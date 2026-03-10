@@ -29,7 +29,5 @@ src-tauri/target/
 src-tauri/gen/
 model/
 runtime/
-
-# Temporary migration leftovers
-_legacy_apps/
-_legacy_crates/
+output/
+src-tauri/output/

@@ -875,6 +875,28 @@
   background: #dc2626;
 }
 
+.app-error-boundary {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(circle at top, #f2f7ff 0%, #f8f9fb 44%, #ffffff 100%);
+}
+
+.app-error-boundary-card {
+  width: min(560px, calc(100vw - 48px));
+  padding: 30px;
+  border-radius: 20px;
+  border: 1px solid var(--apple-border-lighter);
+  background-color: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--apple-shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;

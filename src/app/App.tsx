@@ -1,7 +1,7 @@
-import { useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, type DragDropEvent } from "@tauri-apps/api/window";
 import type { QueueItem, QueueStatus, SavedSettings, TranscribeResponse } from "../features/media/types";
 import { detectMediaKind, fileName } from "../features/media/utils";
 import MediaList from "./components/MediaList";
@@ -12,6 +12,7 @@ import Toast from "./components/Toast";
 import UploadPanel from "./components/UploadPanel";
 import type { TermEntry, ToastTone } from "./types";
 import { appReducer, initialAppState } from "./state/appReducer";
+import { reportError, toUserErrorMessage } from "./utils/errors";
 
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
@@ -54,9 +55,9 @@ function App() {
   const settingsTabIndex = settingsTab === "basic" ? 0 : settingsTab === "transcribe" ? 1 : 2;
   const tabIndicatorStyle = { ["--tab-index" as string]: settingsTabIndex } as Record<string, number>;
 
-  const patch = (payload: Partial<typeof state>) => dispatch({ type: "patch", payload });
+  const patch = useCallback((payload: Partial<typeof state>) => dispatch({ type: "patch", payload }), []);
 
-  const pushToast = (message: string, tone: ToastTone = "info") => {
+  const pushToast = useCallback((message: string, tone: ToastTone = "info") => {
     if (toastTimerRef.current) {
       window.clearTimeout(toastTimerRef.current);
     }
@@ -66,68 +67,9 @@ function App() {
       patch({ toast: null });
       toastTimerRef.current = null;
     }, 2200);
-  };
+  }, [patch]);
 
-  useEffect(() => {
-    let unlisten: undefined | (() => void);
-
-    getCurrentWindow()
-      .onDragDropEvent((event: any) => {
-        const payload = event.payload;
-        if (!payload) return;
-
-        if (payload.type === "enter" || payload.type === "over") {
-          patch({ dragActive: true });
-        } else if (payload.type === "leave") {
-          patch({ dragActive: false });
-        } else if (payload.type === "drop") {
-          patch({ dragActive: false });
-          const paths = Array.isArray(payload.paths) ? payload.paths : [];
-          void appendPaths(paths);
-        }
-      })
-      .then((fn) => {
-        unlisten = fn;
-      })
-      .catch(() => {
-        // Drag-drop listener is optional, click-upload always works.
-      });
-
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  useEffect(() => {
-    try {
-      const rawTerms = localStorage.getItem("voxtrans.terms");
-      if (rawTerms) {
-        const parsed = JSON.parse(rawTerms) as TermEntry[];
-        if (Array.isArray(parsed)) {
-          dispatch({ type: "set_terms", terms: parsed });
-        }
-      }
-      const rawSettings = localStorage.getItem("voxtrans.settings");
-      if (rawSettings) {
-        const parsed = JSON.parse(rawSettings) as SavedSettings;
-        if (parsed?.provider && parsed?.chunkTargetSeconds) {
-          patch({
-            settings: parsed,
-            draftProvider: parsed.provider,
-            draftChunkInput: String(parsed.chunkTargetSeconds),
-          });
-        }
-      }
-    } catch {
-      // Ignore corrupted local storage.
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem("voxtrans.terms", JSON.stringify(terms));
-  }, [terms]);
-
-  const appendPaths = async (paths: string[]) => {
+  const appendPaths = useCallback(async (paths: string[]) => {
     if (!paths.length) return;
 
     const incoming = await Promise.all(
@@ -157,23 +99,87 @@ function App() {
 
     dispatch({ type: "add_queue_items", items: incoming });
     pushToast(`已加入队列 ${paths.length} 个文件`, "success");
-  };
+  }, [pushToast]);
+
+  useEffect(() => {
+    let unlisten: undefined | (() => void);
+
+    getCurrentWindow()
+      .onDragDropEvent((event: { payload: DragDropEvent }) => {
+        const payload = event.payload;
+        if (!payload) return;
+
+        if (payload.type === "enter" || payload.type === "over") {
+          patch({ dragActive: true });
+        } else if (payload.type === "leave") {
+          patch({ dragActive: false });
+        } else if (payload.type === "drop") {
+          patch({ dragActive: false });
+          const paths = Array.isArray(payload.paths) ? payload.paths : [];
+          void appendPaths(paths);
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {
+        // Drag-drop listener is optional, click-upload always works.
+      });
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [appendPaths, patch]);
+
+  useEffect(() => {
+    try {
+      const rawTerms = localStorage.getItem("voxtrans.terms");
+      if (rawTerms) {
+        const parsed = JSON.parse(rawTerms) as TermEntry[];
+        if (Array.isArray(parsed)) {
+          dispatch({ type: "set_terms", terms: parsed });
+        }
+      }
+      const rawSettings = localStorage.getItem("voxtrans.settings");
+      if (rawSettings) {
+        const parsed = JSON.parse(rawSettings) as SavedSettings;
+        if (parsed?.provider && parsed?.chunkTargetSeconds) {
+          patch({
+            settings: parsed,
+            draftProvider: parsed.provider,
+            draftChunkInput: String(parsed.chunkTargetSeconds),
+          });
+        }
+      }
+    } catch {
+      // Ignore corrupted local storage.
+    }
+  }, [patch]);
+
+  useEffect(() => {
+    localStorage.setItem("voxtrans.terms", JSON.stringify(terms));
+  }, [terms]);
 
   const pickFiles = async () => {
-    const picked = await open({
-      multiple: true,
-      directory: false,
-      filters: [
-        {
-          name: "Media",
-          extensions: ["mp3", "wav", "m4a", "mp4", "mkv", "flac", "aac", "mov", "webm", "avi"],
-        },
-      ],
-    });
+    try {
+      const picked = await open({
+        multiple: true,
+        directory: false,
+        filters: [
+          {
+            name: "Media",
+            extensions: ["mp3", "wav", "m4a", "mp4", "mkv", "flac", "aac", "mov", "webm", "avi"],
+          },
+        ],
+      });
 
-    if (!picked) return;
-    const paths = Array.isArray(picked) ? picked : [picked];
-    await appendPaths(paths);
+      if (!picked) return;
+      const paths = Array.isArray(picked) ? picked : [picked];
+      await appendPaths(paths);
+    } catch (error) {
+      reportError(error, "pickFiles");
+      pushToast(toUserErrorMessage(error, "打开文件选择器失败"), "error");
+    }
   };
 
   const openSettings = () => {
@@ -282,8 +288,9 @@ function App() {
       const payload = JSON.stringify(terms, null, 2);
       await navigator.clipboard.writeText(payload);
       pushToast("术语已复制到剪贴板", "success");
-    } catch {
-      pushToast("复制失败，请检查系统剪贴板权限", "error");
+    } catch (error) {
+      reportError(error, "exportTerms");
+      pushToast(toUserErrorMessage(error, "复制失败，请检查系统剪贴板权限"), "error");
     }
   };
 
@@ -367,8 +374,10 @@ function App() {
           error: "",
         }),
       });
-      pushToast(`已完成：${item.name}`, "success");
+      pushToast(`已完成：${item.name}，SRT 已保存到 ${response.srtOutputPath}`, "success");
     } catch (err) {
+      reportError(err, "runTranscribe");
+      const errorMessage = toUserErrorMessage(err, "转录失败，请检查模型和运行时配置");
       dispatch({
         type: "patch_queue_item",
         id: item.id,
@@ -376,10 +385,10 @@ function App() {
           ...old,
           status: "error",
           progress: 0,
-          error: String(err),
+          error: errorMessage,
         }),
       });
-      pushToast(`失败：${item.name}`, "error");
+      pushToast(`失败：${item.name}，${errorMessage}`, "error");
     }
   };
 
@@ -396,12 +405,13 @@ function App() {
     patch({ isProcessing: true });
     pushToast(`开始批量处理，共 ${targets.length} 个文件`, "info");
 
-    for (const item of targets) {
-      // eslint-disable-next-line no-await-in-loop
-      await runTranscribe(item);
+    try {
+      for (const item of targets) {
+        await runTranscribe(item);
+      }
+    } finally {
+      patch({ isProcessing: false });
     }
-
-    patch({ isProcessing: false });
   };
 
   const processSingle = async (item: QueueItem) => {
@@ -412,8 +422,12 @@ function App() {
       id: item.id,
       updater: (old) => ({ ...old, status: "pending", progress: 0, error: "" }),
     });
-    await runTranscribe(item);
-    patch({ isProcessing: false });
+
+    try {
+      await runTranscribe(item);
+    } finally {
+      patch({ isProcessing: false });
+    }
   };
 
   const translateSingle = (item: QueueItem) => {
@@ -425,7 +439,8 @@ function App() {
     try {
       await invoke("open_in_explorer", { path: item.path });
     } catch (err) {
-      pushToast(String(err), "error");
+      reportError(err, "openFolderForItem");
+      pushToast(toUserErrorMessage(err, "打开目录失败"), "error");
     }
   };
 

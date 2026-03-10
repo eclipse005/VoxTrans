@@ -24,6 +24,7 @@ export type QueueItem = {
 export type TranscribeResponse = {
   text: string;
   srt: string;
+  srtOutputPath: string;
   audioDurationSec: number;
   transcribeElapsedSec: number;
   rtfx: number;
