@@ -12,7 +12,7 @@ type MediaListProps = {
   onClearQueue: () => void;
   onTranslateSingle: (item: QueueItem) => void;
   onProcessSingle: (item: QueueItem) => void | Promise<void>;
-  onOpenFolder: (item: QueueItem) => void | Promise<void>;
+  onOpenFolder: () => void | Promise<void>;
   onRemoveItem: (id: string) => void;
 };
 
@@ -79,7 +79,7 @@ export default function MediaList({
                 <button className="file-action-btn" title="转录" disabled={isProcessing} onClick={(e) => { e.stopPropagation(); void onProcessSingle(item); }}>
                   <MicIcon />
                 </button>
-                <button className="file-action-btn" title="打开目录" onClick={(e) => { e.stopPropagation(); void onOpenFolder(item); }}>
+                <button className="file-action-btn" title="打开目录" onClick={(e) => { e.stopPropagation(); void onOpenFolder(); }}>
                   <FolderIcon />
                 </button>
                 <button className="file-action-btn delete" title="删除" disabled={isProcessing} onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>

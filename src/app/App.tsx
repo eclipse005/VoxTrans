@@ -435,12 +435,12 @@ function App() {
     pushToast(`转译排期中：${item.name}（功能即将接入）`, "info");
   };
 
-  const openFolderForItem = async (item: QueueItem) => {
+  const openFolderForItem = async () => {
     try {
-      await invoke("open_in_explorer", { path: item.path });
+      await invoke("open_output_dir");
     } catch (err) {
       reportError(err, "openFolderForItem");
-      pushToast(toUserErrorMessage(err, "打开目录失败"), "error");
+      pushToast(toUserErrorMessage(err, "打开 output 目录失败"), "error");
     }
   };
 

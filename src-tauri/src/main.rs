@@ -158,6 +158,42 @@ fn open_in_explorer(path: String) -> Result<(), String> {
     Err("unsupported platform".to_string())
 }
 
+#[tauri::command]
+fn open_output_dir() -> Result<(), String> {
+    let output_dir = resolve_output_dir();
+    std::fs::create_dir_all(&output_dir).map_err(|err| err.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(output_dir)
+            .spawn()
+            .map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(output_dir)
+            .spawn()
+            .map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(output_dir)
+            .spawn()
+            .map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("unsupported platform".to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -165,7 +201,8 @@ fn main() {
             transcribe,
             save_srt,
             get_file_size,
-            open_in_explorer
+            open_in_explorer,
+            open_output_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running voxtrans desktop");
