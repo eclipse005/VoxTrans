@@ -7,53 +7,108 @@ use parakeet_rs::{
     TranscriptionResult,
 };
 
-const CHUNK_TARGET_SECONDS: f64 = 300.0;
+pub mod subtitle;
+
+pub use subtitle::srt::to_srt_from_sentence_tokens as to_srt;
+
+const DEFAULT_CHUNK_TARGET_SECONDS: f64 = 300.0;
 const SILENCE_NOISE_DB: &str = "-35dB";
 const SILENCE_MIN_SECONDS: &str = "0.5";
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = parse_args(std::env::args().skip(1).collect())?;
+#[derive(Debug, Clone)]
+pub struct TranscribeOptions {
+    pub model_dir: PathBuf,
+    pub audio_path: PathBuf,
+    pub provider: Provider,
+    pub timestamp_mode: TimestampKind,
+    pub ort_dir: Option<PathBuf>,
+    pub intra_threads: usize,
+    pub inter_threads: usize,
+    pub chunk_target_seconds: f64,
+}
 
-    if matches!(args.provider, ExecutionProvider::Cuda) {
-        let ort_dir = args
-            .ort_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from(r"D:\voxtrans\runtime\onnxruntime-sm61"));
-        let ort_dll = ort_dir.join("onnxruntime.dll");
-        let old_path = std::env::var("PATH").unwrap_or_default();
-        let merged_path = format!("{};{}", ort_dir.display(), old_path);
-        unsafe {
-            std::env::set_var("ORT_DYLIB_PATH", ort_dll.as_os_str());
-            std::env::set_var("PATH", merged_path);
+impl Default for TranscribeOptions {
+    fn default() -> Self {
+        let intra_threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+
+        Self {
+            model_dir: default_model_dir(),
+            audio_path: PathBuf::new(),
+            provider: Provider::Cuda,
+            timestamp_mode: TimestampKind::Sentences,
+            ort_dir: None,
+            intra_threads,
+            inter_threads: 1,
+            chunk_target_seconds: DEFAULT_CHUNK_TARGET_SECONDS,
         }
     }
+}
 
-    let prepared_audio = prepare_audio_for_transcription(&args.audio_path)?;
-    let audio_duration_sec = wav_duration_seconds(prepared_audio.path())?;
-    let segments = build_segments_from_silence(prepared_audio.path(), audio_duration_sec)?;
+#[derive(Debug, Clone, Copy)]
+pub enum Provider {
+    Cpu,
+    Cuda,
+    DirectMl,
+}
 
-    println!(
-        "segment_count: {} (target_chunk_sec={:.0})",
-        segments.len(),
-        CHUNK_TARGET_SECONDS
-    );
-    for segment in &segments {
-        println!(
-            "segment_{}: duration={:.3}s",
-            segment.index + 1,
-            segment.duration_sec()
-        );
+#[derive(Debug, Clone, Copy)]
+pub enum TimestampKind {
+    Words,
+    Sentences,
+    Tokens,
+}
+
+#[derive(Debug, Clone)]
+pub struct SegmentSummary {
+    pub index: usize,
+    pub duration_sec: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TranscribeOutput {
+    pub text: String,
+    pub tokens: Vec<TimedToken>,
+    pub audio_duration_sec: f64,
+    pub transcribe_elapsed_sec: f64,
+    pub rtfx: f64,
+    pub execution_provider: &'static str,
+    pub segment_summaries: Vec<SegmentSummary>,
+    pub ort_runtime: String,
+}
+
+pub fn transcribe_with_parakeet_v2(
+    options: &TranscribeOptions,
+) -> Result<TranscribeOutput, Box<dyn std::error::Error>> {
+    if options.audio_path.as_os_str().is_empty() {
+        return Err("audio_path is required".into());
     }
+
+    let execution_provider = to_execution_provider(options.provider);
+    let timestamp_mode = to_timestamp_mode(options.timestamp_mode);
+    let ort_runtime = configure_onnxruntime_env(execution_provider, options.ort_dir.clone());
+
+    let prepared_audio = prepare_audio_for_transcription(&options.audio_path)?;
+    let audio_duration_sec = wav_duration_seconds(prepared_audio.path())?;
+    let segments = build_segments_from_silence(
+        prepared_audio.path(),
+        audio_duration_sec,
+        options.chunk_target_seconds,
+    )?;
 
     let started_at = Instant::now();
     let result = transcribe_in_segments(
-        &args.model_dir,
+        &options.model_dir,
         prepared_audio.path(),
-        args.provider,
-        args.timestamp_mode,
+        execution_provider,
+        timestamp_mode,
+        options.intra_threads,
+        options.inter_threads,
         &segments,
     )?;
     let result = merge_punctuation_tokens(result);
+
     let elapsed_sec = started_at.elapsed().as_secs_f64();
     let rtfx = if elapsed_sec > 0.0 {
         audio_duration_sec / elapsed_sec
@@ -61,35 +116,125 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         0.0
     };
 
-    println!(
-        "execution_provider: {}",
-        match args.provider {
-            ExecutionProvider::Cuda => "cuda",
-            _ => "cpu",
-        }
-    );
-    println!("{}", result.text);
-    for token in result.tokens {
-        println!("[{:.3}s - {:.3}s] {}", token.start, token.end, token.text);
-    }
-    println!("audio_duration_sec: {:.3}", audio_duration_sec);
-    println!("transcribe_elapsed_sec: {:.3}", elapsed_sec);
-    println!("RTFx: {:.4}", rtfx);
+    let execution_provider = match options.provider {
+        Provider::Cuda => "cuda",
+        Provider::DirectMl => "directml",
+        _ => "cpu",
+    };
 
-    Ok(())
+    let segment_summaries = segments
+        .iter()
+        .map(|s| SegmentSummary {
+            index: s.index + 1,
+            duration_sec: s.duration_sec(),
+        })
+        .collect();
+
+    Ok(TranscribeOutput {
+        text: result.text,
+        tokens: result.tokens,
+        audio_duration_sec,
+        transcribe_elapsed_sec: elapsed_sec,
+        rtfx,
+        execution_provider,
+        segment_summaries,
+        ort_runtime,
+    })
+}
+
+fn to_execution_provider(provider: Provider) -> ExecutionProvider {
+    match provider {
+        Provider::Cpu => ExecutionProvider::Cpu,
+        Provider::Cuda => ExecutionProvider::Cuda,
+        Provider::DirectMl => ExecutionProvider::DirectML,
+    }
+}
+
+fn to_timestamp_mode(mode: TimestampKind) -> TimestampMode {
+    match mode {
+        TimestampKind::Words => TimestampMode::Words,
+        TimestampKind::Sentences => TimestampMode::Sentences,
+        TimestampKind::Tokens => TimestampMode::Tokens,
+    }
+}
+
+fn default_model_dir() -> PathBuf {
+    let fixed = PathBuf::from(r"D:\voxtrans\model\parakeet-tdt-0.6b-v2");
+    if fixed.exists() {
+        return fixed;
+    }
+
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("model")
+        .join("parakeet-tdt-0.6b-v2")
+}
+
+fn default_runtime_dir() -> PathBuf {
+    let fixed = PathBuf::from(r"D:\voxtrans\runtime\onnxruntime-sm61");
+    if fixed.exists() {
+        return fixed;
+    }
+
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("runtime")
+        .join("onnxruntime-sm61")
+}
+
+fn configure_onnxruntime_env(provider: ExecutionProvider, ort_dir: Option<PathBuf>) -> String {
+    let local_runtime_dir = default_runtime_dir();
+    let resolved_ort_dir = ort_dir.or_else(|| match provider {
+        ExecutionProvider::Cpu | ExecutionProvider::Cuda => {
+            if local_runtime_dir.join("onnxruntime.dll").exists() {
+                Some(local_runtime_dir.clone())
+            } else {
+                None
+            }
+        }
+        ExecutionProvider::DirectML => None,
+    });
+
+    match (provider, resolved_ort_dir) {
+        (ExecutionProvider::Cpu, None) => {
+            unsafe {
+                std::env::remove_var("ORT_DYLIB_PATH");
+            }
+            "system default".to_string()
+        }
+        (_, Some(dir)) => {
+            let ort_dll = dir.join("onnxruntime.dll");
+            let old_path = std::env::var("PATH").unwrap_or_default();
+            let merged_path = format!("{};{}", dir.display(), old_path);
+            unsafe {
+                std::env::set_var("ORT_DYLIB_PATH", ort_dll.as_os_str());
+                std::env::set_var("PATH", merged_path);
+            }
+            ort_dll.display().to_string()
+        }
+        (_, None) => "system default".to_string(),
+    }
 }
 
 fn transcribe_in_segments(
-    model_dir: &PathBuf,
+    model_dir: &Path,
     full_audio_path: &Path,
     provider: ExecutionProvider,
     timestamp_mode: TimestampMode,
+    intra_threads: usize,
+    inter_threads: usize,
     segments: &[AudioSegment],
 ) -> Result<TranscriptionResult, Box<dyn std::error::Error>> {
     let mut model = ParakeetTDT::from_pretrained(
         model_dir,
-        Some(ExecutionConfig::new().with_execution_provider(provider)),
+        Some(
+            ExecutionConfig::new()
+                .with_execution_provider(provider)
+                .with_intra_threads(intra_threads)
+                .with_inter_threads(inter_threads),
+        ),
     )?;
+
     let mut all_tokens: Vec<TimedToken> = Vec::new();
     let mut text_parts: Vec<String> = Vec::new();
 
@@ -100,27 +245,19 @@ fn transcribe_in_segments(
         if !segment_result.text.trim().is_empty() {
             text_parts.push(segment_result.text.trim().to_string());
         }
+
         for token in &mut segment_result.tokens {
             token.start += segment.start_sec as f32;
             token.end += segment.start_sec as f32;
         }
+
         all_tokens.extend(segment_result.tokens);
     }
 
-    let merged_text = text_parts.join(" ");
     Ok(TranscriptionResult {
-        text: merged_text,
+        text: text_parts.join(" "),
         tokens: all_tokens,
     })
-}
-
-#[derive(Debug)]
-struct CliArgs {
-    model_dir: PathBuf,
-    audio_path: PathBuf,
-    provider: ExecutionProvider,
-    timestamp_mode: TimestampMode,
-    ort_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -136,87 +273,17 @@ impl AudioSegment {
     }
 }
 
-fn parse_args(args: Vec<String>) -> Result<CliArgs, Box<dyn std::error::Error>> {
-    let mut model_dir = PathBuf::from(r"D:\voxtrans\model\parakeet-tdt-0.6b-v2");
-    let mut audio_path: Option<PathBuf> = None;
-    let mut provider = ExecutionProvider::Cuda;
-    let mut timestamp_mode = TimestampMode::Words;
-    let mut ort_dir: Option<PathBuf> = None;
-
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--model-dir" => {
-                i += 1;
-                model_dir = PathBuf::from(args.get(i).ok_or("--model-dir requires a value")?.as_str());
-            }
-            "--audio" => {
-                i += 1;
-                audio_path = Some(PathBuf::from(args.get(i).ok_or("--audio requires a value")?.as_str()));
-            }
-            "--provider" => {
-                i += 1;
-                let value = args.get(i).ok_or("--provider requires a value")?;
-                provider = match value.as_str() {
-                    "cuda" => ExecutionProvider::Cuda,
-                    "cpu" => ExecutionProvider::Cpu,
-                    _ => return Err("--provider must be 'cuda' or 'cpu'".into()),
-                };
-            }
-            "--timestamp" => {
-                i += 1;
-                let value = args.get(i).ok_or("--timestamp requires a value")?;
-                timestamp_mode = match value.as_str() {
-                    "words" => TimestampMode::Words,
-                    "sentences" => TimestampMode::Sentences,
-                    "tokens" => TimestampMode::Tokens,
-                    _ => return Err("--timestamp must be 'words', 'sentences', or 'tokens'".into()),
-                };
-            }
-            "--ort-dir" => {
-                i += 1;
-                ort_dir = Some(PathBuf::from(args.get(i).ok_or("--ort-dir requires a value")?.as_str()));
-            }
-            "--help" | "-h" => {
-                print_usage();
-                std::process::exit(0);
-            }
-            other => return Err(format!("unknown argument: {other}").into()),
-        }
-        i += 1;
-    }
-
-    let audio_path = audio_path.ok_or("missing required --audio <path>")?;
-    Ok(CliArgs {
-        model_dir,
-        audio_path,
-        provider,
-        timestamp_mode,
-        ort_dir,
-    })
-}
-
-fn print_usage() {
-    println!("Usage:");
-    println!("  parakeet-rs-upstream-test --audio <path> [options]");
-    println!();
-    println!("Options:");
-    println!("  --model-dir <path>      TDT model directory (default: D:\\voxtrans\\model\\parakeet-tdt-0.6b-v2)");
-    println!("  --provider <cuda|cpu>   Execution provider (default: cuda)");
-    println!("  --timestamp <words|sentences|tokens>  Timestamp mode (default: words)");
-    println!("  --ort-dir <path>        Directory containing custom onnxruntime.dll");
-    println!("  -h, --help              Show this help");
-}
-
 fn wav_duration_seconds(audio_path: &Path) -> Result<f64, Box<dyn std::error::Error>> {
     let reader = hound::WavReader::open(audio_path)?;
     let spec = reader.spec();
     let total_samples = reader.duration() as f64;
     let channel_count = spec.channels as f64;
     let sample_rate = spec.sample_rate as f64;
+
     if channel_count <= 0.0 || sample_rate <= 0.0 {
         return Err("invalid wav metadata for duration calculation".into());
     }
+
     Ok(total_samples / channel_count / sample_rate)
 }
 
@@ -276,8 +343,10 @@ fn prepare_audio_for_transcription(input_path: &PathBuf) -> Result<PreparedAudio
 fn build_segments_from_silence(
     audio_path: &Path,
     total_duration_sec: f64,
+    chunk_target_seconds: f64,
 ) -> Result<Vec<AudioSegment>, Box<dyn std::error::Error>> {
-    if total_duration_sec <= CHUNK_TARGET_SECONDS {
+    let chunk_target_seconds = chunk_target_seconds.max(30.0);
+    if total_duration_sec <= chunk_target_seconds {
         return Ok(vec![AudioSegment {
             index: 0,
             start_sec: 0.0,
@@ -289,8 +358,8 @@ fn build_segments_from_silence(
     let mut split_points = Vec::new();
     let mut last = 0.0_f64;
 
-    while last + CHUNK_TARGET_SECONDS < total_duration_sec {
-        let boundary = last + CHUNK_TARGET_SECONDS;
+    while last + chunk_target_seconds < total_duration_sec {
+        let boundary = last + chunk_target_seconds;
         let candidate = silence_midpoints
             .iter()
             .copied()
@@ -401,6 +470,7 @@ fn extract_segment_to_temp(
         )
         .into());
     }
+
     Ok(TemporaryAudioFile { path: temp_path })
 }
 
@@ -428,11 +498,12 @@ fn build_temp_wav_path(tag: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    std::env::temp_dir().join(format!("parakeet_rs_tmp_{}_{}_{}.wav", pid, tag, nanos))
+    std::env::temp_dir().join(format!("voxtrans_tmp_{}_{}_{}.wav", pid, tag, nanos))
 }
 
 fn merge_punctuation_tokens(mut result: TranscriptionResult) -> TranscriptionResult {
     let mut merged: Vec<TimedToken> = Vec::with_capacity(result.tokens.len());
+
     for token in result.tokens {
         if is_standalone_punctuation(&token.text) {
             if let Some(prev) = merged.last_mut() {
@@ -445,6 +516,7 @@ fn merge_punctuation_tokens(mut result: TranscriptionResult) -> TranscriptionRes
             merged.push(token);
         }
     }
+
     result.tokens = merged;
     result
 }
@@ -454,7 +526,10 @@ fn is_standalone_punctuation(text: &str) -> bool {
     if trimmed.is_empty() {
         return false;
     }
-    trimmed
-        .chars()
-        .all(|c| matches!(c, ',' | '.' | '!' | '?' | ';' | ':' | '，' | '。' | '！' | '？' | '；' | '：'))
+    trimmed.chars().all(|c| {
+        matches!(
+            c,
+            ',' | '.' | '!' | '?' | ';' | ':' | '，' | '。' | '！' | '？' | '；' | '：'
+        )
+    })
 }

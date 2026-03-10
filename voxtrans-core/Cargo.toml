@@ -1,0 +1,8 @@
+[package]
+name = "voxtrans-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+parakeet-rs = { version = "0.3", default-features = false, features = ["cuda", "directml", "load-dynamic"] }
+hound = "3.5"
