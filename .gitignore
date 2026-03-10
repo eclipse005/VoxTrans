@@ -1,0 +1,9 @@
+target/
+model/
+runtime/
+
+# OS/editor temp files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
