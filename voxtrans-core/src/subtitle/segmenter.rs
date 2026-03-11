@@ -225,7 +225,10 @@ fn should_split_after_word(words: &[WordToken], idx: usize) -> bool {
 }
 
 fn ends_with_terminal_punctuation(word: &str) -> bool {
-    word.chars().last().map(is_terminal_punctuation).unwrap_or(false)
+    word.chars()
+        .last()
+        .map(is_terminal_punctuation)
+        .unwrap_or(false)
 }
 
 fn ends_with_comma(word: &str) -> bool {
@@ -323,23 +326,14 @@ fn strip_leading_openers(token: &str) -> &str {
 fn is_terminal_punctuation(c: char) -> bool {
     matches!(
         c,
-        '.'
-            | '!'
-            | '?'
-            | '。'
-            | '！'
-            | '？'
-            | '｡'
-            | '؟'
-            | '۔'
-            | '።'
-            | '။'
-            | '…'
+        '.' | '!' | '?' | '。' | '！' | '？' | '｡' | '؟' | '۔' | '።' | '။' | '…'
     )
 }
 
 fn is_non_break_terminal_case(token: &str) -> bool {
-    is_common_abbreviation(token) || is_single_letter_initial(token) || looks_like_decimal_number(token)
+    is_common_abbreviation(token)
+        || is_single_letter_initial(token)
+        || looks_like_decimal_number(token)
 }
 
 fn is_common_abbreviation(token: &str) -> bool {

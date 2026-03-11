@@ -72,7 +72,6 @@ pub struct TranscribeOutput {
     pub tokens: Vec<TimedToken>,
     pub audio_duration_sec: f64,
     pub transcribe_elapsed_sec: f64,
-    pub rtfx: f64,
     pub execution_provider: &'static str,
     pub segment_summaries: Vec<SegmentSummary>,
     pub ort_runtime: String,
@@ -124,12 +123,6 @@ where
     };
 
     let elapsed_sec = started_at.elapsed().as_secs_f64();
-    let rtfx = if elapsed_sec > 0.0 {
-        audio_duration_sec / elapsed_sec
-    } else {
-        0.0
-    };
-
     let execution_provider = match options.provider {
         Provider::Cuda => "cuda",
         Provider::DirectMl => "directml",
@@ -149,7 +142,6 @@ where
         tokens: result.tokens,
         audio_duration_sec,
         transcribe_elapsed_sec: elapsed_sec,
-        rtfx,
         execution_provider,
         segment_summaries,
         ort_runtime,
@@ -256,7 +248,8 @@ fn transcribe_in_segments(
     let total_segments = segments.len();
     for segment in segments {
         let segment_file = extract_segment_to_temp(full_audio_path, segment)?;
-        let mut segment_result = model.transcribe_file(segment_file.path.as_path(), Some(timestamp_mode))?;
+        let mut segment_result =
+            model.transcribe_file(segment_file.path.as_path(), Some(timestamp_mode))?;
 
         if !segment_result.text.trim().is_empty() {
             text_parts.push(segment_result.text.trim().to_string());
@@ -328,7 +321,9 @@ impl Drop for TemporaryAudioFile {
     }
 }
 
-fn prepare_audio_for_transcription(input_path: &PathBuf) -> Result<PreparedAudio, Box<dyn std::error::Error>> {
+fn prepare_audio_for_transcription(
+    input_path: &PathBuf,
+) -> Result<PreparedAudio, Box<dyn std::error::Error>> {
     if is_wav_16k_mono(input_path)? {
         return Ok(PreparedAudio::Original(input_path.clone()));
     }
@@ -351,10 +346,16 @@ fn prepare_audio_for_transcription(input_path: &PathBuf) -> Result<PreparedAudio
         .status()?;
 
     if !status.success() {
-        return Err(format!("ffmpeg conversion failed for input: {}", input_path.display()).into());
+        return Err(format!(
+            "ffmpeg conversion failed for input: {}",
+            input_path.display()
+        )
+        .into());
     }
 
-    Ok(PreparedAudio::Temporary(TemporaryAudioFile { path: temp_path }))
+    Ok(PreparedAudio::Temporary(TemporaryAudioFile {
+        path: temp_path,
+    }))
 }
 
 fn build_segments_from_silence(

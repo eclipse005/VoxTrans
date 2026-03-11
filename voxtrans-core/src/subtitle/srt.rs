@@ -76,17 +76,17 @@ pub fn parse_srt(input: &str) -> Result<Vec<SrtCue>, SrtError> {
             })?
             .trim();
 
-        let (start_str, end_str) = parse_timestamp_line(timestamp_line).ok_or_else(|| {
-            SrtError::InvalidTimestampLine {
+        let (start_str, end_str) =
+            parse_timestamp_line(timestamp_line).ok_or_else(|| SrtError::InvalidTimestampLine {
                 block: block_number,
                 line: timestamp_line.to_string(),
-            }
-        })?;
+            })?;
 
-        let start_ms = parse_srt_time_to_ms(start_str).ok_or_else(|| SrtError::InvalidTimeValue {
-            block: block_number,
-            value: start_str.to_string(),
-        })?;
+        let start_ms =
+            parse_srt_time_to_ms(start_str).ok_or_else(|| SrtError::InvalidTimeValue {
+                block: block_number,
+                value: start_str.to_string(),
+            })?;
 
         let end_ms = parse_srt_time_to_ms(end_str).ok_or_else(|| SrtError::InvalidTimeValue {
             block: block_number,
@@ -115,7 +115,11 @@ pub fn normalize_cues(cues: &[SrtCue]) -> Vec<SrtCue> {
         .iter()
         .map(|cue| {
             let mut text = cue.text.replace("\r\n", "\n");
-            text = text.lines().map(str::trim_end).collect::<Vec<_>>().join("\n");
+            text = text
+                .lines()
+                .map(str::trim_end)
+                .collect::<Vec<_>>()
+                .join("\n");
             let start_ms = cue.start_ms;
             let end_ms = cue.end_ms.max(start_ms);
             SrtCue {
@@ -149,11 +153,7 @@ pub fn validate_cues(cues: &[SrtCue]) -> Vec<String> {
             warnings.push(format!("cue {} is longer than 60 seconds", idx + 1));
         }
         if idx > 0 && cue.start_ms < cues[idx - 1].end_ms {
-            warnings.push(format!(
-                "cue {} overlaps with cue {}",
-                idx + 1,
-                idx
-            ));
+            warnings.push(format!("cue {} overlaps with cue {}", idx + 1, idx));
         }
     }
 

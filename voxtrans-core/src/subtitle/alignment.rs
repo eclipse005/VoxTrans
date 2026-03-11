@@ -27,7 +27,12 @@ pub fn align_text_to_timestamps(full_text: &str, word_timestamps: &[WordToken]) 
     let clean_chars: Vec<char> = clean_to_original.iter().map(|&i| full_chars[i]).collect();
     let cleaned_words: Vec<Vec<char>> = word_timestamps
         .iter()
-        .map(|w| w.word.chars().filter(|c| is_word_char(*c)).collect::<Vec<char>>())
+        .map(|w| {
+            w.word
+                .chars()
+                .filter(|c| is_word_char(*c))
+                .collect::<Vec<char>>()
+        })
         .collect();
 
     let mut result: Vec<WordToken> = Vec::new();
@@ -164,7 +169,11 @@ mod tests {
     #[test]
     fn fallback_when_match_quality_too_low() {
         let full = "totally unrelated content";
-        let words = vec![wt("hello", 0.0, 0.2), wt("world", 0.2, 0.5), wt("test", 0.5, 0.8)];
+        let words = vec![
+            wt("hello", 0.0, 0.2),
+            wt("world", 0.2, 0.5),
+            wt("test", 0.5, 0.8),
+        ];
         let out = align_text_to_timestamps(full, &words);
 
         assert_eq!(out.len(), words.len());

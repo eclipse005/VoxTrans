@@ -1,7 +1,8 @@
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use tauri::async_runtime::spawn_blocking;
 use crate::prompts::{LLM_CONNECT_TEST_SYSTEM_PROMPT, LLM_CONNECT_TEST_USER_PROMPT};
+use reqwest::StatusCode;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use tauri::async_runtime::spawn_blocking;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +66,7 @@ pub struct LlmInteractRequest {
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
     pub timeout_secs: Option<u64>,
+    pub max_retries: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,6 +86,7 @@ pub struct LlmTestConnectionRequest {
     pub base_url: Option<String>,
     pub model: String,
     pub timeout_secs: Option<u64>,
+    pub max_retries: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,6 +97,11 @@ pub struct LlmTestConnectionResponse {
     pub finish_reason: Option<String>,
     pub model: String,
 }
+
+const DEFAULT_MAX_RETRIES: u32 = 3;
+const MAX_ALLOWED_RETRIES: u32 = 8;
+const BASE_RETRY_BACKOFF_MS: u64 = 500;
+const MAX_RETRY_BACKOFF_MS: u64 = 4000;
 
 fn normalize_base_url(base_url: Option<String>) -> String {
     let fallback = "https://api.openai.com/v1".to_string();
@@ -169,7 +177,11 @@ fn build_payload(request: &LlmInteractRequest) -> Result<Value, String> {
         payload["max_tokens"] = json!(max_tokens);
     }
 
-    let mode = request.mode.as_deref().unwrap_or("chat").to_ascii_lowercase();
+    let mode = request
+        .mode
+        .as_deref()
+        .unwrap_or("chat")
+        .to_ascii_lowercase();
     let tools = request.tools.clone().unwrap_or_default();
     if mode == "tool" || !tools.is_empty() {
         payload["tools"] = serde_json::to_value(tools).map_err(|e| e.to_string())?;
@@ -228,6 +240,25 @@ fn parse_llm_response(raw: &Value) -> Result<LlmInteractResponse, String> {
     })
 }
 
+fn should_retry_status(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS
+            | StatusCode::BAD_GATEWAY
+            | StatusCode::SERVICE_UNAVAILABLE
+            | StatusCode::GATEWAY_TIMEOUT
+    )
+}
+
+fn should_retry_transport_error(err: &reqwest::Error) -> bool {
+    err.is_timeout() || err.is_connect() || err.is_request() || err.is_body()
+}
+
+fn retry_backoff_ms(attempt: u32) -> u64 {
+    let shift = attempt.saturating_sub(1).min(4);
+    (BASE_RETRY_BACKOFF_MS << shift).min(MAX_RETRY_BACKOFF_MS)
+}
+
 fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractResponse, String> {
     if request.api_key.trim().is_empty() {
         return Err("apiKey is required".to_string());
@@ -239,35 +270,67 @@ fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractR
     let url = completion_endpoint(request.base_url.clone());
     let payload = build_payload(&request)?;
     let timeout_secs = request.timeout_secs.unwrap_or(300).max(5);
+    let max_retries = request
+        .max_retries
+        .unwrap_or(DEFAULT_MAX_RETRIES)
+        .min(MAX_ALLOWED_RETRIES);
+    let total_attempts = max_retries + 1;
 
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| format!("failed to build llm client: {e}"))?;
 
-    let response = client
-        .post(&url)
-        .bearer_auth(request.api_key.trim())
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .map_err(|e| format!("llm request failed: {e}"))?;
+    let mut attempt: u32 = 0;
+    let final_error = loop {
+        attempt += 1;
+        let send_result = client
+            .post(&url)
+            .bearer_auth(request.api_key.trim())
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send();
 
-    let status_code = response.status();
-    let body_text = response
-        .text()
-        .map_err(|e| format!("failed to read llm response body: {e}"))?;
+        match send_result {
+            Ok(response) => {
+                let status_code = response.status();
+                let body_text = response
+                    .text()
+                    .map_err(|e| format!("failed to read llm response body: {e}"))?;
 
-    if status_code.is_success() {
-        let raw: Value = serde_json::from_str(&body_text)
-            .map_err(|e| format!("invalid llm response json: {e}; body: {body_text}"))?;
-        return parse_llm_response(&raw);
+                if status_code.is_success() {
+                    let raw: Value = serde_json::from_str(&body_text)
+                        .map_err(|e| format!("invalid llm response json: {e}; body: {body_text}"))?;
+                    return parse_llm_response(&raw);
+                }
+
+                let error = match serde_json::from_str::<Value>(&body_text) {
+                    Ok(raw) => format!("llm api error ({status_code}) @ {url}: {raw}"),
+                    Err(_) => format!("llm api error ({status_code}) @ {url}: {body_text}"),
+                };
+
+                if attempt > max_retries || !should_retry_status(status_code) {
+                    break error;
+                }
+            }
+            Err(err) => {
+                let error = format!("llm request failed: {err}");
+                if attempt > max_retries || !should_retry_transport_error(&err) {
+                    break error;
+                }
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(retry_backoff_ms(attempt)));
+    };
+
+    if attempt > 1 {
+        return Err(format!(
+            "llm request exhausted after {attempt}/{total_attempts} attempts: {}",
+            final_error
+        ));
     }
-
-    Err(match serde_json::from_str::<Value>(&body_text) {
-        Ok(raw) => format!("llm api error ({status_code}) @ {url}: {raw}"),
-        Err(_) => format!("llm api error ({status_code}) @ {url}: {body_text}"),
-    })
+    Err(final_error)
 }
 
 #[tauri::command]
@@ -278,7 +341,9 @@ pub async fn llm_interact(request: LlmInteractRequest) -> Result<LlmInteractResp
 }
 
 #[tauri::command]
-pub async fn llm_test_connection(request: LlmTestConnectionRequest) -> Result<LlmTestConnectionResponse, String> {
+pub async fn llm_test_connection(
+    request: LlmTestConnectionRequest,
+) -> Result<LlmTestConnectionResponse, String> {
     let interact_request = LlmInteractRequest {
         api_key: request.api_key,
         model: request.model.clone(),
@@ -293,6 +358,7 @@ pub async fn llm_test_connection(request: LlmTestConnectionRequest) -> Result<Ll
         temperature: None,
         max_tokens: None,
         timeout_secs: request.timeout_secs.or(Some(30)),
+        max_retries: request.max_retries.or(Some(1)),
     };
 
     let response = spawn_blocking(move || run_llm_interact_blocking(interact_request))
@@ -306,3 +372,6 @@ pub async fn llm_test_connection(request: LlmTestConnectionRequest) -> Result<Ll
         model: request.model,
     })
 }
+
+
+

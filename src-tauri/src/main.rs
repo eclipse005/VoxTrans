@@ -1,17 +1,23 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_state;
+mod commands;
+mod db;
 mod llm;
 mod prompts;
+mod services;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::async_runtime::spawn_blocking;
 use tauri::Emitter;
+use tauri::Manager;
+use tauri::async_runtime::spawn_blocking;
+use voxtrans_core::subtitle::segmenter::{
+    WordToken, normalize_word_tokens, plain_text_from_segments, split_english_segments,
+    words_from_timed_tokens,
+};
 use voxtrans_core::subtitle::srt::{
     normalize_cues, parse_srt, to_srt_from_cues, to_srt_from_segments, validate_cues,
-};
-use voxtrans_core::subtitle::segmenter::{
-    normalize_word_tokens, plain_text_from_segments, split_english_segments, words_from_timed_tokens, WordToken,
 };
 use voxtrans_core::{Provider, TimestampKind, TranscribeOptions};
 
@@ -33,7 +39,6 @@ struct TranscribeResponse {
     segment_total: usize,
     audio_duration_sec: f64,
     transcribe_elapsed_sec: f64,
-    rtfx: f64,
     execution_provider: String,
     ort_runtime: String,
 }
@@ -66,6 +71,7 @@ struct SegmentWithWordsResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BuildSegmentsRequest {
+    task_id: String,
     audio_path: String,
     words: Vec<WordTokenResponse>,
 }
@@ -89,6 +95,7 @@ struct SaveSrtRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SubtitleLoadRequest {
+    task_id: String,
     media_path: String,
     fallback_srt: Option<String>,
 }
@@ -106,6 +113,7 @@ struct SubtitleLoadResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SubtitleSaveRequest {
+    task_id: String,
     media_path: String,
     content: String,
     autosave: bool,
@@ -119,7 +127,10 @@ struct SubtitleSaveResponse {
 }
 
 #[tauri::command]
-async fn transcribe(app: tauri::AppHandle, request: TranscribeRequest) -> Result<TranscribeResponse, String> {
+async fn transcribe(
+    app: tauri::AppHandle,
+    request: TranscribeRequest,
+) -> Result<TranscribeResponse, String> {
     spawn_blocking(move || {
         let task_id = request.task_id.clone();
         let app_handle = app.clone();
@@ -142,17 +153,18 @@ async fn transcribe(app: tauri::AppHandle, request: TranscribeRequest) -> Result
             options.ort_dir = Some(PathBuf::from(ort_dir));
         }
 
-        let output = voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
-            let _ = app_handle.emit(
-                "transcribe-progress",
-                TranscribeProgressEvent {
-                    task_id: task_id.clone(),
-                    current_segment: current,
-                    total_segments: total,
-                },
-            );
-        })
-        .map_err(|err| err.to_string())?;
+        let output =
+            voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
+                let _ = app_handle.emit(
+                    "transcribe-progress",
+                    TranscribeProgressEvent {
+                        task_id: task_id.clone(),
+                        current_segment: current,
+                        total_segments: total,
+                    },
+                );
+            })
+            .map_err(|err| err.to_string())?;
         let words = normalize_word_tokens(words_from_timed_tokens(&output.tokens));
 
         Ok(TranscribeResponse {
@@ -160,7 +172,6 @@ async fn transcribe(app: tauri::AppHandle, request: TranscribeRequest) -> Result
             segment_total: output.segment_summaries.len(),
             audio_duration_sec: output.audio_duration_sec,
             transcribe_elapsed_sec: output.transcribe_elapsed_sec,
-            rtfx: output.rtfx,
             execution_provider: output.execution_provider.to_string(),
             ort_runtime: output.ort_runtime,
         })
@@ -170,15 +181,13 @@ async fn transcribe(app: tauri::AppHandle, request: TranscribeRequest) -> Result
 }
 
 #[tauri::command]
-fn build_segments_from_words(request: BuildSegmentsRequest) -> Result<BuildSegmentsResponse, String> {
+fn build_segments_from_words(
+    request: BuildSegmentsRequest,
+) -> Result<BuildSegmentsResponse, String> {
     let audio_path = PathBuf::from(&request.audio_path);
-    let srt_output_path = default_srt_output_path(&audio_path);
+    let srt_output_path = task_srt_output_path(&request.task_id, &audio_path);
 
-    let words: Vec<WordToken> = request
-        .words
-        .into_iter()
-        .map(response_to_word)
-        .collect();
+    let words: Vec<WordToken> = request.words.into_iter().map(response_to_word).collect();
     let segments = split_english_segments(&words);
     let srt = to_srt_from_segments(&segments);
     let text = plain_text_from_segments(&segments);
@@ -187,12 +196,8 @@ fn build_segments_from_words(request: BuildSegmentsRequest) -> Result<BuildSegme
         std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
 
-    let segments_response: Vec<SegmentWithWordsResponse> = segments
-        .iter()
-        .map(segment_to_response)
-        .collect();
-
-    std::fs::write(&srt_output_path, &srt).map_err(|err| err.to_string())?;
+    let segments_response: Vec<SegmentWithWordsResponse> =
+        segments.iter().map(segment_to_response).collect();
 
     Ok(BuildSegmentsResponse {
         text,
@@ -202,14 +207,37 @@ fn build_segments_from_words(request: BuildSegmentsRequest) -> Result<BuildSegme
     })
 }
 
-fn default_srt_output_path(audio_path: &std::path::Path) -> PathBuf {
+fn sanitize_filename_component(raw: &str) -> String {
+    raw.chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            _ => ch,
+        })
+        .collect::<String>()
+        .trim()
+        .trim_matches('.')
+        .to_string()
+}
+
+fn task_output_dir(task_id: &str, audio_path: &std::path::Path) -> PathBuf {
     let stem = audio_path
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "transcript".to_string());
+    let safe_stem = sanitize_filename_component(&stem);
+    let safe_task_id = sanitize_filename_component(task_id);
+    resolve_output_dir().join(format!("{}_{}", safe_stem, safe_task_id))
+}
 
-    resolve_output_dir().join(format!("{stem}_en.srt"))
+fn task_srt_output_path(task_id: &str, audio_path: &std::path::Path) -> PathBuf {
+    let stem = audio_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "transcript".to_string());
+    let safe_stem = sanitize_filename_component(&stem);
+    task_output_dir(task_id, audio_path).join(format!("{}_en.srt", safe_stem))
 }
 
 fn response_to_word(response: WordTokenResponse) -> WordToken {
@@ -228,7 +256,9 @@ fn word_to_response(word: &WordToken) -> WordTokenResponse {
     }
 }
 
-fn segment_to_response(segment: &voxtrans_core::subtitle::srt::SubtitleSegment) -> SegmentWithWordsResponse {
+fn segment_to_response(
+    segment: &voxtrans_core::subtitle::srt::SubtitleSegment,
+) -> SegmentWithWordsResponse {
     SegmentWithWordsResponse {
         start: segment.start_sec,
         end: segment.end_sec,
@@ -245,16 +275,14 @@ fn segment_to_response(segment: &voxtrans_core::subtitle::srt::SubtitleSegment) 
     }
 }
 
-fn default_srt_draft_path(audio_path: &std::path::Path) -> PathBuf {
+fn task_srt_draft_path(task_id: &str, audio_path: &std::path::Path) -> PathBuf {
     let stem = audio_path
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "transcript".to_string());
-
-    resolve_output_dir()
-        .join(".draft")
-        .join(format!("{stem}_en.draft.srt"))
+    let safe_stem = sanitize_filename_component(&stem);
+    task_output_dir(task_id, audio_path).join(format!("{}_en.draft.srt", safe_stem))
 }
 
 fn resolve_output_dir() -> PathBuf {
@@ -275,9 +303,9 @@ fn resolve_output_dir() -> PathBuf {
 
 #[tauri::command]
 fn load_subtitle_editor(request: SubtitleLoadRequest) -> Result<SubtitleLoadResponse, String> {
-    let media_path = PathBuf::from(request.media_path);
-    let srt_path = default_srt_output_path(&media_path);
-    let draft_path = default_srt_draft_path(&media_path);
+    let media_path = PathBuf::from(&request.media_path);
+    let srt_path = task_srt_output_path(&request.task_id, &media_path);
+    let draft_path = task_srt_draft_path(&request.task_id, &media_path);
 
     if let Some(parent) = srt_path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
@@ -327,9 +355,9 @@ fn load_subtitle_editor(request: SubtitleLoadRequest) -> Result<SubtitleLoadResp
 
 #[tauri::command]
 fn save_subtitle_editor(request: SubtitleSaveRequest) -> Result<SubtitleSaveResponse, String> {
-    let media_path = PathBuf::from(request.media_path);
-    let srt_path = default_srt_output_path(&media_path);
-    let draft_path = default_srt_draft_path(&media_path);
+    let media_path = PathBuf::from(&request.media_path);
+    let srt_path = task_srt_output_path(&request.task_id, &media_path);
+    let draft_path = task_srt_draft_path(&request.task_id, &media_path);
 
     let parsed = parse_srt(&request.content).map_err(|err| err.to_string())?;
     let normalized = normalize_cues(&parsed);
@@ -357,6 +385,9 @@ fn save_subtitle_editor(request: SubtitleSaveRequest) -> Result<SubtitleSaveResp
 
 #[tauri::command]
 fn save_srt(request: SaveSrtRequest) -> Result<(), String> {
+    if let Some(parent) = std::path::Path::new(&request.output_path).parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
     std::fs::write(&request.output_path, request.content).map_err(|err| err.to_string())
 }
 
@@ -444,6 +475,12 @@ fn open_output_dir() -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            let pool = tauri::async_runtime::block_on(async { db::init_pool(&app_handle).await })?;
+            app.manage(app_state::AppState { pool });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             transcribe,
             build_segments_from_words,
@@ -453,9 +490,31 @@ fn main() {
             get_file_size,
             open_in_explorer,
             open_output_dir,
+            commands::preferences::load_user_preferences,
+            commands::preferences::save_app_settings,
+            commands::preferences::save_terms,
+            commands::preferences::save_hotword_correction,
+            commands::workspace::load_workspace_state,
+            commands::workspace::save_queue_state,
+            commands::history::record_task_event,
+            commands::history::list_task_events,
+            commands::history::list_task_summaries,
+            commands::history::clear_task_events,
+            commands::history::delete_task_summaries,
+            prompts::build_hotword_correction_prompts,
             llm::llm_interact,
             llm::llm_test_connection
         ])
         .run(tauri::generate_context!())
         .expect("error while running voxtrans desktop");
 }
+
+
+
+
+
+
+
+
+
+
