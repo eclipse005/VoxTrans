@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useReducer, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { SavedSettings } from "../features/media/types";
-import type { LlmTestConnectionResponse } from "../features/media/types";
+import type { LlmTestConnectionResponse, SavedSettings, TaskEventRecord } from "../features/media/types";
 import MediaList from "./components/MediaList";
+import LogsModal from "./components/LogsModal";
 import Navbar from "./components/Navbar";
 import SettingsModal from "./components/SettingsModal";
 import SubtitleEditorModal from "./components/SubtitleEditorModal";
@@ -13,6 +13,7 @@ import { useAppPersistence } from "./hooks/useAppPersistence";
 import { useQueueWorkflow } from "./hooks/useQueueWorkflow";
 import { useSubtitleWorkflow } from "./hooks/useSubtitleWorkflow";
 import { useToast } from "./hooks/useToast";
+import { useWorkspacePersistence } from "./hooks/useWorkspacePersistence";
 import { appReducer, initialAppState } from "./state/appReducer";
 import type { TermEntry } from "./types";
 import { parseImportedTerms } from "./utils/termsImport";
@@ -26,6 +27,7 @@ function App() {
     activeTab,
     showSettings,
     showGlossary,
+    showLogs,
     settings,
     draftProvider,
     draftChunkInput,
@@ -60,11 +62,16 @@ function App() {
     subtitleDirty,
   } = state;
 
-  const patch = useCallback((payload: Partial<typeof state>) => dispatch({ type: "patch", payload }), []);
-  const { pushToast } = useToast(patch);
+  const { pushToast } = useToast(dispatch);
   const [testingLlm, setTestingLlm] = useState(false);
+  const [logEvents, setLogEvents] = useState<TaskEventRecord[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
 
-  useAppPersistence(terms, hotwordCorrection, dispatch, patch);
+  useAppPersistence(terms, hotwordCorrection, dispatch);
+  useWorkspacePersistence({
+    queue,
+    dispatch,
+  });
 
   const {
     queueCount,
@@ -78,8 +85,13 @@ function App() {
   } = useQueueWorkflow({
     queue,
     settings,
+    llmSettings: {
+      apiKey: draftApiKey,
+      apiBase: draftApiBase,
+      apiModel: draftApiModel,
+    },
+    hotwordCorrection,
     dispatch,
-    patch,
     pushToast,
   });
 
@@ -100,24 +112,62 @@ function App() {
     subtitleSrtPath,
     subtitleCues,
     subtitleDirty,
-    patch,
+    dispatch,
     pushToast,
   });
 
   const termsCount = terms.length;
   const settingsTabIndex = settingsTab === "transcribe" ? 0 : settingsTab === "translate" ? 1 : settingsTab === "hotword" ? 2 : 3;
   const tabIndicatorStyle = { ["--tab-index" as string]: settingsTabIndex } as Record<string, number>;
+  const loadLogs = useCallback(async () => {
+    setLoadingLogs(true);
+    try {
+      const events = await invoke<TaskEventRecord[]>("list_task_events", {
+        request: {
+          limit: 300,
+        },
+      });
+      setLogEvents(events);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "加载日志失败";
+      pushToast(message, "error");
+    } finally {
+      setLoadingLogs(false);
+    }
+  }, [pushToast]);
+
+  const openLogs = useCallback(() => {
+    dispatch({ type: "set_ui", payload: { showLogs: true } });
+    void loadLogs();
+  }, [dispatch, loadLogs]);
+
+  const clearLogs = useCallback(async () => {
+    try {
+      await invoke("clear_task_events", {
+        request: {
+          taskId: null,
+        },
+      });
+      setLogEvents([]);
+      pushToast("日志已清空", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "清空日志失败";
+      pushToast(message, "error");
+    }
+  }, [pushToast]);
 
   const openSettings = useCallback(() => {
-    patch({
+    dispatch({ type: "set_draft", payload: {
       draftProvider: settings.provider,
       draftChunkInput: String(settings.chunkTargetSeconds),
+    }});
+    dispatch({ type: "set_ui", payload: {
       settingsTab: "transcribe",
       showSettings: true,
-    });
-  }, [patch, settings.chunkTargetSeconds, settings.provider]);
+    }});
+  }, [dispatch, settings.chunkTargetSeconds, settings.provider]);
 
-  const saveSettings = useCallback(() => {
+  const saveSettings = useCallback(async () => {
     const parsed = Number.parseInt(draftChunkInput.trim(), 10);
     if (!Number.isFinite(parsed)) {
       pushToast("分段时长必须是数字", "error");
@@ -130,18 +180,31 @@ function App() {
       chunkTargetSeconds: clamped,
     } satisfies SavedSettings;
 
-    patch({
+    dispatch({
+      type: "set_settings",
       settings: nextSettings,
-      draftChunkInput: String(clamped),
     });
-    localStorage.setItem("voxtrans.settings", JSON.stringify(nextSettings));
-    localStorage.setItem("voxtrans.llm", JSON.stringify({
-      apiKey: draftApiKey,
-      apiBase: draftApiBase,
-      apiModel: draftApiModel,
-    }));
-    pushToast("设置已保存（后续任务生效）", "success");
-  }, [draftApiBase, draftApiKey, draftApiModel, draftChunkInput, draftProvider, patch, pushToast]);
+    dispatch({ type: "set_draft", payload: {
+      draftChunkInput: String(clamped),
+    }});
+
+    try {
+      await invoke("save_app_settings", {
+        request: {
+          settings: nextSettings,
+          llm: {
+            apiKey: draftApiKey,
+            apiBase: draftApiBase,
+            apiModel: draftApiModel,
+          },
+        },
+      });
+      pushToast("设置已保存（后续任务生效）", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "设置保存失败";
+      pushToast(message, "error");
+    }
+  }, [dispatch, draftApiBase, draftApiKey, draftApiModel, draftChunkInput, draftProvider, pushToast]);
 
   const testLlmConnection = useCallback(async () => {
     if (!draftApiKey.trim()) {
@@ -198,35 +261,35 @@ function App() {
     } satisfies TermEntry;
 
     dispatch({ type: "add_term", term: next });
-    patch({
+    dispatch({ type: "set_term_form", payload: {
       termSource: "",
       termTarget: "",
       termNote: "",
-    });
-  }, [patch, pushToast, termNote, termSource, termTarget, terms]);
+    }});
+  }, [dispatch, pushToast, termNote, termSource, termTarget, terms]);
 
   const removeTerm = useCallback((id: string) => {
     dispatch({ type: "remove_term", id });
   }, []);
 
   const startEditTerm = useCallback((term: TermEntry) => {
-    patch({
+    dispatch({ type: "set_term_editing", payload: {
       editingTermId: term.id,
       selectedTermId: null,
       editSource: term.source,
       editTarget: term.target,
       editNote: term.note,
-    });
-  }, [patch]);
+    }});
+  }, [dispatch]);
 
   const cancelEditTerm = useCallback(() => {
-    patch({
+    dispatch({ type: "set_term_editing", payload: {
       editingTermId: null,
       editSource: "",
       editTarget: "",
       editNote: "",
-    });
-  }, [patch]);
+    }});
+  }, [dispatch]);
 
   const saveEditTerm = useCallback(() => {
     if (!editingTermId) return;
@@ -244,9 +307,9 @@ function App() {
       target,
       note: editNote.trim(),
     });
-    patch({ editingTermId: null });
+    dispatch({ type: "set_term_editing", payload: { editingTermId: null } });
     pushToast("术语已更新", "success");
-  }, [editNote, editSource, editTarget, editingTermId, patch, pushToast]);
+  }, [dispatch, editNote, editSource, editTarget, editingTermId, pushToast]);
 
   const importTerms = useCallback(() => {
     const { imported, duplicateCount, invalidCount } = parseImportedTerms(importTermsText, terms);
@@ -256,16 +319,18 @@ function App() {
     }
 
     dispatch({ type: "set_terms", terms: [...imported, ...terms] });
-    patch({
-      importTermsText: "",
+    dispatch({ type: "set_ui", payload: {
       showImportTerms: false,
-    });
+    }});
+    dispatch({ type: "set_term_form", payload: {
+      importTermsText: "",
+    }});
 
     const stats: string[] = [`已导入 ${imported.length} 条`];
     if (duplicateCount > 0) stats.push(`重复 ${duplicateCount} 条`);
     if (invalidCount > 0) stats.push(`无效 ${invalidCount} 条`);
     pushToast(stats.join("，"), "success");
-  }, [importTermsText, patch, pushToast, terms]);
+  }, [dispatch, importTermsText, pushToast, terms]);
 
   const filteredTerms = useMemo(() => {
     const keyword = termSearch.trim().toLowerCase();
@@ -279,7 +344,12 @@ function App() {
 
   return (
     <div className="apple-style app-root">
-      <Navbar termsCount={termsCount} onOpenTerms={() => patch({ showGlossary: true })} onOpenSettings={openSettings} />
+      <Navbar
+        termsCount={termsCount}
+        onOpenTerms={() => dispatch({ type: "set_ui", payload: { showGlossary: true } })}
+        onOpenLogs={openLogs}
+        onOpenSettings={openSettings}
+      />
 
       <main className="apple-container apple-section">
         <section className="workspace-left">
@@ -288,10 +358,10 @@ function App() {
             dragActive={dragActive}
             youtubeUrl={youtubeUrl}
             youtubeQuality={youtubeQuality}
-            onTabChange={(tab) => patch({ activeTab: tab })}
+            onTabChange={(tab) => dispatch({ type: "set_ui", payload: { activeTab: tab } })}
             onPickFiles={pickFiles}
-            onYoutubeUrlChange={(value) => patch({ youtubeUrl: value })}
-            onYoutubeQualityChange={(value) => patch({ youtubeQuality: value })}
+            onYoutubeUrlChange={(value) => dispatch({ type: "set_ui", payload: { youtubeUrl: value } })}
+            onYoutubeQualityChange={(value) => dispatch({ type: "set_ui", payload: { youtubeQuality: value } })}
             onYoutubeDownload={() => pushToast("YouTube 下载功能即将接入", "info")}
           />
 
@@ -300,7 +370,7 @@ function App() {
             queueCount={queueCount}
             activeId={activeId}
             isProcessing={queueBusy}
-            onSetActiveId={(id) => patch({ activeId: activeId === id ? "" : id })}
+            onSetActiveId={(id) => dispatch({ type: "set_ui", payload: { activeId: activeId === id ? "" : id } })}
             onProcessQueue={processQueue}
             onClearQueue={clearQueue}
             onTranslateSingle={translateSingle}
@@ -349,17 +419,17 @@ function App() {
         draftApiModel={draftApiModel}
         testingLlm={testingLlm}
         hotwordCorrection={hotwordCorrection}
-        onClose={() => patch({ showSettings: false })}
+        onClose={() => dispatch({ type: "set_ui", payload: { showSettings: false } })}
         onSave={saveSettings}
         onTestLlmConnection={testLlmConnection}
-        onSettingsTabChange={(tab) => patch({ settingsTab: tab })}
-        onDraftProviderChange={(value) => patch({ draftProvider: value })}
-        onDraftChunkInputChange={(value) => patch({ draftChunkInput: value })}
-        onDraftApiKeyChange={(value) => patch({ draftApiKey: value })}
-        onDraftAutoPuncChange={(value) => patch({ draftAutoPunc: value })}
-        onDraftApiBaseChange={(value) => patch({ draftApiBase: value })}
-        onDraftApiModelChange={(value) => patch({ draftApiModel: value })}
-        onHotwordCorrectionChange={(value) => patch({ hotwordCorrection: value })}
+        onSettingsTabChange={(tab) => dispatch({ type: "set_ui", payload: { settingsTab: tab } })}
+        onDraftProviderChange={(value) => dispatch({ type: "set_draft", payload: { draftProvider: value } })}
+        onDraftChunkInputChange={(value) => dispatch({ type: "set_draft", payload: { draftChunkInput: value } })}
+        onDraftApiKeyChange={(value) => dispatch({ type: "set_draft", payload: { draftApiKey: value } })}
+        onDraftAutoPuncChange={(value) => dispatch({ type: "set_draft", payload: { draftAutoPunc: value } })}
+        onDraftApiBaseChange={(value) => dispatch({ type: "set_draft", payload: { draftApiBase: value } })}
+        onDraftApiModelChange={(value) => dispatch({ type: "set_draft", payload: { draftApiModel: value } })}
+        onHotwordCorrectionChange={(value) => dispatch({ type: "set_draft", payload: { hotwordCorrection: value } })}
       />
 
       <TermsModal
@@ -377,24 +447,33 @@ function App() {
         editSource={editSource}
         editTarget={editTarget}
         editNote={editNote}
-        onClose={() => patch({ showGlossary: false })}
+        onClose={() => dispatch({ type: "set_ui", payload: { showGlossary: false } })}
         onAddTerm={addTerm}
         onClearTerms={() => dispatch({ type: "set_terms", terms: [] })}
-        onToggleImportTerms={() => patch({ showImportTerms: !showImportTerms })}
+        onToggleImportTerms={() => dispatch({ type: "set_ui", payload: { showImportTerms: !showImportTerms } })}
         onImportTerms={importTerms}
         onRemoveTerm={removeTerm}
         onStartEditTerm={startEditTerm}
         onCancelEditTerm={cancelEditTerm}
         onSaveEditTerm={saveEditTerm}
-        onTermSourceChange={(value) => patch({ termSource: value })}
-        onTermTargetChange={(value) => patch({ termTarget: value })}
-        onTermNoteChange={(value) => patch({ termNote: value })}
-        onTermSearchChange={(value) => patch({ termSearch: value })}
-        onImportTermsTextChange={(value) => patch({ importTermsText: value })}
-        onSelectedTermIdChange={(id) => patch({ selectedTermId: id })}
-        onEditSourceChange={(value) => patch({ editSource: value })}
-        onEditTargetChange={(value) => patch({ editTarget: value })}
-        onEditNoteChange={(value) => patch({ editNote: value })}
+        onTermSourceChange={(value) => dispatch({ type: "set_term_form", payload: { termSource: value } })}
+        onTermTargetChange={(value) => dispatch({ type: "set_term_form", payload: { termTarget: value } })}
+        onTermNoteChange={(value) => dispatch({ type: "set_term_form", payload: { termNote: value } })}
+        onTermSearchChange={(value) => dispatch({ type: "set_term_form", payload: { termSearch: value } })}
+        onImportTermsTextChange={(value) => dispatch({ type: "set_term_form", payload: { importTermsText: value } })}
+        onSelectedTermIdChange={(id) => dispatch({ type: "set_term_editing", payload: { selectedTermId: id } })}
+        onEditSourceChange={(value) => dispatch({ type: "set_term_editing", payload: { editSource: value } })}
+        onEditTargetChange={(value) => dispatch({ type: "set_term_editing", payload: { editTarget: value } })}
+        onEditNoteChange={(value) => dispatch({ type: "set_term_editing", payload: { editNote: value } })}
+      />
+
+      <LogsModal
+        visible={showLogs}
+        loading={loadingLogs}
+        events={logEvents}
+        onClose={() => dispatch({ type: "set_ui", payload: { showLogs: false } })}
+        onRefresh={loadLogs}
+        onClear={clearLogs}
       />
 
       <Toast toast={toast} />
@@ -403,3 +482,8 @@ function App() {
 }
 
 export default App;
+
+
+
+
+

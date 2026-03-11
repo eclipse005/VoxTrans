@@ -6,12 +6,22 @@ export type SavedSettings = {
 };
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
+export type TranscribeStatus = QueueStatus;
+export type TranslateStatus = "idle" | "queued" | "processing" | "done" | "error";
 
 export type SubtitleCue = {
   id: string;
   startMs: number;
   endMs: number;
   text: string;
+  translatedText: string;
+};
+
+export type SubtitleSegment = {
+  startMs: number;
+  endMs: number;
+  sourceText: string;
+  translatedText: string;
 };
 
 export type QueueItem = {
@@ -20,14 +30,17 @@ export type QueueItem = {
   name: string;
   mediaKind: "audio" | "video";
   sizeBytes: number;
-  status: QueueStatus;
-  progress: number;
-  segmentCurrent: number;
-  segmentTotal: number;
+  transcribeStatus: TranscribeStatus;
+  transcribeProgress: number;
+  transcribeSegmentCurrent: number;
+  transcribeSegmentTotal: number;
+  transcribeError: string;
+  translateStatus: TranslateStatus;
+  translateProgress: number;
+  translateError: string;
   resultText: string;
   resultSrt: string;
-  rtfx: number | null;
-  error: string;
+  subtitleSegmentsJson: string;
 };
 
 export type WordToken = {
@@ -48,9 +61,14 @@ export type TranscribeResponse = {
   segmentTotal: number;
   audioDurationSec: number;
   transcribeElapsedSec: number;
-  rtfx: number;
   executionProvider: string;
   ortRuntime: string;
+};
+
+export type BuildSegmentsRequest = {
+  taskId: string;
+  audioPath: string;
+  words: WordToken[];
 };
 
 export type BuildSegmentsResponse = {
@@ -60,12 +78,25 @@ export type BuildSegmentsResponse = {
   segments: SegmentWithWords[];
 };
 
+export type SubtitleLoadRequest = {
+  taskId: string;
+  mediaPath: string;
+  fallbackSrt?: string | null;
+};
+
 export type SubtitleLoadResponse = {
   srtPath: string;
   draftPath: string;
   content: string;
   usingDraft: boolean;
   warnings: string[];
+};
+
+export type SubtitleSaveRequest = {
+  taskId: string;
+  mediaPath: string;
+  content: string;
+  autosave: boolean;
 };
 
 export type SubtitleSaveResponse = {
@@ -86,3 +117,89 @@ export type LlmTestConnectionResponse = {
   finishReason?: string | null;
   model: string;
 };
+
+export type DbTermEntry = {
+  id: string;
+  source: string;
+  target: string;
+  note: string;
+};
+
+export type DbHotwordGroup = {
+  id: string;
+  name: string;
+  keyterms: string[];
+};
+
+export type DbHotwordCorrection = {
+  enabled: boolean;
+  activeGroupId: string;
+  groups: DbHotwordGroup[];
+};
+
+export type DbLlmSettings = {
+  apiKey: string;
+  apiBase: string;
+  apiModel: string;
+};
+
+export type UserPreferencesResponse = {
+  settings: SavedSettings;
+  llm: DbLlmSettings;
+  terms: DbTermEntry[];
+  hotwordCorrection: DbHotwordCorrection;
+};
+
+export type SaveAppSettingsRequest = {
+  settings: SavedSettings;
+  llm: DbLlmSettings;
+};
+
+export type WorkspaceStateResponse = {
+  queue: QueueItem[];
+};
+
+export type TaskLanguage = {
+  sourceLang: string;
+  targetLang: string;
+};
+
+export type TaskPipelineStatus = {
+  transcribeStatus: TranscribeStatus;
+  transcribeError: string;
+  transcribedAt: number | null;
+  translateStatus: TranslateStatus;
+  translateError: string;
+  translatedAt: number | null;
+};
+
+export type TaskAssets = {
+  transcriptSrt: string;
+  translatedSrt: string;
+  translatedSrtPath: string;
+  subtitleSegmentsJson: string;
+  translateModel: string;
+};
+
+export type TaskSummary = {
+  id: string;
+  mediaPath: string;
+  name: string;
+  mediaKind: "audio" | "video";
+  sizeBytes: number;
+  lastStatus: string;
+  lastError: string;
+  outputSrtPath: string;
+  outputWordsJson: string;
+  createdAt: number;
+  updatedAt: number;
+} & TaskLanguage & TaskPipelineStatus & TaskAssets;
+
+export type TaskEventRecord = {
+  id: number;
+  taskId: string | null;
+  eventType: string;
+  payload: Record<string, unknown>;
+  createdAt: number;
+};
+

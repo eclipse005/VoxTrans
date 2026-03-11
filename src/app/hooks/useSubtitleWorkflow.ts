@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueueItem, SubtitleCue, SubtitleLoadResponse, SubtitleSaveResponse } from "../../features/media/types";
 import { buildFallbackCue, createCueAfter, cuesToSrt, parseSrtContent } from "../../features/media/srt";
-import type { AppState } from "../state/appReducer";
+import type { AppAction } from "../state/appReducer";
 import { reportError, toUserErrorMessage } from "../utils/errors";
 import { buildCueWarningsById } from "../utils/subtitleWarnings";
 
-type PatchState = (payload: Partial<AppState>) => void;
+type DispatchState = (action: AppAction) => void;
 type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
 
 type UseSubtitleWorkflowArgs = {
@@ -18,7 +18,7 @@ type UseSubtitleWorkflowArgs = {
   subtitleSrtPath: string;
   subtitleCues: SubtitleCue[];
   subtitleDirty: boolean;
-  patch: PatchState;
+  dispatch: DispatchState;
   pushToast: PushToast;
 };
 
@@ -31,7 +31,7 @@ export function useSubtitleWorkflow({
   subtitleSrtPath,
   subtitleCues,
   subtitleDirty,
-  patch,
+  dispatch,
   pushToast,
 }: UseSubtitleWorkflowArgs) {
   const subtitleSaveTimerRef = useRef<number | null>(null);
@@ -56,29 +56,32 @@ export function useSubtitleWorkflow({
   }, []);
 
   const saveSubtitle = useCallback(async (finalSave: boolean) => {
-    if (!subtitleMediaPath) return;
+    if (!subtitleMediaPath || !subtitleTaskId) return;
 
     try {
       clearSubtitleSavedIndicatorTimer();
-      patch({ subtitleSaveState: "saving" });
+      dispatch({ type: "set_subtitle", payload: { subtitleSaveState: "saving" } });
       const content = cuesToSrt(subtitleCues);
       const response = await invoke<SubtitleSaveResponse>("save_subtitle_editor", {
         request: {
+          taskId: subtitleTaskId,
           mediaPath: subtitleMediaPath,
           content,
           autosave: !finalSave,
         },
       });
 
-      patch({
+      dispatch({
+        type: "set_subtitle",
+        payload: {
         subtitleSaveState: "saved",
         subtitleDirty: false,
         subtitleSrtPath: response.srtPath,
         subtitleCueWarnings: buildCueWarningsById(subtitleCues, response.warnings),
-      });
+      }});
 
       subtitleSavedIndicatorTimerRef.current = window.setTimeout(() => {
-        patch({ subtitleSaveState: "idle" });
+        dispatch({ type: "set_subtitle", payload: { subtitleSaveState: "idle" } });
         subtitleSavedIndicatorTimerRef.current = null;
       }, 1200);
 
@@ -87,25 +90,26 @@ export function useSubtitleWorkflow({
       }
     } catch (err) {
       reportError(err, "saveSubtitle");
-      patch({ subtitleSaveState: "error" });
+      dispatch({ type: "set_subtitle", payload: { subtitleSaveState: "error" } });
       if (finalSave) {
         pushToast(toUserErrorMessage(err, "字幕保存失败"), "error");
       }
     }
-  }, [clearSubtitleSavedIndicatorTimer, patch, pushToast, subtitleCues, subtitleMediaPath]);
+  }, [clearSubtitleSavedIndicatorTimer, dispatch, pushToast, subtitleCues, subtitleMediaPath, subtitleTaskId]);
 
   const loadSubtitleEditor = useCallback(async (item: QueueItem) => {
     try {
       clearSubtitleSavedIndicatorTimer();
-      patch({
+      dispatch({ type: "set_subtitle", payload: {
         subtitleTaskId: item.id,
         subtitleTaskName: item.name,
         subtitleMediaPath: item.path,
         subtitleSaveState: "idle",
-      });
+      }});
 
       const response = await invoke<SubtitleLoadResponse>("load_subtitle_editor", {
         request: {
+          taskId: item.id,
           mediaPath: item.path,
           fallbackSrt: item.resultSrt || null,
         },
@@ -113,14 +117,15 @@ export function useSubtitleWorkflow({
 
       const parsedCues = parseSrtContent(response.content);
       const effectiveCues = parsedCues.length > 0 ? parsedCues : buildFallbackCue(response.content);
-      patch({
+      const hydratedCues = hydrateTranslatedCues(effectiveCues, item);
+      dispatch({ type: "set_subtitle", payload: {
         subtitleSrtPath: response.srtPath,
         subtitleDraftPath: response.draftPath,
-        subtitleCues: effectiveCues,
-        subtitleCueWarnings: buildCueWarningsById(effectiveCues, response.warnings),
+        subtitleCues: hydratedCues,
+        subtitleCueWarnings: buildCueWarningsById(hydratedCues, response.warnings),
         subtitleDirty: false,
         subtitleSaveState: "idle",
-      });
+      }});
 
       if (response.usingDraft) {
         pushToast("已恢复自动保存草稿", "info");
@@ -128,7 +133,7 @@ export function useSubtitleWorkflow({
     } catch (error) {
       reportError(error, "loadSubtitleEditor");
       pushToast("字幕格式有误，无法加载编辑器", "error");
-      patch({
+      dispatch({ type: "set_subtitle", payload: {
         subtitleTaskId: item.id,
         subtitleTaskName: item.name,
         subtitleMediaPath: item.path,
@@ -138,19 +143,19 @@ export function useSubtitleWorkflow({
         subtitleCueWarnings: {},
         subtitleDirty: false,
         subtitleSaveState: "error",
-      });
+      }});
     }
-  }, [clearSubtitleSavedIndicatorTimer, patch, pushToast]);
+  }, [clearSubtitleSavedIndicatorTimer, dispatch, pushToast]);
 
   const markSubtitleEdited = useCallback((nextCues: SubtitleCue[]) => {
     clearSubtitleSavedIndicatorTimer();
-    patch({
+    dispatch({ type: "set_subtitle", payload: {
       subtitleCues: nextCues,
       subtitleCueWarnings: {},
       subtitleDirty: true,
       subtitleSaveState: "idle",
-    });
-  }, [clearSubtitleSavedIndicatorTimer, patch]);
+    }});
+  }, [clearSubtitleSavedIndicatorTimer, dispatch]);
 
   useEffect(() => {
     if (!subtitleMediaPath || !subtitleDirty) {
@@ -215,12 +220,17 @@ export function useSubtitleWorkflow({
       .map(({ cue }) => cue.text.trim())
       .filter(Boolean)
       .join("\n");
+    const mergedTranslatedText = selectedIndices
+      .map(({ cue }) => cue.translatedText.trim())
+      .filter(Boolean)
+      .join("\n");
 
     const mergedCue: SubtitleCue = {
       ...first.cue,
       startMs: Math.min(...selectedIndices.map(({ cue }) => cue.startMs)),
       endMs: Math.max(...selectedIndices.map(({ cue }) => cue.endMs)),
       text: mergedText,
+      translatedText: mergedTranslatedText,
     };
 
     const mergedIds = new Set(selectedIndices.map(({ cue }) => cue.id));
@@ -266,6 +276,7 @@ export function useSubtitleWorkflow({
           rightText = trimmed.slice(midChar).trim();
         }
       }
+      const [leftTranslatedText, rightTranslatedText] = splitCueText(cue.translatedText);
 
       const leftCue: SubtitleCue = {
         ...cue,
@@ -273,6 +284,7 @@ export function useSubtitleWorkflow({
         startMs: cue.startMs,
         endMs: splitAt,
         text: leftText,
+        translatedText: leftTranslatedText,
       };
       const rightCue: SubtitleCue = {
         ...cue,
@@ -280,6 +292,7 @@ export function useSubtitleWorkflow({
         startMs: splitAt,
         endMs: cue.endMs,
         text: rightText,
+        translatedText: rightTranslatedText,
       };
 
       bornCueIds.push({ sourceCueId: cue.id, bornCueId: rightCue.id });
@@ -290,32 +303,47 @@ export function useSubtitleWorkflow({
     return bornCueIds;
   }, [markSubtitleEdited, subtitleCues]);
 
-  const replaceTextInCues = useCallback((findText: string, replaceText: string, scopeCueIds: string[] | null): number => {
+  const replaceTextInCues = useCallback((findText: string, replaceText: string, scopeCueIds: string[] | null, maxReplacements?: number): number => {
     const source = findText;
     if (!source) return 0;
 
     const targetSet = scopeCueIds && scopeCueIds.length > 0 ? new Set(scopeCueIds) : null;
+    const limit = maxReplacements && maxReplacements > 0 ? maxReplacements : Number.POSITIVE_INFINITY;
     let replacedCount = 0;
 
     const next = subtitleCues.map((cue) => {
       if (targetSet && !targetSet.has(cue.id)) {
         return cue;
       }
-
-      if (!cue.text.includes(source)) {
+      if (replacedCount >= limit) {
         return cue;
       }
 
-      const segments = cue.text.split(source);
-      const occurrences = segments.length - 1;
-      if (occurrences <= 0) {
+      const text = cue.text;
+      if (!text.includes(source)) {
         return cue;
       }
 
-      replacedCount += occurrences;
+      let cursor = 0;
+      let nextText = "";
+      let localCount = 0;
+      while (cursor < text.length && replacedCount + localCount < limit) {
+        const index = text.indexOf(source, cursor);
+        if (index < 0) break;
+        nextText += text.slice(cursor, index) + replaceText;
+        cursor = index + source.length;
+        localCount += 1;
+      }
+
+      if (localCount === 0) {
+        return cue;
+      }
+
+      nextText += text.slice(cursor);
+      replacedCount += localCount;
       return {
         ...cue,
-        text: segments.join(replaceText),
+        text: nextText,
       };
     });
 
@@ -339,7 +367,7 @@ export function useSubtitleWorkflow({
         subtitleSaveTimerRef.current = null;
       }
       clearSubtitleSavedIndicatorTimer();
-      patch({
+      dispatch({ type: "set_subtitle", payload: {
         subtitleTaskId: "",
         subtitleTaskName: "",
         subtitleMediaPath: "",
@@ -349,12 +377,12 @@ export function useSubtitleWorkflow({
         subtitleCueWarnings: {},
         subtitleSaveState: "idle",
         subtitleDirty: false,
-      });
+      }});
       return;
     }
     if (subtitleTaskId === activeItem.id) return;
     void loadSubtitleEditor(activeItem);
-  }, [activeId, clearSubtitleSavedIndicatorTimer, loadSubtitleEditor, patch, queue, subtitleTaskId]);
+  }, [activeId, clearSubtitleSavedIndicatorTimer, dispatch, loadSubtitleEditor, queue, subtitleTaskId]);
 
   const activeItem = queue.find((item) => item.id === activeId) ?? null;
 
@@ -372,3 +400,62 @@ export function useSubtitleWorkflow({
     removeCue,
   };
 }
+
+function splitCueText(text: string): [string, string] {
+  const trimmed = text.trim();
+  if (!trimmed) return ["", ""];
+
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    const midWord = Math.floor(words.length / 2);
+    return [words.slice(0, midWord).join(" "), words.slice(midWord).join(" ")];
+  }
+
+  const midChar = Math.max(1, Math.floor(trimmed.length / 2));
+  return [trimmed.slice(0, midChar).trim(), trimmed.slice(midChar).trim()];
+}
+
+function hydrateTranslatedCues(cues: SubtitleCue[], item: QueueItem): SubtitleCue[] {
+  const segments = parseSubtitleSegments(item.subtitleSegmentsJson);
+  if (segments.length === 0) return cues.map((cue) => ({ ...cue, translatedText: cue.translatedText || "" }));
+
+  return cues.map((cue, index) => {
+    const byIndex = segments[index];
+    const byTime = segments.find((segment) => overlapMs(cue.startMs, cue.endMs, segment.startMs, segment.endMs) > 0);
+    const translatedText = (byTime?.translatedText ?? byIndex?.translatedText ?? "").trim();
+    return translatedText ? { ...cue, translatedText } : { ...cue, translatedText: cue.translatedText || "" };
+  });
+}
+
+function parseSubtitleSegments(raw?: string): Array<{ startMs: number; endMs: number; sourceText: string; translatedText: string }> {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((segment) => {
+        const start = Number(segment?.startMs ?? 0);
+        const end = Number(segment?.endMs ?? start);
+        const sourceText = typeof segment?.sourceText === "string" ? segment.sourceText : "";
+        const translatedText = typeof segment?.translatedText === "string" ? segment.translatedText : "";
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+        return {
+          startMs: Math.max(0, Math.round(start)),
+          endMs: Math.max(0, Math.round(end)),
+          sourceText,
+          translatedText,
+        };
+      })
+      .filter((segment): segment is { startMs: number; endMs: number; sourceText: string; translatedText: string } => segment !== null);
+  } catch {
+    return [];
+  }
+}
+
+function overlapMs(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
+  return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
+}
+
+
+
+

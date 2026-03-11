@@ -3,18 +3,25 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow, type DragDropEvent } from "@tauri-apps/api/window";
+import { cuesToSrt } from "../../features/media/srt";
 import type {
   BuildSegmentsResponse,
   QueueItem,
-  QueueStatus,
   SavedSettings,
+  SubtitleSegment,
+  WordToken,
   TranscribeResponse,
 } from "../../features/media/types";
 import { detectMediaKind, fileName } from "../../features/media/utils";
-import type { AppAction, AppState } from "../state/appReducer";
+import type { AppAction } from "../state/appReducer";
+import type { HotwordCorrection } from "../types";
+import {
+  correctSegmentsWithHotwords,
+  shouldRunHotwordCorrection,
+  type TimedHotwordSegment,
+} from "../utils/hotwordCorrection";
 import { reportError, toUserErrorMessage } from "../utils/errors";
 
-type PatchState = (payload: Partial<AppState>) => void;
 type DispatchState = (action: AppAction) => void;
 type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
 
@@ -27,16 +34,89 @@ type TranscribeProgressEvent = {
 type UseQueueWorkflowArgs = {
   queue: QueueItem[];
   settings: SavedSettings;
+  llmSettings: {
+    apiKey: string;
+    apiBase: string;
+    apiModel: string;
+  };
+  hotwordCorrection: HotwordCorrection;
   dispatch: DispatchState;
-  patch: PatchState;
   pushToast: PushToast;
 };
 
-export function useQueueWorkflow({ queue, settings, dispatch, patch, pushToast }: UseQueueWorkflowArgs) {
+export function useQueueWorkflow({
+  queue,
+  settings,
+  llmSettings,
+  hotwordCorrection,
+  dispatch,
+  pushToast,
+}: UseQueueWorkflowArgs) {
   const queueCount = queue.length;
-  const hasProcessingTask = useMemo(() => queue.some((item) => item.status === "processing"), [queue]);
-  const hasQueuedTask = useMemo(() => queue.some((item) => item.status === "queued"), [queue]);
+  const hasProcessingTask = useMemo(() => queue.some((item) => item.transcribeStatus === "processing"), [queue]);
+  const hasQueuedTask = useMemo(() => queue.some((item) => item.transcribeStatus === "queued"), [queue]);
   const queueBusy = hasProcessingTask || hasQueuedTask;
+
+  const recordTaskEvent = useCallback(async (
+    eventType: string,
+    payload?: Record<string, unknown>,
+    item?: Partial<QueueItem> & {
+      id: string;
+      sourceLang?: string;
+      targetLang?: string;
+      transcribeStatus?: string;
+      transcribeError?: string;
+      transcriptSrt?: string;
+      transcribedAt?: number | null;
+      translateStatus?: string;
+      translateError?: string;
+      translatedSrt?: string;
+      translatedSrtPath?: string;
+      subtitleSegmentsJson?: string;
+      translateModel?: string;
+      translatedAt?: number | null;
+      outputSrtPath?: string;
+      outputWordsJson?: string;
+    },
+  ) => {
+    try {
+      await invoke("record_task_event", {
+        request: {
+          taskId: item?.id ?? null,
+          eventType,
+          payload: payload ?? {},
+          task: item
+            ? {
+              id: item.id,
+              mediaPath: item.path ?? "",
+              name: item.name ?? "",
+              mediaKind: item.mediaKind ?? "audio",
+              sizeBytes: item.sizeBytes ?? 0,
+              lastStatus: item.transcribeStatus ?? "pending",
+              lastError: item.transcribeError ?? "",
+              outputSrtPath: item.outputSrtPath ?? "",
+              outputWordsJson: item.outputWordsJson ?? "",
+              sourceLang: item.sourceLang ?? "auto",
+              targetLang: item.targetLang ?? "",
+              transcribeStatus: item.transcribeStatus ?? "pending",
+              transcribeError: item.transcribeError ?? "",
+              transcriptSrt: item.transcriptSrt ?? item.resultSrt ?? "",
+              transcribedAt: item.transcribedAt ?? null,
+              translateStatus: item.translateStatus ?? "idle",
+              translateError: item.translateError ?? "",
+              translatedSrt: item.translatedSrt ?? "",
+              translatedSrtPath: item.translatedSrtPath ?? "",
+              subtitleSegmentsJson: item.subtitleSegmentsJson ?? "",
+              translateModel: item.translateModel ?? "",
+              translatedAt: item.translatedAt ?? null,
+            }
+            : null,
+        },
+      });
+    } catch {
+      // History write failures must not affect core workflow.
+    }
+  }, []);
 
   const appendPaths = useCallback(async (paths: string[]) => {
     if (!paths.length) return;
@@ -51,26 +131,32 @@ export function useQueueWorkflow({ queue, settings, dispatch, patch, pushToast }
         }
 
         return {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${path}`,
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           path,
           name: fileName(path),
           mediaKind: detectMediaKind(path),
           sizeBytes,
-          status: "pending" as QueueStatus,
-          progress: 0,
-          segmentCurrent: 0,
-          segmentTotal: 0,
+          transcribeStatus: "pending",
+          transcribeProgress: 0,
+          transcribeSegmentCurrent: 0,
+          transcribeSegmentTotal: 0,
+          transcribeError: "",
+          translateStatus: "idle",
+          translateProgress: 0,
+          translateError: "",
           resultText: "",
           resultSrt: "",
-          rtfx: null,
-          error: "",
+          subtitleSegmentsJson: "[]",
         } satisfies QueueItem;
       }),
     );
 
     dispatch({ type: "add_queue_items", items: incoming });
     pushToast(`已加入队列 ${paths.length} 个文件`, "success");
-  }, [dispatch, pushToast]);
+    for (const item of incoming) {
+      void recordTaskEvent("queue.added", { source: "file_picker_or_drag" }, item);
+    }
+  }, [dispatch, pushToast, recordTaskEvent]);
 
   useEffect(() => {
     let unlisten: undefined | (() => void);
@@ -81,11 +167,11 @@ export function useQueueWorkflow({ queue, settings, dispatch, patch, pushToast }
         if (!payload) return;
 
         if (payload.type === "enter" || payload.type === "over") {
-          patch({ dragActive: true });
+          dispatch({ type: "set_ui", payload: { dragActive: true } });
         } else if (payload.type === "leave") {
-          patch({ dragActive: false });
+          dispatch({ type: "set_ui", payload: { dragActive: false } });
         } else if (payload.type === "drop") {
-          patch({ dragActive: false });
+          dispatch({ type: "set_ui", payload: { dragActive: false } });
           const paths = Array.isArray(payload.paths) ? payload.paths : [];
           void appendPaths(paths);
         }
@@ -100,7 +186,7 @@ export function useQueueWorkflow({ queue, settings, dispatch, patch, pushToast }
     return () => {
       if (unlisten) unlisten();
     };
-  }, [appendPaths, patch]);
+  }, [appendPaths, dispatch]);
 
   useEffect(() => {
     let unlistenProgress: undefined | (() => void);
@@ -113,12 +199,12 @@ export function useQueueWorkflow({ queue, settings, dispatch, patch, pushToast }
         id: payload.taskId,
         updater: (old) => ({
           ...old,
-          segmentCurrent: Math.max(0, payload.currentSegment || 0),
-          segmentTotal: Math.max(0, payload.totalSegments || 0),
-          progress:
+          transcribeSegmentCurrent: Math.max(0, payload.currentSegment || 0),
+          transcribeSegmentTotal: Math.max(0, payload.totalSegments || 0),
+          transcribeProgress:
             payload.totalSegments > 0
               ? Math.min(99, Math.round((Math.max(0, payload.currentSegment || 0) / payload.totalSegments) * 100))
-              : old.progress,
+              : old.transcribeProgress,
         }),
       });
     })
@@ -156,22 +242,31 @@ export function useQueueWorkflow({ queue, settings, dispatch, patch, pushToast }
     }
   }, [appendPaths, pushToast]);
 
-  const runTranscribe = useCallback(async (item: Pick<QueueItem, "id" | "path" | "name">) => {
+  const runTranscribe = useCallback(async (item: QueueItem) => {
     dispatch({
       type: "patch_queue_item",
       id: item.id,
       updater: (old) => ({
         ...old,
-        status: "processing",
-        progress: 15,
-        segmentCurrent: 0,
-        segmentTotal: 0,
-        error: "",
+        transcribeStatus: "processing",
+        transcribeProgress: 15,
+        transcribeSegmentCurrent: 0,
+        transcribeSegmentTotal: 0,
+        transcribeError: "",
       }),
     });
-    patch({ activeId: item.id });
+    dispatch({ type: "set_ui", payload: { activeId: item.id } });
 
     try {
+      void recordTaskEvent("transcribe.started", {
+        chunkTargetSeconds: settings.chunkTargetSeconds,
+        provider: settings.provider,
+      }, {
+        ...item,
+        transcribeStatus: "processing",
+        transcribeError: "",
+      });
+
       const response = await invoke<TranscribeResponse>("transcribe", {
         request: {
           taskId: item.id,
@@ -182,8 +277,46 @@ export function useQueueWorkflow({ queue, settings, dispatch, patch, pushToast }
       });
       const built = await invoke<BuildSegmentsResponse>("build_segments_from_words", {
         request: {
+          taskId: item.id,
           audioPath: item.path,
           words: response.words,
+        },
+      });
+      const baseSegments = toTimedHotwordSegments(built.segments);
+      let finalSegments = baseSegments;
+      let finalText = built.text;
+      let finalSrt = built.srt;
+      let finalWords = flattenWordsFromSegments(baseSegments);
+      let correctionSummary = "";
+
+      if (shouldRunHotwordCorrection(hotwordCorrection)) {
+        const hasLlmConfig = Boolean(llmSettings.apiKey.trim() && llmSettings.apiModel.trim());
+        if (hasLlmConfig) {
+          try {
+            const corrected = await correctSegmentsWithHotwords({
+              segments: baseSegments,
+              config: hotwordCorrection,
+              llm: llmSettings,
+              invokeLlm: (request) => invoke("llm_interact", { request }),
+            });
+            finalSegments = corrected.segments;
+            finalWords = corrected.words;
+            finalText = toPlainText(toSubtitleSegments(finalSegments));
+            finalSrt = toSrtFromSegments(toSubtitleSegments(finalSegments));
+            correctionSummary = corrected.summary;
+          } catch (hotwordErr) {
+            reportError(hotwordErr, "runHotwordCorrection");
+            correctionSummary = toUserErrorMessage(hotwordErr, "术语矫正失败，已保留原始转录");
+          }
+        } else {
+          correctionSummary = "术语矫正已启用，但未配置 LLM Key/Model，已跳过";
+        }
+      }
+
+      await invoke("save_srt", {
+        request: {
+          outputPath: built.srtOutputPath,
+          content: finalSrt,
         },
       });
 
@@ -192,17 +325,34 @@ export function useQueueWorkflow({ queue, settings, dispatch, patch, pushToast }
         id: item.id,
         updater: (old) => ({
           ...old,
-          status: "done",
-          progress: 100,
-          segmentCurrent: response.segmentTotal > 0 ? response.segmentTotal : old.segmentCurrent,
-          segmentTotal: response.segmentTotal > 0 ? response.segmentTotal : old.segmentTotal,
-          resultText: built.text,
-          resultSrt: built.srt,
-          rtfx: response.rtfx,
-          error: "",
+          subtitleSegmentsJson: JSON.stringify(toSubtitleSegments(finalSegments)),
+          transcribeStatus: "done",
+          transcribeProgress: 100,
+          transcribeSegmentCurrent: response.segmentTotal > 0 ? response.segmentTotal : old.transcribeSegmentCurrent,
+          transcribeSegmentTotal: response.segmentTotal > 0 ? response.segmentTotal : old.transcribeSegmentTotal,
+          resultText: finalText,
+          resultSrt: finalSrt,
+          transcribeError: "",
         }),
       });
       pushToast(`已完成：${item.name}，SRT 已保存到 ${built.srtOutputPath}`, "success");
+      void recordTaskEvent("transcribe.completed", {
+        srtOutputPath: built.srtOutputPath,
+        segmentTotal: response.segmentTotal,
+        correctionSummary,
+      }, {
+        ...item,
+        transcribeStatus: "done",
+        transcribeError: "",
+        transcriptSrt: finalSrt,
+        transcribedAt: Math.floor(Date.now() / 1000),
+        translateStatus: "idle",
+        translateError: "",
+        subtitleSegmentsJson: JSON.stringify(toSubtitleSegments(finalSegments)),
+        outputSrtPath: built.srtOutputPath,
+        // Persist final words payload for future rebuild/replay.
+        outputWordsJson: JSON.stringify(finalWords),
+      });
     } catch (err) {
       reportError(err, "runTranscribe");
       const errorMessage = toUserErrorMessage(err, "转录失败，请检查模型和运行时配置");
@@ -211,76 +361,164 @@ export function useQueueWorkflow({ queue, settings, dispatch, patch, pushToast }
         id: item.id,
         updater: (old) => ({
           ...old,
-          status: "error",
-          progress: 0,
-          segmentCurrent: 0,
-          segmentTotal: 0,
-          error: errorMessage,
+          transcribeStatus: "error",
+          transcribeProgress: 0,
+          transcribeSegmentCurrent: 0,
+          transcribeSegmentTotal: 0,
+          transcribeError: errorMessage,
         }),
       });
       pushToast(`失败：${item.name}，${errorMessage}`, "error");
+      void recordTaskEvent("transcribe.failed", { error: errorMessage }, {
+        ...item,
+        transcribeStatus: "error",
+        transcribeError: errorMessage,
+      });
     }
-  }, [dispatch, patch, pushToast, settings.chunkTargetSeconds, settings.provider]);
+  }, [
+    dispatch,
+    hotwordCorrection,
+    llmSettings,
+    pushToast,
+    recordTaskEvent,
+    settings.chunkTargetSeconds,
+    settings.provider,
+  ]);
 
   useEffect(() => {
     if (hasProcessingTask) return;
-    const next = queue.find((item) => item.status === "queued");
+    const next = queue.find((item) => item.transcribeStatus === "queued");
     if (!next) return;
-    void runTranscribe({ id: next.id, path: next.path, name: next.name });
+    void runTranscribe(next);
   }, [hasProcessingTask, queue, runTranscribe]);
 
   const processQueue = useCallback(async () => {
-    const pendingCount = queue.filter((item) => item.status === "pending").length;
+    const pendingCount = queue.filter((item) => item.transcribeStatus === "pending").length;
     if (!pendingCount) {
       pushToast("没有待处理文件", "error");
       return;
     }
 
     const queuedIds = queue
-      .filter((q) => q.status === "pending")
+      .filter((q) => q.transcribeStatus === "pending")
       .map((q) => q.id);
 
     for (const id of queuedIds) {
       dispatch({
         type: "patch_queue_item",
         id,
-        updater: (old) => ({ ...old, status: "queued", progress: 0, segmentCurrent: 0, segmentTotal: 0, error: "" }),
+        updater: (old) => ({
+          ...old,
+          transcribeStatus: "queued",
+          transcribeProgress: 0,
+          transcribeSegmentCurrent: 0,
+          transcribeSegmentTotal: 0,
+          transcribeError: "",
+        }),
       });
+      const item = queue.find((q) => q.id === id);
+      if (item) {
+        void recordTaskEvent("queue.enqueued", { mode: "batch" }, {
+          ...item,
+          transcribeStatus: "queued",
+        });
+      }
     }
 
     pushToast(`开始批量处理，共 ${pendingCount} 个文件`, "info");
-  }, [dispatch, pushToast, queue]);
+  }, [dispatch, pushToast, queue, recordTaskEvent]);
 
   const processSingle = useCallback(async (item: QueueItem) => {
-    if (item.status === "processing" || item.status === "queued") return;
+    if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
     dispatch({
       type: "patch_queue_item",
       id: item.id,
-      updater: (old) => ({ ...old, status: "queued", progress: 0, segmentCurrent: 0, segmentTotal: 0, error: "" }),
+      updater: (old) => ({
+        ...old,
+        transcribeStatus: "queued",
+        transcribeProgress: 0,
+        transcribeSegmentCurrent: 0,
+        transcribeSegmentTotal: 0,
+        transcribeError: "",
+      }),
+    });
+    void recordTaskEvent("queue.enqueued", { mode: "single" }, {
+      ...item,
+      transcribeStatus: "queued",
     });
 
     if (queueBusy) {
       pushToast(`已加入排队：${item.name}`, "info");
     }
-  }, [dispatch, pushToast, queueBusy]);
+  }, [dispatch, pushToast, queueBusy, recordTaskEvent]);
 
-  const clearQueue = useCallback(() => {
+  const clearQueue = useCallback(async () => {
     if (queueBusy) {
       pushToast("正在处理时不能清空队列", "error");
       return;
     }
+    void recordTaskEvent("queue.cleared", { count: queue.length });
     dispatch({ type: "clear_queue" });
+    try {
+      await invoke("delete_task_summaries", {
+        request: { taskId: null, mediaPath: null },
+      });
+    } catch {
+      // Queue is already cleared in UI; ignore history cleanup failure.
+    }
     pushToast("队列已清空", "info");
-  }, [dispatch, pushToast, queueBusy]);
+  }, [dispatch, pushToast, queue, queueBusy, recordTaskEvent]);
 
   const translateSingle = useCallback((item: QueueItem) => {
-    patch({ activeId: item.id });
-    pushToast(`转译排期中：${item.name}（功能即将接入）`, "info");
-  }, [patch, pushToast]);
+    dispatch({ type: "set_ui", payload: { activeId: item.id } });
+    const needsTranscribeFirst = item.transcribeStatus !== "done";
+    dispatch({
+      type: "patch_queue_item",
+      id: item.id,
+      updater: (old) => ({
+        ...old,
+        translateStatus: "queued",
+        translateProgress: 0,
+        translateError: "",
+        transcribeStatus:
+          needsTranscribeFirst && (old.transcribeStatus === "pending" || old.transcribeStatus === "error")
+            ? "queued"
+            : old.transcribeStatus,
+        transcribeError:
+          needsTranscribeFirst && (old.transcribeStatus === "pending" || old.transcribeStatus === "error")
+            ? ""
+            : old.transcribeError,
+      }),
+    });
+    void recordTaskEvent("translate.enqueued", { source: "manual_click" }, {
+      ...item,
+      translateStatus: "queued",
+      translateError: "",
+      transcribeStatus:
+        needsTranscribeFirst && (item.transcribeStatus === "pending" || item.transcribeStatus === "error")
+          ? "queued"
+          : item.transcribeStatus,
+      transcribeError: needsTranscribeFirst ? "" : item.transcribeError,
+      transcriptSrt: item.resultSrt,
+      subtitleSegmentsJson: item.subtitleSegmentsJson,
+    });
+    if (needsTranscribeFirst) {
+      pushToast(`已加入转译队列：先转录再翻译（${item.name}）`, "info");
+    } else {
+      pushToast(`转译排期中：${item.name}（功能即将接入）`, "info");
+    }
+  }, [dispatch, pushToast, recordTaskEvent]);
 
   const removeItem = useCallback((id: string) => {
+    const item = queue.find((q) => q.id === id);
+    if (item) {
+      void recordTaskEvent("queue.removed", { reason: "user_action" }, item);
+      void invoke("delete_task_summaries", {
+        request: { taskId: item.id, mediaPath: item.path },
+      });
+    }
     dispatch({ type: "remove_queue_item", id });
-  }, [dispatch]);
+  }, [dispatch, queue, recordTaskEvent]);
 
   return {
     queueCount,
@@ -294,3 +532,51 @@ export function useQueueWorkflow({ queue, settings, dispatch, patch, pushToast }
     removeItem,
   };
 }
+
+function toTimedHotwordSegments(segments: BuildSegmentsResponse["segments"]): TimedHotwordSegment[] {
+  return segments.map((segment) => ({
+    startMs: Math.max(0, Math.round(segment.start * 1000)),
+    endMs: Math.max(0, Math.round(segment.end * 1000)),
+    sourceText: segment.text ?? "",
+    translatedText: "",
+    words: (segment.words ?? []).map((word) => ({
+      start: word.start,
+      end: word.end,
+      word: word.word ?? "",
+    })),
+  }));
+}
+
+function toSubtitleSegments(segments: TimedHotwordSegment[]): SubtitleSegment[] {
+  return segments.map((segment) => ({
+    startMs: segment.startMs,
+    endMs: segment.endMs,
+    sourceText: segment.sourceText,
+    translatedText: segment.translatedText,
+  }));
+}
+
+function toPlainText(segments: SubtitleSegment[]): string {
+  return segments.map((segment) => segment.sourceText.trim()).filter(Boolean).join(" ");
+}
+
+function toSrtFromSegments(segments: SubtitleSegment[]): string {
+  return cuesToSrt(
+    segments.map((segment, index) => ({
+      id: `seg-${index}-${segment.startMs}`,
+      startMs: Math.max(0, Math.round(segment.startMs)),
+      endMs: Math.max(Math.round(segment.startMs), Math.round(segment.endMs)),
+      text: segment.sourceText ?? "",
+      translatedText: segment.translatedText ?? "",
+    })),
+  );
+}
+
+function flattenWordsFromSegments(segments: TimedHotwordSegment[]): WordToken[] {
+  return segments.flatMap((segment) => segment.words.map((word) => ({ ...word })));
+}
+
+
+
+
+

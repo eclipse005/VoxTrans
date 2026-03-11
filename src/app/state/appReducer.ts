@@ -1,5 +1,8 @@
 import type { QueueItem, SavedSettings, SubtitleCue } from "../../features/media/types";
 import type { HotwordCorrection, SettingsTab, SubtitleSaveState, TermEntry, ToastState, UploadTab } from "../types";
+import { reduceQueueState } from "./queueReducer";
+import { reduceSettingsState } from "./settingsReducer";
+import { reduceSubtitleState } from "./subtitleReducer";
 
 export type AppState = {
   queue: QueueItem[];
@@ -8,6 +11,7 @@ export type AppState = {
   activeTab: UploadTab;
   showSettings: boolean;
   showGlossary: boolean;
+  showLogs: boolean;
   settings: SavedSettings;
   draftProvider: SavedSettings["provider"];
   draftChunkInput: string;
@@ -45,16 +49,81 @@ export type AppState = {
   subtitleDirty: boolean;
 };
 
-export type AppAction =
-  | { type: "patch"; payload: Partial<AppState> }
+export type UiAction = {
+  type: "set_ui";
+  payload: Partial<
+    Pick<
+      AppState,
+      | "activeId"
+      | "dragActive"
+      | "activeTab"
+      | "showSettings"
+      | "showGlossary"
+      | "showLogs"
+      | "showImportTerms"
+      | "youtubeUrl"
+      | "youtubeQuality"
+      | "settingsTab"
+    >
+  >;
+};
+
+export type QueueAction =
   | { type: "add_queue_items"; items: QueueItem[] }
   | { type: "patch_queue_item"; id: string; updater: (item: QueueItem) => QueueItem }
   | { type: "remove_queue_item"; id: string }
-  | { type: "clear_queue" }
+  | { type: "clear_queue" };
+
+export type SubtitleAction = {
+  type: "set_subtitle";
+  payload: Partial<
+    Pick<
+      AppState,
+      | "subtitleTaskId"
+      | "subtitleTaskName"
+      | "subtitleMediaPath"
+      | "subtitleSrtPath"
+      | "subtitleDraftPath"
+      | "subtitleCues"
+      | "subtitleCueWarnings"
+      | "subtitleSaveState"
+      | "subtitleDirty"
+    >
+  >;
+};
+
+export type SettingsAction =
+  | { type: "set_settings"; settings: SavedSettings }
+  | {
+      type: "set_draft";
+      payload: Partial<
+        Pick<
+          AppState,
+          | "draftProvider"
+          | "draftChunkInput"
+          | "draftApiKey"
+          | "draftApiBase"
+          | "draftApiModel"
+          | "draftAutoPunc"
+          | "hotwordCorrection"
+        >
+      >;
+    }
+  | { type: "set_toast"; toast: ToastState | null }
+  | {
+      type: "set_term_form";
+      payload: Partial<Pick<AppState, "termSource" | "termTarget" | "termNote" | "termSearch" | "importTermsText">>;
+    }
+  | {
+      type: "set_term_editing";
+      payload: Partial<Pick<AppState, "selectedTermId" | "editingTermId" | "editSource" | "editTarget" | "editNote">>;
+    }
   | { type: "set_terms"; terms: TermEntry[] }
   | { type: "add_term"; term: TermEntry }
   | { type: "remove_term"; id: string }
   | { type: "update_term"; id: string; source: string; target: string; note: string };
+
+export type AppAction = UiAction | QueueAction | SubtitleAction | SettingsAction;
 
 export const defaultSettings: SavedSettings = {
   provider: "cuda",
@@ -74,6 +143,7 @@ export const initialAppState: AppState = {
   activeTab: "local",
   showSettings: false,
   showGlossary: false,
+  showLogs: false,
   settings: defaultSettings,
   draftProvider: defaultSettings.provider,
   draftChunkInput: String(defaultSettings.chunkTargetSeconds),
@@ -112,67 +182,47 @@ export const initialAppState: AppState = {
 };
 
 export function appReducer(state: AppState, action: AppAction): AppState {
-  switch (action.type) {
-    case "patch":
-      return { ...state, ...action.payload };
-    case "add_queue_items": {
-      const existed = new Set(state.queue.map((item) => item.path));
-      const toAdd = action.items.filter((item) => !existed.has(item.path));
-      return {
-        ...state,
-        queue: [...state.queue, ...toAdd],
-        activeId: state.activeId || toAdd[0]?.id || state.activeId,
-      };
-    }
-    case "patch_queue_item":
-      return {
-        ...state,
-        queue: state.queue.map((item) => (item.id === action.id ? action.updater(item) : item)),
-      };
-    case "remove_queue_item":
-      return {
-        ...state,
-        queue: state.queue.filter((item) => item.id !== action.id),
-        activeId: state.activeId === action.id ? "" : state.activeId,
-      };
-    case "clear_queue":
-      return {
-        ...state,
-        queue: [],
-        activeId: "",
-      };
-    case "set_terms":
-      return {
-        ...state,
-        terms: action.terms,
-      };
-    case "add_term":
-      return {
-        ...state,
-        terms: [action.term, ...state.terms],
-      };
-    case "remove_term":
-      return {
-        ...state,
-        terms: state.terms.filter((item) => item.id !== action.id),
-        selectedTermId: state.selectedTermId === action.id ? null : state.selectedTermId,
-        editingTermId: state.editingTermId === action.id ? null : state.editingTermId,
-      };
-    case "update_term":
-      return {
-        ...state,
-        terms: state.terms.map((item) =>
-          item.id === action.id
-            ? {
-                ...item,
-                source: action.source,
-                target: action.target,
-                note: action.note,
-              }
-            : item,
-        ),
-      };
-    default:
-      return state;
+  if (action.type === "set_ui") {
+    return { ...state, ...action.payload };
   }
+
+  let nextState = state;
+  if (isQueueAction(action)) {
+    nextState = reduceQueueState(nextState, action);
+  }
+  if (isSubtitleAction(action)) {
+    nextState = reduceSubtitleState(nextState, action);
+  }
+  if (isSettingsAction(action)) {
+    nextState = reduceSettingsState(nextState, action);
+  }
+  return nextState;
 }
+
+function isQueueAction(action: AppAction): action is QueueAction {
+  return (
+    action.type === "add_queue_items"
+    || action.type === "patch_queue_item"
+    || action.type === "remove_queue_item"
+    || action.type === "clear_queue"
+  );
+}
+
+function isSubtitleAction(action: AppAction): action is SubtitleAction {
+  return action.type === "set_subtitle";
+}
+
+function isSettingsAction(action: AppAction): action is SettingsAction {
+  return (
+    action.type === "set_settings"
+    || action.type === "set_draft"
+    || action.type === "set_toast"
+    || action.type === "set_term_form"
+    || action.type === "set_term_editing"
+    || action.type === "set_terms"
+    || action.type === "add_term"
+    || action.type === "remove_term"
+    || action.type === "update_term"
+  );
+}
+

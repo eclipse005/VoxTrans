@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { AppState } from "../state/appReducer";
+import type { AppAction } from "../state/appReducer";
 import type { ToastTone } from "../types";
 
-type PatchState = (payload: Partial<AppState>) => void;
+type DispatchState = (action: AppAction) => void;
 
-export function useToast(patch: PatchState) {
+export function useToast(dispatch: DispatchState) {
   const toastTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -20,12 +20,12 @@ export function useToast(patch: PatchState) {
       window.clearTimeout(toastTimerRef.current);
     }
     const id = Date.now();
-    patch({ toast: { id, message, tone } });
+    dispatch({ type: "set_toast", toast: { id, message, tone } });
     toastTimerRef.current = window.setTimeout(() => {
-      patch({ toast: null });
+      dispatch({ type: "set_toast", toast: null });
       toastTimerRef.current = null;
     }, 2200);
-  }, [patch]);
+  }, [dispatch]);
 
   return { pushToast };
 }

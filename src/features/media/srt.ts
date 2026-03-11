@@ -57,6 +57,7 @@ export function parseSrtContent(content: string): SubtitleCue[] {
       startMs,
       endMs: Math.max(endMs, startMs),
       text,
+      translatedText: "",
     });
   }
 
@@ -82,6 +83,7 @@ export function buildFallbackCue(rawText: string): SubtitleCue[] {
       startMs: 0,
       endMs: 2_000,
       text,
+      translatedText: "",
     },
   ];
 }
@@ -93,6 +95,7 @@ export function createCueAfter(current?: SubtitleCue): SubtitleCue {
     startMs: start,
     endMs: start + 2_000,
     text: "",
+    translatedText: "",
   };
 }
 
