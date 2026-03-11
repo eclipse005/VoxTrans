@@ -24,6 +24,11 @@
   color: #b45309;
 }
 
+.status-idle {
+  background-color: #f1f5f9;
+  color: #475569;
+}
+
 .status-queued {
   background-color: #fef3c7;
   color: #b45309;

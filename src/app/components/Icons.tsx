@@ -46,6 +46,15 @@ export function EditIcon() {
 export function SearchIcon() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>;
 }
+export function ChevronLeftIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M15 18l-6-6 6-6" /></svg>;
+}
+export function ChevronRightIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M9 18l6-6-6-6" /></svg>;
+}
+export function ChevronDownIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 9l6 6 6-6" /></svg>;
+}
 export function ReplaceIcon() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M4 7h13" /><path d="M13 3l4 4-4 4" /><path d="M20 17H7" /><path d="M11 13l-4 4 4 4" /></svg>;
 }
@@ -69,3 +78,9 @@ export function CpuIcon() {
 export function GpuIcon() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2.5" y="6" width="15" height="12" rx="2" /><path d="M17.5 10h3a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-3" /><circle cx="8" cy="12" r="3" /><path d="M2.5 9.5h-1.5" /><path d="M2.5 12h-1.5" /><path d="M2.5 14.5h-1.5" /></svg>;
 }
+
+
+export function LogsIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h10" /></svg>;
+}
+

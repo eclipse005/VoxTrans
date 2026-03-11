@@ -1,8 +1,8 @@
-import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { SubtitleCue } from "../../features/media/types";
 import { formatSrtTime, parseSrtTime } from "../../features/media/srt";
 import type { SubtitleSaveState } from "../types";
-import { AlertIcon, EditIcon, ReplaceIcon, SearchIcon, TrashIcon } from "./Icons";
+import { AlertIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, EditIcon, ReplaceIcon, TrashIcon } from "./Icons";
 
 type SubtitleEditorModalProps = {
   visible: boolean;
@@ -16,7 +16,7 @@ type SubtitleEditorModalProps = {
   onAddCueAfter: (selectedCueId: string | null) => void;
   onMergeSelected: (selectedCueIds: string[]) => void;
   onSplitSelected: (selectedCueIds: string[]) => Array<{ sourceCueId: string; bornCueId: string }>;
-  onReplaceText: (findText: string, replaceText: string, scopeCueIds: string[] | null) => number;
+  onReplaceText: (findText: string, replaceText: string, scopeCueIds: string[] | null, maxReplacements?: number) => number;
   onDeleteCue: (cueId: string) => void;
   onClose: () => void | Promise<void>;
 };
@@ -51,27 +51,172 @@ export default function SubtitleEditorModal({
   const [findText, setFindText] = useState("");
   const [replaceText, setReplaceText] = useState("");
   const [findStatus, setFindStatus] = useState("");
-  const [findCursor, setFindCursor] = useState(-1);
-  const [flashCueId, setFlashCueId] = useState("");
+  const [findCursor, setFindCursor] = useState(0);
+  const [isReplaceMenuOpen, setIsReplaceMenuOpen] = useState(false);
   const [isBatchAnimating, setIsBatchAnimating] = useState(false);
   const batchTimerRef = useRef<number | null>(null);
+  const scrollAnimRafRef = useRef<number | null>(null);
+  const listContainerRef = useRef<HTMLDivElement | null>(null);
+  const replaceMenuRef = useRef<HTMLDivElement | null>(null);
   const pendingSplitRef = useRef<Array<{ bornCueId: string; fromRect: DOMRect }>>([]);
   const pendingLayoutFromRectsRef = useRef<Map<string, DOMRect> | null>(null);
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
 
   const cueIds = useMemo(() => cues.map((cue) => cue.id), [cues]);
+  const findKeyword = useMemo(() => findText.trim().toLowerCase(), [findText]);
+  const matchCueIndexes = useMemo(() => {
+    if (!findKeyword) return [] as number[];
+    const indexes: number[] = [];
+    for (let idx = 0; idx < cues.length; idx += 1) {
+      const cue = cues[idx];
+      if (!cue) continue;
+      const seq = String(idx + 1);
+      const start = formatSrtTime(cue.startMs);
+      const end = formatSrtTime(cue.endMs);
+      const range = `${start} --> ${end}`;
+      const haystack = [seq, `#${seq}`, start, end, range, cue.text, cue.translatedText]
+        .join(" ")
+        .toLowerCase();
+      if (haystack.includes(findKeyword)) {
+        indexes.push(idx);
+      }
+    }
+    return indexes;
+  }, [cues, findKeyword]);
+  const matchCueIdToCursor = useMemo(() => {
+    const map = new Map<string, number>();
+    for (let cursor = 0; cursor < matchCueIndexes.length; cursor += 1) {
+      const cue = cues[matchCueIndexes[cursor]];
+      if (!cue) continue;
+      map.set(cue.id, cursor);
+    }
+    return map;
+  }, [cues, matchCueIndexes]);
+  const currentMatch = useMemo(() => {
+    if (!findKeyword || matchCueIndexes.length === 0) return null;
+    const cursor = Math.min(Math.max(findCursor, 0), matchCueIndexes.length - 1);
+    const cueIndex = matchCueIndexes[cursor];
+    const cue = cues[cueIndex];
+    if (!cue) return null;
+    return { cueId: cue.id, cueIndex, cursor };
+  }, [cues, findCursor, findKeyword, matchCueIndexes]);
+  const findCounterLabel = useMemo(() => {
+    if (!findKeyword || matchCueIndexes.length === 0) return "0/0";
+    const cursor = currentMatch ? currentMatch.cursor + 1 : 1;
+    return `${cursor}/${matchCueIndexes.length}`;
+  }, [currentMatch, findKeyword, matchCueIndexes.length]);
+  const findStatusLabel = useMemo(() => {
+    if (!findKeyword) return findStatus;
+    if (matchCueIndexes.length === 0) return findStatus || "无匹配";
+    return findStatus;
+  }, [findKeyword, findStatus, matchCueIndexes.length]);
   const validSelectedCueIds = useMemo(() => {
     return selectedCueIds.filter((id) => cueIds.includes(id));
   }, [cueIds, selectedCueIds]);
   const primarySelectedCueId = validSelectedCueIds[0] ?? null;
+  const renderHighlightedText = (text: string, fallback: string, cueId: string): ReactNode => {
+    if (!text) return fallback;
+    if (!findKeyword) return text;
+
+    const lower = text.toLowerCase();
+    const parts: ReactNode[] = [];
+    let cursor = 0;
+    let partIndex = 0;
+
+    while (cursor < text.length) {
+      const index = lower.indexOf(findKeyword, cursor);
+      if (index < 0) break;
+      if (index > cursor) {
+        parts.push(text.slice(cursor, index));
+      }
+      const match = text.slice(index, index + findKeyword.length);
+      parts.push(
+        <mark
+          key={`${cueId}-${partIndex}`}
+          className={`subtitle-inline-hit ${currentMatch?.cueId === cueId ? "current" : ""}`}
+        >
+          {match}
+        </mark>,
+      );
+      partIndex += 1;
+      cursor = index + findKeyword.length;
+    }
+
+    if (parts.length === 0) return text;
+    if (cursor < text.length) {
+      parts.push(text.slice(cursor));
+    }
+    return parts;
+  };
+
+  const scrollToCueWithFixedDuration = (cueId: string, durationMs = 260) => {
+    const container = listContainerRef.current;
+    const node = cardRefs.current[cueId];
+    if (!container || !node) return;
+
+    if (scrollAnimRafRef.current != null) {
+      window.cancelAnimationFrame(scrollAnimRafRef.current);
+      scrollAnimRafRef.current = null;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const nodeRect = node.getBoundingClientRect();
+    const nodeTopInContainer = nodeRect.top - containerRect.top + container.scrollTop;
+    const targetCenterTop = nodeTopInContainer - (container.clientHeight - nodeRect.height) / 2;
+    const maxTop = Math.max(container.scrollHeight - container.clientHeight, 0);
+    const targetTop = Math.min(Math.max(targetCenterTop, 0), maxTop);
+    const startTop = container.scrollTop;
+    const delta = targetTop - startTop;
+    if (Math.abs(delta) < 0.5) return;
+
+    const start = performance.now();
+    const easeOutCubic = (t: number) => 1 - (1 - t) * (1 - t) * (1 - t);
+
+    const step = (now: number) => {
+      const progress = Math.min((now - start) / durationMs, 1);
+      container.scrollTop = startTop + delta * easeOutCubic(progress);
+      if (progress < 1) {
+        scrollAnimRafRef.current = window.requestAnimationFrame(step);
+      } else {
+        scrollAnimRafRef.current = null;
+      }
+    };
+
+    scrollAnimRafRef.current = window.requestAnimationFrame(step);
+  };
+
+  useEffect(() => {
+    if (!currentMatch) return;
+    window.requestAnimationFrame(() => {
+      scrollToCueWithFixedDuration(currentMatch.cueId);
+    });
+  }, [currentMatch]);
 
   useEffect(() => {
     return () => {
       if (batchTimerRef.current != null) {
         window.clearTimeout(batchTimerRef.current);
       }
+      if (scrollAnimRafRef.current != null) {
+        window.cancelAnimationFrame(scrollAnimRafRef.current);
+        scrollAnimRafRef.current = null;
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isReplaceMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (replaceMenuRef.current?.contains(target)) return;
+      setIsReplaceMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [isReplaceMenuOpen]);
 
   useEffect(() => {
     const layoutFromRects = pendingLayoutFromRectsRef.current;
@@ -205,98 +350,144 @@ export default function SubtitleEditorModal({
       </div>
 
       <div className="subtitle-editor-topbar">
-        <div className="subtitle-find-replace subtitle-find-replace-inline">
-          <input
-            className="apple-input subtitle-find-input"
-            value={findText}
-            onChange={(e) => {
-              setFindText(e.target.value);
-              setFindCursor(-1);
-            }}
-            placeholder="查找文本"
-          />
-          <input
-            className="apple-input subtitle-find-input"
-            value={replaceText}
-            onChange={(e) => setReplaceText(e.target.value)}
-            placeholder="替换为"
-          />
-          <button
-            className="subtitle-icon-btn subtitle-find-action-btn"
-            onClick={handleFindNext}
-            title="查找下一条"
-            aria-label="查找下一条"
-          >
-            <SearchIcon />
-          </button>
-          <button
-            className="subtitle-icon-btn subtitle-find-action-btn"
-            onClick={handleReplaceAll}
-            title="全部替换"
-            aria-label="全部替换"
-          >
-            <ReplaceIcon />
-          </button>
-          <span className="subtitle-find-status">{findStatus}</span>
-        </div>
+        <div className="subtitle-toolbar-shell">
+          <div className="subtitle-find-block subtitle-find-replace-inline">
+            <div className="subtitle-find-replace subtitle-find-shell">
+            <input
+              className="apple-input subtitle-find-input"
+              value={findText}
+              onChange={(e) => {
+                setFindText(e.target.value);
+                setFindStatus("");
+              }}
+              placeholder="查找文本"
+            />
+            <input
+              className="apple-input subtitle-find-input"
+              value={replaceText}
+              onChange={(e) => setReplaceText(e.target.value)}
+              placeholder="替换为"
+            />
+            <div className="subtitle-find-nav" role="group" aria-label="查找匹配导航">
+              <button
+                className="subtitle-find-nav-btn"
+                type="button"
+                onClick={handlePrevMatch}
+                disabled={!findKeyword || matchCueIndexes.length === 0}
+                aria-label="上一条匹配"
+                title="上一条匹配"
+              >
+                <ChevronLeftIcon />
+              </button>
+              <span className="subtitle-find-count" aria-live="polite">{findCounterLabel}</span>
+              <button
+                className="subtitle-find-nav-btn"
+                type="button"
+                onClick={handleNextMatch}
+                disabled={!findKeyword || matchCueIndexes.length === 0}
+                aria-label="下一条匹配"
+                title="下一条匹配"
+              >
+                <ChevronRightIcon />
+              </button>
+            </div>
+            <div className="subtitle-find-split" ref={replaceMenuRef}>
+              <button
+                className="apple-button apple-button-secondary subtitle-find-text-btn subtitle-find-primary-btn subtitle-find-split-main"
+                onClick={handleReplaceOne}
+                title="替换当前命中并跳到下一条"
+                aria-label="替换当前命中并跳到下一条"
+                disabled={!findKeyword}
+              >
+                替换
+              </button>
+              <button
+                className="apple-button apple-button-secondary subtitle-find-text-btn subtitle-find-split-toggle"
+                type="button"
+                onClick={() => setIsReplaceMenuOpen((old) => !old)}
+                aria-label="打开替换菜单"
+                aria-expanded={isReplaceMenuOpen}
+                disabled={!findKeyword}
+              >
+                <ChevronDownIcon />
+              </button>
+              {isReplaceMenuOpen ? (
+                <div className="subtitle-find-split-menu" role="menu" aria-label="替换菜单">
+                  <button
+                    type="button"
+                    className="subtitle-find-split-menu-item"
+                    role="menuitem"
+                    onClick={handleReplaceAllFromMenu}
+                  >
+                    <ReplaceIcon />
+                    全部替换
+                  </button>
+                </div>
+              ) : null}
+            </div>
+              {findStatusLabel ? <span className="subtitle-find-status">{findStatusLabel}</span> : null}
+            </div>
+          </div>
 
-        <div className="subtitle-row-actions">
-          <button
-            className="apple-button apple-button-secondary subtitle-mini-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAddCueAfter(primarySelectedCueId);
-            }}
-            disabled={isBatchAnimating}
-          >
-            新增字幕段
-          </button>
-          <button
-            className="apple-button apple-button-secondary subtitle-mini-btn"
-            disabled={validSelectedCueIds.length < 2 || isBatchAnimating}
-            onClick={(e) => {
-              e.stopPropagation();
-              onMergeSelected(validSelectedCueIds);
-            }}
-            title={validSelectedCueIds.length >= 2 ? `合并 ${validSelectedCueIds.length} 条` : "请选择至少两条字幕"}
-          >
-            {validSelectedCueIds.length >= 2 ? `合并(${validSelectedCueIds.length})` : "合并"}
-          </button>
-          <button
-            className="apple-button apple-button-secondary subtitle-mini-btn"
-            disabled={validSelectedCueIds.length < 1 || isBatchAnimating}
-            onClick={(e) => {
-              e.stopPropagation();
-              const orderedIds = [...validSelectedCueIds].sort((a, b) => cueIds.indexOf(a) - cueIds.indexOf(b));
-              const sourceRectByCueId = new Map<string, DOMRect>();
-              for (const cueId of orderedIds) {
-                const node = cardRefs.current[cueId];
-                if (!node) continue;
-                sourceRectByCueId.set(cueId, node.getBoundingClientRect());
-              }
+          <div className="subtitle-row-actions subtitle-batch-actions">
+            <button
+              className="apple-button apple-button-secondary subtitle-mini-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddCueAfter(primarySelectedCueId);
+              }}
+              disabled={isBatchAnimating}
+            >
+              新增字幕段
+            </button>
+            <button
+              className="apple-button apple-button-secondary subtitle-mini-btn"
+              disabled={validSelectedCueIds.length < 2 || isBatchAnimating}
+              onClick={(e) => {
+                e.stopPropagation();
+                onMergeSelected(validSelectedCueIds);
+              }}
+              title={validSelectedCueIds.length >= 2 ? `合并 ${validSelectedCueIds.length} 条` : "请选择至少两条字幕"}
+            >
+              {validSelectedCueIds.length >= 2 ? `合并(${validSelectedCueIds.length})` : "合并"}
+            </button>
+            <button
+              className="apple-button apple-button-secondary subtitle-mini-btn"
+              disabled={validSelectedCueIds.length < 1 || isBatchAnimating}
+              onClick={(e) => {
+                e.stopPropagation();
+                const orderedIds = [...validSelectedCueIds].sort((a, b) => cueIds.indexOf(a) - cueIds.indexOf(b));
+                const sourceRectByCueId = new Map<string, DOMRect>();
+                for (const cueId of orderedIds) {
+                  const node = cardRefs.current[cueId];
+                  if (!node) continue;
+                  sourceRectByCueId.set(cueId, node.getBoundingClientRect());
+                }
 
-              const splitResult = onSplitSelected(orderedIds);
-              const pending = splitResult
-                .map((item) => {
-                  const fromRect = sourceRectByCueId.get(item.sourceCueId);
-                  if (!fromRect) return null;
-                  return { bornCueId: item.bornCueId, fromRect };
-                })
-                .filter((item): item is { bornCueId: string; fromRect: DOMRect } => item !== null);
+                const splitResult = onSplitSelected(orderedIds);
+                const pending = splitResult
+                  .map((item) => {
+                    const fromRect = sourceRectByCueId.get(item.sourceCueId);
+                    if (!fromRect) return null;
+                    return { bornCueId: item.bornCueId, fromRect };
+                  })
+                  .filter((item): item is { bornCueId: string; fromRect: DOMRect } => item !== null);
 
-              if (pending.length > 0) {
-                setIsBatchAnimating(true);
-                pendingSplitRef.current = pending;
-              }
-            }}
-            title={validSelectedCueIds.length >= 1 ? `拆分 ${validSelectedCueIds.length} 条` : "请选择字幕"}
-          >
-            {validSelectedCueIds.length >= 1 ? `拆分(${validSelectedCueIds.length})` : "拆分"}
-          </button>
+                if (pending.length > 0) {
+                  setIsBatchAnimating(true);
+                  pendingSplitRef.current = pending;
+                }
+              }}
+              title={validSelectedCueIds.length >= 1 ? `拆分 ${validSelectedCueIds.length} 条` : "请选择字幕"}
+            >
+              {validSelectedCueIds.length >= 1 ? `拆分(${validSelectedCueIds.length})` : "拆分"}
+            </button>
+          </div>
         </div>
       </div>
 
       <div
+        ref={listContainerRef}
         className="subtitle-all-editor"
         onClick={(event) => {
           if (event.target === event.currentTarget) {
@@ -314,15 +505,15 @@ export default function SubtitleEditorModal({
               ref={(node) => {
                 cardRefs.current[cue.id] = node;
               }}
-              className={`subtitle-row-card ${validSelectedCueIds.includes(cue.id) ? "selected" : ""} ${flashCueId === cue.id ? "flash-hit" : ""}`}
+              className={`subtitle-row-card ${validSelectedCueIds.includes(cue.id) ? "selected" : ""}`}
               onClick={(event) => handleCueClick(cue.id, event)}
             >
               <div className="subtitle-row-head">
                 <div className="subtitle-row-head-main">
-                  <span className="subtitle-row-index">#{idx + 1}</span>
-                  <span className="subtitle-row-time">{formatSrtTime(cue.startMs)}</span>
+                  <span className="subtitle-row-index">{renderHighlightedText(`#${idx + 1}`, `#${idx + 1}`, cue.id)}</span>
+                  <span className="subtitle-row-time">{renderHighlightedText(formatSrtTime(cue.startMs), formatSrtTime(cue.startMs), cue.id)}</span>
                   <span className="subtitle-time-arrow">→</span>
-                  <span className="subtitle-row-time">{formatSrtTime(cue.endMs)}</span>
+                  <span className="subtitle-row-time">{renderHighlightedText(formatSrtTime(cue.endMs), formatSrtTime(cue.endMs), cue.id)}</span>
                 </div>
                 <div className="subtitle-row-actions">
                   {(cueWarningsById[cue.id]?.length ?? 0) > 0 ? (
@@ -362,7 +553,10 @@ export default function SubtitleEditorModal({
 
               <div className="subtitle-row-summary">
                 <span className="subtitle-row-text-preview" title={cue.text || "(空文本)"}>
-                  {cue.text || "(空文本)"}
+                  <span className="subtitle-row-text-value">{renderHighlightedText(cue.text, "(空文本)", cue.id)}</span>
+                </span>
+                <span className="subtitle-row-text-preview subtitle-row-text-preview-translation" title={cue.translatedText || "(暂无译文)"}>
+                  <span className="subtitle-row-text-value">{renderHighlightedText(cue.translatedText, "(暂无译文)", cue.id)}</span>
                 </span>
               </div>
 
@@ -396,6 +590,12 @@ export default function SubtitleEditorModal({
                     value={cue.text}
                     onChange={(e) => onUpdateCue(cue.id, { text: e.target.value })}
                     placeholder="输入该字幕段文本"
+                  />
+                  <textarea
+                    className="subtitle-editor-textarea subtitle-row-textarea subtitle-row-textarea-translation"
+                    value={cue.translatedText}
+                    onChange={(e) => onUpdateCue(cue.id, { translatedText: e.target.value })}
+                    placeholder="输入该字幕段译文（可选）"
                   />
                 </>
               ) : null}
@@ -455,6 +655,10 @@ export default function SubtitleEditorModal({
 
     setSelectedCueIds([cueId]);
     setAnchorCueId(cueId);
+    const cursor = matchCueIdToCursor.get(cueId);
+    if (cursor != null) {
+      setFindCursor(cursor);
+    }
   };
 
   function clearSelection() {
@@ -477,61 +681,74 @@ export default function SubtitleEditorModal({
     clearSelection();
   }
 
-  function handleFindNext() {
-    const keyword = findText.trim().toLowerCase();
-    if (!keyword) {
-      setFindStatus("请输入查找内容");
-      return;
-    }
-
-    const startIndex = findCursor >= 0 ? findCursor : (primarySelectedCueId ? cueIds.indexOf(primarySelectedCueId) : -1);
-    for (let step = 1; step <= cues.length; step += 1) {
-      const idx = (startIndex + step + cues.length) % cues.length;
-      const cue = cues[idx];
-      if (!cue) continue;
-
-      const seq = String(idx + 1);
-      const start = formatSrtTime(cue.startMs);
-      const end = formatSrtTime(cue.endMs);
-      const range = `${start} --> ${end}`;
-      const haystack = [seq, `#${seq}`, start, end, range, cue.text]
-        .join(" ")
-        .toLowerCase();
-
-      if (haystack.includes(keyword)) {
-        setFindCursor(idx);
-        setFindStatus(`定位到 #${idx + 1}`);
-        window.requestAnimationFrame(() => {
-          const node = cardRefs.current[cue.id];
-          if (node) {
-            node.scrollIntoView({ behavior: "smooth", block: "center" });
-          }
-        });
-        setFlashCueId(cue.id);
-        window.setTimeout(() => {
-          setFlashCueId((old) => (old === cue.id ? "" : old));
-        }, 900);
-        return;
-      }
-    }
-
-    setFindStatus("未找到匹配项");
-  }
-
-  function handleReplaceAll() {
+  function handleReplaceOne() {
+    setIsReplaceMenuOpen(false);
     const keyword = findText.trim();
     if (!keyword) {
       setFindStatus("请输入查找内容");
       return;
     }
+    if (!currentMatch) {
+      setFindStatus("未找到匹配项");
+      return;
+    }
 
-    const useSelectionScope = validSelectedCueIds.length > 1 ? validSelectedCueIds : null;
-    const count = onReplaceText(keyword, replaceText, useSelectionScope);
+    const count = onReplaceText(keyword, replaceText, [currentMatch.cueId], 1);
+    if (count <= 0) {
+      setFindStatus("未替换任何内容");
+      return;
+    }
+
+    setFindStatus("已替换 1 处");
+    if (matchCueIndexes.length > 0) {
+      setFindCursor((old) => {
+        const next = old + 1;
+        return next >= matchCueIndexes.length ? 0 : next;
+      });
+    }
+  }
+
+  function handleReplaceAllFromMenu() {
+    const keyword = findText.trim();
+    if (!keyword) {
+      setFindStatus("请输入查找内容");
+      setIsReplaceMenuOpen(false);
+      return;
+    }
+
+    const count = onReplaceText(keyword, replaceText, null);
     if (count > 0) {
       setFindStatus(`已替换 ${count} 处`);
     } else {
       setFindStatus("未替换任何内容");
     }
+    setIsReplaceMenuOpen(false);
+  }
+
+  function handlePrevMatch() {
+    if (!findKeyword) {
+      setFindStatus("请输入查找内容");
+      return;
+    }
+    if (matchCueIndexes.length === 0) {
+      setFindStatus("无匹配");
+      return;
+    }
+    setFindCursor((old) => (old <= 0 ? matchCueIndexes.length - 1 : old - 1));
+    setFindStatus("");
+  }
+
+  function handleNextMatch() {
+    if (!findKeyword) {
+      setFindStatus("请输入查找内容");
+      return;
+    }
+    if (matchCueIndexes.length === 0) {
+      setFindStatus("无匹配");
+      return;
+    }
+    setFindCursor((old) => (old + 1 >= matchCueIndexes.length ? 0 : old + 1));
+    setFindStatus("");
   }
 
   if (embedded) {
@@ -548,3 +765,4 @@ export default function SubtitleEditorModal({
     </div>
   );
 }
+

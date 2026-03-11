@@ -1,4 +1,4 @@
-import type { QueueItem } from "../../features/media/types";
+import type { QueueItem, QueueStatus, TranslateStatus } from "../../features/media/types";
 import { formatBytes, statusLabel } from "../../features/media/utils";
 import { AudioFileIcon, MicIcon, PlayIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
 
@@ -20,6 +20,22 @@ function inferMediaKind(item: QueueItem): "audio" | "video" {
   if (/\.(mp4|mkv|mov|avi|webm|m4v)\b/.test(probe)) return "video";
   if (/\.(mp3|wav|m4a|flac|aac|ogg|opus)\b/.test(probe)) return "audio";
   return item.mediaKind;
+}
+
+function resolvePrimaryStatus(item: QueueItem): QueueStatus {
+  if (item.transcribeStatus !== "done") {
+    return item.transcribeStatus;
+  }
+
+  return mapTranslateToQueueStatus(item.translateStatus);
+}
+
+function mapTranslateToQueueStatus(status: TranslateStatus): QueueStatus {
+  if (status === "idle") return "done";
+  if (status === "queued") return "queued";
+  if (status === "processing") return "processing";
+  if (status === "done") return "done";
+  return "error";
 }
 
 export default function MediaList({
@@ -52,48 +68,57 @@ export default function MediaList({
         {queue.length === 0 ? (
           <div className="file-item file-item-empty" />
         ) : (
-          queue.map((item) => (
-            <div key={item.id} className={`file-item ${item.id === activeId ? "active" : ""}`} onClick={() => onSetActiveId(item.id)}>
-              <div className="file-info">
-                <div className="file-icon">{inferMediaKind(item) === "video" ? <VideoFileIcon /> : <AudioFileIcon />}</div>
-                <div className="file-details">
-                  <div className="file-name" title={item.name}>
-                    {item.name}
-                  </div>
-                  <div className="file-bottom-row">
-                    <div className="file-meta-stack">
-                      <div className="file-meta">{formatBytes(item.sizeBytes)}</div>
-                      <div className="file-task-info">
-                        {item.status === "processing" && item.segmentTotal <= 0 ? (
-                          <span className="task-status status-processing">准备中</span>
-                        ) : item.status === "processing" ? null : (
-                          <span className={`task-status status-${item.status}`}>
-                            {statusLabel(item.status)}
-                          </span>
-                        )}
-                        {item.status === "processing" && item.segmentTotal > 1 ? (
-                          <span key={`${item.id}-${item.segmentCurrent}-${item.segmentTotal}`} className="task-step task-step-progress">
-                            {`处理中 ${Math.min(item.segmentCurrent || 0, item.segmentTotal)}/${item.segmentTotal}`}
-                          </span>
-                        ) : null}
-                      </div>
+          queue.map((item) => {
+            const primaryStatus = resolvePrimaryStatus(item);
+            const transcribeProcessing = item.transcribeStatus === "processing";
+            const transcribeProgressText = transcribeProcessing
+              ? (item.transcribeSegmentTotal > 1
+                ? `转录处理中 ${Math.min(item.transcribeSegmentCurrent || 0, item.transcribeSegmentTotal)}/${item.transcribeSegmentTotal}`
+                : "转录处理中")
+              : "";
+
+            return (
+              <div key={item.id} className={`file-item ${item.id === activeId ? "active" : ""}`} onClick={() => onSetActiveId(item.id)}>
+                <div className="file-info">
+                  <div className="file-icon">{inferMediaKind(item) === "video" ? <VideoFileIcon /> : <AudioFileIcon />}</div>
+                  <div className="file-details">
+                    <div className="file-name" title={item.name}>
+                      {item.name}
                     </div>
-                    <div className="file-actions">
-                      <button className="file-action-btn" title="转译" onClick={(e) => { e.stopPropagation(); onTranslateSingle(item); }}>
-                        <TranslateIcon />
-                      </button>
-                      <button className="file-action-btn" title="转录" disabled={item.status === "processing"} onClick={(e) => { e.stopPropagation(); void onProcessSingle(item); }}>
-                        <MicIcon />
-                      </button>
-                      <button className="file-action-btn delete" title="删除" disabled={item.status === "processing"} onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>
-                        <TrashIcon />
-                      </button>
+                    <div className="file-bottom-row">
+                      <div className="file-meta-stack">
+                        <div className="file-meta">{formatBytes(item.sizeBytes)}</div>
+                        <div className="file-task-info">
+                          {transcribeProcessing ? (
+                            <span key={`${item.id}-${item.transcribeSegmentCurrent}-${item.transcribeSegmentTotal}`} className="task-step task-step-progress">
+                              {transcribeProgressText}
+                            </span>
+                          ) : primaryStatus === "processing" && item.transcribeSegmentTotal <= 0 ? (
+                            <span className="task-status status-processing">准备中</span>
+                          ) : (
+                            <span className={`task-status status-${primaryStatus}`}>
+                              {statusLabel(primaryStatus)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="file-actions">
+                        <button className="file-action-btn" title="转译" onClick={(e) => { e.stopPropagation(); onTranslateSingle(item); }}>
+                          <TranslateIcon />
+                        </button>
+                        <button className="file-action-btn" title="转录" disabled={item.transcribeStatus === "processing"} onClick={(e) => { e.stopPropagation(); void onProcessSingle(item); }}>
+                          <MicIcon />
+                        </button>
+                        <button className="file-action-btn delete" title="删除" disabled={item.transcribeStatus === "processing" || item.translateStatus === "processing"} onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>
+                          <TrashIcon />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

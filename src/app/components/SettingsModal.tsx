@@ -17,7 +17,7 @@ type SettingsModalProps = {
   testingLlm: boolean;
   hotwordCorrection: HotwordCorrection;
   onClose: () => void;
-  onSave: () => void;
+  onSave: () => void | Promise<void>;
   onTestLlmConnection: () => void | Promise<void>;
   onSettingsTabChange: (tab: SettingsTab) => void;
   onDraftProviderChange: (value: Provider) => void;
