@@ -18,7 +18,6 @@ type TermsModalProps = {
   editNote: string;
   onClose: () => void;
   onAddTerm: () => void;
-  onExportTerms: () => void;
   onClearTerms: () => void;
   onToggleImportTerms: () => void;
   onImportTerms: () => void;
@@ -55,7 +54,6 @@ export default function TermsModal(props: TermsModalProps) {
     editNote,
     onClose,
     onAddTerm,
-    onExportTerms,
     onClearTerms,
     onToggleImportTerms,
     onImportTerms,
@@ -97,20 +95,23 @@ export default function TermsModal(props: TermsModalProps) {
 
           <div className="settings-section">
             <div className="terms-actions">
-              <button className="apple-button apple-button-secondary" onClick={onExportTerms}>导出(复制JSON)</button>
-              <button className="apple-button apple-button-secondary" onClick={onToggleImportTerms}>导入文本</button>
+              <button className="apple-button apple-button-secondary" onClick={onToggleImportTerms}>
+                {showImportTerms ? "收起批量导入" : "批量导入"}
+              </button>
               <button className="apple-button apple-button-secondary" onClick={onClearTerms}>清空术语</button>
             </div>
             {showImportTerms ? (
               <div className="terms-import-panel">
+                <div className="terms-import-headline">批量导入术语</div>
+                <p className="terms-import-hint">每行一条，固定格式：`源词 = 目标词 = 备注`。备注可选，`#` 或 `//` 开头会被忽略。</p>
                 <textarea
                   className="terms-import-textarea"
-                  placeholder={"每行一个术语：\nApple = 苹果\nstreaming = 流式"}
+                  placeholder={"Apple = 苹果 = 品牌名\nstreaming = 流式 = ASR 场景\nGPU = 图形处理器"}
                   value={importTermsText}
                   onChange={(e) => onImportTermsTextChange(e.target.value)}
                 />
                 <div className="terms-import-actions">
-                  <button className="apple-button" onClick={onImportTerms}>确认导入</button>
+                  <button className="apple-button" onClick={onImportTerms}>开始导入</button>
                   <button className="apple-button apple-button-secondary" onClick={onToggleImportTerms}>取消</button>
                 </div>
               </div>

@@ -2,13 +2,15 @@ import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { SubtitleCue } from "../../features/media/types";
 import { formatSrtTime, parseSrtTime } from "../../features/media/srt";
 import type { SubtitleSaveState } from "../types";
-import { EditIcon, ReplaceIcon, SearchIcon, TrashIcon } from "./Icons";
+import { AlertIcon, EditIcon, ReplaceIcon, SearchIcon, TrashIcon } from "./Icons";
 
 type SubtitleEditorModalProps = {
   visible: boolean;
+  embedded?: boolean;
   taskName: string;
   srtPath: string;
   cues: SubtitleCue[];
+  cueWarningsById: Record<string, string[]>;
   saveState: SubtitleSaveState;
   onUpdateCue: (cueId: string, patch: Partial<SubtitleCue>) => void;
   onAddCueAfter: (selectedCueId: string | null) => void;
@@ -28,9 +30,11 @@ function saveStateLabel(state: SubtitleSaveState): string {
 
 export default function SubtitleEditorModal({
   visible,
+  embedded = false,
   taskName,
   srtPath,
   cues,
+  cueWarningsById,
   saveState,
   onUpdateCue,
   onAddCueAfter,
@@ -179,6 +183,229 @@ export default function SubtitleEditorModal({
 
   if (!visible) return null;
 
+  const content = (
+    <div className={embedded ? "subtitle-inline-content" : "modal-content modal-content-subtitle"} onClick={handleContainerClick}>
+      {!embedded ? (
+        <button className="modal-close" onClick={() => { void onClose(); }} aria-label="关闭">
+          ×
+        </button>
+      ) : null}
+
+      <div className="subtitle-editor-header">
+        <div>
+          <div className="subtitle-title-row">
+            <h3 className="apple-heading-small">字幕编辑器</h3>
+            <span className="subtitle-count-badge">{cues.length} 条</span>
+            <span className={`subtitle-save-indicator subtitle-save-${saveState}`}>{saveStateLabel(saveState)}</span>
+          </div>
+          <p className="apple-body-small subtitle-editor-meta" title={`任务: ${taskName} · 输出: ${srtPath || "--"}`}>
+            任务: {taskName} · 输出: {srtPath || "--"}
+          </p>
+        </div>
+      </div>
+
+      <div className="subtitle-editor-topbar">
+        <div className="subtitle-find-replace subtitle-find-replace-inline">
+          <input
+            className="apple-input subtitle-find-input"
+            value={findText}
+            onChange={(e) => {
+              setFindText(e.target.value);
+              setFindCursor(-1);
+            }}
+            placeholder="查找文本"
+          />
+          <input
+            className="apple-input subtitle-find-input"
+            value={replaceText}
+            onChange={(e) => setReplaceText(e.target.value)}
+            placeholder="替换为"
+          />
+          <button
+            className="subtitle-icon-btn subtitle-find-action-btn"
+            onClick={handleFindNext}
+            title="查找下一条"
+            aria-label="查找下一条"
+          >
+            <SearchIcon />
+          </button>
+          <button
+            className="subtitle-icon-btn subtitle-find-action-btn"
+            onClick={handleReplaceAll}
+            title="全部替换"
+            aria-label="全部替换"
+          >
+            <ReplaceIcon />
+          </button>
+          <span className="subtitle-find-status">{findStatus}</span>
+        </div>
+
+        <div className="subtitle-row-actions">
+          <button
+            className="apple-button apple-button-secondary subtitle-mini-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddCueAfter(primarySelectedCueId);
+            }}
+            disabled={isBatchAnimating}
+          >
+            新增字幕段
+          </button>
+          <button
+            className="apple-button apple-button-secondary subtitle-mini-btn"
+            disabled={validSelectedCueIds.length < 2 || isBatchAnimating}
+            onClick={(e) => {
+              e.stopPropagation();
+              onMergeSelected(validSelectedCueIds);
+            }}
+            title={validSelectedCueIds.length >= 2 ? `合并 ${validSelectedCueIds.length} 条` : "请选择至少两条字幕"}
+          >
+            {validSelectedCueIds.length >= 2 ? `合并(${validSelectedCueIds.length})` : "合并"}
+          </button>
+          <button
+            className="apple-button apple-button-secondary subtitle-mini-btn"
+            disabled={validSelectedCueIds.length < 1 || isBatchAnimating}
+            onClick={(e) => {
+              e.stopPropagation();
+              const orderedIds = [...validSelectedCueIds].sort((a, b) => cueIds.indexOf(a) - cueIds.indexOf(b));
+              const sourceRectByCueId = new Map<string, DOMRect>();
+              for (const cueId of orderedIds) {
+                const node = cardRefs.current[cueId];
+                if (!node) continue;
+                sourceRectByCueId.set(cueId, node.getBoundingClientRect());
+              }
+
+              const splitResult = onSplitSelected(orderedIds);
+              const pending = splitResult
+                .map((item) => {
+                  const fromRect = sourceRectByCueId.get(item.sourceCueId);
+                  if (!fromRect) return null;
+                  return { bornCueId: item.bornCueId, fromRect };
+                })
+                .filter((item): item is { bornCueId: string; fromRect: DOMRect } => item !== null);
+
+              if (pending.length > 0) {
+                setIsBatchAnimating(true);
+                pendingSplitRef.current = pending;
+              }
+            }}
+            title={validSelectedCueIds.length >= 1 ? `拆分 ${validSelectedCueIds.length} 条` : "请选择字幕"}
+          >
+            {validSelectedCueIds.length >= 1 ? `拆分(${validSelectedCueIds.length})` : "拆分"}
+          </button>
+        </div>
+      </div>
+
+      <div
+        className="subtitle-all-editor"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) {
+            setSelectedCueIds([]);
+            setAnchorCueId("");
+          }
+        }}
+      >
+        {cues.length === 0 ? (
+          <div className="subtitle-cue-empty">暂无字幕段，点击上方“新增字幕段”开始编辑。</div>
+        ) : (
+          cues.map((cue, idx) => (
+            <article
+              key={cue.id}
+              ref={(node) => {
+                cardRefs.current[cue.id] = node;
+              }}
+              className={`subtitle-row-card ${validSelectedCueIds.includes(cue.id) ? "selected" : ""} ${flashCueId === cue.id ? "flash-hit" : ""}`}
+              onClick={(event) => handleCueClick(cue.id, event)}
+            >
+              <div className="subtitle-row-head">
+                <div className="subtitle-row-head-main">
+                  <span className="subtitle-row-index">#{idx + 1}</span>
+                  <span className="subtitle-row-time">{formatSrtTime(cue.startMs)}</span>
+                  <span className="subtitle-time-arrow">→</span>
+                  <span className="subtitle-row-time">{formatSrtTime(cue.endMs)}</span>
+                </div>
+                <div className="subtitle-row-actions">
+                  {(cueWarningsById[cue.id]?.length ?? 0) > 0 ? (
+                    <span
+                      className="subtitle-warning-badge"
+                      title={cueWarningsById[cue.id].join("\n")}
+                      aria-label={`该字幕存在 ${cueWarningsById[cue.id].length} 条格式问题`}
+                    >
+                      <AlertIcon />
+                    </span>
+                  ) : null}
+                  <button
+                    className="subtitle-icon-btn"
+                    title={editingCueId === cue.id ? "收起编辑" : "编辑字幕"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedCueIds([cue.id]);
+                      setAnchorCueId(cue.id);
+                      setEditingCueId((old) => (old === cue.id ? "" : cue.id));
+                    }}
+                  >
+                    <EditIcon />
+                  </button>
+                  <button
+                    className="subtitle-icon-btn subtitle-icon-btn-danger"
+                    title="删除字幕段"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteCue(cue.id);
+                    }}
+                    disabled={cues.length <= 1}
+                  >
+                    <TrashIcon />
+                  </button>
+                </div>
+              </div>
+
+              <div className="subtitle-row-summary">
+                <span className="subtitle-row-text-preview" title={cue.text || "(空文本)"}>
+                  {cue.text || "(空文本)"}
+                </span>
+              </div>
+
+              {editingCueId === cue.id ? (
+                <>
+                  <div className="subtitle-time-grid">
+                    <label className="subtitle-time-field">
+                      <span>开始</span>
+                      <input
+                        key={`start-${cue.id}-${cue.startMs}`}
+                        className="apple-input"
+                        defaultValue={formatSrtTime(cue.startMs)}
+                        onBlur={(e) => applyStart(cue, e.currentTarget.value)}
+                      />
+                    </label>
+                    <label className="subtitle-time-field">
+                      <span>结束</span>
+                      <input
+                        key={`end-${cue.id}-${cue.endMs}`}
+                        className="apple-input"
+                        defaultValue={formatSrtTime(cue.endMs)}
+                        onBlur={(e) => applyEnd(cue, e.currentTarget.value)}
+                      />
+                    </label>
+                  </div>
+
+                  {timeErrorByCue[cue.id] ? <div className="subtitle-time-error">{timeErrorByCue[cue.id]}</div> : null}
+
+                  <textarea
+                    className="subtitle-editor-textarea subtitle-row-textarea"
+                    value={cue.text}
+                    onChange={(e) => onUpdateCue(cue.id, { text: e.target.value })}
+                    placeholder="输入该字幕段文本"
+                  />
+                </>
+              ) : null}
+            </article>
+          ))
+        )}
+      </div>
+    </div>
+  );
+
   const applyStart = (cue: SubtitleCue, value: string) => {
     const parsed = parseSrtTime(value);
     if (parsed == null) {
@@ -230,12 +457,12 @@ export default function SubtitleEditorModal({
     setAnchorCueId(cueId);
   };
 
-  const clearSelection = () => {
+  function clearSelection() {
     setSelectedCueIds([]);
     setAnchorCueId("");
-  };
+  }
 
-  const handleContainerClick = (event: MouseEvent<HTMLElement>) => {
+  function handleContainerClick(event: MouseEvent<HTMLElement>) {
     const target = event.target as HTMLElement | null;
     if (!target) return;
 
@@ -248,9 +475,9 @@ export default function SubtitleEditorModal({
     if (isToolbarAction || isFindReplaceAction || isCloseAction) return;
 
     clearSelection();
-  };
+  }
 
-  const handleFindNext = () => {
+  function handleFindNext() {
     const keyword = findText.trim().toLowerCase();
     if (!keyword) {
       setFindStatus("请输入查找内容");
@@ -289,9 +516,9 @@ export default function SubtitleEditorModal({
     }
 
     setFindStatus("未找到匹配项");
-  };
+  }
 
-  const handleReplaceAll = () => {
+  function handleReplaceAll() {
     const keyword = findText.trim();
     if (!keyword) {
       setFindStatus("请输入查找内容");
@@ -305,281 +532,19 @@ export default function SubtitleEditorModal({
     } else {
       setFindStatus("未替换任何内容");
     }
-  };
+  }
 
-  const runMergeAnimation = (selectedIds: string[]) => {
-    if (selectedIds.length < 2 || isBatchAnimating) return;
-
-    const orderedIds = [...selectedIds].sort((a, b) => cueIds.indexOf(a) - cueIds.indexOf(b));
-    const firstId = orderedIds[0];
-    const firstNode = firstId ? cardRefs.current[firstId] : null;
-
-    if (!firstNode) {
-      onMergeSelected(orderedIds);
-      return;
-    }
-
-    setIsBatchAnimating(true);
-    const firstRect = firstNode.getBoundingClientRect();
-
-    firstNode.animate(
-      [
-        { transform: "scale(1)", boxShadow: "0 0 0 rgba(0, 113, 227, 0)" },
-        { transform: "scale(1.014)", boxShadow: "0 12px 28px rgba(0, 113, 227, 0.16)", offset: 0.72 },
-        { transform: "scale(1)", boxShadow: "0 0 0 rgba(0, 113, 227, 0)" },
-      ],
-      { duration: 360, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+  if (embedded) {
+    return (
+      <section className="subtitle-inline-root" role="region" aria-label="字幕编辑器">
+        {content}
+      </section>
     );
-
-    for (const cueId of orderedIds.slice(1)) {
-      const node = cardRefs.current[cueId];
-      if (!node) continue;
-      const rect = node.getBoundingClientRect();
-      const dx = firstRect.left - rect.left;
-      const dy = firstRect.top - rect.top;
-
-      node.animate(
-        [
-          { transform: "translate(0, 0) scale(1)", opacity: 1 },
-          { transform: `translate(${dx * 0.95}px, ${dy * 0.95}px) scale(0.94)`, opacity: 0.16, offset: 0.82 },
-          { transform: `translate(${dx}px, ${dy}px) scale(0.9)`, opacity: 0.06 },
-        ],
-        {
-          duration: 360,
-          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
-          fill: "forwards",
-        },
-      );
-    }
-
-    if (batchTimerRef.current != null) {
-      window.clearTimeout(batchTimerRef.current);
-    }
-
-    const layoutRects = new Map<string, DOMRect>();
-    for (const id of cueIds) {
-      const node = cardRefs.current[id];
-      if (!node) continue;
-      layoutRects.set(id, node.getBoundingClientRect());
-    }
-
-    batchTimerRef.current = window.setTimeout(() => {
-      pendingLayoutFromRectsRef.current = layoutRects;
-      onMergeSelected(orderedIds);
-      batchTimerRef.current = null;
-    }, 260);
-  };
+  }
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true">
-      <div className="modal-content modal-content-subtitle" onClick={handleContainerClick}>
-        <button className="modal-close" onClick={() => { void onClose(); }} aria-label="关闭">
-          ×
-        </button>
-
-        <div className="subtitle-editor-header">
-          <div>
-            <div className="subtitle-title-row">
-              <h3 className="apple-heading-small">字幕编辑器</h3>
-              <span className="subtitle-count-badge">{cues.length} 条</span>
-              <span className={`subtitle-save-indicator subtitle-save-${saveState}`}>{saveStateLabel(saveState)}</span>
-            </div>
-            <p className="apple-body-small subtitle-editor-meta" title={`任务: ${taskName} · 输出: ${srtPath || "--"}`}>
-              任务: {taskName} · 输出: {srtPath || "--"}
-            </p>
-          </div>
-        </div>
-
-        <div className="subtitle-editor-topbar">
-          <div className="subtitle-find-replace subtitle-find-replace-inline">
-            <input
-              className="apple-input subtitle-find-input"
-              value={findText}
-              onChange={(e) => {
-                setFindText(e.target.value);
-                setFindCursor(-1);
-              }}
-              placeholder="查找文本"
-            />
-            <input
-              className="apple-input subtitle-find-input"
-              value={replaceText}
-              onChange={(e) => setReplaceText(e.target.value)}
-              placeholder="替换为"
-            />
-            <button
-              className="subtitle-icon-btn subtitle-find-action-btn"
-              onClick={handleFindNext}
-              title="查找下一条"
-              aria-label="查找下一条"
-            >
-              <SearchIcon />
-            </button>
-            <button
-              className="subtitle-icon-btn subtitle-find-action-btn"
-              onClick={handleReplaceAll}
-              title="全部替换"
-              aria-label="全部替换"
-            >
-              <ReplaceIcon />
-            </button>
-            <span className="subtitle-find-status">{findStatus}</span>
-          </div>
-
-          <div className="subtitle-row-actions">
-            <button
-              className="apple-button apple-button-secondary subtitle-mini-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                onAddCueAfter(primarySelectedCueId);
-              }}
-              disabled={isBatchAnimating}
-            >
-              新增字幕段
-            </button>
-            <button
-              className="apple-button apple-button-secondary subtitle-mini-btn"
-              disabled={validSelectedCueIds.length < 2 || isBatchAnimating}
-              onClick={(e) => {
-                e.stopPropagation();
-                runMergeAnimation(validSelectedCueIds);
-              }}
-              title={validSelectedCueIds.length >= 2 ? `合并 ${validSelectedCueIds.length} 条` : "请选择至少两条字幕"}
-            >
-              {validSelectedCueIds.length >= 2 ? `合并(${validSelectedCueIds.length})` : "合并"}
-            </button>
-            <button
-              className="apple-button apple-button-secondary subtitle-mini-btn"
-              disabled={validSelectedCueIds.length < 1 || isBatchAnimating}
-              onClick={(e) => {
-                e.stopPropagation();
-                const orderedIds = [...validSelectedCueIds].sort((a, b) => cueIds.indexOf(a) - cueIds.indexOf(b));
-                const sourceRectByCueId = new Map<string, DOMRect>();
-                for (const cueId of orderedIds) {
-                  const node = cardRefs.current[cueId];
-                  if (!node) continue;
-                  sourceRectByCueId.set(cueId, node.getBoundingClientRect());
-                }
-
-                const splitResult = onSplitSelected(orderedIds);
-                const pending = splitResult
-                  .map((item) => {
-                    const fromRect = sourceRectByCueId.get(item.sourceCueId);
-                    if (!fromRect) return null;
-                    return { bornCueId: item.bornCueId, fromRect };
-                  })
-                  .filter((item): item is { bornCueId: string; fromRect: DOMRect } => item !== null);
-
-                if (pending.length > 0) {
-                  setIsBatchAnimating(true);
-                  pendingSplitRef.current = pending;
-                }
-              }}
-              title={validSelectedCueIds.length >= 1 ? `拆分 ${validSelectedCueIds.length} 条` : "请选择字幕"}
-            >
-              {validSelectedCueIds.length >= 1 ? `拆分(${validSelectedCueIds.length})` : "拆分"}
-            </button>
-          </div>
-        </div>
-
-        <div
-          className="subtitle-all-editor"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              clearSelection();
-            }
-          }}
-        >
-          {cues.length === 0 ? (
-            <div className="subtitle-cue-empty">暂无字幕段，点击上方“新增字幕段”开始编辑。</div>
-          ) : (
-            cues.map((cue, idx) => (
-              <article
-                key={cue.id}
-                ref={(node) => {
-                  cardRefs.current[cue.id] = node;
-                }}
-                className={`subtitle-row-card ${validSelectedCueIds.includes(cue.id) ? "selected" : ""} ${flashCueId === cue.id ? "flash-hit" : ""}`}
-                onClick={(event) => handleCueClick(cue.id, event)}
-              >
-                <div className="subtitle-row-head">
-                  <div className="subtitle-row-head-main">
-                    <span className="subtitle-row-index">#{idx + 1}</span>
-                    <span className="subtitle-row-time">{formatSrtTime(cue.startMs)}</span>
-                    <span className="subtitle-time-arrow">→</span>
-                    <span className="subtitle-row-time">{formatSrtTime(cue.endMs)}</span>
-                  </div>
-                  <div className="subtitle-row-actions">
-                    <button
-                      className="subtitle-icon-btn"
-                      title={editingCueId === cue.id ? "收起编辑" : "编辑字幕"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedCueIds([cue.id]);
-                        setAnchorCueId(cue.id);
-                        setEditingCueId((old) => (old === cue.id ? "" : cue.id));
-                      }}
-                    >
-                      <EditIcon />
-                    </button>
-                    <button
-                      className="subtitle-icon-btn subtitle-icon-btn-danger"
-                      title="删除字幕段"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteCue(cue.id);
-                      }}
-                      disabled={cues.length <= 1}
-                    >
-                      <TrashIcon />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="subtitle-row-summary">
-                  <span className="subtitle-row-text-preview" title={cue.text || "(空文本)"}>
-                    {cue.text || "(空文本)"}
-                  </span>
-                </div>
-
-                {editingCueId === cue.id ? (
-                  <>
-                    <div className="subtitle-time-grid">
-                      <label className="subtitle-time-field">
-                        <span>开始</span>
-                        <input
-                          key={`start-${cue.id}-${cue.startMs}`}
-                          className="apple-input"
-                          defaultValue={formatSrtTime(cue.startMs)}
-                          onBlur={(e) => applyStart(cue, e.currentTarget.value)}
-                        />
-                      </label>
-                      <label className="subtitle-time-field">
-                        <span>结束</span>
-                        <input
-                          key={`end-${cue.id}-${cue.endMs}`}
-                          className="apple-input"
-                          defaultValue={formatSrtTime(cue.endMs)}
-                          onBlur={(e) => applyEnd(cue, e.currentTarget.value)}
-                        />
-                      </label>
-                    </div>
-
-                    {timeErrorByCue[cue.id] ? <div className="subtitle-time-error">{timeErrorByCue[cue.id]}</div> : null}
-
-                    <textarea
-                      className="subtitle-editor-textarea subtitle-row-textarea"
-                      value={cue.text}
-                      onChange={(e) => onUpdateCue(cue.id, { text: e.target.value })}
-                      placeholder="输入该字幕段文本"
-                    />
-                  </>
-                ) : null}
-              </article>
-            ))
-          )}
-        </div>
-      </div>
+      {content}
     </div>
   );
 }

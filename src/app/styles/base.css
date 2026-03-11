@@ -16,6 +16,12 @@
   --apple-section-spacing: 120px;
   --apple-content-max-width: 1560px;
   --apple-content-padding: 32px;
+  --layout-unified-gap: 0px;
+  --layout-side-padding: var(--layout-unified-gap);
+  --layout-main-gap: var(--layout-unified-gap);
+  --layout-left-stack-gap: var(--layout-unified-gap);
+  --layout-top-padding: 0px;
+  --layout-bottom-padding: var(--layout-unified-gap);
   --apple-radius-button: 999px;
   --apple-radius-card: 18px;
   --apple-radius-card-large: 28px;
@@ -34,8 +40,9 @@ html,
 body,
 #root {
   width: 100%;
-  min-height: 100%;
+  height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 .apple-style {

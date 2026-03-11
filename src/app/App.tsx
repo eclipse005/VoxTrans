@@ -32,6 +32,36 @@ type TranscribeProgressEvent = {
   totalSegments: number;
 };
 
+function buildCueWarningsById(cues: SubtitleCue[]): Record<string, string[]> {
+  const warningsById: Record<string, string[]> = {};
+  const pushWarning = (cueId: string, warning: string) => {
+    if (!warningsById[cueId]) warningsById[cueId] = [];
+    warningsById[cueId].push(warning);
+  };
+
+  for (let idx = 0; idx < cues.length; idx += 1) {
+    const cue = cues[idx];
+    const cueNo = idx + 1;
+    const text = cue.text.trim();
+    if (!text) {
+      pushWarning(cue.id, `第 ${cueNo} 条文本为空`);
+    }
+    if (cue.endMs < cue.startMs) {
+      pushWarning(cue.id, `第 ${cueNo} 条结束时间早于开始时间`);
+    }
+    if (cue.endMs - cue.startMs > 60_000) {
+      pushWarning(cue.id, `第 ${cueNo} 条时长超过 60 秒`);
+    }
+    if (idx > 0) {
+      const prev = cues[idx - 1];
+      if (cue.startMs < prev.endMs) {
+        pushWarning(cue.id, `第 ${cueNo} 条与上一条时间重叠`);
+      }
+    }
+  }
+  return warningsById;
+}
+
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const toastTimerRef = useRef<number | null>(null);
@@ -67,11 +97,12 @@ function App() {
     youtubeUrl,
     youtubeQuality,
     toast,
-    showSubtitleEditor,
+    subtitleTaskId,
     subtitleTaskName,
     subtitleMediaPath,
     subtitleSrtPath,
     subtitleCues,
+    subtitleCueWarnings,
     subtitleSaveState,
     subtitleDirty,
   } = state;
@@ -364,17 +395,6 @@ function App() {
     pushToast("术语已更新", "success");
   };
 
-  const exportTerms = async () => {
-    try {
-      const payload = JSON.stringify(terms, null, 2);
-      await navigator.clipboard.writeText(payload);
-      pushToast("术语已复制到剪贴板", "success");
-    } catch (error) {
-      reportError(error, "exportTerms");
-      pushToast(toUserErrorMessage(error, "复制失败，请检查系统剪贴板权限"), "error");
-    }
-  };
-
   const importTerms = () => {
     const rows = importTermsText
       .split(/\r?\n/)
@@ -382,33 +402,63 @@ function App() {
       .filter(Boolean);
     if (!rows.length) return;
 
-    const parsed: TermEntry[] = [];
+    const existed = new Set(terms.map((item) => item.source.toLowerCase()));
+    const imported: TermEntry[] = [];
+    let invalidCount = 0;
+    let duplicateCount = 0;
+
+    const splitRow = (
+      line: string,
+    ): { source: string; target: string; note: string } | "comment" | null => {
+      if (line.startsWith("#") || line.startsWith("//")) return "comment";
+
+      const parts = line.split("=").map((part) => part.trim());
+      const source = parts[0] ?? "";
+      const target = parts[1] ?? "";
+      const note = parts.slice(2).join(" = ");
+      return source && target ? { source, target, note } : null;
+    };
+
     for (const line of rows) {
-      const parts = line.split("=");
-      if (parts.length < 2) continue;
-      const source = parts[0].trim();
-      const target = parts.slice(1).join("=").trim();
-      if (!source || !target) continue;
-      parsed.push({
+      const parsed = splitRow(line);
+      if (parsed === "comment") {
+        continue;
+      }
+      if (!parsed) {
+        invalidCount += 1;
+        continue;
+      }
+
+      const key = parsed.source.toLowerCase();
+      if (existed.has(key)) {
+        duplicateCount += 1;
+        continue;
+      }
+
+      existed.add(key);
+      imported.push({
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        source,
-        target,
-        note: "",
+        source: parsed.source,
+        target: parsed.target,
+        note: parsed.note,
       });
     }
-    if (!parsed.length) {
-      pushToast("导入格式不正确，请使用 源词 = 目标词", "error");
+
+    if (!imported.length) {
+      pushToast("没有可导入术语，请检查格式", "error");
       return;
     }
 
-    const existed = new Set(terms.map((item) => item.source.toLowerCase()));
-    const merged = parsed.filter((item) => !existed.has(item.source.toLowerCase()));
-    dispatch({ type: "set_terms", terms: [...merged, ...terms] });
+    dispatch({ type: "set_terms", terms: [...imported, ...terms] });
     patch({
       importTermsText: "",
       showImportTerms: false,
     });
-    pushToast(`已导入 ${parsed.length} 条术语`, "success");
+
+    const stats: string[] = [`已导入 ${imported.length} 条`];
+    if (duplicateCount > 0) stats.push(`重复 ${duplicateCount} 条`);
+    if (invalidCount > 0) stats.push(`无效 ${invalidCount} 条`);
+    pushToast(stats.join("，"), "success");
   };
 
   const clearQueue = () => {
@@ -555,6 +605,7 @@ function App() {
         subtitleSaveState: "saved",
         subtitleDirty: false,
         subtitleSrtPath: response.srtPath,
+        subtitleCueWarnings: buildCueWarningsById(subtitleCues),
       });
 
       subtitleSavedIndicatorTimerRef.current = window.setTimeout(() => {
@@ -563,11 +614,7 @@ function App() {
       }, 1200);
 
       if (finalSave) {
-        if (response.warnings.length > 0) {
-          pushToast(`字幕已保存，存在 ${response.warnings.length} 条提示`, "info");
-        } else {
-          pushToast("字幕已保存", "success");
-        }
+        pushToast("字幕已保存", "success");
       }
     } catch (err) {
       reportError(err, "saveSubtitle");
@@ -578,14 +625,13 @@ function App() {
     }
   }, [clearSubtitleSavedIndicatorTimer, patch, pushToast, subtitleCues, subtitleMediaPath]);
 
-  const openSubtitleEditor = async (item: QueueItem) => {
+  const loadSubtitleEditor = useCallback(async (item: QueueItem) => {
     try {
       clearSubtitleSavedIndicatorTimer();
       patch({
         subtitleTaskId: item.id,
         subtitleTaskName: item.name,
         subtitleMediaPath: item.path,
-        showSubtitleEditor: true,
         subtitleSaveState: "idle",
       });
 
@@ -602,6 +648,7 @@ function App() {
         subtitleSrtPath: response.srtPath,
         subtitleDraftPath: response.draftPath,
         subtitleCues: effectiveCues,
+        subtitleCueWarnings: buildCueWarningsById(effectiveCues),
         subtitleDirty: false,
         subtitleSaveState: "idle",
       });
@@ -609,48 +656,36 @@ function App() {
       if (response.usingDraft) {
         pushToast("已恢复自动保存草稿", "info");
       }
-      if (response.warnings.length > 0) {
-        pushToast(`字幕加载完成，存在 ${response.warnings.length} 条格式提示`, "info");
-      }
     } catch (error) {
-      reportError(error, "openSubtitleEditor");
-      pushToast(toUserErrorMessage(error, "打开字幕编辑器失败"), "error");
+      reportError(error, "loadSubtitleEditor");
+      pushToast("字幕格式有误，无法加载编辑器", "error");
       patch({
-        showSubtitleEditor: false,
+        // Keep task id aligned with current active item to avoid retry loop.
+        subtitleTaskId: item.id,
+        subtitleTaskName: item.name,
+        subtitleMediaPath: item.path,
+        subtitleDraftPath: "",
+        subtitleSrtPath: "",
+        subtitleCues: [],
+        subtitleCueWarnings: {},
+        subtitleDirty: false,
+        subtitleSaveState: "error",
       });
     }
-  };
-
-  const closeSubtitleEditor = async () => {
-    if (subtitleDirty) {
-      await saveSubtitle(true);
-    }
-
-    clearSubtitleSavedIndicatorTimer();
-    patch({
-      showSubtitleEditor: false,
-      subtitleTaskId: "",
-      subtitleTaskName: "",
-      subtitleMediaPath: "",
-      subtitleDraftPath: "",
-      subtitleSrtPath: "",
-      subtitleCues: [],
-      subtitleSaveState: "idle",
-      subtitleDirty: false,
-    });
-  };
+  }, [clearSubtitleSavedIndicatorTimer, patch, pushToast]);
 
   const markSubtitleEdited = useCallback((nextCues: SubtitleCue[]) => {
     clearSubtitleSavedIndicatorTimer();
     patch({
       subtitleCues: nextCues,
+      subtitleCueWarnings: buildCueWarningsById(nextCues),
       subtitleDirty: true,
       subtitleSaveState: "idle",
     });
   }, [clearSubtitleSavedIndicatorTimer, patch]);
 
   useEffect(() => {
-    if (!showSubtitleEditor || !subtitleMediaPath || !subtitleDirty) {
+    if (!subtitleMediaPath || !subtitleDirty) {
       return;
     }
 
@@ -667,7 +702,7 @@ function App() {
         window.clearTimeout(subtitleSaveTimerRef.current);
       }
     };
-  }, [saveSubtitle, showSubtitleEditor, subtitleMediaPath, subtitleCues, subtitleDirty]);
+  }, [saveSubtitle, subtitleMediaPath, subtitleCues, subtitleDirty]);
 
   const updateCue = (cueId: string, patchCue: Partial<SubtitleCue>) => {
     markSubtitleEdited(
@@ -832,6 +867,21 @@ function App() {
     dispatch({ type: "remove_queue_item", id });
   };
 
+  useEffect(() => {
+    const activeItem = queue.find((item) => item.id === activeId);
+    if (!activeItem) {
+      patch({
+        subtitleTaskId: "",
+        subtitleSaveState: "idle",
+      });
+      return;
+    }
+    if (subtitleTaskId === activeItem.id) return;
+    void loadSubtitleEditor(activeItem);
+  }, [activeId, loadSubtitleEditor, patch, queue, subtitleTaskId]);
+
+  const activeItem = queue.find((item) => item.id === activeId) ?? null;
+
   const filteredTerms = terms.filter((item) => {
     const keyword = termSearch.trim().toLowerCase();
     if (!keyword) return true;
@@ -847,52 +897,60 @@ function App() {
       <Navbar termsCount={termsCount} onOpenTerms={() => patch({ showGlossary: true })} onOpenSettings={openSettings} />
 
       <main className="apple-container apple-section">
-        <div className="apple-animate-on-scroll hero-section animated">
-          <h2 className="apple-heading-hero">音视频转写翻译工具</h2>
-          <p className="apple-body-large hero-description">Parakeet 转录 • 精准时间戳 • 智能断句 • AI 术语矫正</p>
-        </div>
+        <section className="workspace-left">
+          <UploadPanel
+            activeTab={activeTab}
+            dragActive={dragActive}
+            youtubeUrl={youtubeUrl}
+            youtubeQuality={youtubeQuality}
+            onTabChange={(tab) => patch({ activeTab: tab })}
+            onPickFiles={pickFiles}
+            onYoutubeUrlChange={(value) => patch({ youtubeUrl: value })}
+            onYoutubeQualityChange={(value) => patch({ youtubeQuality: value })}
+            onYoutubeDownload={() => pushToast("YouTube 下载功能即将接入", "info")}
+          />
 
-        <UploadPanel
-          activeTab={activeTab}
-          dragActive={dragActive}
-          youtubeUrl={youtubeUrl}
-          youtubeQuality={youtubeQuality}
-          onTabChange={(tab) => patch({ activeTab: tab })}
-          onPickFiles={pickFiles}
-          onYoutubeUrlChange={(value) => patch({ youtubeUrl: value })}
-          onYoutubeQualityChange={(value) => patch({ youtubeQuality: value })}
-          onYoutubeDownload={() => pushToast("YouTube 下载功能即将接入", "info")}
-        />
+          <MediaList
+            queue={queue}
+            queueCount={queueCount}
+            activeId={activeId}
+            isProcessing={queueBusy}
+            onSetActiveId={(id) => patch({ activeId: activeId === id ? "" : id })}
+            onProcessQueue={processQueue}
+            onClearQueue={clearQueue}
+            onTranslateSingle={translateSingle}
+            onProcessSingle={processSingle}
+            onRemoveItem={removeItem}
+          />
+        </section>
 
-        <MediaList
-          queue={queue}
-          queueCount={queueCount}
-          activeId={activeId}
-          isProcessing={queueBusy}
-          onSetActiveId={(id) => patch({ activeId: id })}
-          onProcessQueue={processQueue}
-          onClearQueue={clearQueue}
-          onTranslateSingle={translateSingle}
-          onProcessSingle={processSingle}
-          onOpenSubtitleEditor={openSubtitleEditor}
-          onRemoveItem={removeItem}
-        />
+        <section className="workspace-right">
+          <div className={`subtitle-panel-layer subtitle-panel-layer-editor ${activeItem ? "is-visible" : "is-hidden"}`}>
+            <SubtitleEditorModal
+              embedded
+              visible
+              taskName={subtitleTaskName}
+              srtPath={subtitleSrtPath}
+              cues={subtitleCues}
+              cueWarningsById={subtitleCueWarnings}
+              saveState={subtitleSaveState}
+              onUpdateCue={updateCue}
+              onAddCueAfter={addCueAfter}
+              onMergeSelected={mergeSelectedCues}
+              onSplitSelected={splitSelectedCues}
+              onReplaceText={replaceTextInCues}
+              onDeleteCue={removeCue}
+              onClose={() => {}}
+            />
+          </div>
+          <div className={`subtitle-panel-layer subtitle-panel-layer-empty ${activeItem ? "is-hidden" : "is-visible"}`}>
+            <div className="subtitle-panel-empty">
+              <h3 className="apple-heading-medium">字幕编辑器</h3>
+              <p className="apple-body">请在左侧任务列表中选择一个媒体任务开始编辑字幕。</p>
+            </div>
+          </div>
+        </section>
       </main>
-
-      <SubtitleEditorModal
-        visible={showSubtitleEditor}
-        taskName={subtitleTaskName}
-        srtPath={subtitleSrtPath}
-        cues={subtitleCues}
-        saveState={subtitleSaveState}
-        onUpdateCue={updateCue}
-        onAddCueAfter={addCueAfter}
-        onMergeSelected={mergeSelectedCues}
-        onSplitSelected={splitSelectedCues}
-        onReplaceText={replaceTextInCues}
-        onDeleteCue={removeCue}
-        onClose={closeSubtitleEditor}
-      />
 
       <SettingsModal
         visible={showSettings}
@@ -930,7 +988,6 @@ function App() {
         editNote={editNote}
         onClose={() => patch({ showGlossary: false })}
         onAddTerm={addTerm}
-        onExportTerms={exportTerms}
         onClearTerms={() => dispatch({ type: "set_terms", terms: [] })}
         onToggleImportTerms={() => patch({ showImportTerms: !showImportTerms })}
         onImportTerms={importTerms}

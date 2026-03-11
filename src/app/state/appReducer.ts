@@ -37,6 +37,7 @@ export type AppState = {
   subtitleSrtPath: string;
   subtitleDraftPath: string;
   subtitleCues: SubtitleCue[];
+  subtitleCueWarnings: Record<string, string[]>;
   subtitleSelectedCueId: string;
   subtitleSaveState: SubtitleSaveState;
   subtitleDirty: boolean;
@@ -94,6 +95,7 @@ export const initialAppState: AppState = {
   subtitleSrtPath: "",
   subtitleDraftPath: "",
   subtitleCues: [],
+  subtitleCueWarnings: {},
   subtitleSelectedCueId: "",
   subtitleSaveState: "idle",
   subtitleDirty: false,

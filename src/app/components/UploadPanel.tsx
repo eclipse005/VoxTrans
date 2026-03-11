@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import type { UploadTab } from "../types";
-import { DownloadIcon, FileIcon, UploadIcon, UploadIconLarge, YoutubeIcon, YoutubeIconLarge } from "./Icons";
+import { DownloadIcon, UploadIcon, YoutubeIcon } from "./Icons";
 
 type UploadPanelProps = {
   activeTab: UploadTab;
@@ -30,6 +30,10 @@ export default function UploadPanel({
 
   return (
     <div className="apple-animate-on-scroll apple-delay-100 upload-section animated">
+      <div className="sidebar-title-group">
+        <h3 className="sidebar-title">媒体导入</h3>
+      </div>
+
       <div className="upload-tabs" style={tabIndicatorStyle}>
         <div className="upload-tab-indicator" />
         <button className={`tab-button ${activeTab === "local" ? "active" : ""}`} onClick={() => onTabChange("local")}>
@@ -45,7 +49,7 @@ export default function UploadPanel({
       <div className="upload-panel-body">
         <div className={`upload-panel-content ${activeTab === "local" ? "active" : ""}`} aria-hidden={activeTab !== "local"}>
           <div
-            className={`upload-area ${dragActive ? "drag-over" : ""}`}
+            className={`upload-area upload-area-compact ${dragActive ? "drag-over" : ""}`}
             role="button"
             tabIndex={activeTab === "local" ? 0 : -1}
             onClick={activeTab === "local" ? onPickFiles : undefined}
@@ -57,25 +61,22 @@ export default function UploadPanel({
             }}
           >
             <div className="upload-content">
-              <div className="upload-icon">
-                <UploadIconLarge />
-              </div>
               <div className="upload-text">
-                <h3 className="upload-title">拖拽上传音视频文件</h3>
-                <p className="upload-hint">支持 .mp3 .wav .m4a .mp4 .webm .mkv .avi .mov 等格式</p>
+                <h3 className="upload-title">拖拽或点击上传</h3>
+                <p className="upload-hint">支持多选音视频文件</p>
               </div>
-              <div className="upload-footer">
-                <FileIcon />
-                <span>支持多文件上传（也可点击上传）</span>
-              </div>
+              <button className="apple-button upload-select-btn" type="button">
+                上传文件
+              </button>
             </div>
           </div>
         </div>
 
         <div className={`upload-panel-content ${activeTab === "youtube" ? "active" : ""}`} aria-hidden={activeTab !== "youtube"}>
-          <div className="youtube-download-area">
-            <div className="youtube-icon">
-              <YoutubeIconLarge />
+          <div className="youtube-download-area youtube-download-compact">
+            <div className="youtube-headline">
+              <YoutubeIcon />
+              <span>YouTube 下载</span>
             </div>
 
             <div className="youtube-input-group">
@@ -101,20 +102,7 @@ export default function UploadPanel({
               <DownloadIcon />
               下载视频
             </button>
-
-            <div className="download-progress">
-              <div className="progress-info">
-                <span>准备下载...</span>
-                <span>0%</span>
-              </div>
-              <div className="progress-bar-bg">
-                <div className="progress-bar-fill" style={{ width: "0%" }} />
-              </div>
-              <div className="progress-details">
-                <span>-- MB/s</span>
-                <span>剩余 --:--</span>
-              </div>
-            </div>
+            <p className="youtube-note">下载流程后续接入</p>
           </div>
         </div>
       </div>

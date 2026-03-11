@@ -1,5 +1,22 @@
 .app-root {
+  height: 100vh;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: linear-gradient(180deg, #f4f5f8 0%, #f7f8fb 60%, #f4f5f8 100%);
+}
+
+.apple-navbar .apple-heading-small {
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+.file-list-header .apple-heading-medium {
+  font-size: 26px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
 }
 
 .status-pending {
