@@ -1,5 +1,6 @@
 import { EditIcon, TrashIcon } from "./Icons";
 import type { TermEntry } from "../types";
+import { useDialogA11y } from "./useDialogA11y";
 
 type TermsModalProps = {
   visible: boolean;
@@ -72,19 +73,26 @@ export default function TermsModal(props: TermsModalProps) {
     onEditNoteChange,
   } = props;
 
+  const dialogRef = useDialogA11y(visible, onClose);
   if (!visible) return null;
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content modal-content-terms">
-        <button className="modal-close" onClick={onClose}>×</button>
+      <div
+        ref={dialogRef}
+        className="modal-content modal-content-terms"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="terms-modal-title"
+        tabIndex={-1}
+      >
+        <button className="modal-close" onClick={onClose} aria-label="关闭术语表">×</button>
         <div className="terms-header">
-          <h3 className="apple-heading-medium">术语表</h3>
+          <h3 id="terms-modal-title" className="apple-heading-medium">术语表</h3>
           <span className="terms-count">{termsCount}</span>
         </div>
         <div className="terms-body">
           <div className="settings-section">
-            <h3 className="apple-heading-small">新增术语</h3>
             <div className="terms-add-form">
               <input className="terms-input" placeholder="源词" value={termSource} onChange={(e) => onTermSourceChange(e.target.value)} />
               <input className="terms-input" placeholder="目标词" value={termTarget} onChange={(e) => onTermTargetChange(e.target.value)} />
@@ -179,10 +187,6 @@ export default function TermsModal(props: TermsModalProps) {
               )}
             </div>
           </div>
-        </div>
-        <div className="settings-footer">
-          <button className="apple-button" onClick={onClose}>完成</button>
-          <button className="apple-button apple-button-secondary" onClick={onClose}>关闭</button>
         </div>
       </div>
     </div>

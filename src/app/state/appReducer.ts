@@ -1,5 +1,5 @@
 import type { QueueItem, SavedSettings, SubtitleCue } from "../../features/media/types";
-import type { SettingsTab, SubtitleSaveState, TermEntry, ToastState, UploadTab } from "../types";
+import type { HotwordCorrection, SettingsTab, SubtitleSaveState, TermEntry, ToastState, UploadTab } from "../types";
 
 export type AppState = {
   queue: QueueItem[];
@@ -12,9 +12,11 @@ export type AppState = {
   draftProvider: SavedSettings["provider"];
   draftChunkInput: string;
   settingsTab: SettingsTab;
+  draftApiKey: string;
   draftApiBase: string;
+  draftApiModel: string;
   draftAutoPunc: boolean;
-  draftHotwordCorrection: boolean;
+  hotwordCorrection: HotwordCorrection;
   terms: TermEntry[];
   termSource: string;
   termTarget: string;
@@ -59,6 +61,12 @@ export const defaultSettings: SavedSettings = {
   chunkTargetSeconds: 300,
 };
 
+const defaultHotwordCorrection: HotwordCorrection = {
+  enabled: true,
+  activeGroupId: "group-0",
+  groups: [{ id: "group-0", name: "默认分组", keyterms: [] }],
+};
+
 export const initialAppState: AppState = {
   queue: [],
   activeId: "",
@@ -69,10 +77,12 @@ export const initialAppState: AppState = {
   settings: defaultSettings,
   draftProvider: defaultSettings.provider,
   draftChunkInput: String(defaultSettings.chunkTargetSeconds),
-  settingsTab: "basic",
+  settingsTab: "transcribe",
+  draftApiKey: "",
   draftApiBase: "",
+  draftApiModel: "",
   draftAutoPunc: true,
-  draftHotwordCorrection: true,
+  hotwordCorrection: defaultHotwordCorrection,
   terms: [],
   termSource: "",
   termTarget: "",

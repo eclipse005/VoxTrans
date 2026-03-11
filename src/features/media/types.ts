@@ -72,3 +72,17 @@ export type SubtitleSaveResponse = {
   srtPath: string;
   warnings: string[];
 };
+
+export type LlmTestConnectionRequest = {
+  apiKey: string;
+  baseUrl?: string | null;
+  model: string;
+  timeoutSecs?: number | null;
+};
+
+export type LlmTestConnectionResponse = {
+  ok: boolean;
+  message: string;
+  finishReason?: string | null;
+  model: string;
+};

@@ -1,20 +1,7 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useMemo, useReducer, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
-import { getCurrentWindow, type DragDropEvent } from "@tauri-apps/api/window";
-import type {
-  BuildSegmentsResponse,
-  QueueItem,
-  QueueStatus,
-  SavedSettings,
-  SubtitleCue,
-  SubtitleLoadResponse,
-  SubtitleSaveResponse,
-  TranscribeResponse,
-} from "../features/media/types";
-import { detectMediaKind, fileName } from "../features/media/utils";
-import { buildFallbackCue, createCueAfter, cuesToSrt, parseSrtContent } from "../features/media/srt";
+import type { SavedSettings } from "../features/media/types";
+import type { LlmTestConnectionResponse } from "../features/media/types";
 import MediaList from "./components/MediaList";
 import Navbar from "./components/Navbar";
 import SettingsModal from "./components/SettingsModal";
@@ -22,52 +9,16 @@ import SubtitleEditorModal from "./components/SubtitleEditorModal";
 import TermsModal from "./components/TermsModal";
 import Toast from "./components/Toast";
 import UploadPanel from "./components/UploadPanel";
-import type { TermEntry, ToastTone } from "./types";
+import { useAppPersistence } from "./hooks/useAppPersistence";
+import { useQueueWorkflow } from "./hooks/useQueueWorkflow";
+import { useSubtitleWorkflow } from "./hooks/useSubtitleWorkflow";
+import { useToast } from "./hooks/useToast";
 import { appReducer, initialAppState } from "./state/appReducer";
-import { reportError, toUserErrorMessage } from "./utils/errors";
-
-type TranscribeProgressEvent = {
-  taskId: string;
-  currentSegment: number;
-  totalSegments: number;
-};
-
-function buildCueWarningsById(cues: SubtitleCue[]): Record<string, string[]> {
-  const warningsById: Record<string, string[]> = {};
-  const pushWarning = (cueId: string, warning: string) => {
-    if (!warningsById[cueId]) warningsById[cueId] = [];
-    warningsById[cueId].push(warning);
-  };
-
-  for (let idx = 0; idx < cues.length; idx += 1) {
-    const cue = cues[idx];
-    const cueNo = idx + 1;
-    const text = cue.text.trim();
-    if (!text) {
-      pushWarning(cue.id, `第 ${cueNo} 条文本为空`);
-    }
-    if (cue.endMs < cue.startMs) {
-      pushWarning(cue.id, `第 ${cueNo} 条结束时间早于开始时间`);
-    }
-    if (cue.endMs - cue.startMs > 60_000) {
-      pushWarning(cue.id, `第 ${cueNo} 条时长超过 60 秒`);
-    }
-    if (idx > 0) {
-      const prev = cues[idx - 1];
-      if (cue.startMs < prev.endMs) {
-        pushWarning(cue.id, `第 ${cueNo} 条与上一条时间重叠`);
-      }
-    }
-  }
-  return warningsById;
-}
+import type { TermEntry } from "./types";
+import { parseImportedTerms } from "./utils/termsImport";
 
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
-  const toastTimerRef = useRef<number | null>(null);
-  const subtitleSaveTimerRef = useRef<number | null>(null);
-  const subtitleSavedIndicatorTimerRef = useRef<number | null>(null);
-
   const {
     queue,
     activeId,
@@ -79,9 +30,11 @@ function App() {
     draftProvider,
     draftChunkInput,
     settingsTab,
+    draftApiKey,
     draftApiBase,
+    draftApiModel,
     draftAutoPunc,
-    draftHotwordCorrection,
+    hotwordCorrection,
     terms,
     termSource,
     termTarget,
@@ -107,203 +60,64 @@ function App() {
     subtitleDirty,
   } = state;
 
-  const queueCount = queue.length;
-  const hasProcessingTask = queue.some((item) => item.status === "processing");
-  const hasQueuedTask = queue.some((item) => item.status === "queued");
-  const queueBusy = hasProcessingTask || hasQueuedTask;
+  const patch = useCallback((payload: Partial<typeof state>) => dispatch({ type: "patch", payload }), []);
+  const { pushToast } = useToast(patch);
+  const [testingLlm, setTestingLlm] = useState(false);
+
+  useAppPersistence(terms, hotwordCorrection, dispatch, patch);
+
+  const {
+    queueCount,
+    queueBusy,
+    pickFiles,
+    processQueue,
+    processSingle,
+    clearQueue,
+    translateSingle,
+    removeItem,
+  } = useQueueWorkflow({
+    queue,
+    settings,
+    dispatch,
+    patch,
+    pushToast,
+  });
+
+  const {
+    activeItem,
+    updateCue,
+    addCueAfter,
+    mergeSelectedCues,
+    splitSelectedCues,
+    replaceTextInCues,
+    removeCue,
+  } = useSubtitleWorkflow({
+    queue,
+    activeId,
+    subtitleTaskId,
+    subtitleTaskName,
+    subtitleMediaPath,
+    subtitleSrtPath,
+    subtitleCues,
+    subtitleDirty,
+    patch,
+    pushToast,
+  });
+
   const termsCount = terms.length;
-  const settingsTabIndex = settingsTab === "basic" ? 0 : settingsTab === "transcribe" ? 1 : 2;
+  const settingsTabIndex = settingsTab === "transcribe" ? 0 : settingsTab === "translate" ? 1 : settingsTab === "hotword" ? 2 : 3;
   const tabIndicatorStyle = { ["--tab-index" as string]: settingsTabIndex } as Record<string, number>;
 
-  const patch = useCallback((payload: Partial<typeof state>) => dispatch({ type: "patch", payload }), []);
-
-  const clearSubtitleSavedIndicatorTimer = useCallback(() => {
-    if (subtitleSavedIndicatorTimerRef.current != null) {
-      window.clearTimeout(subtitleSavedIndicatorTimerRef.current);
-      subtitleSavedIndicatorTimerRef.current = null;
-    }
-  }, []);
-
-  const pushToast = useCallback((message: string, tone: ToastTone = "info") => {
-    if (toastTimerRef.current) {
-      window.clearTimeout(toastTimerRef.current);
-    }
-    const id = Date.now();
-    patch({ toast: { id, message, tone } });
-    toastTimerRef.current = window.setTimeout(() => {
-      patch({ toast: null });
-      toastTimerRef.current = null;
-    }, 2200);
-  }, [patch]);
-
-  const appendPaths = useCallback(async (paths: string[]) => {
-    if (!paths.length) return;
-
-    const incoming = await Promise.all(
-      paths.map(async (path) => {
-        let sizeBytes = 0;
-        try {
-          sizeBytes = await invoke<number>("get_file_size", { path });
-        } catch {
-          sizeBytes = 0;
-        }
-
-        return {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${path}`,
-          path,
-          name: fileName(path),
-          mediaKind: detectMediaKind(path),
-          sizeBytes,
-          status: "pending" as QueueStatus,
-          progress: 0,
-          segmentCurrent: 0,
-          segmentTotal: 0,
-          resultText: "",
-          resultSrt: "",
-          rtfx: null,
-          error: "",
-        } satisfies QueueItem;
-      }),
-    );
-
-    dispatch({ type: "add_queue_items", items: incoming });
-    pushToast(`已加入队列 ${paths.length} 个文件`, "success");
-  }, [pushToast]);
-
-  useEffect(() => {
-    let unlisten: undefined | (() => void);
-
-    getCurrentWindow()
-      .onDragDropEvent((event: { payload: DragDropEvent }) => {
-        const payload = event.payload;
-        if (!payload) return;
-
-        if (payload.type === "enter" || payload.type === "over") {
-          patch({ dragActive: true });
-        } else if (payload.type === "leave") {
-          patch({ dragActive: false });
-        } else if (payload.type === "drop") {
-          patch({ dragActive: false });
-          const paths = Array.isArray(payload.paths) ? payload.paths : [];
-          void appendPaths(paths);
-        }
-      })
-      .then((fn) => {
-        unlisten = fn;
-      })
-      .catch(() => {
-        // Drag-drop listener is optional, click-upload always works.
-      });
-
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, [appendPaths, patch]);
-
-  useEffect(() => {
-    let unlistenProgress: undefined | (() => void);
-
-    listen<TranscribeProgressEvent>("transcribe-progress", (event) => {
-      const payload = event.payload;
-      if (!payload?.taskId) return;
-      dispatch({
-        type: "patch_queue_item",
-        id: payload.taskId,
-        updater: (old) => ({
-          ...old,
-          segmentCurrent: Math.max(0, payload.currentSegment || 0),
-          segmentTotal: Math.max(0, payload.totalSegments || 0),
-          progress:
-            payload.totalSegments > 0
-              ? Math.min(99, Math.round((Math.max(0, payload.currentSegment || 0) / payload.totalSegments) * 100))
-              : old.progress,
-        }),
-      });
-    })
-      .then((fn) => {
-        unlistenProgress = fn;
-      })
-      .catch(() => {
-        // Progress events are optional.
-      });
-
-    return () => {
-      if (unlistenProgress) unlistenProgress();
-    };
-  }, []);
-
-  useEffect(() => {
-    try {
-      const rawTerms = localStorage.getItem("voxtrans.terms");
-      if (rawTerms) {
-        const parsed = JSON.parse(rawTerms) as TermEntry[];
-        if (Array.isArray(parsed)) {
-          dispatch({ type: "set_terms", terms: parsed });
-        }
-      }
-      const rawSettings = localStorage.getItem("voxtrans.settings");
-      if (rawSettings) {
-        const parsed = JSON.parse(rawSettings) as SavedSettings;
-        if (parsed?.provider && parsed?.chunkTargetSeconds) {
-          patch({
-            settings: parsed,
-            draftProvider: parsed.provider,
-            draftChunkInput: String(parsed.chunkTargetSeconds),
-          });
-        }
-      }
-    } catch {
-      // Ignore corrupted local storage.
-    }
-  }, [patch]);
-
-  useEffect(() => {
-    localStorage.setItem("voxtrans.terms", JSON.stringify(terms));
-  }, [terms]);
-
-  useEffect(() => {
-    return () => {
-      if (subtitleSaveTimerRef.current != null) {
-        window.clearTimeout(subtitleSaveTimerRef.current);
-      }
-      if (subtitleSavedIndicatorTimerRef.current != null) {
-        window.clearTimeout(subtitleSavedIndicatorTimerRef.current);
-      }
-    };
-  }, []);
-
-  const pickFiles = async () => {
-    try {
-      const picked = await open({
-        multiple: true,
-        directory: false,
-        filters: [
-          {
-            name: "Media",
-            extensions: ["mp3", "wav", "m4a", "mp4", "mkv", "flac", "aac", "mov", "webm", "avi"],
-          },
-        ],
-      });
-
-      if (!picked) return;
-      const paths = Array.isArray(picked) ? picked : [picked];
-      await appendPaths(paths);
-    } catch (error) {
-      reportError(error, "pickFiles");
-      pushToast(toUserErrorMessage(error, "打开文件选择器失败"), "error");
-    }
-  };
-
-  const openSettings = () => {
+  const openSettings = useCallback(() => {
     patch({
       draftProvider: settings.provider,
       draftChunkInput: String(settings.chunkTargetSeconds),
-      settingsTab: "basic",
+      settingsTab: "transcribe",
       showSettings: true,
     });
-  };
+  }, [patch, settings.chunkTargetSeconds, settings.provider]);
 
-  const saveSettings = () => {
+  const saveSettings = useCallback(() => {
     const parsed = Number.parseInt(draftChunkInput.trim(), 10);
     if (!Number.isFinite(parsed)) {
       pushToast("分段时长必须是数字", "error");
@@ -321,10 +135,48 @@ function App() {
       draftChunkInput: String(clamped),
     });
     localStorage.setItem("voxtrans.settings", JSON.stringify(nextSettings));
+    localStorage.setItem("voxtrans.llm", JSON.stringify({
+      apiKey: draftApiKey,
+      apiBase: draftApiBase,
+      apiModel: draftApiModel,
+    }));
     pushToast("设置已保存（后续任务生效）", "success");
-  };
+  }, [draftApiBase, draftApiKey, draftApiModel, draftChunkInput, draftProvider, patch, pushToast]);
 
-  const addTerm = () => {
+  const testLlmConnection = useCallback(async () => {
+    if (!draftApiKey.trim()) {
+      pushToast("请先填写 API Key", "error");
+      return;
+    }
+    if (!draftApiModel.trim()) {
+      pushToast("请先填写 Model", "error");
+      return;
+    }
+
+    setTestingLlm(true);
+    try {
+      const res = await invoke<LlmTestConnectionResponse>("llm_test_connection", {
+        request: {
+          apiKey: draftApiKey,
+          baseUrl: draftApiBase || null,
+          model: draftApiModel,
+          timeoutSecs: 30,
+        },
+      });
+      if (res.ok) {
+        pushToast(`连通成功：${res.model}`, "success");
+      } else {
+        pushToast(res.message || "连通失败", "error");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "连通失败";
+      pushToast(message, "error");
+    } finally {
+      setTestingLlm(false);
+    }
+  }, [draftApiBase, draftApiKey, draftApiModel, pushToast]);
+
+  const addTerm = useCallback(() => {
     const source = termSource.trim();
     const target = termTarget.trim();
     if (!source || !target) {
@@ -351,13 +203,13 @@ function App() {
       termTarget: "",
       termNote: "",
     });
-  };
+  }, [patch, pushToast, termNote, termSource, termTarget, terms]);
 
-  const removeTerm = (id: string) => {
+  const removeTerm = useCallback((id: string) => {
     dispatch({ type: "remove_term", id });
-  };
+  }, []);
 
-  const startEditTerm = (term: TermEntry) => {
+  const startEditTerm = useCallback((term: TermEntry) => {
     patch({
       editingTermId: term.id,
       selectedTermId: null,
@@ -365,18 +217,18 @@ function App() {
       editTarget: term.target,
       editNote: term.note,
     });
-  };
+  }, [patch]);
 
-  const cancelEditTerm = () => {
+  const cancelEditTerm = useCallback(() => {
     patch({
       editingTermId: null,
       editSource: "",
       editTarget: "",
       editNote: "",
     });
-  };
+  }, [patch]);
 
-  const saveEditTerm = () => {
+  const saveEditTerm = useCallback(() => {
     if (!editingTermId) return;
     const source = editSource.trim();
     const target = editTarget.trim();
@@ -384,6 +236,7 @@ function App() {
       pushToast("请输入原词和目标词", "error");
       return;
     }
+
     dispatch({
       type: "update_term",
       id: editingTermId,
@@ -393,57 +246,10 @@ function App() {
     });
     patch({ editingTermId: null });
     pushToast("术语已更新", "success");
-  };
+  }, [editNote, editSource, editTarget, editingTermId, patch, pushToast]);
 
-  const importTerms = () => {
-    const rows = importTermsText
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (!rows.length) return;
-
-    const existed = new Set(terms.map((item) => item.source.toLowerCase()));
-    const imported: TermEntry[] = [];
-    let invalidCount = 0;
-    let duplicateCount = 0;
-
-    const splitRow = (
-      line: string,
-    ): { source: string; target: string; note: string } | "comment" | null => {
-      if (line.startsWith("#") || line.startsWith("//")) return "comment";
-
-      const parts = line.split("=").map((part) => part.trim());
-      const source = parts[0] ?? "";
-      const target = parts[1] ?? "";
-      const note = parts.slice(2).join(" = ");
-      return source && target ? { source, target, note } : null;
-    };
-
-    for (const line of rows) {
-      const parsed = splitRow(line);
-      if (parsed === "comment") {
-        continue;
-      }
-      if (!parsed) {
-        invalidCount += 1;
-        continue;
-      }
-
-      const key = parsed.source.toLowerCase();
-      if (existed.has(key)) {
-        duplicateCount += 1;
-        continue;
-      }
-
-      existed.add(key);
-      imported.push({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        source: parsed.source,
-        target: parsed.target,
-        note: parsed.note,
-      });
-    }
-
+  const importTerms = useCallback(() => {
+    const { imported, duplicateCount, invalidCount } = parseImportedTerms(importTermsText, terms);
     if (!imported.length) {
       pushToast("没有可导入术语，请检查格式", "error");
       return;
@@ -459,438 +265,17 @@ function App() {
     if (duplicateCount > 0) stats.push(`重复 ${duplicateCount} 条`);
     if (invalidCount > 0) stats.push(`无效 ${invalidCount} 条`);
     pushToast(stats.join("，"), "success");
-  };
+  }, [importTermsText, patch, pushToast, terms]);
 
-  const clearQueue = () => {
-    if (queueBusy) {
-      pushToast("正在处理时不能清空队列", "error");
-      return;
-    }
-    dispatch({ type: "clear_queue" });
-    pushToast("队列已清空", "info");
-  };
-
-  const runTranscribe = useCallback(async (item: Pick<QueueItem, "id" | "path" | "name">) => {
-    dispatch({
-      type: "patch_queue_item",
-      id: item.id,
-      updater: (old) => ({
-        ...old,
-        status: "processing",
-        progress: 15,
-        segmentCurrent: 0,
-        segmentTotal: 0,
-        error: "",
-      }),
-    });
-    patch({ activeId: item.id });
-
-    try {
-      const response = await invoke<TranscribeResponse>("transcribe", {
-        request: {
-          taskId: item.id,
-          audioPath: item.path,
-          provider: settings.provider,
-          chunkTargetSeconds: settings.chunkTargetSeconds,
-        },
-      });
-      const built = await invoke<BuildSegmentsResponse>("build_segments_from_words", {
-        request: {
-          audioPath: item.path,
-          words: response.words,
-        },
-      });
-
-      dispatch({
-        type: "patch_queue_item",
-        id: item.id,
-        updater: (old) => ({
-          ...old,
-          status: "done",
-          progress: 100,
-          segmentCurrent: response.segmentTotal > 0 ? response.segmentTotal : old.segmentCurrent,
-          segmentTotal: response.segmentTotal > 0 ? response.segmentTotal : old.segmentTotal,
-          resultText: built.text,
-          resultSrt: built.srt,
-          rtfx: response.rtfx,
-          error: "",
-        }),
-      });
-      pushToast(`已完成：${item.name}，SRT 已保存到 ${built.srtOutputPath}`, "success");
-    } catch (err) {
-      reportError(err, "runTranscribe");
-      const errorMessage = toUserErrorMessage(err, "转录失败，请检查模型和运行时配置");
-      dispatch({
-        type: "patch_queue_item",
-        id: item.id,
-        updater: (old) => ({
-          ...old,
-          status: "error",
-          progress: 0,
-          segmentCurrent: 0,
-          segmentTotal: 0,
-          error: errorMessage,
-        }),
-      });
-      pushToast(`失败：${item.name}，${errorMessage}`, "error");
-    }
-  }, [patch, pushToast, settings.chunkTargetSeconds, settings.provider]);
-
-  const processQueue = async () => {
-    const pendingCount = queue.filter((item) => item.status === "pending").length;
-    if (!pendingCount) {
-      pushToast("没有待处理文件", "error");
-      return;
-    }
-
-    const queuedIds = queue
-      .filter((q) => q.status === "pending")
-      .map((q) => q.id);
-    if (!queuedIds.length) {
-      pushToast("没有待处理文件", "error");
-      return;
-    }
-    for (const id of queuedIds) {
-      dispatch({
-        type: "patch_queue_item",
-        id,
-        updater: (old) => ({ ...old, status: "queued", progress: 0, segmentCurrent: 0, segmentTotal: 0, error: "" }),
-      });
-    }
-
-    pushToast(`开始批量处理，共 ${pendingCount} 个文件`, "info");
-  };
-
-  const processSingle = async (item: QueueItem) => {
-    if (item.status === "processing" || item.status === "queued") return;
-    dispatch({
-      type: "patch_queue_item",
-      id: item.id,
-      updater: (old) => ({ ...old, status: "queued", progress: 0, segmentCurrent: 0, segmentTotal: 0, error: "" }),
-    });
-
-    if (queueBusy) {
-      pushToast(`已加入排队：${item.name}`, "info");
-    }
-  };
-
-  useEffect(() => {
-    if (hasProcessingTask) return;
-    const next = queue.find((item) => item.status === "queued");
-    if (!next) return;
-    void runTranscribe({ id: next.id, path: next.path, name: next.name });
-  }, [hasProcessingTask, queue, runTranscribe]);
-
-  const translateSingle = (item: QueueItem) => {
-    patch({ activeId: item.id });
-    pushToast(`转译排期中：${item.name}（功能即将接入）`, "info");
-  };
-
-  const saveSubtitle = useCallback(async (finalSave: boolean) => {
-    if (!subtitleMediaPath) return;
-
-    try {
-      clearSubtitleSavedIndicatorTimer();
-      patch({ subtitleSaveState: "saving" });
-      const content = cuesToSrt(subtitleCues);
-      const response = await invoke<SubtitleSaveResponse>("save_subtitle_editor", {
-        request: {
-          mediaPath: subtitleMediaPath,
-          content,
-          autosave: !finalSave,
-        },
-      });
-
-      patch({
-        subtitleSaveState: "saved",
-        subtitleDirty: false,
-        subtitleSrtPath: response.srtPath,
-        subtitleCueWarnings: buildCueWarningsById(subtitleCues),
-      });
-
-      subtitleSavedIndicatorTimerRef.current = window.setTimeout(() => {
-        patch({ subtitleSaveState: "idle" });
-        subtitleSavedIndicatorTimerRef.current = null;
-      }, 1200);
-
-      if (finalSave) {
-        pushToast("字幕已保存", "success");
-      }
-    } catch (err) {
-      reportError(err, "saveSubtitle");
-      patch({ subtitleSaveState: "error" });
-      if (finalSave) {
-        pushToast(toUserErrorMessage(err, "字幕保存失败"), "error");
-      }
-    }
-  }, [clearSubtitleSavedIndicatorTimer, patch, pushToast, subtitleCues, subtitleMediaPath]);
-
-  const loadSubtitleEditor = useCallback(async (item: QueueItem) => {
-    try {
-      clearSubtitleSavedIndicatorTimer();
-      patch({
-        subtitleTaskId: item.id,
-        subtitleTaskName: item.name,
-        subtitleMediaPath: item.path,
-        subtitleSaveState: "idle",
-      });
-
-      const response = await invoke<SubtitleLoadResponse>("load_subtitle_editor", {
-        request: {
-          mediaPath: item.path,
-          fallbackSrt: item.resultSrt || null,
-        },
-      });
-
-      const parsedCues = parseSrtContent(response.content);
-      const effectiveCues = parsedCues.length > 0 ? parsedCues : buildFallbackCue(response.content);
-      patch({
-        subtitleSrtPath: response.srtPath,
-        subtitleDraftPath: response.draftPath,
-        subtitleCues: effectiveCues,
-        subtitleCueWarnings: buildCueWarningsById(effectiveCues),
-        subtitleDirty: false,
-        subtitleSaveState: "idle",
-      });
-
-      if (response.usingDraft) {
-        pushToast("已恢复自动保存草稿", "info");
-      }
-    } catch (error) {
-      reportError(error, "loadSubtitleEditor");
-      pushToast("字幕格式有误，无法加载编辑器", "error");
-      patch({
-        // Keep task id aligned with current active item to avoid retry loop.
-        subtitleTaskId: item.id,
-        subtitleTaskName: item.name,
-        subtitleMediaPath: item.path,
-        subtitleDraftPath: "",
-        subtitleSrtPath: "",
-        subtitleCues: [],
-        subtitleCueWarnings: {},
-        subtitleDirty: false,
-        subtitleSaveState: "error",
-      });
-    }
-  }, [clearSubtitleSavedIndicatorTimer, patch, pushToast]);
-
-  const markSubtitleEdited = useCallback((nextCues: SubtitleCue[]) => {
-    clearSubtitleSavedIndicatorTimer();
-    patch({
-      subtitleCues: nextCues,
-      subtitleCueWarnings: buildCueWarningsById(nextCues),
-      subtitleDirty: true,
-      subtitleSaveState: "idle",
-    });
-  }, [clearSubtitleSavedIndicatorTimer, patch]);
-
-  useEffect(() => {
-    if (!subtitleMediaPath || !subtitleDirty) {
-      return;
-    }
-
-    if (subtitleSaveTimerRef.current) {
-      window.clearTimeout(subtitleSaveTimerRef.current);
-    }
-
-    subtitleSaveTimerRef.current = window.setTimeout(() => {
-      void saveSubtitle(false);
-    }, 800);
-
-    return () => {
-      if (subtitleSaveTimerRef.current) {
-        window.clearTimeout(subtitleSaveTimerRef.current);
-      }
-    };
-  }, [saveSubtitle, subtitleMediaPath, subtitleCues, subtitleDirty]);
-
-  const updateCue = (cueId: string, patchCue: Partial<SubtitleCue>) => {
-    markSubtitleEdited(
-      subtitleCues.map((cue) =>
-        cue.id === cueId
-          ? {
-              ...cue,
-              ...patchCue,
-            }
-          : cue,
-      ),
-    );
-  };
-
-  const addCueAfter = (selectedCueId: string | null) => {
-    const selectedIndex = selectedCueId ? subtitleCues.findIndex((cue) => cue.id === selectedCueId) : -1;
-    if (selectedIndex < 0) {
-      const lastCue = subtitleCues[subtitleCues.length - 1];
-      const newCue = createCueAfter(lastCue);
-      markSubtitleEdited([...subtitleCues, newCue]);
-      return;
-    }
-
-    const anchorCue = subtitleCues[selectedIndex];
-    const newCue = createCueAfter(anchorCue);
-    const next = [...subtitleCues];
-    next.splice(selectedIndex + 1, 0, newCue);
-    markSubtitleEdited(next);
-  };
-
-  const mergeSelectedCues = (selectedCueIds: string[]) => {
-    const selectedSet = new Set(selectedCueIds);
-    const selectedIndices = subtitleCues
-      .map((cue, index) => ({ cue, index }))
-      .filter(({ cue }) => selectedSet.has(cue.id));
-
-    if (selectedIndices.length < 2) return;
-
-    selectedIndices.sort((a, b) => a.index - b.index);
-    const first = selectedIndices[0];
-    const mergedText = selectedIndices
-      .map(({ cue }) => cue.text.trim())
-      .filter(Boolean)
-      .join("\n");
-
-    const mergedCue: SubtitleCue = {
-      ...first.cue,
-      startMs: Math.min(...selectedIndices.map(({ cue }) => cue.startMs)),
-      endMs: Math.max(...selectedIndices.map(({ cue }) => cue.endMs)),
-      text: mergedText,
-    };
-
-    const mergedIds = new Set(selectedIndices.map(({ cue }) => cue.id));
-    const base = subtitleCues.filter((cue) => !mergedIds.has(cue.id));
-    const insertAt = Math.min(first.index, base.length);
-    const next = [...base.slice(0, insertAt), mergedCue, ...base.slice(insertAt)];
-
-    markSubtitleEdited(next);
-  };
-
-  const splitSelectedCues = (selectedCueIds: string[]): Array<{ sourceCueId: string; bornCueId: string }> => {
-    if (!selectedCueIds.length) return [];
-
-    const selectedSet = new Set(selectedCueIds);
-    const next: SubtitleCue[] = [];
-    const bornCueIds: Array<{ sourceCueId: string; bornCueId: string }> = [];
-
-    for (const cue of subtitleCues) {
-      if (!selectedSet.has(cue.id)) {
-        next.push(cue);
-        continue;
-      }
-
-      const duration = Math.max(2, cue.endMs - cue.startMs);
-      const middle = cue.startMs + Math.floor(duration / 2);
-      const splitAt = Math.max(cue.startMs + 1, Math.min(cue.endMs - 1, middle));
-
-      const trimmed = cue.text.trim();
-      let leftText = "";
-      let rightText = "";
-      if (!trimmed) {
-        leftText = "";
-        rightText = "";
-      } else {
-        const words = trimmed.split(/\s+/).filter(Boolean);
-        if (words.length >= 2) {
-          const midWord = Math.floor(words.length / 2);
-          leftText = words.slice(0, midWord).join(" ");
-          rightText = words.slice(midWord).join(" ");
-        } else {
-          const midChar = Math.max(1, Math.floor(trimmed.length / 2));
-          leftText = trimmed.slice(0, midChar).trim();
-          rightText = trimmed.slice(midChar).trim();
-        }
-      }
-
-      const leftCue: SubtitleCue = {
-        ...cue,
-        id: `${cue.id}-a-${Math.random().toString(36).slice(2, 6)}`,
-        startMs: cue.startMs,
-        endMs: splitAt,
-        text: leftText,
-      };
-      const rightCue: SubtitleCue = {
-        ...cue,
-        id: `${cue.id}-b-${Math.random().toString(36).slice(2, 6)}`,
-        startMs: splitAt,
-        endMs: cue.endMs,
-        text: rightText,
-      };
-
-      bornCueIds.push({ sourceCueId: cue.id, bornCueId: rightCue.id });
-      next.push(leftCue, rightCue);
-    }
-
-    markSubtitleEdited(next);
-    return bornCueIds;
-  };
-
-  const replaceTextInCues = (findText: string, replaceText: string, scopeCueIds: string[] | null): number => {
-    const source = findText;
-    if (!source) return 0;
-
-    const targetSet = scopeCueIds && scopeCueIds.length > 0 ? new Set(scopeCueIds) : null;
-    let replacedCount = 0;
-
-    const next = subtitleCues.map((cue) => {
-      if (targetSet && !targetSet.has(cue.id)) {
-        return cue;
-      }
-
-      if (!cue.text.includes(source)) {
-        return cue;
-      }
-
-      const segments = cue.text.split(source);
-      const occurrences = segments.length - 1;
-      if (occurrences <= 0) {
-        return cue;
-      }
-
-      replacedCount += occurrences;
-      return {
-        ...cue,
-        text: segments.join(replaceText),
-      };
-    });
-
-    if (replacedCount > 0) {
-      markSubtitleEdited(next);
-    }
-
-    return replacedCount;
-  };
-
-  const removeCue = (cueId: string) => {
-    const next = subtitleCues.filter((cue) => cue.id !== cueId);
-    markSubtitleEdited(next);
-  };
-
-  const removeItem = (id: string) => {
-    dispatch({ type: "remove_queue_item", id });
-  };
-
-  useEffect(() => {
-    const activeItem = queue.find((item) => item.id === activeId);
-    if (!activeItem) {
-      patch({
-        subtitleTaskId: "",
-        subtitleSaveState: "idle",
-      });
-      return;
-    }
-    if (subtitleTaskId === activeItem.id) return;
-    void loadSubtitleEditor(activeItem);
-  }, [activeId, loadSubtitleEditor, patch, queue, subtitleTaskId]);
-
-  const activeItem = queue.find((item) => item.id === activeId) ?? null;
-
-  const filteredTerms = terms.filter((item) => {
+  const filteredTerms = useMemo(() => {
     const keyword = termSearch.trim().toLowerCase();
-    if (!keyword) return true;
-    return (
-      item.source.toLowerCase().includes(keyword) ||
-      item.target.toLowerCase().includes(keyword) ||
-      item.note.toLowerCase().includes(keyword)
-    );
-  });
+    if (!keyword) return terms;
+    return terms.filter((item) => (
+      item.source.toLowerCase().includes(keyword)
+      || item.target.toLowerCase().includes(keyword)
+      || item.note.toLowerCase().includes(keyword)
+    ));
+  }, [termSearch, terms]);
 
   return (
     <div className="apple-style app-root">
@@ -958,17 +343,23 @@ function App() {
         tabIndicatorStyle={tabIndicatorStyle}
         draftProvider={draftProvider}
         draftChunkInput={draftChunkInput}
+        draftApiKey={draftApiKey}
         draftAutoPunc={draftAutoPunc}
-        draftHotwordCorrection={draftHotwordCorrection}
         draftApiBase={draftApiBase}
+        draftApiModel={draftApiModel}
+        testingLlm={testingLlm}
+        hotwordCorrection={hotwordCorrection}
         onClose={() => patch({ showSettings: false })}
         onSave={saveSettings}
+        onTestLlmConnection={testLlmConnection}
         onSettingsTabChange={(tab) => patch({ settingsTab: tab })}
         onDraftProviderChange={(value) => patch({ draftProvider: value })}
         onDraftChunkInputChange={(value) => patch({ draftChunkInput: value })}
+        onDraftApiKeyChange={(value) => patch({ draftApiKey: value })}
         onDraftAutoPuncChange={(value) => patch({ draftAutoPunc: value })}
-        onDraftHotwordCorrectionChange={(value) => patch({ draftHotwordCorrection: value })}
         onDraftApiBaseChange={(value) => patch({ draftApiBase: value })}
+        onDraftApiModelChange={(value) => patch({ draftApiModel: value })}
+        onHotwordCorrectionChange={(value) => patch({ hotwordCorrection: value })}
       />
 
       <TermsModal

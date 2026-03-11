@@ -56,6 +56,7 @@ body,
 }
 
 .apple-heading-hero {
+  margin: 0;
   font-size: clamp(34px, 3vw, 44px);
   line-height: 1.02;
   font-weight: 700;
@@ -64,6 +65,7 @@ body,
 }
 
 .apple-heading-medium {
+  margin: 0;
   font-size: clamp(24px, 3vw, 42px);
   line-height: 1.02;
   font-weight: 700;
@@ -71,6 +73,7 @@ body,
 }
 
 .apple-heading-small {
+  margin: 0;
   font-size: 28px;
   line-height: 1.1;
   font-weight: 700;

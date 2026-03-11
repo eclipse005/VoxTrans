@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod llm;
+mod prompts;
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::async_runtime::spawn_blocking;
@@ -449,7 +452,9 @@ fn main() {
             save_subtitle_editor,
             get_file_size,
             open_in_explorer,
-            open_output_dir
+            open_output_dir,
+            llm::llm_interact,
+            llm::llm_test_connection
         ])
         .run(tauri::generate_context!())
         .expect("error while running voxtrans desktop");
