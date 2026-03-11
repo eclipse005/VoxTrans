@@ -7,6 +7,11 @@
   color: #b45309;
 }
 
+.status-queued {
+  background-color: #fef3c7;
+  color: #b45309;
+}
+
 .status-processing {
   background-color: #e3f2fd;
   color: #1976d2;

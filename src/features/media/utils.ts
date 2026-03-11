@@ -23,7 +23,8 @@ export function formatBytes(bytes: number): string {
 }
 
 export function statusLabel(status: QueueStatus): string {
-  if (status === "pending") return "排队中";
+  if (status === "pending") return "待处理";
+  if (status === "queued") return "排队中";
   if (status === "processing") return "处理中";
   if (status === "done") return "已完成";
   return "失败";

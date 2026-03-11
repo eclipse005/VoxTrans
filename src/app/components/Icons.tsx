@@ -31,6 +31,9 @@ export function MicIcon() {
 export function FolderIcon() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /><line x1="12" y1="11" x2="12" y2="17" /><path d="M12 11l4 4" /><path d="M12 11l-4 4" /></svg>;
 }
+export function SubtitleIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2.5" y="4" width="14.5" height="12" rx="2.5" /><path d="M5.5 8.5h3.5" /><path d="M10.5 8.5h3.5" /><path d="M5.5 12h8.5" /><path d="M15.8 17.4l4.9-4.9a1.4 1.4 0 0 1 2 2l-4.9 4.9-2.8.8z" /><path d="M20.4 12.8l1.8 1.8" /></svg>;
+}
 export function DownloadIcon() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>;
 }
@@ -40,9 +43,26 @@ export function FileIcon() {
 export function EditIcon() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5a2.121 2.121 0 0 1 3-3z" /></svg>;
 }
+export function SearchIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>;
+}
+export function ReplaceIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M4 7h13" /><path d="M13 3l4 4-4 4" /><path d="M20 17H7" /><path d="M11 13l-4 4 4 4" /></svg>;
+}
+export function MergeIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 3v6a3 3 0 0 0 3 3h6" /><path d="M18 21v-6a3 3 0 0 0-3-3H9" /><path d="M15 12l3-3 3 3" /><path d="M9 12l-3 3-3-3" /></svg>;
+}
 export function VideoFileIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="4" width="15" height="16" rx="2" /><polygon points="10 9 10 15 14 12 10 9" /><path d="M17 8l5-3v14l-5-3z" /></svg>;
 }
 export function AudioFileIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>;
+}
+
+export function CpuIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="7" y="7" width="10" height="10" rx="2" /><path d="M9 1v3" /><path d="M15 1v3" /><path d="M9 20v3" /><path d="M15 20v3" /><path d="M20 9h3" /><path d="M20 14h3" /><path d="M1 9h3" /><path d="M1 14h3" /></svg>;
+}
+
+export function GpuIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2.5" y="6" width="15" height="12" rx="2" /><path d="M17.5 10h3a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-3" /><circle cx="8" cy="12" r="3" /><path d="M2.5 9.5h-1.5" /><path d="M2.5 12h-1.5" /><path d="M2.5 14.5h-1.5" /></svg>;
 }

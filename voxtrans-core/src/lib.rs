@@ -81,6 +81,16 @@ pub struct TranscribeOutput {
 pub fn transcribe_with_parakeet_v2(
     options: &TranscribeOptions,
 ) -> Result<TranscribeOutput, Box<dyn std::error::Error>> {
+    transcribe_with_parakeet_v2_with_progress(options, |_current, _total| {})
+}
+
+pub fn transcribe_with_parakeet_v2_with_progress<F>(
+    options: &TranscribeOptions,
+    mut on_segment_progress: F,
+) -> Result<TranscribeOutput, Box<dyn std::error::Error>>
+where
+    F: FnMut(usize, usize),
+{
     if options.audio_path.as_os_str().is_empty() {
         return Err("audio_path is required".into());
     }
@@ -106,8 +116,12 @@ pub fn transcribe_with_parakeet_v2(
         options.intra_threads,
         options.inter_threads,
         &segments,
+        &mut on_segment_progress,
     )?;
-    let result = merge_punctuation_tokens(result);
+    let result = match options.timestamp_mode {
+        TimestampKind::Words => result,
+        _ => merge_punctuation_tokens(result),
+    };
 
     let elapsed_sec = started_at.elapsed().as_secs_f64();
     let rtfx = if elapsed_sec > 0.0 {
@@ -224,6 +238,7 @@ fn transcribe_in_segments(
     intra_threads: usize,
     inter_threads: usize,
     segments: &[AudioSegment],
+    on_segment_progress: &mut dyn FnMut(usize, usize),
 ) -> Result<TranscriptionResult, Box<dyn std::error::Error>> {
     let mut model = ParakeetTDT::from_pretrained(
         model_dir,
@@ -238,6 +253,7 @@ fn transcribe_in_segments(
     let mut all_tokens: Vec<TimedToken> = Vec::new();
     let mut text_parts: Vec<String> = Vec::new();
 
+    let total_segments = segments.len();
     for segment in segments {
         let segment_file = extract_segment_to_temp(full_audio_path, segment)?;
         let mut segment_result = model.transcribe_file(segment_file.path.as_path(), Some(timestamp_mode))?;
@@ -252,6 +268,7 @@ fn transcribe_in_segments(
         }
 
         all_tokens.extend(segment_result.tokens);
+        on_segment_progress(segment.index + 1, total_segments);
     }
 
     Ok(TranscriptionResult {

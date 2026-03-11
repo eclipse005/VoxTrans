@@ -1,5 +1,6 @@
 import type { Provider } from "../../features/media/types";
 import type { SettingsTab } from "../types";
+import { CpuIcon, GpuIcon } from "./Icons";
 
 type SettingsModalProps = {
   visible: boolean;
@@ -70,10 +71,28 @@ export default function SettingsModal(props: SettingsModalProps) {
                   <div className="form-row">
                     <div className="form-group">
                       <label>执行设备</label>
-                      <select className="apple-select" value={draftProvider} onChange={(e) => onDraftProviderChange(e.target.value as Provider)}>
-                        <option value="cpu">CPU</option>
-                        <option value="cuda">CUDA</option>
-                      </select>
+                      <div className="device-toggle-group" role="group" aria-label="执行设备">
+                        <button
+                          type="button"
+                          className={`device-toggle-btn ${draftProvider === "cpu" ? "active" : ""}`}
+                          onClick={() => onDraftProviderChange("cpu")}
+                          aria-pressed={draftProvider === "cpu"}
+                          title="CPU"
+                        >
+                          <CpuIcon />
+                          <span>CPU</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={`device-toggle-btn ${draftProvider === "cuda" ? "active" : ""}`}
+                          onClick={() => onDraftProviderChange("cuda")}
+                          aria-pressed={draftProvider === "cuda"}
+                          title="GPU (CUDA)"
+                        >
+                          <GpuIcon />
+                          <span>GPU</span>
+                        </button>
+                      </div>
                     </div>
                     <div className="form-group">
                       <label>分段时长（秒）</label>

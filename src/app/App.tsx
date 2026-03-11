@@ -1,12 +1,24 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow, type DragDropEvent } from "@tauri-apps/api/window";
-import type { QueueItem, QueueStatus, SavedSettings, TranscribeResponse } from "../features/media/types";
+import type {
+  BuildSegmentsResponse,
+  QueueItem,
+  QueueStatus,
+  SavedSettings,
+  SubtitleCue,
+  SubtitleLoadResponse,
+  SubtitleSaveResponse,
+  TranscribeResponse,
+} from "../features/media/types";
 import { detectMediaKind, fileName } from "../features/media/utils";
+import { buildFallbackCue, createCueAfter, cuesToSrt, parseSrtContent } from "../features/media/srt";
 import MediaList from "./components/MediaList";
 import Navbar from "./components/Navbar";
 import SettingsModal from "./components/SettingsModal";
+import SubtitleEditorModal from "./components/SubtitleEditorModal";
 import TermsModal from "./components/TermsModal";
 import Toast from "./components/Toast";
 import UploadPanel from "./components/UploadPanel";
@@ -14,14 +26,21 @@ import type { TermEntry, ToastTone } from "./types";
 import { appReducer, initialAppState } from "./state/appReducer";
 import { reportError, toUserErrorMessage } from "./utils/errors";
 
+type TranscribeProgressEvent = {
+  taskId: string;
+  currentSegment: number;
+  totalSegments: number;
+};
+
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const toastTimerRef = useRef<number | null>(null);
+  const subtitleSaveTimerRef = useRef<number | null>(null);
+  const subtitleSavedIndicatorTimerRef = useRef<number | null>(null);
 
   const {
     queue,
     activeId,
-    isProcessing,
     dragActive,
     activeTab,
     showSettings,
@@ -48,14 +67,31 @@ function App() {
     youtubeUrl,
     youtubeQuality,
     toast,
+    showSubtitleEditor,
+    subtitleTaskName,
+    subtitleMediaPath,
+    subtitleSrtPath,
+    subtitleCues,
+    subtitleSaveState,
+    subtitleDirty,
   } = state;
 
   const queueCount = queue.length;
+  const hasProcessingTask = queue.some((item) => item.status === "processing");
+  const hasQueuedTask = queue.some((item) => item.status === "queued");
+  const queueBusy = hasProcessingTask || hasQueuedTask;
   const termsCount = terms.length;
   const settingsTabIndex = settingsTab === "basic" ? 0 : settingsTab === "transcribe" ? 1 : 2;
   const tabIndicatorStyle = { ["--tab-index" as string]: settingsTabIndex } as Record<string, number>;
 
   const patch = useCallback((payload: Partial<typeof state>) => dispatch({ type: "patch", payload }), []);
+
+  const clearSubtitleSavedIndicatorTimer = useCallback(() => {
+    if (subtitleSavedIndicatorTimerRef.current != null) {
+      window.clearTimeout(subtitleSavedIndicatorTimerRef.current);
+      subtitleSavedIndicatorTimerRef.current = null;
+    }
+  }, []);
 
   const pushToast = useCallback((message: string, tone: ToastTone = "info") => {
     if (toastTimerRef.current) {
@@ -89,6 +125,8 @@ function App() {
           sizeBytes,
           status: "pending" as QueueStatus,
           progress: 0,
+          segmentCurrent: 0,
+          segmentTotal: 0,
           resultText: "",
           resultSrt: "",
           rtfx: null,
@@ -132,6 +170,38 @@ function App() {
   }, [appendPaths, patch]);
 
   useEffect(() => {
+    let unlistenProgress: undefined | (() => void);
+
+    listen<TranscribeProgressEvent>("transcribe-progress", (event) => {
+      const payload = event.payload;
+      if (!payload?.taskId) return;
+      dispatch({
+        type: "patch_queue_item",
+        id: payload.taskId,
+        updater: (old) => ({
+          ...old,
+          segmentCurrent: Math.max(0, payload.currentSegment || 0),
+          segmentTotal: Math.max(0, payload.totalSegments || 0),
+          progress:
+            payload.totalSegments > 0
+              ? Math.min(99, Math.round((Math.max(0, payload.currentSegment || 0) / payload.totalSegments) * 100))
+              : old.progress,
+        }),
+      });
+    })
+      .then((fn) => {
+        unlistenProgress = fn;
+      })
+      .catch(() => {
+        // Progress events are optional.
+      });
+
+    return () => {
+      if (unlistenProgress) unlistenProgress();
+    };
+  }, []);
+
+  useEffect(() => {
     try {
       const rawTerms = localStorage.getItem("voxtrans.terms");
       if (rawTerms) {
@@ -159,6 +229,17 @@ function App() {
   useEffect(() => {
     localStorage.setItem("voxtrans.terms", JSON.stringify(terms));
   }, [terms]);
+
+  useEffect(() => {
+    return () => {
+      if (subtitleSaveTimerRef.current != null) {
+        window.clearTimeout(subtitleSaveTimerRef.current);
+      }
+      if (subtitleSavedIndicatorTimerRef.current != null) {
+        window.clearTimeout(subtitleSavedIndicatorTimerRef.current);
+      }
+    };
+  }, []);
 
   const pickFiles = async () => {
     try {
@@ -331,7 +412,7 @@ function App() {
   };
 
   const clearQueue = () => {
-    if (isProcessing) {
+    if (queueBusy) {
       pushToast("正在处理时不能清空队列", "error");
       return;
     }
@@ -339,7 +420,7 @@ function App() {
     pushToast("队列已清空", "info");
   };
 
-  const runTranscribe = async (item: Pick<QueueItem, "id" | "path" | "name">) => {
+  const runTranscribe = useCallback(async (item: Pick<QueueItem, "id" | "path" | "name">) => {
     dispatch({
       type: "patch_queue_item",
       id: item.id,
@@ -347,6 +428,8 @@ function App() {
         ...old,
         status: "processing",
         progress: 15,
+        segmentCurrent: 0,
+        segmentTotal: 0,
         error: "",
       }),
     });
@@ -355,9 +438,16 @@ function App() {
     try {
       const response = await invoke<TranscribeResponse>("transcribe", {
         request: {
+          taskId: item.id,
           audioPath: item.path,
           provider: settings.provider,
           chunkTargetSeconds: settings.chunkTargetSeconds,
+        },
+      });
+      const built = await invoke<BuildSegmentsResponse>("build_segments_from_words", {
+        request: {
+          audioPath: item.path,
+          words: response.words,
         },
       });
 
@@ -368,13 +458,15 @@ function App() {
           ...old,
           status: "done",
           progress: 100,
-          resultText: response.text,
-          resultSrt: response.srt,
+          segmentCurrent: response.segmentTotal > 0 ? response.segmentTotal : old.segmentCurrent,
+          segmentTotal: response.segmentTotal > 0 ? response.segmentTotal : old.segmentTotal,
+          resultText: built.text,
+          resultSrt: built.srt,
           rtfx: response.rtfx,
           error: "",
         }),
       });
-      pushToast(`已完成：${item.name}，SRT 已保存到 ${response.srtOutputPath}`, "success");
+      pushToast(`已完成：${item.name}，SRT 已保存到 ${built.srtOutputPath}`, "success");
     } catch (err) {
       reportError(err, "runTranscribe");
       const errorMessage = toUserErrorMessage(err, "转录失败，请检查模型和运行时配置");
@@ -385,67 +477,358 @@ function App() {
           ...old,
           status: "error",
           progress: 0,
+          segmentCurrent: 0,
+          segmentTotal: 0,
           error: errorMessage,
         }),
       });
       pushToast(`失败：${item.name}，${errorMessage}`, "error");
     }
-  };
+  }, [patch, pushToast, settings.chunkTargetSeconds, settings.provider]);
 
   const processQueue = async () => {
-    if (isProcessing) return;
-    const targets = queue
-      .filter((item) => item.status === "pending")
-      .map((item) => ({ id: item.id, path: item.path, name: item.name }));
-    if (!targets.length) {
+    const pendingCount = queue.filter((item) => item.status === "pending").length;
+    if (!pendingCount) {
       pushToast("没有待处理文件", "error");
       return;
     }
 
-    patch({ isProcessing: true });
-    pushToast(`开始批量处理，共 ${targets.length} 个文件`, "info");
-
-    try {
-      for (const item of targets) {
-        await runTranscribe(item);
-      }
-    } finally {
-      patch({ isProcessing: false });
+    const queuedIds = queue
+      .filter((q) => q.status === "pending")
+      .map((q) => q.id);
+    if (!queuedIds.length) {
+      pushToast("没有待处理文件", "error");
+      return;
     }
+    for (const id of queuedIds) {
+      dispatch({
+        type: "patch_queue_item",
+        id,
+        updater: (old) => ({ ...old, status: "queued", progress: 0, segmentCurrent: 0, segmentTotal: 0, error: "" }),
+      });
+    }
+
+    pushToast(`开始批量处理，共 ${pendingCount} 个文件`, "info");
   };
 
   const processSingle = async (item: QueueItem) => {
-    if (isProcessing) return;
-    patch({ isProcessing: true });
+    if (item.status === "processing" || item.status === "queued") return;
     dispatch({
       type: "patch_queue_item",
       id: item.id,
-      updater: (old) => ({ ...old, status: "pending", progress: 0, error: "" }),
+      updater: (old) => ({ ...old, status: "queued", progress: 0, segmentCurrent: 0, segmentTotal: 0, error: "" }),
     });
 
-    try {
-      await runTranscribe(item);
-    } finally {
-      patch({ isProcessing: false });
+    if (queueBusy) {
+      pushToast(`已加入排队：${item.name}`, "info");
     }
   };
+
+  useEffect(() => {
+    if (hasProcessingTask) return;
+    const next = queue.find((item) => item.status === "queued");
+    if (!next) return;
+    void runTranscribe({ id: next.id, path: next.path, name: next.name });
+  }, [hasProcessingTask, queue, runTranscribe]);
 
   const translateSingle = (item: QueueItem) => {
     patch({ activeId: item.id });
     pushToast(`转译排期中：${item.name}（功能即将接入）`, "info");
   };
 
-  const openFolderForItem = async () => {
+  const saveSubtitle = useCallback(async (finalSave: boolean) => {
+    if (!subtitleMediaPath) return;
+
     try {
-      await invoke("open_output_dir");
+      clearSubtitleSavedIndicatorTimer();
+      patch({ subtitleSaveState: "saving" });
+      const content = cuesToSrt(subtitleCues);
+      const response = await invoke<SubtitleSaveResponse>("save_subtitle_editor", {
+        request: {
+          mediaPath: subtitleMediaPath,
+          content,
+          autosave: !finalSave,
+        },
+      });
+
+      patch({
+        subtitleSaveState: "saved",
+        subtitleDirty: false,
+        subtitleSrtPath: response.srtPath,
+      });
+
+      subtitleSavedIndicatorTimerRef.current = window.setTimeout(() => {
+        patch({ subtitleSaveState: "idle" });
+        subtitleSavedIndicatorTimerRef.current = null;
+      }, 1200);
+
+      if (finalSave) {
+        if (response.warnings.length > 0) {
+          pushToast(`字幕已保存，存在 ${response.warnings.length} 条提示`, "info");
+        } else {
+          pushToast("字幕已保存", "success");
+        }
+      }
     } catch (err) {
-      reportError(err, "openFolderForItem");
-      pushToast(toUserErrorMessage(err, "打开 output 目录失败"), "error");
+      reportError(err, "saveSubtitle");
+      patch({ subtitleSaveState: "error" });
+      if (finalSave) {
+        pushToast(toUserErrorMessage(err, "字幕保存失败"), "error");
+      }
+    }
+  }, [clearSubtitleSavedIndicatorTimer, patch, pushToast, subtitleCues, subtitleMediaPath]);
+
+  const openSubtitleEditor = async (item: QueueItem) => {
+    try {
+      clearSubtitleSavedIndicatorTimer();
+      patch({
+        subtitleTaskId: item.id,
+        subtitleTaskName: item.name,
+        subtitleMediaPath: item.path,
+        showSubtitleEditor: true,
+        subtitleSaveState: "idle",
+      });
+
+      const response = await invoke<SubtitleLoadResponse>("load_subtitle_editor", {
+        request: {
+          mediaPath: item.path,
+          fallbackSrt: item.resultSrt || null,
+        },
+      });
+
+      const parsedCues = parseSrtContent(response.content);
+      const effectiveCues = parsedCues.length > 0 ? parsedCues : buildFallbackCue(response.content);
+      patch({
+        subtitleSrtPath: response.srtPath,
+        subtitleDraftPath: response.draftPath,
+        subtitleCues: effectiveCues,
+        subtitleDirty: false,
+        subtitleSaveState: "idle",
+      });
+
+      if (response.usingDraft) {
+        pushToast("已恢复自动保存草稿", "info");
+      }
+      if (response.warnings.length > 0) {
+        pushToast(`字幕加载完成，存在 ${response.warnings.length} 条格式提示`, "info");
+      }
+    } catch (error) {
+      reportError(error, "openSubtitleEditor");
+      pushToast(toUserErrorMessage(error, "打开字幕编辑器失败"), "error");
+      patch({
+        showSubtitleEditor: false,
+      });
     }
   };
 
+  const closeSubtitleEditor = async () => {
+    if (subtitleDirty) {
+      await saveSubtitle(true);
+    }
+
+    clearSubtitleSavedIndicatorTimer();
+    patch({
+      showSubtitleEditor: false,
+      subtitleTaskId: "",
+      subtitleTaskName: "",
+      subtitleMediaPath: "",
+      subtitleDraftPath: "",
+      subtitleSrtPath: "",
+      subtitleCues: [],
+      subtitleSaveState: "idle",
+      subtitleDirty: false,
+    });
+  };
+
+  const markSubtitleEdited = useCallback((nextCues: SubtitleCue[]) => {
+    clearSubtitleSavedIndicatorTimer();
+    patch({
+      subtitleCues: nextCues,
+      subtitleDirty: true,
+      subtitleSaveState: "idle",
+    });
+  }, [clearSubtitleSavedIndicatorTimer, patch]);
+
+  useEffect(() => {
+    if (!showSubtitleEditor || !subtitleMediaPath || !subtitleDirty) {
+      return;
+    }
+
+    if (subtitleSaveTimerRef.current) {
+      window.clearTimeout(subtitleSaveTimerRef.current);
+    }
+
+    subtitleSaveTimerRef.current = window.setTimeout(() => {
+      void saveSubtitle(false);
+    }, 800);
+
+    return () => {
+      if (subtitleSaveTimerRef.current) {
+        window.clearTimeout(subtitleSaveTimerRef.current);
+      }
+    };
+  }, [saveSubtitle, showSubtitleEditor, subtitleMediaPath, subtitleCues, subtitleDirty]);
+
+  const updateCue = (cueId: string, patchCue: Partial<SubtitleCue>) => {
+    markSubtitleEdited(
+      subtitleCues.map((cue) =>
+        cue.id === cueId
+          ? {
+              ...cue,
+              ...patchCue,
+            }
+          : cue,
+      ),
+    );
+  };
+
+  const addCueAfter = (selectedCueId: string | null) => {
+    const selectedIndex = selectedCueId ? subtitleCues.findIndex((cue) => cue.id === selectedCueId) : -1;
+    if (selectedIndex < 0) {
+      const lastCue = subtitleCues[subtitleCues.length - 1];
+      const newCue = createCueAfter(lastCue);
+      markSubtitleEdited([...subtitleCues, newCue]);
+      return;
+    }
+
+    const anchorCue = subtitleCues[selectedIndex];
+    const newCue = createCueAfter(anchorCue);
+    const next = [...subtitleCues];
+    next.splice(selectedIndex + 1, 0, newCue);
+    markSubtitleEdited(next);
+  };
+
+  const mergeSelectedCues = (selectedCueIds: string[]) => {
+    const selectedSet = new Set(selectedCueIds);
+    const selectedIndices = subtitleCues
+      .map((cue, index) => ({ cue, index }))
+      .filter(({ cue }) => selectedSet.has(cue.id));
+
+    if (selectedIndices.length < 2) return;
+
+    selectedIndices.sort((a, b) => a.index - b.index);
+    const first = selectedIndices[0];
+    const mergedText = selectedIndices
+      .map(({ cue }) => cue.text.trim())
+      .filter(Boolean)
+      .join("\n");
+
+    const mergedCue: SubtitleCue = {
+      ...first.cue,
+      startMs: Math.min(...selectedIndices.map(({ cue }) => cue.startMs)),
+      endMs: Math.max(...selectedIndices.map(({ cue }) => cue.endMs)),
+      text: mergedText,
+    };
+
+    const mergedIds = new Set(selectedIndices.map(({ cue }) => cue.id));
+    const base = subtitleCues.filter((cue) => !mergedIds.has(cue.id));
+    const insertAt = Math.min(first.index, base.length);
+    const next = [...base.slice(0, insertAt), mergedCue, ...base.slice(insertAt)];
+
+    markSubtitleEdited(next);
+  };
+
+  const splitSelectedCues = (selectedCueIds: string[]): Array<{ sourceCueId: string; bornCueId: string }> => {
+    if (!selectedCueIds.length) return [];
+
+    const selectedSet = new Set(selectedCueIds);
+    const next: SubtitleCue[] = [];
+    const bornCueIds: Array<{ sourceCueId: string; bornCueId: string }> = [];
+
+    for (const cue of subtitleCues) {
+      if (!selectedSet.has(cue.id)) {
+        next.push(cue);
+        continue;
+      }
+
+      const duration = Math.max(2, cue.endMs - cue.startMs);
+      const middle = cue.startMs + Math.floor(duration / 2);
+      const splitAt = Math.max(cue.startMs + 1, Math.min(cue.endMs - 1, middle));
+
+      const trimmed = cue.text.trim();
+      let leftText = "";
+      let rightText = "";
+      if (!trimmed) {
+        leftText = "";
+        rightText = "";
+      } else {
+        const words = trimmed.split(/\s+/).filter(Boolean);
+        if (words.length >= 2) {
+          const midWord = Math.floor(words.length / 2);
+          leftText = words.slice(0, midWord).join(" ");
+          rightText = words.slice(midWord).join(" ");
+        } else {
+          const midChar = Math.max(1, Math.floor(trimmed.length / 2));
+          leftText = trimmed.slice(0, midChar).trim();
+          rightText = trimmed.slice(midChar).trim();
+        }
+      }
+
+      const leftCue: SubtitleCue = {
+        ...cue,
+        id: `${cue.id}-a-${Math.random().toString(36).slice(2, 6)}`,
+        startMs: cue.startMs,
+        endMs: splitAt,
+        text: leftText,
+      };
+      const rightCue: SubtitleCue = {
+        ...cue,
+        id: `${cue.id}-b-${Math.random().toString(36).slice(2, 6)}`,
+        startMs: splitAt,
+        endMs: cue.endMs,
+        text: rightText,
+      };
+
+      bornCueIds.push({ sourceCueId: cue.id, bornCueId: rightCue.id });
+      next.push(leftCue, rightCue);
+    }
+
+    markSubtitleEdited(next);
+    return bornCueIds;
+  };
+
+  const replaceTextInCues = (findText: string, replaceText: string, scopeCueIds: string[] | null): number => {
+    const source = findText;
+    if (!source) return 0;
+
+    const targetSet = scopeCueIds && scopeCueIds.length > 0 ? new Set(scopeCueIds) : null;
+    let replacedCount = 0;
+
+    const next = subtitleCues.map((cue) => {
+      if (targetSet && !targetSet.has(cue.id)) {
+        return cue;
+      }
+
+      if (!cue.text.includes(source)) {
+        return cue;
+      }
+
+      const segments = cue.text.split(source);
+      const occurrences = segments.length - 1;
+      if (occurrences <= 0) {
+        return cue;
+      }
+
+      replacedCount += occurrences;
+      return {
+        ...cue,
+        text: segments.join(replaceText),
+      };
+    });
+
+    if (replacedCount > 0) {
+      markSubtitleEdited(next);
+    }
+
+    return replacedCount;
+  };
+
+  const removeCue = (cueId: string) => {
+    const next = subtitleCues.filter((cue) => cue.id !== cueId);
+    markSubtitleEdited(next);
+  };
+
   const removeItem = (id: string) => {
-    if (isProcessing) return;
     dispatch({ type: "remove_queue_item", id });
   };
 
@@ -485,16 +868,31 @@ function App() {
           queue={queue}
           queueCount={queueCount}
           activeId={activeId}
-          isProcessing={isProcessing}
+          isProcessing={queueBusy}
           onSetActiveId={(id) => patch({ activeId: id })}
           onProcessQueue={processQueue}
           onClearQueue={clearQueue}
           onTranslateSingle={translateSingle}
           onProcessSingle={processSingle}
-          onOpenFolder={openFolderForItem}
+          onOpenSubtitleEditor={openSubtitleEditor}
           onRemoveItem={removeItem}
         />
       </main>
+
+      <SubtitleEditorModal
+        visible={showSubtitleEditor}
+        taskName={subtitleTaskName}
+        srtPath={subtitleSrtPath}
+        cues={subtitleCues}
+        saveState={subtitleSaveState}
+        onUpdateCue={updateCue}
+        onAddCueAfter={addCueAfter}
+        onMergeSelected={mergeSelectedCues}
+        onSplitSelected={splitSelectedCues}
+        onReplaceText={replaceTextInCues}
+        onDeleteCue={removeCue}
+        onClose={closeSubtitleEditor}
+      />
 
       <SettingsModal
         visible={showSettings}

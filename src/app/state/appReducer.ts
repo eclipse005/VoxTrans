@@ -1,10 +1,9 @@
-import type { QueueItem, SavedSettings } from "../../features/media/types";
-import type { SettingsTab, TermEntry, ToastState, UploadTab } from "../types";
+import type { QueueItem, SavedSettings, SubtitleCue } from "../../features/media/types";
+import type { SettingsTab, SubtitleSaveState, TermEntry, ToastState, UploadTab } from "../types";
 
 export type AppState = {
   queue: QueueItem[];
   activeId: string;
-  isProcessing: boolean;
   dragActive: boolean;
   activeTab: UploadTab;
   showSettings: boolean;
@@ -31,6 +30,16 @@ export type AppState = {
   youtubeUrl: string;
   youtubeQuality: string;
   toast: ToastState | null;
+  showSubtitleEditor: boolean;
+  subtitleTaskId: string;
+  subtitleTaskName: string;
+  subtitleMediaPath: string;
+  subtitleSrtPath: string;
+  subtitleDraftPath: string;
+  subtitleCues: SubtitleCue[];
+  subtitleSelectedCueId: string;
+  subtitleSaveState: SubtitleSaveState;
+  subtitleDirty: boolean;
 };
 
 export type AppAction =
@@ -52,7 +61,6 @@ export const defaultSettings: SavedSettings = {
 export const initialAppState: AppState = {
   queue: [],
   activeId: "",
-  isProcessing: false,
   dragActive: false,
   activeTab: "local",
   showSettings: false,
@@ -79,6 +87,16 @@ export const initialAppState: AppState = {
   youtubeUrl: "",
   youtubeQuality: "",
   toast: null,
+  showSubtitleEditor: false,
+  subtitleTaskId: "",
+  subtitleTaskName: "",
+  subtitleMediaPath: "",
+  subtitleSrtPath: "",
+  subtitleDraftPath: "",
+  subtitleCues: [],
+  subtitleSelectedCueId: "",
+  subtitleSaveState: "idle",
+  subtitleDirty: false,
 };
 
 export function appReducer(state: AppState, action: AppAction): AppState {

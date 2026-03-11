@@ -1,6 +1,6 @@
 import type { QueueItem } from "../../features/media/types";
 import { formatBytes, statusLabel } from "../../features/media/utils";
-import { AudioFileIcon, FolderIcon, MicIcon, PlayIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
+import { AudioFileIcon, MicIcon, PlayIcon, SubtitleIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
 
 type MediaListProps = {
   queue: QueueItem[];
@@ -12,7 +12,7 @@ type MediaListProps = {
   onClearQueue: () => void;
   onTranslateSingle: (item: QueueItem) => void;
   onProcessSingle: (item: QueueItem) => void | Promise<void>;
-  onOpenFolder: () => void | Promise<void>;
+  onOpenSubtitleEditor: (item: QueueItem) => void | Promise<void>;
   onRemoveItem: (id: string) => void;
 };
 
@@ -26,7 +26,7 @@ export default function MediaList({
   onClearQueue,
   onTranslateSingle,
   onProcessSingle,
-  onOpenFolder,
+  onOpenSubtitleEditor,
   onRemoveItem,
 }: MediaListProps) {
   return (
@@ -67,8 +67,20 @@ export default function MediaList({
                   </div>
                   <div className="file-meta">{formatBytes(item.sizeBytes)}</div>
                   <div className="file-task-info">
-                    <span className={`task-status status-${item.status}`}>{statusLabel(item.status)}</span>
-                    {item.rtfx ? <span className="task-step">RTFx {item.rtfx.toFixed(2)}</span> : null}
+                    {item.status === "processing" && item.segmentTotal <= 0 ? (
+                      <span className="task-status status-processing">准备中</span>
+                    ) : item.status === "processing" ? null : (
+                      <span className={`task-status status-${item.status}`}>
+                        {statusLabel(item.status)}
+                      </span>
+                    )}
+                    {item.status === "processing" && item.segmentTotal > 1 ? (
+                      <span key={`${item.id}-${item.segmentCurrent}-${item.segmentTotal}`} className="task-step task-step-progress">
+                        {`处理中 ${Math.min(item.segmentCurrent || 0, item.segmentTotal)}/${item.segmentTotal}`}
+                      </span>
+                    ) : item.rtfx ? (
+                      <span className="task-step">RTFx {item.rtfx.toFixed(2)}</span>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -76,13 +88,13 @@ export default function MediaList({
                 <button className="file-action-btn" title="转译" onClick={(e) => { e.stopPropagation(); onTranslateSingle(item); }}>
                   <TranslateIcon />
                 </button>
-                <button className="file-action-btn" title="转录" disabled={isProcessing} onClick={(e) => { e.stopPropagation(); void onProcessSingle(item); }}>
+                <button className="file-action-btn" title="转录" disabled={item.status === "processing"} onClick={(e) => { e.stopPropagation(); void onProcessSingle(item); }}>
                   <MicIcon />
                 </button>
-                <button className="file-action-btn" title="打开目录" onClick={(e) => { e.stopPropagation(); void onOpenFolder(); }}>
-                  <FolderIcon />
+                <button className="file-action-btn" title="字幕编辑" onClick={(e) => { e.stopPropagation(); void onOpenSubtitleEditor(item); }}>
+                  <SubtitleIcon />
                 </button>
-                <button className="file-action-btn delete" title="删除" disabled={isProcessing} onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>
+                <button className="file-action-btn delete" title="删除" disabled={item.status === "processing"} onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>
                   <TrashIcon />
                 </button>
               </div>
