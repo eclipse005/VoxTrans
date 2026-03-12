@@ -235,7 +235,7 @@ export function useQueueWorkflow({
       updater: (old) => ({
         ...old,
         transcribeStatus: "processing",
-        transcribeProgress: 15,
+        transcribeProgress: 0,
         transcribeSegmentCurrent: 0,
         transcribeSegmentTotal: 0,
         transcribePhase: "initializing",

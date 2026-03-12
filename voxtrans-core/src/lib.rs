@@ -205,6 +205,7 @@ fn transcribe_in_segments(
 
     let total_segments = segments.len();
     for segment in segments {
+        on_segment_progress(segment.index + 1, total_segments);
         let segment_file = extract_segment_to_temp(full_audio_path, segment)?;
         let mut segment_result =
             model.transcribe_file(segment_file.path.as_path(), Some(timestamp_mode))?;
@@ -219,7 +220,6 @@ fn transcribe_in_segments(
         }
 
         all_tokens.extend(segment_result.tokens);
-        on_segment_progress(segment.index + 1, total_segments);
     }
 
     Ok(TranscriptionResult {

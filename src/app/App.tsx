@@ -231,7 +231,7 @@ function App() {
       return;
     }
 
-    const clamped = Math.max(60, Math.min(1800, parsed));
+    const clamped = Math.max(60, Math.min(300, parsed));
     const nextSettings = {
       provider: draftProvider,
       chunkTargetSeconds: clamped,
