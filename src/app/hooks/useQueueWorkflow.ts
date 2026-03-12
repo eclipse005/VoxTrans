@@ -144,7 +144,33 @@ export function useQueueWorkflow({
   }, [dispatch, pushToast]);
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: undefined | (() => void);
+    let scaleFactor = 1;
+
+    void getCurrentWindow()
+      .scaleFactor()
+      .then((value) => {
+        if (!disposed && Number.isFinite(value) && value > 0) {
+          scaleFactor = value;
+        }
+      })
+      .catch(() => {});
+
+    const isInsideUploadArea = (position: { x: number; y: number }) => {
+      const zone = document.querySelector(".upload-panel-content.active .upload-area");
+      if (!(zone instanceof HTMLElement)) return false;
+      const rect = zone.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+
+      const logicalX = position.x / scaleFactor;
+      const logicalY = position.y / scaleFactor;
+      const insideLogical = logicalX >= rect.left && logicalX <= rect.right && logicalY >= rect.top && logicalY <= rect.bottom;
+      if (insideLogical) return true;
+
+      // Fallback for environments that already report logical coordinates.
+      return position.x >= rect.left && position.x <= rect.right && position.y >= rect.top && position.y <= rect.bottom;
+    };
 
     getCurrentWindow()
       .onDragDropEvent((event: { payload: DragDropEvent }) => {
@@ -152,16 +178,22 @@ export function useQueueWorkflow({
         if (!payload) return;
 
         if (payload.type === "enter" || payload.type === "over") {
-          dispatch({ type: "set_ui", payload: { dragActive: true } });
+          const inside = isInsideUploadArea(payload.position);
+          dispatch({ type: "set_ui", payload: { dragActive: inside } });
         } else if (payload.type === "leave") {
           dispatch({ type: "set_ui", payload: { dragActive: false } });
         } else if (payload.type === "drop") {
           dispatch({ type: "set_ui", payload: { dragActive: false } });
+          if (!isInsideUploadArea(payload.position)) return;
           const paths = Array.isArray(payload.paths) ? payload.paths : [];
           void appendPaths(paths);
         }
       })
       .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
         unlisten = fn;
       })
       .catch(() => {
@@ -169,11 +201,13 @@ export function useQueueWorkflow({
       });
 
     return () => {
+      disposed = true;
       if (unlisten) unlisten();
     };
   }, [appendPaths, dispatch]);
 
   useEffect(() => {
+    let disposed = false;
     let unlistenProgress: undefined | (() => void);
 
     listen<TranscribeProgressEvent>("transcribe-progress", (event) => {
@@ -195,6 +229,10 @@ export function useQueueWorkflow({
       });
     })
       .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
         unlistenProgress = fn;
       })
       .catch(() => {
@@ -202,6 +240,7 @@ export function useQueueWorkflow({
       });
 
     return () => {
+      disposed = true;
       if (unlistenProgress) unlistenProgress();
     };
   }, [dispatch]);

@@ -1604,10 +1604,44 @@
 .subtitle-editor-meta {
   width: 100%;
   max-width: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 4px 0 0;
+}
+
+.subtitle-meta-prefix {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subtitle-output-link {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--apple-blue);
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin: 4px 0 0;
+}
+
+.subtitle-output-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.subtitle-output-link:disabled {
+  color: var(--apple-text-secondary);
+  cursor: default;
 }
 
 .subtitle-save-indicator {
@@ -1856,6 +1890,11 @@
   background: #fff;
 }
 
+.subtitle-find-split .apple-button:hover:not(:disabled),
+.subtitle-find-split .apple-button:active:not(:disabled) {
+  transform: none;
+}
+
 .subtitle-find-split-main {
   border: none;
   border-radius: 0;
@@ -1957,6 +1996,7 @@
   background: transparent;
   box-shadow: none;
 }
+
 
 .subtitle-row-summary {
   display: flex;

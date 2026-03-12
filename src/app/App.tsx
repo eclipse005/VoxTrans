@@ -203,6 +203,22 @@ function App() {
     dispatch({ type: "set_ui", payload: { showLogs: true } });
   }, [activeQueueItem, dispatch, pushToast]);
 
+  const openSubtitleDir = useCallback(async () => {
+    try {
+      if (subtitleSrtPath) {
+        const normalized = subtitleSrtPath.replace(/\\/g, "/");
+        const splitAt = normalized.lastIndexOf("/");
+        const parentDir = splitAt > 0 ? subtitleSrtPath.slice(0, splitAt) : subtitleSrtPath;
+        await invoke("open_in_explorer", { path: parentDir });
+      } else {
+        await invoke("open_output_dir");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "打开字幕目录失败";
+      pushToast(message, "error");
+    }
+  }, [pushToast, subtitleSrtPath]);
+
   const clearLogs = useCallback(async () => {
     if (!logTaskContext) return;
     try {
@@ -548,6 +564,7 @@ function App() {
               onSplitSelected={splitSelectedCues}
               onReplaceText={replaceTextInCues}
               onDeleteCue={removeCue}
+              onOpenSrtDir={openSubtitleDir}
               onClose={() => {}}
             />
           </div>

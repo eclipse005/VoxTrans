@@ -228,7 +228,7 @@ fn task_output_dir(task_id: &str, audio_path: &std::path::Path) -> PathBuf {
         .unwrap_or_else(|| "transcript".to_string());
     let safe_stem = sanitize_filename_component(&stem);
     let safe_task_id = sanitize_filename_component(task_id);
-    resolve_output_dir().join(format!("{}_{}", safe_stem, safe_task_id))
+    services::output::resolve_output_dir().join(format!("{}_{}", safe_stem, safe_task_id))
 }
 
 fn task_srt_output_path(task_id: &str, audio_path: &std::path::Path) -> PathBuf {
@@ -284,22 +284,6 @@ fn task_srt_draft_path(task_id: &str, audio_path: &std::path::Path) -> PathBuf {
         .unwrap_or_else(|| "transcript".to_string());
     let safe_stem = sanitize_filename_component(&stem);
     task_output_dir(task_id, audio_path).join(format!("{}_en.draft.srt", safe_stem))
-}
-
-fn resolve_output_dir() -> PathBuf {
-    if let Ok(custom_dir) = std::env::var("VOXTRANS_OUTPUT_DIR") {
-        let path = PathBuf::from(custom_dir);
-        if !path.as_os_str().is_empty() {
-            return path;
-        }
-    }
-
-    let tauri_manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let project_root = tauri_manifest_dir
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or(tauri_manifest_dir);
-    project_root.join("output")
 }
 
 #[tauri::command]
@@ -398,81 +382,6 @@ fn get_file_size(path: String) -> Result<u64, String> {
     Ok(metadata.len())
 }
 
-#[tauri::command]
-fn open_in_explorer(path: String) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg("/select,")
-            .arg(path)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg("-R")
-            .arg(path)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let parent = std::path::PathBuf::from(path)
-            .parent()
-            .map(|p| p.to_path_buf())
-            .ok_or_else(|| "invalid file path".to_string())?;
-        std::process::Command::new("xdg-open")
-            .arg(parent)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[allow(unreachable_code)]
-    Err("unsupported platform".to_string())
-}
-
-#[tauri::command]
-fn open_output_dir() -> Result<(), String> {
-    let output_dir = resolve_output_dir();
-    std::fs::create_dir_all(&output_dir).map_err(|err| err.to_string())?;
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(output_dir)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(output_dir)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(output_dir)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[allow(unreachable_code)]
-    Err("unsupported platform".to_string())
-}
-
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -494,8 +403,8 @@ fn main() {
             load_subtitle_editor,
             save_subtitle_editor,
             get_file_size,
-            open_in_explorer,
-            open_output_dir,
+            commands::system::open_in_explorer,
+            commands::system::open_output_dir,
             commands::model::open_model_dir,
             commands::model::get_model_status,
             commands::model::start_model_download,

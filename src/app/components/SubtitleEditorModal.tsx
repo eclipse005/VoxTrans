@@ -18,6 +18,7 @@ type SubtitleEditorModalProps = {
   onSplitSelected: (selectedCueIds: string[]) => Array<{ sourceCueId: string; bornCueId: string }>;
   onReplaceText: (findText: string, replaceText: string, scopeCueIds: string[] | null, maxReplacements?: number) => number;
   onDeleteCue: (cueId: string) => void;
+  onOpenSrtDir: () => void | Promise<void>;
   onClose: () => void | Promise<void>;
 };
 
@@ -42,6 +43,7 @@ export default function SubtitleEditorModal({
   onSplitSelected,
   onReplaceText,
   onDeleteCue,
+  onOpenSrtDir,
   onClose,
 }: SubtitleEditorModalProps) {
   const [timeErrorByCue, setTimeErrorByCue] = useState<Record<string, string>>({});
@@ -343,9 +345,21 @@ export default function SubtitleEditorModal({
             <span className="subtitle-count-badge">{cues.length} 条</span>
             <span className={`subtitle-save-indicator subtitle-save-${saveState}`}>{saveStateLabel(saveState)}</span>
           </div>
-          <p className="apple-body-small subtitle-editor-meta" title={`任务: ${taskName} · 输出: ${srtPath || "--"}`}>
-            任务: {taskName} · 输出: {srtPath || "--"}
-          </p>
+          <div className="apple-body-small subtitle-editor-meta" title={`任务: ${taskName} · 输出: ${srtPath || "--"}`}>
+            <span className="subtitle-meta-prefix">任务: {taskName} · 输出:</span>
+            <button
+              type="button"
+              className="subtitle-output-link"
+              onClick={(e) => {
+                e.stopPropagation();
+                void onOpenSrtDir();
+              }}
+              aria-label={srtPath ? "打开字幕输出目录" : "打开输出目录"}
+              title={srtPath ? "打开字幕输出目录" : "打开输出目录"}
+            >
+              {srtPath || "--"}
+            </button>
+          </div>
         </div>
       </div>
 

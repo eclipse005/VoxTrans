@@ -20,34 +20,5 @@ pub fn resolve_model_dir() -> PathBuf {
 pub fn open_model_dir() -> Result<(), String> {
     let model_dir = resolve_model_dir();
     std::fs::create_dir_all(&model_dir).map_err(|err| err.to_string())?;
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(model_dir)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(model_dir)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(model_dir)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-
-    #[allow(unreachable_code)]
-    Err("unsupported platform".to_string())
+    crate::services::system::open_path(&model_dir)
 }
