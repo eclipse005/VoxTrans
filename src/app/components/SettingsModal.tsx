@@ -219,7 +219,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                           title="GPU (CUDA)"
                         >
                           <GpuIcon />
-                          <span>GPU</span>
+                          <span>CUDA</span>
                         </button>
                       </div>
                     </div>

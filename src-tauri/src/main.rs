@@ -29,7 +29,6 @@ struct TranscribeRequest {
     provider: String,
     chunk_target_seconds: u32,
     model_dir: Option<String>,
-    ort_dir: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -41,7 +40,6 @@ struct TranscribeResponse {
     audio_duration_sec: f64,
     transcribe_elapsed_sec: f64,
     execution_provider: String,
-    ort_runtime: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -141,7 +139,6 @@ async fn transcribe(
         options.provider = match request.provider.to_ascii_lowercase().as_str() {
             "cpu" => Provider::Cpu,
             "cuda" => Provider::Cuda,
-            "directml" => Provider::DirectMl,
             other => return Err(format!("unsupported provider: {other}")),
         };
         options.timestamp_mode = TimestampKind::Words;
@@ -149,9 +146,6 @@ async fn transcribe(
 
         if let Some(model_dir) = request.model_dir {
             options.model_dir = PathBuf::from(model_dir);
-        }
-        if let Some(ort_dir) = request.ort_dir {
-            options.ort_dir = Some(PathBuf::from(ort_dir));
         }
 
         let output =
@@ -179,7 +173,6 @@ async fn transcribe(
             audio_duration_sec: output.audio_duration_sec,
             transcribe_elapsed_sec: output.transcribe_elapsed_sec,
             execution_provider: output.execution_provider.to_string(),
-            ort_runtime: output.ort_runtime,
         })
     })
     .await

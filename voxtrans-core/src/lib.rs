@@ -21,7 +21,6 @@ pub struct TranscribeOptions {
     pub audio_path: PathBuf,
     pub provider: Provider,
     pub timestamp_mode: TimestampKind,
-    pub ort_dir: Option<PathBuf>,
     pub intra_threads: usize,
     pub inter_threads: usize,
     pub chunk_target_seconds: f64,
@@ -38,7 +37,6 @@ impl Default for TranscribeOptions {
             audio_path: PathBuf::new(),
             provider: Provider::Cuda,
             timestamp_mode: TimestampKind::Sentences,
-            ort_dir: None,
             intra_threads,
             inter_threads: 1,
             chunk_target_seconds: DEFAULT_CHUNK_TARGET_SECONDS,
@@ -50,7 +48,6 @@ impl Default for TranscribeOptions {
 pub enum Provider {
     Cpu,
     Cuda,
-    DirectMl,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -74,7 +71,6 @@ pub struct TranscribeOutput {
     pub transcribe_elapsed_sec: f64,
     pub execution_provider: &'static str,
     pub segment_summaries: Vec<SegmentSummary>,
-    pub ort_runtime: String,
 }
 
 pub fn transcribe_with_parakeet_v2(
@@ -96,8 +92,6 @@ where
 
     let execution_provider = to_execution_provider(options.provider);
     let timestamp_mode = to_timestamp_mode(options.timestamp_mode);
-    let ort_runtime = configure_onnxruntime_env(execution_provider, options.ort_dir.clone());
-
     let prepared_audio = prepare_audio_for_transcription(&options.audio_path)?;
     let audio_duration_sec = wav_duration_seconds(prepared_audio.path())?;
     let segments = build_segments_from_silence(
@@ -125,7 +119,6 @@ where
     let elapsed_sec = started_at.elapsed().as_secs_f64();
     let execution_provider = match options.provider {
         Provider::Cuda => "cuda",
-        Provider::DirectMl => "directml",
         _ => "cpu",
     };
 
@@ -144,7 +137,6 @@ where
         transcribe_elapsed_sec: elapsed_sec,
         execution_provider,
         segment_summaries,
-        ort_runtime,
     })
 }
 
@@ -152,7 +144,6 @@ fn to_execution_provider(provider: Provider) -> ExecutionProvider {
     match provider {
         Provider::Cpu => ExecutionProvider::Cpu,
         Provider::Cuda => ExecutionProvider::Cuda,
-        Provider::DirectMl => ExecutionProvider::DirectML,
     }
 }
 
@@ -165,61 +156,28 @@ fn to_timestamp_mode(mode: TimestampKind) -> TimestampMode {
 }
 
 fn default_model_dir() -> PathBuf {
-    let fixed = PathBuf::from(r"D:\voxtrans\model\parakeet-tdt-0.6b-v2");
-    if fixed.exists() {
-        return fixed;
+    if let Ok(custom) = std::env::var("VOXTRANS_MODEL_DIR") {
+        let path = PathBuf::from(custom);
+        if path.exists() {
+            return path;
+        }
     }
 
+    // Installed app: prefer model folder beside the executable.
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let candidate = exe_dir.join("model").join("parakeet-tdt-0.6b-v2");
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+
+    // Dev mode fallback (e.g. `npm run tauri dev` from project root).
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join("model")
         .join("parakeet-tdt-0.6b-v2")
-}
-
-fn default_runtime_dir() -> PathBuf {
-    let fixed = PathBuf::from(r"D:\voxtrans\runtime\onnxruntime-sm61");
-    if fixed.exists() {
-        return fixed;
-    }
-
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("runtime")
-        .join("onnxruntime-sm61")
-}
-
-fn configure_onnxruntime_env(provider: ExecutionProvider, ort_dir: Option<PathBuf>) -> String {
-    let local_runtime_dir = default_runtime_dir();
-    let resolved_ort_dir = ort_dir.or_else(|| match provider {
-        ExecutionProvider::Cpu | ExecutionProvider::Cuda => {
-            if local_runtime_dir.join("onnxruntime.dll").exists() {
-                Some(local_runtime_dir.clone())
-            } else {
-                None
-            }
-        }
-        ExecutionProvider::DirectML => None,
-    });
-
-    match (provider, resolved_ort_dir) {
-        (ExecutionProvider::Cpu, None) => {
-            unsafe {
-                std::env::remove_var("ORT_DYLIB_PATH");
-            }
-            "system default".to_string()
-        }
-        (_, Some(dir)) => {
-            let ort_dll = dir.join("onnxruntime.dll");
-            let old_path = std::env::var("PATH").unwrap_or_default();
-            let merged_path = format!("{};{}", dir.display(), old_path);
-            unsafe {
-                std::env::set_var("ORT_DYLIB_PATH", ort_dll.as_os_str());
-                std::env::set_var("PATH", merged_path);
-            }
-            ort_dll.display().to_string()
-        }
-        (_, None) => "system default".to_string(),
-    }
 }
 
 fn transcribe_in_segments(
@@ -321,6 +279,17 @@ impl Drop for TemporaryAudioFile {
     }
 }
 
+fn ffmpeg_command() -> Command {
+    let mut cmd = Command::new("ffmpeg");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW
+        cmd.creation_flags(0x08000000);
+    }
+    cmd
+}
+
 fn prepare_audio_for_transcription(
     input_path: &PathBuf,
 ) -> Result<PreparedAudio, Box<dyn std::error::Error>> {
@@ -329,7 +298,7 @@ fn prepare_audio_for_transcription(
     }
 
     let temp_path = build_temp_wav_path("prepared");
-    let status = Command::new("ffmpeg")
+    let status = ffmpeg_command()
         .arg("-loglevel")
         .arg("error")
         .arg("-y")
@@ -413,7 +382,7 @@ fn build_segments_from_silence(
 }
 
 fn detect_silence_midpoints(audio_path: &Path) -> Result<Vec<f64>, Box<dyn std::error::Error>> {
-    let output = Command::new("ffmpeg")
+    let output = ffmpeg_command()
         .arg("-hide_banner")
         .arg("-i")
         .arg(audio_path)
@@ -459,7 +428,7 @@ fn extract_segment_to_temp(
     segment: &AudioSegment,
 ) -> Result<TemporaryAudioFile, Box<dyn std::error::Error>> {
     let temp_path = build_temp_wav_path(&format!("segment_{}", segment.index + 1));
-    let status = Command::new("ffmpeg")
+    let status = ffmpeg_command()
         .arg("-loglevel")
         .arg("error")
         .arg("-y")

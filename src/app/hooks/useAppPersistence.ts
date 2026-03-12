@@ -15,7 +15,8 @@ export function useAppPersistence(terms: TermEntry[], hotwordCorrection: Hotword
       try {
         const res = await invoke<UserPreferencesResponse>("load_user_preferences");
         if (cancelled) return;
-        const provider = (res.settings.provider === "cpu" || res.settings.provider === "cuda")
+        const provider = (res.settings.provider === "cpu"
+          || res.settings.provider === "cuda")
           ? res.settings.provider as Provider
           : "cuda";
         dispatch({ type: "set_terms", terms: res.terms });

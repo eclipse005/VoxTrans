@@ -66,7 +66,6 @@ export type TranscribeResponse = {
   audioDurationSec: number;
   transcribeElapsedSec: number;
   executionProvider: string;
-  ortRuntime: string;
 };
 
 export type BuildSegmentsRequest = {
