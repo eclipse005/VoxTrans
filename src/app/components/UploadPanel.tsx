@@ -6,11 +6,9 @@ type UploadPanelProps = {
   activeTab: UploadTab;
   dragActive: boolean;
   youtubeUrl: string;
-  youtubeQuality: string;
   onTabChange: (tab: UploadTab) => void;
   onPickFiles: () => void | Promise<void>;
   onYoutubeUrlChange: (value: string) => void;
-  onYoutubeQualityChange: (value: string) => void;
   onYoutubeDownload: () => void;
 };
 
@@ -18,15 +16,17 @@ export default function UploadPanel({
   activeTab,
   dragActive,
   youtubeUrl,
-  youtubeQuality,
   onTabChange,
   onPickFiles,
   onYoutubeUrlChange,
-  onYoutubeQualityChange,
   onYoutubeDownload,
 }: UploadPanelProps) {
   const tabIndex = activeTab === "local" ? 0 : 1;
   const tabIndicatorStyle = { ["--upload-tab-index" as string]: tabIndex } as CSSProperties;
+  const showYoutubeProgress = false;
+  const youtubeTitle = "";
+  const youtubeSpeed = "";
+  const youtubeSize = "";
 
   return (
     <div className="apple-animate-on-scroll apple-delay-100 upload-section animated">
@@ -83,26 +83,40 @@ export default function UploadPanel({
               <input
                 type="text"
                 className="youtube-url-input"
-                placeholder="粘贴 YouTube 链接，解析完成后右侧可选画质"
+                placeholder="粘贴 YouTube 链接"
                 value={youtubeUrl}
                 onChange={(e) => onYoutubeUrlChange(e.target.value)}
                 autoComplete="off"
               />
-              <select
-                className="quality-select"
-                value={youtubeQuality}
-                onChange={(e) => onYoutubeQualityChange(e.target.value)}
-                disabled
+              <button
+                className="youtube-download-icon-btn"
+                type="button"
+                onClick={onYoutubeDownload}
+                disabled={!youtubeUrl.trim()}
+                aria-label="下载视频"
+                title="下载视频"
               >
-                <option value="">画质</option>
-              </select>
+                <DownloadIcon />
+              </button>
             </div>
-
-            <button className="download-button" onClick={onYoutubeDownload} disabled={!youtubeUrl.trim()}>
-              <DownloadIcon />
-              下载视频
-            </button>
-            <p className="youtube-note">下载流程后续接入</p>
+            {showYoutubeProgress ? (
+              <div className="youtube-progress-shell" aria-label="下载进度">
+                {youtubeTitle ? (
+                  <div className="youtube-progress-head">
+                    <span className="youtube-progress-title" title={youtubeTitle}>{youtubeTitle}</span>
+                  </div>
+                ) : null}
+                <div className="youtube-progress-track">
+                  <div className="youtube-progress-fill" style={{ width: "0%" }} />
+                </div>
+                {youtubeSpeed || youtubeSize ? (
+                  <div className="youtube-progress-meta">
+                    <span>{youtubeSpeed}</span>
+                    <span>{youtubeSize}</span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

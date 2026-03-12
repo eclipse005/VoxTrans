@@ -58,7 +58,6 @@ function App() {
     editTarget,
     editNote,
     youtubeUrl,
-    youtubeQuality,
     toast,
     subtitleTaskId,
     subtitleTaskName,
@@ -526,11 +525,9 @@ function App() {
             activeTab={activeTab}
             dragActive={dragActive}
             youtubeUrl={youtubeUrl}
-            youtubeQuality={youtubeQuality}
             onTabChange={(tab) => dispatch({ type: "set_ui", payload: { activeTab: tab } })}
             onPickFiles={pickFiles}
             onYoutubeUrlChange={(value) => dispatch({ type: "set_ui", payload: { youtubeUrl: value } })}
-            onYoutubeQualityChange={(value) => dispatch({ type: "set_ui", payload: { youtubeQuality: value } })}
             onYoutubeDownload={() => pushToast("YouTube 下载功能即将接入", "info")}
           />
 
