@@ -19,6 +19,7 @@ import {
   shouldRunHotwordCorrection,
   type TimedHotwordSegment,
 } from "../utils/hotwordCorrection";
+import { restorePunctuationOnWords } from "../utils/punctuationCorrection";
 import { reportError, toUserErrorMessage } from "../utils/errors";
 
 type DispatchState = (action: AppAction) => void;
@@ -238,11 +239,75 @@ export function useQueueWorkflow({
           ? response.segmentDurationsSec.map(round2)
           : [],
       });
+      let wordsForBuild = response.words;
+      if (settings.autoPunc) {
+        const hasLlmConfig = Boolean(llmSettings.apiKey.trim() && llmSettings.apiModel.trim());
+        if (!hasLlmConfig) {
+          void appendTaskLog("main", item, "punc.skipped", {
+            reason: "自动标点增强已启用，但未配置 LLM Key/Model，已跳过",
+          });
+        } else {
+          dispatch({
+            type: "patch_queue_item",
+            id: item.id,
+            updater: (old) => ({
+              ...old,
+              transcribePhase: "punctuation",
+            }),
+          });
+          void appendTaskLog("main", item, "punc.started");
+          try {
+            let puncRound = 0;
+            const restored = await restorePunctuationOnWords({
+              words: response.words,
+              llm: llmSettings,
+              invokeLlm: async (request) => {
+                puncRound += 1;
+                const safeRequest = { ...request, apiKey: "[redacted]" };
+                await appendTaskLog("llm", item, "punc.llm.request", {
+                  round: puncRound,
+                  request: safeRequest,
+                });
+                const llmResponse = await invoke<{
+                  status: "completed" | "requires_tool";
+                  message?: string;
+                  toolCalls: Array<{
+                    id: string;
+                    type: string;
+                    function: {
+                      name: string;
+                      arguments: string;
+                    };
+                  }>;
+                }>("llm_interact", { request });
+                await appendTaskLog("llm", item, "punc.llm.response", {
+                  round: puncRound,
+                  response: llmResponse,
+                });
+                return llmResponse;
+              },
+            });
+            wordsForBuild = restored.words;
+            void appendTaskLog("main", item, "punc.completed", {
+              sentenceTotal: restored.sentenceTotal,
+              suspiciousCount: restored.suspiciousCount,
+              restoredCount: restored.restoredCount,
+              acceptedCount: restored.acceptedCount,
+              rejectedCount: restored.rejectedCount,
+            });
+          } catch (puncErr) {
+            reportError(puncErr, "runPunctuationCorrection");
+            void appendTaskLog("main", item, "punc.failed", {
+              error: toUserErrorMessage(puncErr, "自动标点增强失败，已保留原始转录"),
+            });
+          }
+        }
+      }
       const built = await invoke<BuildSegmentsResponse>("build_segments_from_words", {
         request: {
           taskId: item.id,
           audioPath: item.path,
-          words: response.words,
+          words: wordsForBuild,
         },
       });
       const baseSegments = toTimedHotwordSegments(built.segments);
@@ -366,6 +431,7 @@ export function useQueueWorkflow({
     llmSettings,
     pushToast,
     appendTaskLog,
+    settings.autoPunc,
     settings.chunkTargetSeconds,
     settings.provider,
   ]);

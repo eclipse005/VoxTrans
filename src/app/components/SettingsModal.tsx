@@ -243,8 +243,8 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <label className="setting-toggle">
                       <input type="checkbox" checked={draftAutoPunc} onChange={(e) => onDraftAutoPuncChange(e.target.checked)} />
                       <span className="toggle-label">
-                        <span className="toggle-title">自动标点增强</span>
-                        <span className="toggle-desc">让转录结果更接近可阅读文本。</span>
+                        <span className="toggle-title">AI 标点优化</span>
+                        <span className="toggle-desc">优化标点与断句，提升字幕可读性。</span>
                       </span>
                       <span className="toggle-switch" />
                     </label>

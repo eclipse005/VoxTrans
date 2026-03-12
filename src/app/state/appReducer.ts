@@ -128,6 +128,7 @@ export type AppAction = UiAction | QueueAction | SubtitleAction | SettingsAction
 export const defaultSettings: SavedSettings = {
   provider: "cuda",
   chunkTargetSeconds: 300,
+  autoPunc: true,
 };
 
 const defaultHotwordCorrection: HotwordCorrection = {

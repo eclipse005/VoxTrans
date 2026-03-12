@@ -3,6 +3,7 @@ use sqlx::SqlitePool;
 
 const KEY_PROVIDER: &str = "settings.provider";
 const KEY_CHUNK_TARGET_SECONDS: &str = "settings.chunkTargetSeconds";
+const KEY_AUTO_PUNC: &str = "settings.autoPunc";
 const KEY_LLM_API_KEY: &str = "llm.apiKey";
 const KEY_LLM_API_BASE: &str = "llm.apiBase";
 const KEY_LLM_API_MODEL: &str = "llm.apiModel";
@@ -12,6 +13,7 @@ const KEY_LLM_API_MODEL: &str = "llm.apiModel";
 pub struct SavedSettings {
     pub provider: String,
     pub chunk_target_seconds: u32,
+    pub auto_punc: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -99,6 +101,12 @@ pub async fn save_app_settings(
         &mut *tx,
         KEY_CHUNK_TARGET_SECONDS,
         &request.settings.chunk_target_seconds.to_string(),
+    )
+    .await?;
+    set_setting(
+        &mut *tx,
+        KEY_AUTO_PUNC,
+        if request.settings.auto_punc { "1" } else { "0" },
     )
     .await?;
     set_setting(&mut *tx, KEY_LLM_API_KEY, &request.llm.api_key).await?;
@@ -199,10 +207,18 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         .and_then(|v| v.parse::<u32>().ok())
         .map(|v| v.clamp(60, 1800))
         .unwrap_or(300);
+    let auto_punc = get_setting(pool, KEY_AUTO_PUNC)
+        .await?
+        .map(|v| {
+            let normalized = v.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes"
+        })
+        .unwrap_or(true);
 
     Ok(SavedSettings {
         provider,
         chunk_target_seconds,
+        auto_punc,
     })
 }
 

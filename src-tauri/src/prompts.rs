@@ -29,6 +29,19 @@ pub struct BuildHotwordCorrectionPromptsResponse {
     pub tools: Vec<LlmTool>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildPunctuationRestorePromptRequest {
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildPunctuationRestorePromptResponse {
+    pub system_prompt: String,
+    pub user_prompt: String,
+}
+
 #[tauri::command]
 pub fn build_hotword_correction_prompts(
     request: BuildHotwordCorrectionPromptsRequest,
@@ -175,6 +188,39 @@ batch_replace(replacements=[
         system_prompt,
         initial_task,
         tools,
+    })
+}
+
+#[tauri::command]
+pub fn build_punctuation_restore_prompt(
+    request: BuildPunctuationRestorePromptRequest,
+) -> Result<BuildPunctuationRestorePromptResponse, String> {
+    let text = request.text.trim();
+    if text.is_empty() {
+        return Err("text must not be empty".to_string());
+    }
+
+    let system_prompt = [
+        "You are an ASR punctuation restoration assistant.",
+        "Only restore punctuation and capitalization.",
+        "Do not add, remove, replace, or reorder words.",
+        "Return strict JSON only: {\"text\":\"...\"}.",
+    ]
+    .join(" ");
+
+    let user_prompt = [
+        "Restore punctuation and capitalization for this ASR sentence.",
+        "Keep exactly the same words and order.",
+        "Output JSON only in this format: {\"text\":\"...\"}.",
+        "",
+        "Input text:",
+        text,
+    ]
+    .join("\n");
+
+    Ok(BuildPunctuationRestorePromptResponse {
+        system_prompt,
+        user_prompt,
     })
 }
 

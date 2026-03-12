@@ -42,6 +42,9 @@ function getTranscribeProcessingText(item: QueueItem): string {
   if (item.transcribePhase === "hotword") {
     return "术语矫正中";
   }
+  if (item.transcribePhase === "punctuation") {
+    return "标点恢复中";
+  }
   if (item.transcribePhase === "initializing") {
     return "转录准备中";
   }

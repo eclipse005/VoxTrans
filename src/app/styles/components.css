@@ -1477,6 +1477,11 @@
   padding-right: 44px;
 }
 
+.subtitle-editor-header > div {
+  flex: 1;
+  min-width: 0;
+}
+
 .subtitle-title-row {
   display: inline-flex;
   align-items: center;
@@ -1494,7 +1499,8 @@
 }
 
 .subtitle-editor-meta {
-  max-width: 860px;
+  width: 100%;
+  max-width: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

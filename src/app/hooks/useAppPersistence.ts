@@ -24,6 +24,7 @@ export function useAppPersistence(terms: TermEntry[], hotwordCorrection: Hotword
           settings: {
             provider,
             chunkTargetSeconds: res.settings.chunkTargetSeconds,
+            autoPunc: res.settings.autoPunc ?? true,
           },
         });
         dispatch({
@@ -31,6 +32,7 @@ export function useAppPersistence(terms: TermEntry[], hotwordCorrection: Hotword
           payload: {
             draftProvider: provider,
             draftChunkInput: String(res.settings.chunkTargetSeconds),
+            draftAutoPunc: res.settings.autoPunc ?? true,
             draftApiKey: res.llm.apiKey ?? "",
             draftApiBase: res.llm.apiBase ?? "",
             draftApiModel: res.llm.apiModel ?? "",

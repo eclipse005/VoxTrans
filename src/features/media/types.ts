@@ -3,12 +3,13 @@ export type Provider = "cpu" | "cuda";
 export type SavedSettings = {
   provider: Provider;
   chunkTargetSeconds: number;
+  autoPunc: boolean;
 };
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
 export type TranslateStatus = "idle" | "queued" | "processing" | "done" | "error";
-export type TranscribePhase = "initializing" | "recognizing" | "hotword";
+export type TranscribePhase = "initializing" | "recognizing" | "punctuation" | "hotword";
 
 export type SubtitleCue = {
   id: string;

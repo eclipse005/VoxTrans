@@ -191,12 +191,13 @@ function App() {
     dispatch({ type: "set_draft", payload: {
       draftProvider: settings.provider,
       draftChunkInput: String(settings.chunkTargetSeconds),
+      draftAutoPunc: settings.autoPunc,
     }});
     dispatch({ type: "set_ui", payload: {
       settingsTab: "transcribe",
       showSettings: true,
     }});
-  }, [dispatch, settings.chunkTargetSeconds, settings.provider]);
+  }, [dispatch, settings.autoPunc, settings.chunkTargetSeconds, settings.provider]);
 
   const saveSettings = useCallback(async () => {
     const parsed = Number.parseInt(draftChunkInput.trim(), 10);
@@ -209,6 +210,7 @@ function App() {
     const nextSettings = {
       provider: draftProvider,
       chunkTargetSeconds: clamped,
+      autoPunc: draftAutoPunc,
     } satisfies SavedSettings;
 
     dispatch({
@@ -235,7 +237,7 @@ function App() {
       const message = error instanceof Error ? error.message : "设置保存失败";
       pushToast(message, "error");
     }
-  }, [dispatch, draftApiBase, draftApiKey, draftApiModel, draftChunkInput, draftProvider, pushToast]);
+  }, [dispatch, draftApiBase, draftApiKey, draftApiModel, draftAutoPunc, draftChunkInput, draftProvider, pushToast]);
 
   const testLlmConnection = useCallback(async () => {
     if (!draftApiKey.trim()) {

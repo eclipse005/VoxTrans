@@ -144,6 +144,7 @@ function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] 
   switch (value) {
     case "initializing":
     case "recognizing":
+    case "punctuation":
     case "hotword":
       return value;
     default:

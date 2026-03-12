@@ -511,6 +511,7 @@ fn main() {
             commands::logs::read_task_log,
             commands::logs::clear_task_logs,
             prompts::build_hotword_correction_prompts,
+            prompts::build_punctuation_restore_prompt,
             llm::llm_interact,
             llm::llm_test_connection
         ])
