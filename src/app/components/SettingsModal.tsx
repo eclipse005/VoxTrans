@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { Provider } from "../../features/media/types";
 import type { ModelDownloadStateSnapshot } from "../../features/media/types";
 import type { HotwordCorrection, SettingsTab } from "../types";
-import { CpuIcon, GpuIcon } from "./Icons";
+import { CheckIcon, CloseIcon, CpuIcon, DownloadIcon, FolderIcon, GpuIcon } from "./Icons";
 import { useDialogA11y } from "./useDialogA11y";
 
 type SettingsModalProps = {
@@ -243,34 +243,65 @@ export default function SettingsModal(props: SettingsModalProps) {
               <div className="settings-section">
                 <h3 className="apple-heading-small">模型管理</h3>
                 <div className="api-config-form model-manager-card">
-                  <div className="form-group model-path-group">
+                  <div className="form-group">
                     <label>模型目录</label>
-                    <input className="apple-input" value={modelDir} readOnly />
-                  </div>
-                  <div className="model-progress-block">
-                    <div className="model-progress-head">
-                      <span className="model-progress-title">下载进度</span>
-                      <span className="model-progress-percent">{percent}%</span>
-                    </div>
-                    <div className="model-progress-track">
-                      <div className="model-progress-fill" style={{ width: `${percent}%` }} />
-                    </div>
-                    <div className="model-progress-meta">
-                      <span>速度: {speedText}</span>
-                      <span>{sizeText}</span>
+                    <div className="model-path-row">
+                      <input className="apple-input" value={modelDir} readOnly />
+                      <button
+                        className="model-icon-btn"
+                        type="button"
+                        title="打开目录"
+                        aria-label="打开模型目录"
+                        onClick={() => { void onOpenModelDir(); }}
+                      >
+                        <FolderIcon />
+                      </button>
                     </div>
                   </div>
-                  <div className="model-action-row">
-                    <button className="apple-button apple-button-secondary" onClick={() => { void onOpenModelDir(); }}>
-                      打开目录
-                    </button>
+                  <div className="model-progress-panel">
+                    <div className="model-progress-block">
+                      <div className="model-progress-head">
+                        <span className="model-progress-title">下载进度</span>
+                        <span className="model-progress-percent">{percent}%</span>
+                      </div>
+                      <div className="model-progress-track">
+                        <div className="model-progress-fill" style={{ width: `${percent}%` }} />
+                      </div>
+                      <div className="model-progress-meta">
+                        <span>速度: {speedText}</span>
+                        <span>{sizeText}</span>
+                      </div>
+                    </div>
                     {modelDownload.phase === "downloading" ? (
-                      <button className="apple-button apple-button-secondary" onClick={() => { void onCancelModelDownload(); }}>
-                        取消下载
+                      <button
+                        className="model-icon-btn"
+                        type="button"
+                        title="取消下载"
+                        aria-label="取消下载"
+                        onClick={() => { void onCancelModelDownload(); }}
+                      >
+                        <CloseIcon />
+                      </button>
+                    ) : modelReady ? (
+                      <button
+                        className="model-icon-btn model-icon-btn-success"
+                        type="button"
+                        title="已下载完成"
+                        aria-label="已下载完成"
+                        disabled
+                      >
+                        <CheckIcon />
                       </button>
                     ) : (
-                      <button className="apple-button" onClick={() => { void onStartModelDownload(); }} disabled={modelBusy || modelReady}>
-                        下载模型
+                      <button
+                        className="model-icon-btn"
+                        type="button"
+                        title="下载模型"
+                        aria-label="下载模型"
+                        onClick={() => { void onStartModelDownload(); }}
+                        disabled={modelBusy}
+                      >
+                        <DownloadIcon />
                       </button>
                     )}
                   </div>

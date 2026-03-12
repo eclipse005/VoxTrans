@@ -941,15 +941,11 @@
   padding: 12px;
 }
 
-.model-path-group {
-  gap: 6px;
-}
-
-.model-status-line {
-  font-size: 13px;
-  color: var(--apple-text-secondary);
-  line-height: 1.35;
-  word-break: break-word;
+.model-path-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+  align-items: center;
 }
 
 .model-progress-block {
@@ -959,6 +955,14 @@
   border: 1px solid var(--apple-border-lighter);
   border-radius: 10px;
   background: #fff;
+  min-width: 0;
+}
+
+.model-progress-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+  align-items: center;
 }
 
 .model-progress-head {
@@ -1001,10 +1005,35 @@
   color: var(--apple-text-secondary);
 }
 
-.model-action-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+.model-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid var(--apple-border-light);
+  background: #fff;
+  color: var(--apple-blue);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--apple-transition-fast);
+}
+
+.model-icon-btn:hover:not(:disabled) {
+  border-color: rgba(0, 113, 227, 0.5);
+  background: rgba(0, 113, 227, 0.08);
+}
+
+.model-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.model-icon-btn-success {
+  color: #1a7f37;
+  border-color: #8fd1a8;
+  background: #e8f7ee;
+  opacity: 1 !important;
 }
 
 .setting-toggle {

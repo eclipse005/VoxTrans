@@ -61,6 +61,12 @@ export function ReplaceIcon() {
 export function AlertIcon() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M12 3l9 16H3l9-16z" /><path d="M12 9v5" /><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none" /></svg>;
 }
+export function CheckIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M20 6L9 17l-5-5" /></svg>;
+}
+export function CloseIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M18 6L6 18" /><path d="M6 6l12 12" /></svg>;
+}
 export function MergeIcon() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 3v6a3 3 0 0 0 3 3h6" /><path d="M18 21v-6a3 3 0 0 0-3-3H9" /><path d="M15 12l3-3 3 3" /><path d="M9 12l-3 3-3-3" /></svg>;
 }
