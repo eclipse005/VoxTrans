@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type {
   LlmTestConnectionResponse,
+  ModelDownloadStateSnapshot,
+  ModelStatusResponse,
   SavedSettings,
   TaskLlmUsageSummary,
   TaskLogChannel,
@@ -78,6 +81,17 @@ function App() {
   const [logContent, setLogContent] = useState("");
   const [logUsageSummary, setLogUsageSummary] = useState<TaskLlmUsageSummary | null>(null);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [modelDir, setModelDir] = useState("");
+  const [modelReady, setModelReady] = useState(false);
+  const [modelDownload, setModelDownload] = useState<ModelDownloadStateSnapshot>({
+    phase: "idle",
+    downloadedBytes: 0,
+    totalBytes: 0,
+    speedBytesPerSec: 0,
+    message: "",
+  });
+  const [modelBusy, setModelBusy] = useState(false);
+  const lastModelStatusRefreshAtRef = useRef(0);
 
   useAppPersistence(terms, hotwordCorrection, dispatch);
   useWorkspacePersistence({
@@ -212,7 +226,52 @@ function App() {
     void loadLogs();
   }, [showLogs, logTaskContext, logChannel, loadLogs]);
 
+  const refreshModelStatus = useCallback(async () => {
+    try {
+      const status = await invoke<ModelStatusResponse>("get_model_status");
+      setModelDir(status.modelDir);
+      setModelReady(status.ready);
+      setModelDownload(status.download);
+      setModelBusy(status.download.phase === "downloading");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "读取模型状态失败";
+      pushToast(message, "error");
+    }
+  }, [pushToast]);
+
+  useEffect(() => {
+    void refreshModelStatus();
+  }, [refreshModelStatus]);
+
+  useEffect(() => {
+    let unlisten: undefined | (() => void);
+    listen<ModelDownloadStateSnapshot>("model-download-progress", (event) => {
+      const payload = event.payload;
+      if (!payload) return;
+      setModelDownload(payload);
+      if (payload.phase === "downloading") {
+        const now = Date.now();
+        if (now - lastModelStatusRefreshAtRef.current >= 1000) {
+          lastModelStatusRefreshAtRef.current = now;
+          void refreshModelStatus();
+        }
+      } else {
+        setModelBusy(false);
+        void refreshModelStatus();
+      }
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {});
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [refreshModelStatus]);
+
   const openSettings = useCallback(() => {
+    void refreshModelStatus();
     dispatch({ type: "set_draft", payload: {
       draftProvider: settings.provider,
       draftChunkInput: String(settings.chunkTargetSeconds),
@@ -222,7 +281,43 @@ function App() {
       settingsTab: "transcribe",
       showSettings: true,
     }});
-  }, [dispatch, settings.autoPunc, settings.chunkTargetSeconds, settings.provider]);
+  }, [dispatch, refreshModelStatus, settings.autoPunc, settings.chunkTargetSeconds, settings.provider]);
+
+  const startModelDownload = useCallback(async () => {
+    setModelBusy(true);
+    try {
+      await invoke("start_model_download");
+      pushToast("开始后台下载模型", "info");
+      await refreshModelStatus();
+    } catch (error) {
+      setModelBusy(false);
+      const message = error instanceof Error ? error.message : "启动模型下载失败";
+      pushToast(message, "error");
+    }
+  }, [pushToast, refreshModelStatus]);
+
+  const cancelModelDownload = useCallback(async () => {
+    setModelBusy(true);
+    try {
+      await invoke("cancel_model_download");
+      pushToast("已请求取消下载", "info");
+      await refreshModelStatus();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "取消下载失败";
+      pushToast(message, "error");
+    } finally {
+      setModelBusy(false);
+    }
+  }, [pushToast, refreshModelStatus]);
+
+  const openModelDir = useCallback(async () => {
+    try {
+      await invoke("open_model_dir");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "打开模型目录失败";
+      pushToast(message, "error");
+    }
+  }, [pushToast]);
 
   const saveSettings = useCallback(async () => {
     const parsed = Number.parseInt(draftChunkInput.trim(), 10);
@@ -476,6 +571,10 @@ function App() {
         draftApiBase={draftApiBase}
         draftApiModel={draftApiModel}
         testingLlm={testingLlm}
+        modelDir={modelDir}
+        modelReady={modelReady}
+        modelDownload={modelDownload}
+        modelBusy={modelBusy}
         hotwordCorrection={hotwordCorrection}
         onClose={() => dispatch({ type: "set_ui", payload: { showSettings: false } })}
         onSave={saveSettings}
@@ -487,6 +586,9 @@ function App() {
         onDraftAutoPuncChange={(value) => dispatch({ type: "set_draft", payload: { draftAutoPunc: value } })}
         onDraftApiBaseChange={(value) => dispatch({ type: "set_draft", payload: { draftApiBase: value } })}
         onDraftApiModelChange={(value) => dispatch({ type: "set_draft", payload: { draftApiModel: value } })}
+        onOpenModelDir={openModelDir}
+        onStartModelDownload={startModelDownload}
+        onCancelModelDownload={cancelModelDownload}
         onHotwordCorrectionChange={(value) => dispatch({ type: "set_draft", payload: { hotwordCorrection: value } })}
       />
 

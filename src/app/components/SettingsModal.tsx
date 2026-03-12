@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Provider } from "../../features/media/types";
+import type { ModelDownloadStateSnapshot } from "../../features/media/types";
 import type { HotwordCorrection, SettingsTab } from "../types";
 import { CpuIcon, GpuIcon } from "./Icons";
 import { useDialogA11y } from "./useDialogA11y";
@@ -15,6 +16,10 @@ type SettingsModalProps = {
   draftApiBase: string;
   draftApiModel: string;
   testingLlm: boolean;
+  modelDir: string;
+  modelReady: boolean;
+  modelDownload: ModelDownloadStateSnapshot;
+  modelBusy: boolean;
   hotwordCorrection: HotwordCorrection;
   onClose: () => void;
   onSave: () => void | Promise<void>;
@@ -26,6 +31,9 @@ type SettingsModalProps = {
   onDraftAutoPuncChange: (value: boolean) => void;
   onDraftApiBaseChange: (value: string) => void;
   onDraftApiModelChange: (value: string) => void;
+  onOpenModelDir: () => void | Promise<void>;
+  onStartModelDownload: () => void | Promise<void>;
+  onCancelModelDownload: () => void | Promise<void>;
   onHotwordCorrectionChange: (value: HotwordCorrection) => void;
 };
 
@@ -35,6 +43,18 @@ function nextGroupIndex(groups: HotwordCorrection["groups"]) {
     if (!matched) return max;
     return Math.max(max, Number.parseInt(matched[1], 10));
   }, 0) + 1;
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let idx = 0;
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024;
+    idx += 1;
+  }
+  return `${size.toFixed(idx === 0 ? 0 : 2)} ${units[idx]}`;
 }
 
 export default function SettingsModal(props: SettingsModalProps) {
@@ -49,6 +69,10 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftApiBase,
     draftApiModel,
     testingLlm,
+    modelDir,
+    modelReady,
+    modelDownload,
+    modelBusy,
     hotwordCorrection,
     onClose,
     onSave,
@@ -60,6 +84,9 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftAutoPuncChange,
     onDraftApiBaseChange,
     onDraftApiModelChange,
+    onOpenModelDir,
+    onStartModelDownload,
+    onCancelModelDownload,
     onHotwordCorrectionChange,
   } = props;
 
@@ -161,6 +188,10 @@ export default function SettingsModal(props: SettingsModalProps) {
 
   const dialogRef = useDialogA11y(visible, onClose);
   if (!visible) return null;
+  const hasTotal = modelDownload.totalBytes > 0;
+  const percent = hasTotal ? Math.min(100, Math.round((modelDownload.downloadedBytes / modelDownload.totalBytes) * 100)) : 0;
+  const sizeText = `${formatBytes(modelDownload.downloadedBytes)} / ${formatBytes(modelDownload.totalBytes)}`;
+  const speedText = modelDownload.speedBytesPerSec > 0 ? `${formatBytes(modelDownload.speedBytesPerSec)}/s` : "-";
 
   return (
     <div className="modal-overlay">
@@ -195,48 +226,6 @@ export default function SettingsModal(props: SettingsModalProps) {
           {settingsTab === "transcribe" ? (
             <div className="settings-tab-content active">
               <div className="settings-section">
-                <h3 className="apple-heading-small">核心参数</h3>
-                <div className="api-config-form">
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>执行设备</label>
-                      <div className="device-toggle-group" role="group" aria-label="执行设备">
-                        <button
-                          type="button"
-                          className={`device-toggle-btn ${draftProvider === "cpu" ? "active" : ""}`}
-                          onClick={() => onDraftProviderChange("cpu")}
-                          aria-pressed={draftProvider === "cpu"}
-                          title="CPU"
-                        >
-                          <CpuIcon />
-                          <span>CPU</span>
-                        </button>
-                        <button
-                          type="button"
-                          className={`device-toggle-btn ${draftProvider === "cuda" ? "active" : ""}`}
-                          onClick={() => onDraftProviderChange("cuda")}
-                          aria-pressed={draftProvider === "cuda"}
-                          title="GPU (CUDA)"
-                        >
-                          <GpuIcon />
-                          <span>CUDA</span>
-                        </button>
-                      </div>
-                    </div>
-                    <div className="form-group">
-                      <label>分段时长（秒）</label>
-                      <input
-                        className="apple-input"
-                        inputMode="numeric"
-                        value={draftChunkInput}
-                        onChange={(e) => onDraftChunkInputChange(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder="60 - 300"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="settings-section">
                 <h3 className="apple-heading-small">转录流程</h3>
                 <div className="api-config-form">
                   <div className="settings-toggles">
@@ -248,6 +237,42 @@ export default function SettingsModal(props: SettingsModalProps) {
                       </span>
                       <span className="toggle-switch" />
                     </label>
+                  </div>
+                </div>
+              </div>
+              <div className="settings-section">
+                <h3 className="apple-heading-small">模型管理</h3>
+                <div className="api-config-form model-manager-card">
+                  <div className="form-group model-path-group">
+                    <label>模型目录</label>
+                    <input className="apple-input" value={modelDir} readOnly />
+                  </div>
+                  <div className="model-progress-block">
+                    <div className="model-progress-head">
+                      <span className="model-progress-title">下载进度</span>
+                      <span className="model-progress-percent">{percent}%</span>
+                    </div>
+                    <div className="model-progress-track">
+                      <div className="model-progress-fill" style={{ width: `${percent}%` }} />
+                    </div>
+                    <div className="model-progress-meta">
+                      <span>速度: {speedText}</span>
+                      <span>{sizeText}</span>
+                    </div>
+                  </div>
+                  <div className="model-action-row">
+                    <button className="apple-button apple-button-secondary" onClick={() => { void onOpenModelDir(); }}>
+                      打开目录
+                    </button>
+                    {modelDownload.phase === "downloading" ? (
+                      <button className="apple-button apple-button-secondary" onClick={() => { void onCancelModelDownload(); }}>
+                        取消下载
+                      </button>
+                    ) : (
+                      <button className="apple-button" onClick={() => { void onStartModelDownload(); }} disabled={modelBusy || modelReady}>
+                        下载模型
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -464,7 +489,43 @@ export default function SettingsModal(props: SettingsModalProps) {
               <div className="settings-section">
                 <h3 className="apple-heading-small">高级参数</h3>
                 <div className="api-config-form">
-                  <p className="apple-body">当前版本暂无高级参数。</p>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>执行设备</label>
+                      <div className="device-toggle-group" role="group" aria-label="执行设备">
+                        <button
+                          type="button"
+                          className={`device-toggle-btn ${draftProvider === "cpu" ? "active" : ""}`}
+                          onClick={() => onDraftProviderChange("cpu")}
+                          aria-pressed={draftProvider === "cpu"}
+                          title="CPU"
+                        >
+                          <CpuIcon />
+                          <span>CPU</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={`device-toggle-btn ${draftProvider === "cuda" ? "active" : ""}`}
+                          onClick={() => onDraftProviderChange("cuda")}
+                          aria-pressed={draftProvider === "cuda"}
+                          title="GPU (CUDA)"
+                        >
+                          <GpuIcon />
+                          <span>CUDA</span>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label>分段时长（秒）</label>
+                      <input
+                        className="apple-input"
+                        inputMode="numeric"
+                        value={draftChunkInput}
+                        onChange={(e) => onDraftChunkInputChange(e.target.value.replace(/[^0-9]/g, ""))}
+                        placeholder="60 - 300"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

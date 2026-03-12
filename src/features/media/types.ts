@@ -216,3 +216,19 @@ export type TaskLlmUsageSummary = {
   buckets: TaskLlmUsageBucket[];
 };
 
+export type ModelDownloadStateSnapshot = {
+  phase: "idle" | "downloading" | "completed" | "failed" | "cancelled";
+  downloadedBytes: number;
+  totalBytes: number;
+  speedBytesPerSec: number;
+  message: string;
+};
+
+export type ModelStatusResponse = {
+  modelDir: string;
+  requiredFiles: string[];
+  missingFiles: string[];
+  ready: boolean;
+  download: ModelDownloadStateSnapshot;
+};
+
