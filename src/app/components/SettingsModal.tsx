@@ -280,10 +280,10 @@ export default function SettingsModal(props: SettingsModalProps) {
                     />
                   </div>
                   <div className="llm-model-test-row">
-                    <div className="form-group">
+                    <div className="form-group llm-model-field">
                       <label>模型</label>
                       <input
-                        className="apple-input"
+                        className="apple-input llm-model-input"
                         value={draftApiModel}
                         onChange={(e) => onDraftApiModelChange(e.target.value)}
                         placeholder="gpt-4.1-mini"
@@ -450,7 +450,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                           addHotword();
                         }
                       }}
-                      placeholder="单个添加：AI:Artificial Intelligence | 批量添加：API, SDK, CLI（英文逗号分隔）"
+                  placeholder="单个：AI:Artificial Intelligence；批量：API,SDK,CLI"
                     />
                     <button className="apple-button apple-button-secondary" type="button" onClick={addHotword}>添加</button>
                   </div>

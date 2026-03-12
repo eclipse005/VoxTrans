@@ -823,6 +823,15 @@
   align-items: end;
 }
 
+.llm-model-field {
+  margin: 0;
+}
+
+.llm-model-input {
+  width: 100%;
+  max-width: 260px;
+}
+
 .llm-test-btn {
   min-height: 42px;
   padding: 0 18px;
@@ -2303,10 +2312,47 @@
   margin: 0;
 }
 
+.logs-title-block {
+  min-width: 0;
+}
+
+.logs-task-name {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--apple-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 520px;
+}
+
 .logs-actions {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.logs-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logs-tab-btn {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--apple-border-light);
+  background: #fff;
+  color: var(--apple-text-secondary);
+  cursor: pointer;
+  transition: all var(--apple-transition-fast);
+}
+
+.logs-tab-btn.active {
+  border-color: rgba(0, 113, 227, 0.45);
+  background: rgba(0, 113, 227, 0.08);
+  color: var(--apple-blue);
 }
 
 .logs-body {
@@ -2327,52 +2373,17 @@
   color: var(--apple-text-secondary);
 }
 
-.logs-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.logs-item {
-  border: 1px solid var(--apple-border-lighter);
-  border-radius: 10px;
-  background: #fff;
-  padding: 10px;
-}
-
-.logs-item-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.logs-event-type {
-  font-size: 12px;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.logs-time {
-  font-size: 12px;
-  color: var(--apple-text-secondary);
-}
-
-.logs-item-meta {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--apple-text-secondary);
-}
-
-.logs-payload {
-  margin: 8px 0 0;
-  border: 1px solid var(--apple-border-lighter);
+.logs-text {
+  margin: 0;
+  min-height: 100%;
   border-radius: 8px;
   background: #f8fafc;
-  padding: 8px 10px;
+  border: 1px solid var(--apple-border-lighter);
+  padding: 10px 12px;
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+  font-family: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
 }
 

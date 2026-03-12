@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { LlmTestConnectionResponse, SavedSettings, TaskEventRecord } from "../features/media/types";
+import type { LlmTestConnectionResponse, SavedSettings, TaskLogChannel } from "../features/media/types";
 import MediaList from "./components/MediaList";
 import LogsModal from "./components/LogsModal";
 import Navbar from "./components/Navbar";
@@ -64,7 +64,13 @@ function App() {
 
   const { pushToast } = useToast(dispatch);
   const [testingLlm, setTestingLlm] = useState(false);
-  const [logEvents, setLogEvents] = useState<TaskEventRecord[]>([]);
+  const [logTaskContext, setLogTaskContext] = useState<{
+    taskId: string;
+    mediaPath: string;
+    taskName: string;
+  } | null>(null);
+  const [logChannel, setLogChannel] = useState<TaskLogChannel>("main");
+  const [logContent, setLogContent] = useState("");
   const [loadingLogs, setLoadingLogs] = useState(false);
 
   useAppPersistence(terms, hotwordCorrection, dispatch);
@@ -117,44 +123,69 @@ function App() {
   });
 
   const termsCount = terms.length;
+  const activeQueueItem = useMemo(
+    () => queue.find((item) => item.id === activeId) ?? null,
+    [queue, activeId],
+  );
   const settingsTabIndex = settingsTab === "transcribe" ? 0 : settingsTab === "translate" ? 1 : settingsTab === "hotword" ? 2 : 3;
   const tabIndicatorStyle = { ["--tab-index" as string]: settingsTabIndex } as Record<string, number>;
   const loadLogs = useCallback(async () => {
+    if (!logTaskContext) return;
     setLoadingLogs(true);
     try {
-      const events = await invoke<TaskEventRecord[]>("list_task_events", {
+      const content = await invoke<string>("read_task_log", {
         request: {
-          limit: 300,
+          taskId: logTaskContext.taskId,
+          mediaPath: logTaskContext.mediaPath,
+          channel: logChannel,
         },
       });
-      setLogEvents(events);
+      setLogContent(content || "");
     } catch (error) {
       const message = error instanceof Error ? error.message : "加载日志失败";
       pushToast(message, "error");
     } finally {
       setLoadingLogs(false);
     }
-  }, [pushToast]);
+  }, [logChannel, logTaskContext, pushToast]);
 
   const openLogs = useCallback(() => {
+    if (!activeQueueItem) {
+      pushToast("请先在左侧选中一个任务", "error");
+      return;
+    }
+    setLogTaskContext({
+      taskId: activeQueueItem.id,
+      mediaPath: activeQueueItem.path,
+      taskName: activeQueueItem.name,
+    });
+    setLogChannel("main");
+    setLogContent("");
     dispatch({ type: "set_ui", payload: { showLogs: true } });
-    void loadLogs();
-  }, [dispatch, loadLogs]);
+  }, [activeQueueItem, dispatch, pushToast]);
 
   const clearLogs = useCallback(async () => {
+    if (!logTaskContext) return;
     try {
-      await invoke("clear_task_events", {
+      await invoke("clear_task_logs", {
         request: {
-          taskId: null,
+          taskId: logTaskContext.taskId,
+          mediaPath: logTaskContext.mediaPath,
+          channel: logChannel,
         },
       });
-      setLogEvents([]);
+      setLogContent("");
       pushToast("日志已清空", "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : "清空日志失败";
       pushToast(message, "error");
     }
-  }, [pushToast]);
+  }, [logChannel, logTaskContext, pushToast]);
+
+  useEffect(() => {
+    if (!showLogs || !logTaskContext) return;
+    void loadLogs();
+  }, [showLogs, logTaskContext, logChannel, loadLogs]);
 
   const openSettings = useCallback(() => {
     dispatch({ type: "set_draft", payload: {
@@ -470,10 +501,13 @@ function App() {
       <LogsModal
         visible={showLogs}
         loading={loadingLogs}
-        events={logEvents}
+        taskName={logTaskContext?.taskName || ""}
+        activeChannel={logChannel}
+        content={logContent}
         onClose={() => dispatch({ type: "set_ui", payload: { showLogs: false } })}
         onRefresh={loadLogs}
         onClear={clearLogs}
+        onChannelChange={setLogChannel}
       />
 
       <Toast toast={toast} />

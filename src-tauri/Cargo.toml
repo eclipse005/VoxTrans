@@ -13,4 +13,5 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio-rustls", "macros", "migrate"] }
 tauri = { version = "2.10.3", features = [] }
 tauri-plugin-dialog = "2.6.0"
+chrono = { version = "0.4", features = ["clock"] }
 voxtrans-core = { path = "../voxtrans-core" }

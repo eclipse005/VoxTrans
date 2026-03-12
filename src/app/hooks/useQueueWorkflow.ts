@@ -9,7 +9,6 @@ import type {
   QueueItem,
   SavedSettings,
   SubtitleSegment,
-  WordToken,
   TranscribeResponse,
 } from "../../features/media/types";
 import { detectMediaKind, fileName } from "../../features/media/utils";
@@ -57,64 +56,23 @@ export function useQueueWorkflow({
   const hasQueuedTask = useMemo(() => queue.some((item) => item.transcribeStatus === "queued"), [queue]);
   const queueBusy = hasProcessingTask || hasQueuedTask;
 
-  const recordTaskEvent = useCallback(async (
+  const appendTaskLog = useCallback(async (
+    channel: "main" | "llm",
+    item: Pick<QueueItem, "id" | "path">,
     eventType: string,
     payload?: Record<string, unknown>,
-    item?: Partial<QueueItem> & {
-      id: string;
-      sourceLang?: string;
-      targetLang?: string;
-      transcribeStatus?: string;
-      transcribeError?: string;
-      transcriptSrt?: string;
-      transcribedAt?: number | null;
-      translateStatus?: string;
-      translateError?: string;
-      translatedSrt?: string;
-      translatedSrtPath?: string;
-      subtitleSegmentsJson?: string;
-      translateModel?: string;
-      translatedAt?: number | null;
-      outputSrtPath?: string;
-      outputWordsJson?: string;
-    },
   ) => {
     try {
-      await invoke("record_task_event", {
+      await invoke("append_task_log", {
         request: {
-          taskId: item?.id ?? null,
-          eventType,
-          payload: payload ?? {},
-          task: item
-            ? {
-              id: item.id,
-              mediaPath: item.path ?? "",
-              name: item.name ?? "",
-              mediaKind: item.mediaKind ?? "audio",
-              sizeBytes: item.sizeBytes ?? 0,
-              lastStatus: item.transcribeStatus ?? "pending",
-              lastError: item.transcribeError ?? "",
-              outputSrtPath: item.outputSrtPath ?? "",
-              outputWordsJson: item.outputWordsJson ?? "",
-              sourceLang: item.sourceLang ?? "auto",
-              targetLang: item.targetLang ?? "",
-              transcribeStatus: item.transcribeStatus ?? "pending",
-              transcribeError: item.transcribeError ?? "",
-              transcriptSrt: item.transcriptSrt ?? item.resultSrt ?? "",
-              transcribedAt: item.transcribedAt ?? null,
-              translateStatus: item.translateStatus ?? "idle",
-              translateError: item.translateError ?? "",
-              translatedSrt: item.translatedSrt ?? "",
-              translatedSrtPath: item.translatedSrtPath ?? "",
-              subtitleSegmentsJson: item.subtitleSegmentsJson ?? "",
-              translateModel: item.translateModel ?? "",
-              translatedAt: item.translatedAt ?? null,
-            }
-            : null,
+          taskId: item.id,
+          mediaPath: item.path,
+          channel,
+          message: formatTaskLogLine(eventType, payload),
         },
       });
     } catch {
-      // History write failures must not affect core workflow.
+      // Log write failures must not affect core workflow.
     }
   }, []);
 
@@ -140,6 +98,7 @@ export function useQueueWorkflow({
           transcribeProgress: 0,
           transcribeSegmentCurrent: 0,
           transcribeSegmentTotal: 0,
+          transcribePhase: "",
           transcribeError: "",
           translateStatus: "idle",
           translateProgress: 0,
@@ -153,10 +112,7 @@ export function useQueueWorkflow({
 
     dispatch({ type: "add_queue_items", items: incoming });
     pushToast(`已加入队列 ${paths.length} 个文件`, "success");
-    for (const item of incoming) {
-      void recordTaskEvent("queue.added", { source: "file_picker_or_drag" }, item);
-    }
-  }, [dispatch, pushToast, recordTaskEvent]);
+  }, [dispatch, pushToast]);
 
   useEffect(() => {
     let unlisten: undefined | (() => void);
@@ -201,6 +157,7 @@ export function useQueueWorkflow({
           ...old,
           transcribeSegmentCurrent: Math.max(0, payload.currentSegment || 0),
           transcribeSegmentTotal: Math.max(0, payload.totalSegments || 0),
+          transcribePhase: "recognizing",
           transcribeProgress:
             payload.totalSegments > 0
               ? Math.min(99, Math.round((Math.max(0, payload.currentSegment || 0) / payload.totalSegments) * 100))
@@ -252,19 +209,16 @@ export function useQueueWorkflow({
         transcribeProgress: 15,
         transcribeSegmentCurrent: 0,
         transcribeSegmentTotal: 0,
+        transcribePhase: "initializing",
         transcribeError: "",
       }),
     });
-    dispatch({ type: "set_ui", payload: { activeId: item.id } });
 
     try {
-      void recordTaskEvent("transcribe.started", {
+      void appendTaskLog("main", item, "transcribe.started", {
         chunkTargetSeconds: settings.chunkTargetSeconds,
         provider: settings.provider,
-      }, {
-        ...item,
-        transcribeStatus: "processing",
-        transcribeError: "",
+        mediaPath: item.path,
       });
 
       const response = await invoke<TranscribeResponse>("transcribe", {
@@ -274,6 +228,15 @@ export function useQueueWorkflow({
           provider: settings.provider,
           chunkTargetSeconds: settings.chunkTargetSeconds,
         },
+      });
+      void appendTaskLog("main", item, "transcribe.asr.completed", {
+        segmentTotal: response.segmentTotal,
+        audioDurationSec: round2(response.audioDurationSec),
+        transcribeElapsedSec: round2(response.transcribeElapsedSec),
+        executionProvider: response.executionProvider,
+        segmentDurationsSec: Array.isArray(response.segmentDurationsSec)
+          ? response.segmentDurationsSec.map(round2)
+          : [],
       });
       const built = await invoke<BuildSegmentsResponse>("build_segments_from_words", {
         request: {
@@ -286,30 +249,71 @@ export function useQueueWorkflow({
       let finalSegments = baseSegments;
       let finalText = built.text;
       let finalSrt = built.srt;
-      let finalWords = flattenWordsFromSegments(baseSegments);
-      let correctionSummary = "";
+      let hotwordError = "";
 
       if (shouldRunHotwordCorrection(hotwordCorrection)) {
         const hasLlmConfig = Boolean(llmSettings.apiKey.trim() && llmSettings.apiModel.trim());
         if (hasLlmConfig) {
+          void appendTaskLog("main", item, "hotword.started", {
+            groupId: hotwordCorrection.activeGroupId,
+          });
+          dispatch({
+            type: "patch_queue_item",
+            id: item.id,
+            updater: (old) => ({
+              ...old,
+              transcribePhase: "hotword",
+            }),
+          });
           try {
+            let llmRound = 0;
             const corrected = await correctSegmentsWithHotwords({
               segments: baseSegments,
               config: hotwordCorrection,
               llm: llmSettings,
-              invokeLlm: (request) => invoke("llm_interact", { request }),
+              invokeLlm: async (request) => {
+                llmRound += 1;
+                const safeRequest = { ...request, apiKey: "[redacted]" };
+                await appendTaskLog("llm", item, "llm.request", {
+                  round: llmRound,
+                  request: safeRequest,
+                });
+                const response = await invoke<{
+                  status: "completed" | "requires_tool";
+                  message?: string;
+                  toolCalls: Array<{
+                    id: string;
+                    type: string;
+                    function: {
+                      name: string;
+                      arguments: string;
+                    };
+                  }>;
+                }>("llm_interact", { request });
+                await appendTaskLog("llm", item, "llm.response", {
+                  round: llmRound,
+                  response,
+                });
+                return response;
+              },
             });
             finalSegments = corrected.segments;
-            finalWords = corrected.words;
             finalText = toPlainText(toSubtitleSegments(finalSegments));
             finalSrt = toSrtFromSegments(toSubtitleSegments(finalSegments));
-            correctionSummary = corrected.summary;
+            const hotwordReport = buildHotwordReport(corrected.changedCount, corrected.replacementStats);
+            void appendTaskLog("main", item, "hotword.completed", {
+              changedCount: corrected.changedCount,
+              replacements: corrected.replacementStats,
+              report: hotwordReport,
+            });
           } catch (hotwordErr) {
             reportError(hotwordErr, "runHotwordCorrection");
-            correctionSummary = toUserErrorMessage(hotwordErr, "术语矫正失败，已保留原始转录");
+            hotwordError = toUserErrorMessage(hotwordErr, "术语矫正失败，已保留原始转录");
+            void appendTaskLog("main", item, "hotword.failed", { error: hotwordError });
           }
         } else {
-          correctionSummary = "术语矫正已启用，但未配置 LLM Key/Model，已跳过";
+          hotwordError = "术语矫正已启用，但未配置 LLM Key/Model，已跳过";
+          void appendTaskLog("main", item, "hotword.skipped", { reason: hotwordError });
         }
       }
 
@@ -330,29 +334,13 @@ export function useQueueWorkflow({
           transcribeProgress: 100,
           transcribeSegmentCurrent: response.segmentTotal > 0 ? response.segmentTotal : old.transcribeSegmentCurrent,
           transcribeSegmentTotal: response.segmentTotal > 0 ? response.segmentTotal : old.transcribeSegmentTotal,
+          transcribePhase: "",
           resultText: finalText,
           resultSrt: finalSrt,
           transcribeError: "",
         }),
       });
       pushToast(`已完成：${item.name}，SRT 已保存到 ${built.srtOutputPath}`, "success");
-      void recordTaskEvent("transcribe.completed", {
-        srtOutputPath: built.srtOutputPath,
-        segmentTotal: response.segmentTotal,
-        correctionSummary,
-      }, {
-        ...item,
-        transcribeStatus: "done",
-        transcribeError: "",
-        transcriptSrt: finalSrt,
-        transcribedAt: Math.floor(Date.now() / 1000),
-        translateStatus: "idle",
-        translateError: "",
-        subtitleSegmentsJson: JSON.stringify(toSubtitleSegments(finalSegments)),
-        outputSrtPath: built.srtOutputPath,
-        // Persist final words payload for future rebuild/replay.
-        outputWordsJson: JSON.stringify(finalWords),
-      });
     } catch (err) {
       reportError(err, "runTranscribe");
       const errorMessage = toUserErrorMessage(err, "转录失败，请检查模型和运行时配置");
@@ -365,22 +353,19 @@ export function useQueueWorkflow({
           transcribeProgress: 0,
           transcribeSegmentCurrent: 0,
           transcribeSegmentTotal: 0,
+          transcribePhase: "",
           transcribeError: errorMessage,
         }),
       });
       pushToast(`失败：${item.name}，${errorMessage}`, "error");
-      void recordTaskEvent("transcribe.failed", { error: errorMessage }, {
-        ...item,
-        transcribeStatus: "error",
-        transcribeError: errorMessage,
-      });
+      void appendTaskLog("main", item, "transcribe.failed", { error: errorMessage });
     }
   }, [
     dispatch,
     hotwordCorrection,
     llmSettings,
     pushToast,
-    recordTaskEvent,
+    appendTaskLog,
     settings.chunkTargetSeconds,
     settings.provider,
   ]);
@@ -413,20 +398,15 @@ export function useQueueWorkflow({
           transcribeProgress: 0,
           transcribeSegmentCurrent: 0,
           transcribeSegmentTotal: 0,
+          transcribePhase: "",
           transcribeError: "",
         }),
       });
-      const item = queue.find((q) => q.id === id);
-      if (item) {
-        void recordTaskEvent("queue.enqueued", { mode: "batch" }, {
-          ...item,
-          transcribeStatus: "queued",
-        });
-      }
+      // Queue state updates are UI-level events; avoid writing them into main task flow log.
     }
 
     pushToast(`开始批量处理，共 ${pendingCount} 个文件`, "info");
-  }, [dispatch, pushToast, queue, recordTaskEvent]);
+  }, [dispatch, pushToast, queue]);
 
   const processSingle = useCallback(async (item: QueueItem) => {
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
@@ -439,25 +419,20 @@ export function useQueueWorkflow({
         transcribeProgress: 0,
         transcribeSegmentCurrent: 0,
         transcribeSegmentTotal: 0,
+        transcribePhase: "",
         transcribeError: "",
       }),
     });
-    void recordTaskEvent("queue.enqueued", { mode: "single" }, {
-      ...item,
-      transcribeStatus: "queued",
-    });
-
     if (queueBusy) {
       pushToast(`已加入排队：${item.name}`, "info");
     }
-  }, [dispatch, pushToast, queueBusy, recordTaskEvent]);
+  }, [dispatch, pushToast, queueBusy]);
 
   const clearQueue = useCallback(async () => {
     if (queueBusy) {
       pushToast("正在处理时不能清空队列", "error");
       return;
     }
-    void recordTaskEvent("queue.cleared", { count: queue.length });
     dispatch({ type: "clear_queue" });
     try {
       await invoke("delete_task_summaries", {
@@ -467,7 +442,7 @@ export function useQueueWorkflow({
       // Queue is already cleared in UI; ignore history cleanup failure.
     }
     pushToast("队列已清空", "info");
-  }, [dispatch, pushToast, queue, queueBusy, recordTaskEvent]);
+  }, [dispatch, pushToast, queueBusy]);
 
   const translateSingle = useCallback((item: QueueItem) => {
     dispatch({ type: "set_ui", payload: { activeId: item.id } });
@@ -484,41 +459,32 @@ export function useQueueWorkflow({
           needsTranscribeFirst && (old.transcribeStatus === "pending" || old.transcribeStatus === "error")
             ? "queued"
             : old.transcribeStatus,
+        transcribePhase:
+          needsTranscribeFirst && (old.transcribeStatus === "pending" || old.transcribeStatus === "error")
+            ? ""
+            : old.transcribePhase,
         transcribeError:
           needsTranscribeFirst && (old.transcribeStatus === "pending" || old.transcribeStatus === "error")
             ? ""
             : old.transcribeError,
       }),
     });
-    void recordTaskEvent("translate.enqueued", { source: "manual_click" }, {
-      ...item,
-      translateStatus: "queued",
-      translateError: "",
-      transcribeStatus:
-        needsTranscribeFirst && (item.transcribeStatus === "pending" || item.transcribeStatus === "error")
-          ? "queued"
-          : item.transcribeStatus,
-      transcribeError: needsTranscribeFirst ? "" : item.transcribeError,
-      transcriptSrt: item.resultSrt,
-      subtitleSegmentsJson: item.subtitleSegmentsJson,
-    });
     if (needsTranscribeFirst) {
       pushToast(`已加入转译队列：先转录再翻译（${item.name}）`, "info");
     } else {
       pushToast(`转译排期中：${item.name}（功能即将接入）`, "info");
     }
-  }, [dispatch, pushToast, recordTaskEvent]);
+  }, [dispatch, pushToast]);
 
   const removeItem = useCallback((id: string) => {
     const item = queue.find((q) => q.id === id);
     if (item) {
-      void recordTaskEvent("queue.removed", { reason: "user_action" }, item);
       void invoke("delete_task_summaries", {
         request: { taskId: item.id, mediaPath: item.path },
       });
     }
     dispatch({ type: "remove_queue_item", id });
-  }, [dispatch, queue, recordTaskEvent]);
+  }, [dispatch, queue]);
 
   return {
     queueCount,
@@ -572,8 +538,34 @@ function toSrtFromSegments(segments: SubtitleSegment[]): string {
   );
 }
 
-function flattenWordsFromSegments(segments: TimedHotwordSegment[]): WordToken[] {
-  return segments.flatMap((segment) => segment.words.map((word) => ({ ...word })));
+function formatTaskLogLine(eventType: string, payload?: Record<string, unknown>): string {
+  if (!payload || Object.keys(payload).length === 0) {
+    return eventType;
+  }
+  return `${eventType}\n${JSON.stringify(payload, null, 2)}`;
+}
+
+function round2(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 100) / 100;
+}
+
+function buildHotwordReport(
+  changedCount: number,
+  replacementStats: Array<{ oldText: string; newText: string; count: number }>,
+): string {
+  if (changedCount <= 0) {
+    return "矫正完成: 0 处修改";
+  }
+
+  const lines = [`矫正完成: ${changedCount} 处修改`, ""];
+  const stats = replacementStats.length > 0
+    ? replacementStats
+    : [{ oldText: "（未知）", newText: "（未知）", count: changedCount }];
+  for (const stat of stats) {
+    lines.push(`  ${stat.oldText} -> ${stat.newText}: ${stat.count} 处`);
+  }
+  return lines.join("\n");
 }
 
 

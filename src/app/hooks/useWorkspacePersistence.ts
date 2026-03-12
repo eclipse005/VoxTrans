@@ -66,7 +66,7 @@ function taskSummaryToQueueItem(task: TaskSummary): QueueItem {
   const transcribeStatus = normalizeTranscribeStatus(task.transcribeStatus || task.lastStatus);
   const segments = parseSubtitleSegments(task.subtitleSegmentsJson);
   const resultText = segments.map((segment) => segment.sourceText.trim()).filter(Boolean).join("\n");
-  return {
+  return recoverTransientStates({
     id: task.id,
     path: task.mediaPath,
     name: task.name,
@@ -76,6 +76,7 @@ function taskSummaryToQueueItem(task: TaskSummary): QueueItem {
     transcribeProgress: transcribeStatus === "done" ? 100 : 0,
     transcribeSegmentCurrent: 0,
     transcribeSegmentTotal: 0,
+    transcribePhase: "",
     transcribeError: task.transcribeError || task.lastError || "",
     translateStatus: task.translateStatus || "idle",
     translateProgress: task.translateStatus === "done" ? 100 : 0,
@@ -83,7 +84,7 @@ function taskSummaryToQueueItem(task: TaskSummary): QueueItem {
     resultText,
     resultSrt: task.transcriptSrt || "",
     subtitleSegmentsJson: JSON.stringify(segments),
-  };
+  });
 }
 
 function normalizeTranscribeStatus(value: string): TranscribeStatus {
@@ -103,26 +104,27 @@ function dedupeById(items: QueueItem[]): QueueItem[] {
   const seen = new Set<string>();
   const deduped: QueueItem[] = [];
   for (const item of items) {
-    if (seen.has(item.path)) continue;
-    seen.add(item.path);
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
     deduped.push(item);
   }
   return deduped;
 }
 
 function normalizeQueueItem(item: QueueItem): QueueItem {
-  return {
+  return recoverTransientStates({
     ...item,
     transcribeStatus: normalizeTranscribeStatus(item.transcribeStatus),
     transcribeProgress: clampProgress(item.transcribeProgress),
     transcribeSegmentCurrent: Math.max(0, item.transcribeSegmentCurrent || 0),
     transcribeSegmentTotal: Math.max(0, item.transcribeSegmentTotal || 0),
+    transcribePhase: normalizeTranscribePhase(item.transcribePhase),
     transcribeError: item.transcribeError || "",
     translateStatus: normalizeTranslateStatus(item.translateStatus),
     translateProgress: clampProgress(item.translateProgress),
     translateError: item.translateError || "",
     subtitleSegmentsJson: normalizeSubtitleSegmentsJson(item.subtitleSegmentsJson),
-  };
+  });
 }
 
 function normalizeTranslateStatus(value: string): TranslateStatus {
@@ -135,6 +137,17 @@ function normalizeTranslateStatus(value: string): TranslateStatus {
       return value;
     default:
       return "idle";
+  }
+}
+
+function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] {
+  switch (value) {
+    case "initializing":
+    case "recognizing":
+    case "hotword":
+      return value;
+    default:
+      return "";
   }
 }
 
@@ -170,5 +183,32 @@ function parseSubtitleSegments(raw: string): SubtitleSegment[] {
   } catch {
     return [];
   }
+}
+
+function recoverTransientStates(item: QueueItem): QueueItem {
+  let next = { ...item };
+
+  if (next.transcribeStatus === "processing") {
+    next = {
+      ...next,
+      transcribeStatus: "error",
+      transcribeProgress: 0,
+      transcribeSegmentCurrent: 0,
+      transcribeSegmentTotal: 0,
+      transcribePhase: "",
+      transcribeError: next.transcribeError || "任务在上次退出时中断，请重试",
+    };
+  }
+
+  if (next.translateStatus === "processing") {
+    next = {
+      ...next,
+      translateStatus: "error",
+      translateProgress: 0,
+      translateError: next.translateError || "任务在上次退出时中断，请重试",
+    };
+  }
+
+  return next;
 }
 

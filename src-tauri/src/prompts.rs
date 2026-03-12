@@ -125,8 +125,8 @@ batch_replace(replacements=[
                 parameters: json!({
                     "type": "object",
                     "properties": {
-                        "start_idx": { "type": "integer", "description": "起始索引（可选，从0开始）" },
-                        "end_idx": { "type": "integer", "description": "结束索引（可选）" }
+                        "start_idx": { "type": "integer", "description": "起始索引（0基，0表示第1句）" },
+                        "end_idx": { "type": "integer", "description": "结束索引（0基，开区间）" }
                     }
                 }),
             },

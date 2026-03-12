@@ -37,6 +37,7 @@ struct TranscribeRequest {
 struct TranscribeResponse {
     words: Vec<WordTokenResponse>,
     segment_total: usize,
+    segment_durations_sec: Vec<f64>,
     audio_duration_sec: f64,
     transcribe_elapsed_sec: f64,
     execution_provider: String,
@@ -170,6 +171,11 @@ async fn transcribe(
         Ok(TranscribeResponse {
             words: words.iter().map(word_to_response).collect(),
             segment_total: output.segment_summaries.len(),
+            segment_durations_sec: output
+                .segment_summaries
+                .iter()
+                .map(|s| (s.duration_sec * 100.0).round() / 100.0)
+                .collect(),
             audio_duration_sec: output.audio_duration_sec,
             transcribe_elapsed_sec: output.transcribe_elapsed_sec,
             execution_provider: output.execution_provider.to_string(),
@@ -501,6 +507,9 @@ fn main() {
             commands::history::list_task_summaries,
             commands::history::clear_task_events,
             commands::history::delete_task_summaries,
+            commands::logs::append_task_log,
+            commands::logs::read_task_log,
+            commands::logs::clear_task_logs,
             prompts::build_hotword_correction_prompts,
             llm::llm_interact,
             llm::llm_test_connection

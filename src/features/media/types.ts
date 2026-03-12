@@ -8,6 +8,7 @@ export type SavedSettings = {
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
 export type TranslateStatus = "idle" | "queued" | "processing" | "done" | "error";
+export type TranscribePhase = "initializing" | "recognizing" | "hotword";
 
 export type SubtitleCue = {
   id: string;
@@ -34,6 +35,7 @@ export type QueueItem = {
   transcribeProgress: number;
   transcribeSegmentCurrent: number;
   transcribeSegmentTotal: number;
+  transcribePhase?: TranscribePhase | "";
   transcribeError: string;
   translateStatus: TranslateStatus;
   translateProgress: number;
@@ -59,6 +61,7 @@ export type SegmentWithWords = {
 export type TranscribeResponse = {
   words: WordToken[];
   segmentTotal: number;
+  segmentDurationsSec: number[];
   audioDurationSec: number;
   transcribeElapsedSec: number;
   executionProvider: string;
@@ -195,11 +198,5 @@ export type TaskSummary = {
   updatedAt: number;
 } & TaskLanguage & TaskPipelineStatus & TaskAssets;
 
-export type TaskEventRecord = {
-  id: number;
-  taskId: string | null;
-  eventType: string;
-  payload: Record<string, unknown>;
-  createdAt: number;
-};
+export type TaskLogChannel = "main" | "llm";
 

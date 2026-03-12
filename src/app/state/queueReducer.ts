@@ -3,8 +3,8 @@ import type { AppState, QueueAction } from "./appReducer";
 export function reduceQueueState(state: AppState, action: QueueAction): AppState {
   switch (action.type) {
     case "add_queue_items": {
-      const existed = new Set(state.queue.map((item) => item.path));
-      const toAdd = action.items.filter((item) => !existed.has(item.path));
+      const existed = new Set(state.queue.map((item) => item.id));
+      const toAdd = action.items.filter((item) => !existed.has(item.id));
       return {
         ...state,
         queue: [...state.queue, ...toAdd],

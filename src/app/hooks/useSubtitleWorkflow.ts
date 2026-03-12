@@ -36,6 +36,7 @@ export function useSubtitleWorkflow({
 }: UseSubtitleWorkflowArgs) {
   const subtitleSaveTimerRef = useRef<number | null>(null);
   const subtitleSavedIndicatorTimerRef = useRef<number | null>(null);
+  const loadedSubtitleVersionRef = useRef<string>("");
 
   const clearSubtitleSavedIndicatorTimer = useCallback(() => {
     if (subtitleSavedIndicatorTimerRef.current != null) {
@@ -126,6 +127,7 @@ export function useSubtitleWorkflow({
         subtitleDirty: false,
         subtitleSaveState: "idle",
       }});
+      loadedSubtitleVersionRef.current = buildSubtitleVersion(item);
 
       if (response.usingDraft) {
         pushToast("已恢复自动保存草稿", "info");
@@ -144,6 +146,7 @@ export function useSubtitleWorkflow({
         subtitleDirty: false,
         subtitleSaveState: "error",
       }});
+      loadedSubtitleVersionRef.current = buildSubtitleVersion(item);
     }
   }, [clearSubtitleSavedIndicatorTimer, dispatch, pushToast]);
 
@@ -378,11 +381,22 @@ export function useSubtitleWorkflow({
         subtitleSaveState: "idle",
         subtitleDirty: false,
       }});
+      loadedSubtitleVersionRef.current = "";
       return;
     }
-    if (subtitleTaskId === activeItem.id) return;
+
+    if (subtitleTaskId !== activeItem.id) {
+      void loadSubtitleEditor(activeItem);
+      return;
+    }
+
+    // Same selected task: reload once transcription output changes from the queue state.
+    if (subtitleDirty) return;
+    if (activeItem.transcribeStatus !== "done") return;
+    const currentVersion = buildSubtitleVersion(activeItem);
+    if (loadedSubtitleVersionRef.current === currentVersion) return;
     void loadSubtitleEditor(activeItem);
-  }, [activeId, clearSubtitleSavedIndicatorTimer, dispatch, loadSubtitleEditor, queue, subtitleTaskId]);
+  }, [activeId, clearSubtitleSavedIndicatorTimer, dispatch, loadSubtitleEditor, queue, subtitleDirty, subtitleTaskId]);
 
   const activeItem = queue.find((item) => item.id === activeId) ?? null;
 
@@ -454,6 +468,15 @@ function parseSubtitleSegments(raw?: string): Array<{ startMs: number; endMs: nu
 
 function overlapMs(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
   return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
+}
+
+function buildSubtitleVersion(item: QueueItem): string {
+  return [
+    item.id,
+    item.transcribeStatus,
+    item.resultSrt,
+    item.subtitleSegmentsJson,
+  ].join("|");
 }
 
 

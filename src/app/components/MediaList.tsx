@@ -38,6 +38,19 @@ function mapTranslateToQueueStatus(status: TranslateStatus): QueueStatus {
   return "error";
 }
 
+function getTranscribeProcessingText(item: QueueItem): string {
+  if (item.transcribePhase === "hotword") {
+    return "术语矫正中";
+  }
+  if (item.transcribePhase === "initializing") {
+    return "转录准备中";
+  }
+  if (item.transcribeSegmentTotal > 1) {
+    return `转录处理中 ${Math.min(item.transcribeSegmentCurrent || 0, item.transcribeSegmentTotal)}/${item.transcribeSegmentTotal}`;
+  }
+  return "转录处理中";
+}
+
 export default function MediaList({
   queue,
   queueCount,
@@ -71,11 +84,7 @@ export default function MediaList({
           queue.map((item) => {
             const primaryStatus = resolvePrimaryStatus(item);
             const transcribeProcessing = item.transcribeStatus === "processing";
-            const transcribeProgressText = transcribeProcessing
-              ? (item.transcribeSegmentTotal > 1
-                ? `转录处理中 ${Math.min(item.transcribeSegmentCurrent || 0, item.transcribeSegmentTotal)}/${item.transcribeSegmentTotal}`
-                : "转录处理中")
-              : "";
+            const transcribeProgressText = transcribeProcessing ? getTranscribeProcessingText(item) : "";
 
             return (
               <div key={item.id} className={`file-item ${item.id === activeId ? "active" : ""}`} onClick={() => onSetActiveId(item.id)}>
@@ -90,7 +99,7 @@ export default function MediaList({
                         <div className="file-meta">{formatBytes(item.sizeBytes)}</div>
                         <div className="file-task-info">
                           {transcribeProcessing ? (
-                            <span key={`${item.id}-${item.transcribeSegmentCurrent}-${item.transcribeSegmentTotal}`} className="task-step task-step-progress">
+                            <span key={`${item.id}-${item.transcribePhase || ""}-${item.transcribeSegmentCurrent}-${item.transcribeSegmentTotal}`} className="task-step task-step-progress">
                               {transcribeProgressText}
                             </span>
                           ) : primaryStatus === "processing" && item.transcribeSegmentTotal <= 0 ? (

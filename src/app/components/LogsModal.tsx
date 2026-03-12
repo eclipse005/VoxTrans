@@ -1,21 +1,29 @@
-import type { TaskEventRecord } from "../../features/media/types";
+import type { TaskLogChannel } from "../../features/media/types";
 import { useDialogA11y } from "./useDialogA11y";
 
 type LogsModalProps = {
   visible: boolean;
   loading: boolean;
-  events: TaskEventRecord[];
+  taskName: string;
+  activeChannel: TaskLogChannel;
+  content: string;
   onClose: () => void;
   onRefresh: () => void | Promise<void>;
   onClear: () => void | Promise<void>;
+  onChannelChange: (channel: TaskLogChannel) => void;
 };
 
-function formatEventTime(createdAt: number): string {
-  const tsMs = createdAt > 1_000_000_000_000 ? createdAt : createdAt * 1000;
-  return new Date(tsMs).toLocaleString();
-}
-
-export default function LogsModal({ visible, loading, events, onClose, onRefresh, onClear }: LogsModalProps) {
+export default function LogsModal({
+  visible,
+  loading,
+  taskName,
+  activeChannel,
+  content,
+  onClose,
+  onRefresh,
+  onClear,
+  onChannelChange,
+}: LogsModalProps) {
   const dialogRef = useDialogA11y(visible, onClose);
   if (!visible) return null;
 
@@ -31,37 +39,49 @@ export default function LogsModal({ visible, loading, events, onClose, onRefresh
       >
         <button className="modal-close" onClick={onClose} aria-label="关闭日志">×</button>
         <div className="logs-header">
-          <h3 id="logs-modal-title" className="apple-heading-small">运行日志</h3>
+          <div className="logs-title-block">
+            <h3 id="logs-modal-title" className="apple-heading-small">运行日志</h3>
+            <div className="logs-task-name" title={taskName}>{taskName}</div>
+          </div>
           <div className="logs-actions">
             <button className="apple-button apple-button-secondary" onClick={() => { void onRefresh(); }} disabled={loading}>
               刷新
             </button>
-            <button className="apple-button apple-button-secondary" onClick={() => { void onClear(); }} disabled={loading || events.length === 0}>
+            <button className="apple-button apple-button-secondary" onClick={() => { void onClear(); }} disabled={loading || content.trim().length === 0}>
               清空日志
             </button>
           </div>
         </div>
 
+        <div className="logs-tabs" role="tablist" aria-label="日志文件切换">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeChannel === "main"}
+            className={`logs-tab-btn ${activeChannel === "main" ? "active" : ""}`}
+            onClick={() => onChannelChange("main")}
+          >
+            主流程
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeChannel === "llm"}
+            className={`logs-tab-btn ${activeChannel === "llm" ? "active" : ""}`}
+            onClick={() => onChannelChange("llm")}
+          >
+            LLM 交互
+          </button>
+        </div>
+
         <div className="logs-body">
           {loading ? <div className="logs-empty">加载中...</div> : null}
-          {!loading && events.length === 0 ? <div className="logs-empty">暂无日志</div> : null}
-          {!loading && events.length > 0 ? (
-            <div className="logs-list">
-              {events.map((event) => (
-                <article key={event.id} className="logs-item">
-                  <div className="logs-item-head">
-                    <span className="logs-event-type">{event.eventType}</span>
-                    <span className="logs-time">{formatEventTime(event.createdAt)}</span>
-                  </div>
-                  <div className="logs-item-meta">任务: {event.taskId || "全局"}</div>
-                  <pre className="logs-payload">{JSON.stringify(event.payload ?? {}, null, 2)}</pre>
-                </article>
-              ))}
-            </div>
+          {!loading && content.trim().length === 0 ? <div className="logs-empty">暂无日志</div> : null}
+          {!loading && content.trim().length > 0 ? (
+            <pre className="logs-text">{content}</pre>
           ) : null}
         </div>
       </div>
     </div>
   );
 }
-
