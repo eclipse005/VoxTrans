@@ -40,7 +40,7 @@ function mapTranslateToQueueStatus(status: TranslateStatus): QueueStatus {
 
 function getTranscribeProcessingText(item: QueueItem): string {
   if (item.transcribePhase === "hotword") {
-    return "术语矫正中";
+    return "热词矫正中";
   }
   if (item.transcribePhase === "punctuation") {
     return "标点恢复中";

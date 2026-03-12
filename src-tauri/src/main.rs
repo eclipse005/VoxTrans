@@ -510,6 +510,8 @@ fn main() {
             commands::logs::append_task_log,
             commands::logs::read_task_log,
             commands::logs::clear_task_logs,
+            commands::usage::record_task_llm_usage,
+            commands::usage::get_task_llm_usage_summary,
             prompts::build_hotword_correction_prompts,
             prompts::build_punctuation_restore_prompt,
             llm::llm_interact,

@@ -26,5 +26,5 @@ export type HotwordCorrection = {
 };
 
 export type UploadTab = "local" | "youtube";
-export type SettingsTab = "transcribe" | "translate" | "hotword" | "advanced";
+export type SettingsTab = "transcribe" | "llm" | "hotword" | "advanced";
 export type SubtitleSaveState = "idle" | "saving" | "saved" | "error";

@@ -181,8 +181,8 @@ export default function SettingsModal(props: SettingsModalProps) {
           <button className={`settings-tab-btn ${settingsTab === "transcribe" ? "active" : ""}`} onClick={() => onSettingsTabChange("transcribe")}>
             转录
           </button>
-          <button className={`settings-tab-btn ${settingsTab === "translate" ? "active" : ""}`} onClick={() => onSettingsTabChange("translate")}>
-            翻译
+          <button className={`settings-tab-btn ${settingsTab === "llm" ? "active" : ""}`} onClick={() => onSettingsTabChange("llm")}>
+            LLM
           </button>
           <button className={`settings-tab-btn ${settingsTab === "hotword" ? "active" : ""}`} onClick={() => onSettingsTabChange("hotword")}>
             热词矫正
@@ -254,10 +254,10 @@ export default function SettingsModal(props: SettingsModalProps) {
             </div>
           ) : null}
 
-          {settingsTab === "translate" ? (
+          {settingsTab === "llm" ? (
             <div className="settings-tab-content active">
               <div className="settings-section">
-                <h3 className="apple-heading-small">翻译接口</h3>
+                <h3 className="apple-heading-small">LLM 接口</h3>
                 <div className="api-config-form">
                   <div className="form-group">
                     <label>密钥</label>

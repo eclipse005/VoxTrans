@@ -2344,6 +2344,62 @@
   gap: 8px;
 }
 
+.logs-usage-card {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  border: 1px solid var(--apple-border-light);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.logs-usage-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid var(--apple-border-lighter);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.logs-usage-label {
+  font-size: 12px;
+  color: var(--apple-text-secondary);
+}
+
+.logs-usage-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--apple-text-primary);
+}
+
+.logs-usage-stages {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.logs-usage-stage {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--apple-border-lighter);
+  background: #fff;
+  font-size: 12px;
+  color: var(--apple-text-secondary);
+}
+
+.logs-usage-stage-empty {
+  font-size: 12px;
+  color: var(--apple-text-secondary);
+}
+
 .logs-tab-btn {
   min-height: 32px;
   padding: 0 12px;

@@ -179,6 +179,21 @@ export async function restorePunctuationOnWords(
   };
 }
 
+export function countSuspiciousPunctuationSentences(words: WordToken[]): {
+  sentenceTotal: number;
+  suspiciousCount: number;
+} {
+  if (!words.length) {
+    return { sentenceTotal: 0, suspiciousCount: 0 };
+  }
+  const sentences = splitTemporarySentences(words);
+  const suspiciousCount = sentences.filter((sentence) => isSuspiciousSentence(sentence.text)).length;
+  return {
+    sentenceTotal: sentences.length,
+    suspiciousCount,
+  };
+}
+
 function splitTemporarySentences(words: WordToken[]): TemporarySentence[] {
   const sentences: TemporarySentence[] = [];
   let start = 0;

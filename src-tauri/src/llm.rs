@@ -76,6 +76,9 @@ pub struct LlmInteractResponse {
     pub message: Option<String>,
     pub tool_calls: Vec<LlmToolCall>,
     pub finish_reason: Option<String>,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
     pub raw: Value,
 }
 
@@ -231,11 +234,27 @@ fn parse_llm_response(raw: &Value) -> Result<LlmInteractResponse, String> {
         "completed"
     };
 
+    let prompt_tokens = raw
+        .get("usage")
+        .and_then(|u| u.get("prompt_tokens"))
+        .and_then(|v| v.as_u64());
+    let completion_tokens = raw
+        .get("usage")
+        .and_then(|u| u.get("completion_tokens"))
+        .and_then(|v| v.as_u64());
+    let total_tokens = raw
+        .get("usage")
+        .and_then(|u| u.get("total_tokens"))
+        .and_then(|v| v.as_u64());
+
     Ok(LlmInteractResponse {
         status: status.to_string(),
         message,
         tool_calls,
         finish_reason,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
         raw: raw.clone(),
     })
 }

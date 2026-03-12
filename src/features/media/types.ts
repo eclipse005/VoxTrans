@@ -201,3 +201,19 @@ export type TaskSummary = {
 
 export type TaskLogChannel = "main" | "llm";
 
+export type TaskLlmUsageBucket = {
+  stage: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  updatedAt: number;
+};
+
+export type TaskLlmUsageSummary = {
+  taskId: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  buckets: TaskLlmUsageBucket[];
+};
+

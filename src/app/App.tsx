@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { LlmTestConnectionResponse, SavedSettings, TaskLogChannel } from "../features/media/types";
+import type {
+  LlmTestConnectionResponse,
+  SavedSettings,
+  TaskLlmUsageSummary,
+  TaskLogChannel,
+} from "../features/media/types";
 import MediaList from "./components/MediaList";
 import LogsModal from "./components/LogsModal";
 import Navbar from "./components/Navbar";
@@ -71,6 +76,7 @@ function App() {
   } | null>(null);
   const [logChannel, setLogChannel] = useState<TaskLogChannel>("main");
   const [logContent, setLogContent] = useState("");
+  const [logUsageSummary, setLogUsageSummary] = useState<TaskLlmUsageSummary | null>(null);
   const [loadingLogs, setLoadingLogs] = useState(false);
 
   useAppPersistence(terms, hotwordCorrection, dispatch);
@@ -127,20 +133,38 @@ function App() {
     () => queue.find((item) => item.id === activeId) ?? null,
     [queue, activeId],
   );
-  const settingsTabIndex = settingsTab === "transcribe" ? 0 : settingsTab === "translate" ? 1 : settingsTab === "hotword" ? 2 : 3;
+  const settingsTabIndex = settingsTab === "transcribe" ? 0 : settingsTab === "llm" ? 1 : settingsTab === "hotword" ? 2 : 3;
   const tabIndicatorStyle = { ["--tab-index" as string]: settingsTabIndex } as Record<string, number>;
   const loadLogs = useCallback(async () => {
     if (!logTaskContext) return;
     setLoadingLogs(true);
     try {
-      const content = await invoke<string>("read_task_log", {
-        request: {
-          taskId: logTaskContext.taskId,
-          mediaPath: logTaskContext.mediaPath,
-          channel: logChannel,
-        },
-      });
-      setLogContent(content || "");
+      const [contentResult, usageResult] = await Promise.allSettled([
+        invoke<string>("read_task_log", {
+          request: {
+            taskId: logTaskContext.taskId,
+            mediaPath: logTaskContext.mediaPath,
+            channel: logChannel,
+          },
+        }),
+        invoke<TaskLlmUsageSummary>("get_task_llm_usage_summary", {
+          request: {
+            taskId: logTaskContext.taskId,
+          },
+        }),
+      ]);
+
+      if (contentResult.status === "fulfilled") {
+        setLogContent(contentResult.value || "");
+      } else {
+        throw contentResult.reason;
+      }
+
+      if (usageResult.status === "fulfilled") {
+        setLogUsageSummary(usageResult.value ?? null);
+      } else {
+        setLogUsageSummary(null);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "加载日志失败";
       pushToast(message, "error");
@@ -161,6 +185,7 @@ function App() {
     });
     setLogChannel("main");
     setLogContent("");
+    setLogUsageSummary(null);
     dispatch({ type: "set_ui", payload: { showLogs: true } });
   }, [activeQueueItem, dispatch, pushToast]);
 
@@ -506,6 +531,7 @@ function App() {
         taskName={logTaskContext?.taskName || ""}
         activeChannel={logChannel}
         content={logContent}
+        usageSummary={logUsageSummary}
         onClose={() => dispatch({ type: "set_ui", payload: { showLogs: false } })}
         onRefresh={loadLogs}
         onClear={clearLogs}

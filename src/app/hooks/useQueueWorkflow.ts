@@ -19,7 +19,7 @@ import {
   shouldRunHotwordCorrection,
   type TimedHotwordSegment,
 } from "../utils/hotwordCorrection";
-import { restorePunctuationOnWords } from "../utils/punctuationCorrection";
+import { countSuspiciousPunctuationSentences, restorePunctuationOnWords } from "../utils/punctuationCorrection";
 import { reportError, toUserErrorMessage } from "../utils/errors";
 
 type DispatchState = (action: AppAction) => void;
@@ -74,6 +74,34 @@ export function useQueueWorkflow({
       });
     } catch {
       // Log write failures must not affect core workflow.
+    }
+  }, []);
+
+  const recordLlmUsage = useCallback(async (
+    item: Pick<QueueItem, "id">,
+    stage: "punctuation" | "hotword",
+    usage: {
+      promptTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+    },
+  ) => {
+    const promptTokens = Math.max(0, Math.round(usage.promptTokens ?? 0));
+    const completionTokens = Math.max(0, Math.round(usage.completionTokens ?? 0));
+    const totalTokens = Math.max(0, Math.round(usage.totalTokens ?? (promptTokens + completionTokens)));
+    if (promptTokens <= 0 && completionTokens <= 0 && totalTokens <= 0) return;
+    try {
+      await invoke("record_task_llm_usage", {
+        request: {
+          taskId: item.id,
+          stage,
+          promptTokens,
+          completionTokens,
+          totalTokens,
+        },
+      });
+    } catch {
+      // Usage stats failures must not affect workflow.
     }
   }, []);
 
@@ -247,16 +275,29 @@ export function useQueueWorkflow({
             reason: "自动标点增强已启用，但未配置 LLM Key/Model，已跳过",
           });
         } else {
-          dispatch({
-            type: "patch_queue_item",
-            id: item.id,
-            updater: (old) => ({
-              ...old,
-              transcribePhase: "punctuation",
-            }),
-          });
-          void appendTaskLog("main", item, "punc.started");
-          try {
+          const scan = countSuspiciousPunctuationSentences(response.words);
+          if (scan.suspiciousCount > 0) {
+            dispatch({
+              type: "patch_queue_item",
+              id: item.id,
+              updater: (old) => ({
+                ...old,
+                transcribePhase: "punctuation",
+              }),
+            });
+            void appendTaskLog("main", item, "punc.started", {
+              sentenceTotal: scan.sentenceTotal,
+              suspiciousCount: scan.suspiciousCount,
+            });
+          } else {
+            void appendTaskLog("main", item, "punc.skipped", {
+              reason: "未检测到可疑句，跳过标点恢复",
+              sentenceTotal: scan.sentenceTotal,
+              suspiciousCount: 0,
+            });
+          }
+          if (scan.suspiciousCount > 0) {
+            try {
             let puncRound = 0;
             const restored = await restorePunctuationOnWords({
               words: response.words,
@@ -271,6 +312,9 @@ export function useQueueWorkflow({
                 const llmResponse = await invoke<{
                   status: "completed" | "requires_tool";
                   message?: string;
+                  promptTokens?: number;
+                  completionTokens?: number;
+                  totalTokens?: number;
                   toolCalls: Array<{
                     id: string;
                     type: string;
@@ -284,6 +328,11 @@ export function useQueueWorkflow({
                   round: puncRound,
                   response: llmResponse,
                 });
+                await recordLlmUsage(item, "punctuation", {
+                  promptTokens: llmResponse.promptTokens,
+                  completionTokens: llmResponse.completionTokens,
+                  totalTokens: llmResponse.totalTokens,
+                });
                 return llmResponse;
               },
             });
@@ -295,11 +344,12 @@ export function useQueueWorkflow({
               acceptedCount: restored.acceptedCount,
               rejectedCount: restored.rejectedCount,
             });
-          } catch (puncErr) {
-            reportError(puncErr, "runPunctuationCorrection");
-            void appendTaskLog("main", item, "punc.failed", {
-              error: toUserErrorMessage(puncErr, "自动标点增强失败，已保留原始转录"),
-            });
+            } catch (puncErr) {
+              reportError(puncErr, "runPunctuationCorrection");
+              void appendTaskLog("main", item, "punc.failed", {
+                error: toUserErrorMessage(puncErr, "自动标点增强失败，已保留原始转录"),
+              });
+            }
           }
         }
       }
@@ -346,6 +396,9 @@ export function useQueueWorkflow({
                 const response = await invoke<{
                   status: "completed" | "requires_tool";
                   message?: string;
+                  promptTokens?: number;
+                  completionTokens?: number;
+                  totalTokens?: number;
                   toolCalls: Array<{
                     id: string;
                     type: string;
@@ -358,6 +411,11 @@ export function useQueueWorkflow({
                 await appendTaskLog("llm", item, "llm.response", {
                   round: llmRound,
                   response,
+                });
+                await recordLlmUsage(item, "hotword", {
+                  promptTokens: response.promptTokens,
+                  completionTokens: response.completionTokens,
+                  totalTokens: response.totalTokens,
                 });
                 return response;
               },
@@ -373,11 +431,11 @@ export function useQueueWorkflow({
             });
           } catch (hotwordErr) {
             reportError(hotwordErr, "runHotwordCorrection");
-            hotwordError = toUserErrorMessage(hotwordErr, "术语矫正失败，已保留原始转录");
+            hotwordError = toUserErrorMessage(hotwordErr, "热词矫正失败，已保留原始转录");
             void appendTaskLog("main", item, "hotword.failed", { error: hotwordError });
           }
         } else {
-          hotwordError = "术语矫正已启用，但未配置 LLM Key/Model，已跳过";
+          hotwordError = "热词矫正已启用，但未配置 LLM Key/Model，已跳过";
           void appendTaskLog("main", item, "hotword.skipped", { reason: hotwordError });
         }
       }
@@ -431,6 +489,7 @@ export function useQueueWorkflow({
     llmSettings,
     pushToast,
     appendTaskLog,
+    recordLlmUsage,
     settings.autoPunc,
     settings.chunkTargetSeconds,
     settings.provider,

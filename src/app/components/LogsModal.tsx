@@ -1,4 +1,4 @@
-import type { TaskLogChannel } from "../../features/media/types";
+import type { TaskLogChannel, TaskLlmUsageSummary } from "../../features/media/types";
 import { useDialogA11y } from "./useDialogA11y";
 
 type LogsModalProps = {
@@ -7,6 +7,7 @@ type LogsModalProps = {
   taskName: string;
   activeChannel: TaskLogChannel;
   content: string;
+  usageSummary: TaskLlmUsageSummary | null;
   onClose: () => void;
   onRefresh: () => void | Promise<void>;
   onClear: () => void | Promise<void>;
@@ -19,6 +20,7 @@ export default function LogsModal({
   taskName,
   activeChannel,
   content,
+  usageSummary,
   onClose,
   onRefresh,
   onClear,
@@ -74,6 +76,32 @@ export default function LogsModal({
           </button>
         </div>
 
+        <div className="logs-usage-card">
+          <div className="logs-usage-row">
+            <span className="logs-usage-label">总 Tokens</span>
+            <span className="logs-usage-value">{formatNumber(usageSummary?.totalTokens ?? 0)}</span>
+          </div>
+          <div className="logs-usage-row">
+            <span className="logs-usage-label">输入</span>
+            <span className="logs-usage-value">{formatNumber(usageSummary?.promptTokens ?? 0)}</span>
+          </div>
+          <div className="logs-usage-row">
+            <span className="logs-usage-label">输出</span>
+            <span className="logs-usage-value">{formatNumber(usageSummary?.completionTokens ?? 0)}</span>
+          </div>
+          <div className="logs-usage-stages">
+            {(usageSummary?.buckets ?? []).length === 0 ? (
+              <span className="logs-usage-stage-empty">暂无阶段 Token 记录</span>
+            ) : (
+              usageSummary?.buckets.map((bucket) => (
+                <span key={bucket.stage} className="logs-usage-stage">
+                  {toStageLabel(bucket.stage)}: {formatNumber(bucket.totalTokens)}
+                </span>
+              ))
+            )}
+          </div>
+        </div>
+
         <div className="logs-body">
           {loading ? <div className="logs-empty">加载中...</div> : null}
           {!loading && content.trim().length === 0 ? <div className="logs-empty">暂无日志</div> : null}
@@ -84,4 +112,14 @@ export default function LogsModal({
       </div>
     </div>
   );
+}
+
+function formatNumber(value: number): string {
+  return Math.max(0, value || 0).toLocaleString();
+}
+
+function toStageLabel(stage: string): string {
+  if (stage === "hotword") return "热词矫正";
+  if (stage === "punctuation") return "标点恢复";
+  return stage;
 }
