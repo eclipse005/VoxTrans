@@ -1,7 +1,10 @@
+pub mod file;
 pub mod history;
 pub mod logs;
 pub mod model;
 pub mod preferences;
+pub mod subtitle;
 pub mod system;
+pub mod transcribe;
 pub mod usage;
 pub mod workspace;
