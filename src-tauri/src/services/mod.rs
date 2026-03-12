@@ -1,3 +1,4 @@
+pub mod file;
 pub mod history;
 pub mod logs;
 pub mod model;

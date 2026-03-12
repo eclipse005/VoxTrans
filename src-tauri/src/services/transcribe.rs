@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::Emitter;
-use tauri::async_runtime::spawn_blocking;
 use voxtrans_core::subtitle::segmenter::{
     WordToken, normalize_word_tokens, plain_text_from_segments, split_english_segments,
     words_from_timed_tokens,
@@ -28,14 +26,6 @@ pub struct TranscribeResponse {
     pub audio_duration_sec: f64,
     pub transcribe_elapsed_sec: f64,
     pub execution_provider: String,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct TranscribeProgressEvent {
-    task_id: String,
-    current_segment: usize,
-    total_segments: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -72,58 +62,47 @@ pub struct BuildSegmentsResponse {
     pub segments: Vec<SegmentWithWordsDto>,
 }
 
-pub async fn transcribe(
-    app: tauri::AppHandle,
+pub fn transcribe_blocking<F>(
     request: TranscribeRequest,
-) -> Result<TranscribeResponse, String> {
-    spawn_blocking(move || {
-        let task_id = request.task_id.clone();
-        let app_handle = app.clone();
-        let mut options = TranscribeOptions::default();
-        let audio_path = PathBuf::from(&request.audio_path);
-        options.audio_path = audio_path;
-        options.provider = match request.provider.to_ascii_lowercase().as_str() {
-            "cpu" => Provider::Cpu,
-            "cuda" => Provider::Cuda,
-            other => return Err(format!("unsupported provider: {other}")),
-        };
-        options.timestamp_mode = TimestampKind::Words;
-        options.chunk_target_seconds = request.chunk_target_seconds.clamp(60, 1800) as f64;
-        options.model_dir = crate::services::model::resolve_model_dir();
+    mut on_progress: F,
+) -> Result<TranscribeResponse, String>
+where
+    F: FnMut(usize, usize),
+{
+    let mut options = TranscribeOptions::default();
+    let audio_path = PathBuf::from(&request.audio_path);
+    options.audio_path = audio_path;
+    options.provider = match request.provider.to_ascii_lowercase().as_str() {
+        "cpu" => Provider::Cpu,
+        "cuda" => Provider::Cuda,
+        other => return Err(format!("unsupported provider: {other}")),
+    };
+    options.timestamp_mode = TimestampKind::Words;
+    options.chunk_target_seconds = request.chunk_target_seconds.clamp(60, 1800) as f64;
+    options.model_dir = crate::services::model::resolve_model_dir();
 
-        if let Some(model_dir) = request.model_dir {
-            options.model_dir = PathBuf::from(model_dir);
-        }
+    if let Some(model_dir) = request.model_dir {
+        options.model_dir = PathBuf::from(model_dir);
+    }
 
-        let output =
-            voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
-                let _ = app_handle.emit(
-                    "transcribe-progress",
-                    TranscribeProgressEvent {
-                        task_id: task_id.clone(),
-                        current_segment: current,
-                        total_segments: total,
-                    },
-                );
-            })
-            .map_err(|err| err.to_string())?;
-        let words = normalize_word_tokens(words_from_timed_tokens(&output.tokens));
-
-        Ok(TranscribeResponse {
-            words: words.iter().map(word_to_dto).collect(),
-            segment_total: output.segment_summaries.len(),
-            segment_durations_sec: output
-                .segment_summaries
-                .iter()
-                .map(|s| (s.duration_sec * 100.0).round() / 100.0)
-                .collect(),
-            audio_duration_sec: output.audio_duration_sec,
-            transcribe_elapsed_sec: output.transcribe_elapsed_sec,
-            execution_provider: output.execution_provider.to_string(),
-        })
+    let output = voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
+        on_progress(current, total);
     })
-    .await
-    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())?;
+    let words = normalize_word_tokens(words_from_timed_tokens(&output.tokens));
+
+    Ok(TranscribeResponse {
+        words: words.iter().map(word_to_dto).collect(),
+        segment_total: output.segment_summaries.len(),
+        segment_durations_sec: output
+            .segment_summaries
+            .iter()
+            .map(|s| (s.duration_sec * 100.0).round() / 100.0)
+            .collect(),
+        audio_duration_sec: output.audio_duration_sec,
+        transcribe_elapsed_sec: output.transcribe_elapsed_sec,
+        execution_provider: output.execution_provider.to_string(),
+    })
 }
 
 pub fn build_segments_from_words(request: BuildSegmentsRequest) -> Result<BuildSegmentsResponse, String> {

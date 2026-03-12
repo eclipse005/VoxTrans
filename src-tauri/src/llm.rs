@@ -352,14 +352,12 @@ fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractR
     Err(final_error)
 }
 
-#[tauri::command]
 pub async fn llm_interact(request: LlmInteractRequest) -> Result<LlmInteractResponse, String> {
     spawn_blocking(move || run_llm_interact_blocking(request))
         .await
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 pub async fn llm_test_connection(
     request: LlmTestConnectionRequest,
 ) -> Result<LlmTestConnectionResponse, String> {

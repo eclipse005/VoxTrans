@@ -42,7 +42,6 @@ pub struct BuildPunctuationRestorePromptResponse {
     pub user_prompt: String,
 }
 
-#[tauri::command]
 pub fn build_hotword_correction_prompts(
     request: BuildHotwordCorrectionPromptsRequest,
 ) -> Result<BuildHotwordCorrectionPromptsResponse, String> {
@@ -191,7 +190,6 @@ batch_replace(replacements=[
     })
 }
 
-#[tauri::command]
 pub fn build_punctuation_restore_prompt(
     request: BuildPunctuationRestorePromptRequest,
 ) -> Result<BuildPunctuationRestorePromptResponse, String> {

@@ -53,10 +53,10 @@ fn main() {
             commands::logs::clear_task_logs,
             commands::usage::record_task_llm_usage,
             commands::usage::get_task_llm_usage_summary,
-            prompts::build_hotword_correction_prompts,
-            prompts::build_punctuation_restore_prompt,
-            llm::llm_interact,
-            llm::llm_test_connection
+            commands::prompts::build_hotword_correction_prompts,
+            commands::prompts::build_punctuation_restore_prompt,
+            commands::llm::llm_interact,
+            commands::llm::llm_test_connection
         ])
         .run(tauri::generate_context!())
         .expect("error while running voxtrans desktop");
