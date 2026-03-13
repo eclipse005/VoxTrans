@@ -6,6 +6,7 @@ use crate::prompt_builder::{
 use crate::services::translation::domain::{
     SentenceUnit, SourceCue, TranslatedUnit, TranslationProfile, TranslationTerm,
 };
+use crate::services::translation::json_tool::parse_llm_json_response;
 use serde_json::Value;
 
 const TRANSLATE_BATCH_SIZE: usize = 40;
@@ -285,7 +286,7 @@ impl TranslationLlmClient {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| "empty llm response content".to_string())?;
-        parse_json_loose(content)
+        parse_llm_json_response(content)
     }
 
     async fn translate_batch(
@@ -297,11 +298,9 @@ impl TranslationLlmClient {
             .chat_json(system_prompt, &request.user_prompt, Some("translate"))
             .await?;
 
-        let translated_object = if let Some(obj) = raw.as_object() {
-            obj
-        } else {
-            return Err(format!("translation response must be JSON object: {}", raw));
-        };
+        let translated_object = raw
+            .as_object()
+            .ok_or_else(|| format!("translation response must be JSON object: {}", raw))?;
 
         let units = request
             .sentence_ids_in_order
@@ -311,10 +310,8 @@ impl TranslationLlmClient {
                 let key = (idx + 1).to_string();
                 let translated_text = translated_object
                     .get(&key)
-                    .and_then(|entry| entry.as_object())
-                    .and_then(|entry| entry.get("translation").and_then(|v| v.as_str()))
-                    .unwrap_or_default()
-                    .to_string();
+                    .and_then(extract_translation_text)
+                    .unwrap_or_default();
                 TranslatedUnit {
                     sentence_id: sentence_id.clone(),
                     translated_text,
@@ -502,82 +499,62 @@ fn build_shared_prompt(
     ))
 }
 
-fn parse_json_loose(raw: &str) -> Result<Value, String> {
-    if let Ok(value) = serde_json::from_str::<Value>(raw) {
-        return Ok(value);
+fn extract_translation_text(entry: &Value) -> Option<String> {
+    if let Some(text) = entry.as_str() {
+        let text = text.trim();
+        if !text.is_empty() {
+            return Some(text.to_string());
+        }
     }
-
-    if let Some(stripped) = strip_markdown_code_fence(raw) {
-        if let Ok(value) = serde_json::from_str::<Value>(&stripped) {
-            return Ok(value);
+    let obj = entry.as_object()?;
+    const PRIMARY_KEYS: &[&str] = &[
+        "translation",
+        "translated_text",
+        "translatedText",
+        "译文",
+        "翻译",
+    ];
+    for key in PRIMARY_KEYS {
+        if let Some(text) = obj.get(*key).and_then(|v| v.as_str()) {
+            let text = text.trim();
+            if !text.is_empty() {
+                return Some(text.to_string());
+            }
         }
     }
 
-    for (start_ch, end_ch) in [('[', ']'), ('{', '}')] {
-        if let Some(slice) = extract_balanced(raw, start_ch, end_ch) {
-            if let Ok(value) = serde_json::from_str::<Value>(&slice) {
-                return Ok(value);
-            }
-        }
-    }
-
-    Err(format!("failed to parse llm json response: {}", raw))
-}
-
-fn strip_markdown_code_fence(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if !trimmed.starts_with("```") {
-        return None;
-    }
-    let mut lines = trimmed.lines();
-    let _ = lines.next()?;
-    let inner = lines.collect::<Vec<_>>();
-    if inner.is_empty() {
-        return None;
-    }
-    let joined = inner.join("\n");
-    let cleaned = joined.trim_end_matches("```").trim();
-    if cleaned.is_empty() {
-        None
-    } else {
-        Some(cleaned.to_string())
-    }
-}
-
-fn extract_balanced(raw: &str, start_ch: char, end_ch: char) -> Option<String> {
-    let start = raw.find(start_ch)?;
-    let mut depth: i32 = 0;
-    let mut in_str = false;
-    let mut escaped = false;
-    for (offset, ch) in raw[start..].char_indices() {
-        if in_str {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if ch == '\\' {
-                escaped = true;
-                continue;
-            }
-            if ch == '"' {
-                in_str = false;
-            }
+    for (key, value) in obj {
+        let k = key.trim();
+        if k.eq_ignore_ascii_case("origin")
+            || k.eq_ignore_ascii_case("source")
+            || k.eq_ignore_ascii_case("source_text")
+        {
             continue;
         }
+        if k.starts_with("翻译") || k.starts_with("译文") {
+            if let Some(text) = value.as_str() {
+                let text = text.trim();
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+        }
+    }
 
-        if ch == '"' {
-            in_str = true;
+    for (key, value) in obj {
+        let k = key.trim();
+        if k.eq_ignore_ascii_case("origin")
+            || k.eq_ignore_ascii_case("source")
+            || k.eq_ignore_ascii_case("source_text")
+            || k.eq_ignore_ascii_case("sentence_id")
+            || k.eq_ignore_ascii_case("id")
+        {
             continue;
         }
-        if ch == start_ch {
-            depth += 1;
-            continue;
-        }
-        if ch == end_ch {
-            depth -= 1;
-            if depth == 0 {
-                let end = start + offset + ch.len_utf8();
-                return Some(raw[start..end].to_string());
+        if let Some(text) = value.as_str() {
+            let text = text.trim();
+            if !text.is_empty() {
+                return Some(text.to_string());
             }
         }
     }

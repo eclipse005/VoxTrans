@@ -3,6 +3,7 @@ pub mod history;
 pub mod logs;
 pub mod model;
 pub mod output;
+pub mod postprocess;
 pub mod preferences;
 pub mod subtitle;
 pub mod system;

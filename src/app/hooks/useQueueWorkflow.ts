@@ -15,12 +15,6 @@ import type {
 import { detectMediaKind, fileName } from "../../features/media/utils";
 import type { AppAction } from "../state/appReducer";
 import type { HotwordCorrection } from "../types";
-import {
-  correctSegmentsWithHotwords,
-  shouldRunHotwordCorrection,
-  type TimedHotwordSegment,
-} from "../utils/hotwordCorrection";
-import { countSuspiciousPunctuationSentences, restorePunctuationOnWords } from "../utils/punctuationCorrection";
 import { reportError, toUserErrorMessage } from "../utils/errors";
 
 type DispatchState = (action: AppAction) => void;
@@ -30,6 +24,11 @@ type TranscribeProgressEvent = {
   taskId: string;
   currentSegment: number;
   totalSegments: number;
+};
+
+type TranscribePhaseEvent = {
+  taskId: string;
+  phase: "punctuation" | "hotword";
 };
 
 type TranslateProgressEvent = {
@@ -93,6 +92,30 @@ type TranslationPipelineResponse = {
     sourceText: string;
     translatedText: string;
   }>;
+};
+
+type PostAsrPipelineResponse = {
+  text: string;
+  srt: string;
+  srtOutputPath: string;
+  segments: BuildSegmentsResponse["segments"];
+  words: TranscribeResponse["words"];
+  punctuation: {
+    sentenceTotal: number;
+    suspiciousCount: number;
+    restoredCount: number;
+    acceptedCount: number;
+    rejectedCount: number;
+  };
+  hotword: {
+    changedCount: number;
+    summary: string;
+    replacementStats: Array<{
+      oldText: string;
+      newText: string;
+      count: number;
+    }>;
+  };
 };
 
 export function useQueueWorkflow({
@@ -266,6 +289,35 @@ export function useQueueWorkflow({
     return () => {
       disposed = true;
       if (unlistenProgress) unlistenProgress();
+    };
+  }, [dispatch]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenPhase: undefined | (() => void);
+    listen<TranscribePhaseEvent>("transcribe-phase", (event) => {
+      const payload = event.payload;
+      if (!payload?.taskId) return;
+      dispatch({
+        type: "patch_queue_item",
+        id: payload.taskId,
+        updater: (old) => ({
+          ...old,
+          transcribePhase: payload.phase || old.transcribePhase,
+        }),
+      });
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
+        unlistenPhase = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      if (unlistenPhase) unlistenPhase();
     };
   }, [dispatch]);
 
@@ -500,171 +552,59 @@ export function useQueueWorkflow({
           ? response.segmentDurationsSec.map(round2)
           : [],
       });
-      let wordsForBuild = response.words;
+      const processed = await invoke<PostAsrPipelineResponse>("run_post_asr_pipeline", {
+        request: {
+          taskId: item.id,
+          audioPath: item.path,
+          words: response.words,
+          autoPunc: settings.autoPunc,
+          threads: settings.threads,
+          llm: llmSettings,
+          hotwordCorrection,
+        },
+      });
+      const hasLlmConfig = Boolean(llmSettings.apiKey.trim() && llmSettings.apiModel.trim());
       if (settings.autoPunc) {
-        const hasLlmConfig = Boolean(llmSettings.apiKey.trim() && llmSettings.apiModel.trim());
         if (!hasLlmConfig) {
           void appendTaskLog("main", item, "punc.skipped", {
             reason: "自动标点增强已启用，但未配置 LLM Key/Model，已跳过",
           });
+        } else if (processed.punctuation.suspiciousCount > 0) {
+          void appendTaskLog("main", item, "punc.completed", processed.punctuation);
         } else {
-          const scan = countSuspiciousPunctuationSentences(response.words);
-          if (scan.suspiciousCount > 0) {
-            dispatch({
-              type: "patch_queue_item",
-              id: item.id,
-              updater: (old) => ({
-                ...old,
-                transcribePhase: "punctuation",
-              }),
-            });
-            void appendTaskLog("main", item, "punc.started", {
-              sentenceTotal: scan.sentenceTotal,
-              suspiciousCount: scan.suspiciousCount,
-            });
-          } else {
-            void appendTaskLog("main", item, "punc.skipped", {
-              reason: "未检测到可疑句，跳过标点恢复",
-              sentenceTotal: scan.sentenceTotal,
-              suspiciousCount: 0,
-            });
-          }
-          if (scan.suspiciousCount > 0) {
-            try {
-            const restored = await restorePunctuationOnWords({
-              words: response.words,
-              maxConcurrency: settings.threads,
-              llm: llmSettings,
-              invokeLlm: async (request) => {
-                const llmResponse = await invoke<{
-                  status: "completed" | "requires_tool";
-                  message?: string;
-                  promptTokens?: number;
-                  completionTokens?: number;
-                  totalTokens?: number;
-                  toolCalls: Array<{
-                    id: string;
-                    type: string;
-                    function: {
-                      name: string;
-                      arguments: string;
-                    };
-                  }>;
-                }>("llm_interact", {
-                  request: {
-                    ...request,
-                    logTaskId: item.id,
-                    logMediaPath: item.path,
-                    logStage: "punctuation",
-                  },
-                });
-                return llmResponse;
-              },
-            });
-            wordsForBuild = restored.words;
-            void appendTaskLog("main", item, "punc.completed", {
-              sentenceTotal: restored.sentenceTotal,
-              suspiciousCount: restored.suspiciousCount,
-              restoredCount: restored.restoredCount,
-              acceptedCount: restored.acceptedCount,
-              rejectedCount: restored.rejectedCount,
-            });
-            } catch (puncErr) {
-              reportError(puncErr, "runPunctuationCorrection");
-              void appendTaskLog("main", item, "punc.failed", {
-                error: toUserErrorMessage(puncErr, "自动标点增强失败，已保留原始转录"),
-              });
-            }
-          }
+          void appendTaskLog("main", item, "punc.skipped", {
+            reason: "未检测到可疑句，跳过标点恢复",
+            sentenceTotal: processed.punctuation.sentenceTotal,
+            suspiciousCount: 0,
+          });
         }
+      } else {
+        void appendTaskLog("main", item, "punc.skipped", {
+          reason: "未启用 AI 标点增强",
+        });
       }
-      const built = await invoke<BuildSegmentsResponse>("build_segments_from_words", {
-        request: {
-          taskId: item.id,
-          audioPath: item.path,
-          words: wordsForBuild,
-        },
-      });
-      const baseSegments = toTimedHotwordSegments(built.segments);
-      let finalSegments = baseSegments;
-      let finalText = built.text;
-      let finalSrt = built.srt;
-      let hotwordError = "";
 
-      if (shouldRunHotwordCorrection(hotwordCorrection)) {
-        const hasLlmConfig = Boolean(llmSettings.apiKey.trim() && llmSettings.apiModel.trim());
-        if (hasLlmConfig) {
-          void appendTaskLog("main", item, "hotword.started", {
-            groupId: hotwordCorrection.activeGroupId,
-          });
-          dispatch({
-            type: "patch_queue_item",
-            id: item.id,
-            updater: (old) => ({
-              ...old,
-              transcribePhase: "hotword",
-            }),
-          });
-          try {
-            const corrected = await correctSegmentsWithHotwords({
-              segments: baseSegments,
-              config: hotwordCorrection,
-              llm: llmSettings,
-              invokeLlm: async (request) => {
-                const response = await invoke<{
-                  status: "completed" | "requires_tool";
-                  message?: string;
-                  promptTokens?: number;
-                  completionTokens?: number;
-                  totalTokens?: number;
-                  toolCalls: Array<{
-                    id: string;
-                    type: string;
-                    function: {
-                      name: string;
-                      arguments: string;
-                    };
-                  }>;
-                }>("llm_interact", {
-                  request: {
-                    ...request,
-                    logTaskId: item.id,
-                    logMediaPath: item.path,
-                    logStage: "hotword",
-                  },
-                });
-                return response;
-              },
-            });
-            finalSegments = corrected.segments;
-            finalText = toPlainText(toSubtitleSegments(finalSegments));
-            finalSrt = toSrtFromSegments(toSubtitleSegments(finalSegments));
-            const hotwordReport = buildHotwordReport(corrected.changedCount, corrected.replacementStats);
-            void appendTaskLog("main", item, "hotword.completed", {
-              changedCount: corrected.changedCount,
-              replacements: corrected.replacementStats,
-              report: hotwordReport,
-            });
-          } catch (hotwordErr) {
-            reportError(hotwordErr, "runHotwordCorrection");
-            hotwordError = toUserErrorMessage(hotwordErr, "热词矫正失败，已保留原始转录");
-            void appendTaskLog("main", item, "hotword.failed", { error: hotwordError });
-          }
-        } else {
-          hotwordError = "热词矫正已启用，但未配置 LLM Key/Model，已跳过";
-          void appendTaskLog("main", item, "hotword.skipped", { reason: hotwordError });
-        }
+      if (shouldRunHotwordCorrection(hotwordCorrection, llmSettings)) {
+        void appendTaskLog("main", item, "hotword.completed", {
+          changedCount: processed.hotword.changedCount,
+          replacements: processed.hotword.replacementStats,
+          report: processed.hotword.summary || buildHotwordReport(processed.hotword.changedCount, processed.hotword.replacementStats),
+        });
+      } else {
+        void appendTaskLog("main", item, "hotword.skipped", {
+          reason: "未启用热词矫正或未配置可用 LLM/术语组",
+        });
       }
 
       await invoke("save_srt", {
         request: {
-          outputPath: built.srtOutputPath,
-          content: finalSrt,
+          outputPath: processed.srtOutputPath,
+          content: processed.srt,
         },
       });
 
       const shouldStartTranslate = item.translateStatus === "queued";
-      const normalizedSegments = toSubtitleSegments(finalSegments);
+      const normalizedSegments = toSubtitleSegmentsFromBuilt(processed.segments);
       dispatch({
         type: "patch_queue_item",
         id: item.id,
@@ -676,12 +616,12 @@ export function useQueueWorkflow({
           transcribeSegmentCurrent: response.segmentTotal > 0 ? response.segmentTotal : old.transcribeSegmentCurrent,
           transcribeSegmentTotal: response.segmentTotal > 0 ? response.segmentTotal : old.transcribeSegmentTotal,
           transcribePhase: "",
-          resultText: finalText,
-          resultSrt: finalSrt,
+          resultText: processed.text,
+          resultSrt: processed.srt,
           transcribeError: "",
         }),
       });
-      pushToast(`已完成：${item.name}，SRT 已保存到 ${built.srtOutputPath}`, "success");
+      pushToast(`已完成：${item.name}，SRT 已保存到 ${processed.srtOutputPath}`, "success");
       if (shouldStartTranslate) {
         void runTranslate(item.id, {
           fromTranscribe: true,
@@ -850,43 +790,13 @@ export function useQueueWorkflow({
   };
 }
 
-function toTimedHotwordSegments(segments: BuildSegmentsResponse["segments"]): TimedHotwordSegment[] {
+function toSubtitleSegmentsFromBuilt(segments: BuildSegmentsResponse["segments"]): SubtitleSegment[] {
   return segments.map((segment) => ({
     startMs: Math.max(0, Math.round(segment.start * 1000)),
     endMs: Math.max(0, Math.round(segment.end * 1000)),
     sourceText: segment.text ?? "",
     translatedText: "",
-    words: (segment.words ?? []).map((word) => ({
-      start: word.start,
-      end: word.end,
-      word: word.word ?? "",
-    })),
   }));
-}
-
-function toSubtitleSegments(segments: TimedHotwordSegment[]): SubtitleSegment[] {
-  return segments.map((segment) => ({
-    startMs: segment.startMs,
-    endMs: segment.endMs,
-    sourceText: segment.sourceText,
-    translatedText: segment.translatedText,
-  }));
-}
-
-function toPlainText(segments: SubtitleSegment[]): string {
-  return segments.map((segment) => segment.sourceText.trim()).filter(Boolean).join(" ");
-}
-
-function toSrtFromSegments(segments: SubtitleSegment[]): string {
-  return cuesToSrt(
-    segments.map((segment, index) => ({
-      id: `seg-${index}-${segment.startMs}`,
-      startMs: Math.max(0, Math.round(segment.startMs)),
-      endMs: Math.max(Math.round(segment.startMs), Math.round(segment.endMs)),
-      text: segment.sourceText ?? "",
-      translatedText: segment.translatedText ?? "",
-    })),
-  );
 }
 
 function toTranslatedSrtFromSegments(segments: SubtitleSegment[]): string {
@@ -975,6 +885,20 @@ function buildHotwordReport(
     lines.push(`  ${stat.oldText} -> ${stat.newText}: ${stat.count} 处`);
   }
   return lines.join("\n");
+}
+
+function shouldRunHotwordCorrection(
+  config: HotwordCorrection,
+  llm: { apiKey: string; apiModel: string },
+): boolean {
+  if (!config.enabled || !llm.apiKey.trim() || !llm.apiModel.trim()) {
+    return false;
+  }
+  const active = config.groups.find((g) => g.id === config.activeGroupId) ?? config.groups[0];
+  if (!active || !Array.isArray(active.keyterms)) {
+    return false;
+  }
+  return active.keyterms.some((term) => String(term ?? "").trim().length > 0);
 }
 
 
