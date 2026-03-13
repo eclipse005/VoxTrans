@@ -74,7 +74,6 @@ type TranslationPipelineResponse = {
   taskId: string;
   summary: {
     topicSummary: string;
-    contentStyle: string;
     translationStyle: string;
     terminologySubset: Array<{
       source: string;
@@ -438,7 +437,6 @@ export function useQueueWorkflow({
       });
       void appendTaskLog("main", task, "translate.summary.completed", {
         topicSummary: translated.summary?.topicSummary ?? "",
-        contentStyle: translated.summary?.contentStyle ?? "",
         translationStyle: translated.summary?.translationStyle ?? "",
         terminologySubsetSize: Array.isArray(translated.summary?.terminologySubset)
           ? translated.summary.terminologySubset.length

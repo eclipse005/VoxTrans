@@ -83,8 +83,6 @@ impl TranslationLlmClient {
         let topic_summary = string_from_json(&raw, &["topicSummary", "topic_summary"])
             .or_else(|| string_from_json(&raw, &["theme"]))
             .unwrap_or_else(|| "待分析".to_string());
-        let content_style = string_or_array_from_json(&raw, &["contentStyle", "content_style"])
-            .unwrap_or_else(|| "未定义".to_string());
         let translation_style = string_from_json(&raw, &["translationStyle", "translation_style"])
             .or_else(|| {
                 preferred_translation_style
@@ -103,7 +101,6 @@ impl TranslationLlmClient {
 
         Ok(TranslationProfile {
             topic_summary,
-            content_style,
             translation_style,
             terminology_subset,
             primary_terms,
@@ -333,27 +330,6 @@ fn string_from_json(value: &Value, keys: &[&str]) -> Option<String> {
             if !trimmed.is_empty() {
                 return Some(trimmed.to_string());
             }
-        }
-    }
-    None
-}
-
-fn string_or_array_from_json(value: &Value, keys: &[&str]) -> Option<String> {
-    if let Some(single) = string_from_json(value, keys) {
-        return Some(single);
-    }
-    for key in keys {
-        let Some(arr) = value.get(*key).and_then(|v| v.as_array()) else {
-            continue;
-        };
-        let items = arr
-            .iter()
-            .filter_map(|v| v.as_str().map(str::trim))
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect::<Vec<_>>();
-        if !items.is_empty() {
-            return Some(items.join("、"));
         }
     }
     None

@@ -96,7 +96,6 @@ pub struct AlignedCue {
 #[serde(rename_all = "camelCase")]
 pub struct TranslationProfile {
     pub topic_summary: String,
-    pub content_style: String,
     pub translation_style: String,
     pub terminology_subset: Vec<TranslationTerm>,
     #[serde(default)]

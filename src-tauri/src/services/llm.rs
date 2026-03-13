@@ -354,9 +354,13 @@ fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractR
         .build()
         .map_err(|e| format!("failed to build llm client: {e}"))?;
 
+    let system_prompt = request.system_prompt.clone().unwrap_or_default();
+    let user_prompt = extract_user_prompt(&request);
     let request_log = json!({
-        "systemPrompt": request.system_prompt,
-        "userPrompt": extract_user_prompt(&request),
+        "systemPromptLength": system_prompt.chars().count(),
+        "systemPrompt": system_prompt,
+        "userPromptLength": user_prompt.chars().count(),
+        "userPrompt": user_prompt,
     });
 
     let mut attempt: u32 = 0;
@@ -385,6 +389,7 @@ fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractR
                         json!({
                             "request": request_log.clone(),
                             "response": {
+                                "messageLength": parsed.message.as_deref().unwrap_or_default().chars().count(),
                                 "message": parsed.message.clone().unwrap_or_default(),
                             }
                         }),
@@ -422,6 +427,7 @@ fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractR
             json!({
                 "request": request_log.clone(),
                 "response": {
+                    "messageLength": err.chars().count(),
                     "message": err,
                 }
             }),
@@ -433,6 +439,7 @@ fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractR
         json!({
             "request": request_log,
             "response": {
+                "messageLength": final_error.chars().count(),
                 "message": final_error,
             }
         }),

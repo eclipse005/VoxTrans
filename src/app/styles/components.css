@@ -2652,6 +2652,29 @@
   color: var(--apple-text-primary);
 }
 
+.logs-entry-spacer {
+  flex: 1;
+}
+
+.logs-entry-toggle {
+  border: 1px solid var(--apple-border-lighter);
+  background: #fff;
+  color: var(--apple-text-secondary);
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  line-height: 1;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logs-entry-toggle:hover {
+  color: var(--apple-text-primary);
+}
+
 .logs-empty {
   min-height: 120px;
   display: flex;

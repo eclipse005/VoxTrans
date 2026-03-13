@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { TaskLogChannel, TaskLlmUsageSummary } from "../../features/media/types";
 import { useDialogA11y } from "./useDialogA11y";
 
@@ -28,6 +29,7 @@ export default function LogsModal({
 }: LogsModalProps) {
   const dialogRef = useDialogA11y(visible, onClose);
   const entries = parseLogEntries(content);
+  const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
   const usageBuckets = [...(usageSummary?.buckets ?? [])].sort((a, b) => a.updatedAt - b.updatedAt);
   if (!visible) return null;
 
@@ -109,19 +111,34 @@ export default function LogsModal({
           {!loading && content.trim().length === 0 ? <div className="logs-empty">暂无日志</div> : null}
           {!loading && content.trim().length > 0 ? (
             <div className="logs-entries">
-              {entries.map((entry, index) => (
-                <article key={`${entry.timestamp}-${entry.event}-${index}`} className="logs-entry">
+              {entries.map((entry, index) => {
+                const entryKey = `${entry.timestamp}-${entry.event}-${index}`;
+                const collapsed = collapsedMap[entryKey] ?? false;
+                return (
+                  <article key={entryKey} className="logs-entry">
                   <div className="logs-entry-head">
                     <span className="logs-entry-time">{entry.timestamp}</span>
                     <span className="logs-entry-event">{entry.event}</span>
+                    <span className="logs-entry-spacer" />
+                    <button
+                      type="button"
+                      className="logs-entry-toggle"
+                      aria-label={collapsed ? "展开日志详情" : "收起日志详情"}
+                      onClick={() => {
+                        setCollapsedMap((prev) => ({ ...prev, [entryKey]: !collapsed }));
+                      }}
+                    >
+                      {collapsed ? "▸" : "▾"}
+                    </button>
                   </div>
-                  {entry.payload != null ? (
-                    <pre className="logs-json">{JSON.stringify(entry.payload, null, 2)}</pre>
-                  ) : entry.body ? (
-                    <pre className="logs-text">{entry.body}</pre>
+                  {!collapsed && entry.payload != null ? (
+                    <pre className="logs-json">{formatPayloadForDisplay(entry.payload)}</pre>
+                  ) : !collapsed && entry.body ? (
+                    <pre className="logs-text">{decodeVisibleEscapes(entry.body)}</pre>
                   ) : null}
                 </article>
-              ))}
+                );
+              })}
             </div>
           ) : null}
         </div>
@@ -179,4 +196,16 @@ function parseLogEntries(content: string): LogEntry[] {
     });
   }
   return out;
+}
+
+function formatPayloadForDisplay(payload: unknown): string {
+  return decodeVisibleEscapes(JSON.stringify(payload, null, 2));
+}
+
+function decodeVisibleEscapes(text: string): string {
+  return text
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\"/g, "\"")
+    .replace(/\\\\/g, "\\");
 }
