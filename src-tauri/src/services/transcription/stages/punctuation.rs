@@ -1,22 +1,22 @@
 use serde_json::Value;
 use sqlx::SqlitePool;
 
-use crate::llm::LlmInteractRequest;
+use crate::services::llm::LlmInteractRequest;
 use crate::prompt_builder::BuildPunctuationRestorePromptRequest;
 use crate::services::preferences::LlmSettings;
 use crate::services::transcribe::WordTokenDto;
 
-use super::types::{PunctuationStats, TemporarySentence};
+use crate::services::transcription::domain::{PunctuationStats, StageResult, TemporarySentence};
 
-pub async fn run_punctuation_restore(
+pub async fn run_stage(
     words: &mut [WordTokenDto],
     threads: u32,
     llm: &LlmSettings,
     usage_pool: Option<&SqlitePool>,
     log_ctx: Option<(&str, &str)>,
-) -> Result<PunctuationStats, String> {
+) -> Result<StageResult<PunctuationStats>, String> {
     if llm.api_key.trim().is_empty() || llm.api_model.trim().is_empty() || words.is_empty() {
-        return Ok(PunctuationStats::default());
+        return Ok(StageResult::skipped());
     }
     let sentences = split_temporary_sentences(words);
     let suspicious = sentences
@@ -30,7 +30,7 @@ pub async fn run_punctuation_restore(
         ..Default::default()
     };
     if suspicious.is_empty() {
-        return Ok(stats);
+        return Ok(StageResult::skipped_with(stats));
     }
 
     let max_threads = threads.clamp(1, 16) as usize;
@@ -41,7 +41,7 @@ pub async fn run_punctuation_restore(
                     text: sentence.text.clone(),
                 },
             )?;
-            let response = crate::llm::llm_interact(LlmInteractRequest {
+            let response = crate::services::llm::llm_interact(LlmInteractRequest {
                 api_key: llm.api_key.clone(),
                 model: llm.api_model.clone(),
                 base_url: if llm.api_base.trim().is_empty() {
@@ -96,7 +96,7 @@ pub async fn run_punctuation_restore(
         }
     }
 
-    Ok(stats)
+    Ok(StageResult::executed(stats))
 }
 
 fn split_temporary_sentences(words: &[WordTokenDto]) -> Vec<TemporarySentence> {
@@ -259,3 +259,4 @@ fn join_word_texts(words: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+

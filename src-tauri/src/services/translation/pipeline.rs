@@ -1,5 +1,5 @@
 use crate::services::translation::domain::{
-    AlignedCue, QaSummary, StageReport, StageStatus, TranslationPipelineRequest,
+    AlignedCue, StageReport, StageResult, StageStatus, TranslationPipelineRequest,
     TranslationPipelineResponse, TranslationStage,
 };
 use crate::services::translation::{guardrails, llm, mapping, stages};
@@ -47,7 +47,7 @@ pub async fn run_translation_pipeline(
         .collect::<Vec<_>>();
 
     emit_translation_phase(app_handle, &request.task_id, "summary");
-    let summary = stages::summary::run(
+    let summary_result = stages::summary::run_stage(
         &llm_client,
         &request.cues,
         &request.source_language,
@@ -56,19 +56,21 @@ pub async fn run_translation_pipeline(
         &term_candidates,
     )
     .await?;
-    stage_reports.push(StageReport {
-        stage: TranslationStage::Summary,
-        status: StageStatus::Completed,
-        message: format!(
+    stage_reports.push(stage_report_from_result(
+        TranslationStage::Summary,
+        &summary_result,
+        format!(
             "summary ready: terminology_subset={}",
-            summary.terminology_subset.len()
+            summary_result.metrics.terminology_subset.len()
         ),
-    });
+        "summary skipped",
+    ));
+    let summary = summary_result.metrics;
 
     // Minimal path: translate directly on existing ASR cue segmentation (no sentence regrouping).
     let units = mapping::cues_to_sentence_units(&request.cues);
     emit_translation_phase(app_handle, &request.task_id, "translate");
-    let translated_units = stages::translate::run(
+    let translate_result = stages::translate::run_stage(
         &llm_client,
         &request.source_language,
         &request.target_language,
@@ -76,11 +78,13 @@ pub async fn run_translation_pipeline(
         &units,
     )
     .await?;
-    stage_reports.push(StageReport {
-        stage: TranslationStage::Translate,
-        status: StageStatus::Completed,
-        message: format!("translated {} cue units", translated_units.len()),
-    });
+    stage_reports.push(stage_report_from_result(
+        TranslationStage::Translate,
+        &translate_result,
+        format!("translated {} cue units", translate_result.metrics.len()),
+        "translate skipped",
+    ));
+    let translated_units = translate_result.metrics;
 
     let raw_aligned = mapping::align_translated_units_to_cues(&request.cues, &translated_units);
     let source_snapshot = request
@@ -94,25 +98,29 @@ pub async fn run_translation_pipeline(
         .collect::<Vec<_>>();
     guardrails::assert_source_immutable(&source_snapshot, &raw_aligned)?;
 
-    let aligned = raw_aligned;
-    stage_reports.push(StageReport {
-        stage: TranslationStage::Align,
-        status: StageStatus::Skipped,
-        message: "stage disabled in current milestone".to_string(),
-    });
+    let align_result = stages::align::run_stage(false, raw_aligned);
+    stage_reports.push(stage_report_from_result(
+        TranslationStage::Align,
+        &align_result,
+        format!("aligned {} cues", align_result.metrics.len()),
+        "align skipped",
+    ));
+    let final_cues = align_result.metrics;
 
-    let final_cues = aligned;
-    let qa = QaSummary {
-        issue_total: 0,
-        fixed_total: 0,
-        unresolved_total: 0,
-        issues: Vec::new(),
-    };
-    stage_reports.push(StageReport {
-        stage: TranslationStage::Qa,
-        status: StageStatus::Skipped,
-        message: "stage disabled in current milestone".to_string(),
-    });
+    let qa_result = stages::qa::run_stage(false, final_cues);
+    stage_reports.push(stage_report_from_result(
+        TranslationStage::Qa,
+        &qa_result,
+        format!(
+            "qa completed: issues={}, fixed={}, unresolved={}",
+            qa_result.metrics.qa.issue_total,
+            qa_result.metrics.qa.fixed_total,
+            qa_result.metrics.qa.unresolved_total
+        ),
+        "qa skipped",
+    ));
+    let final_cues = qa_result.metrics.cues;
+    let qa = qa_result.metrics.qa;
 
     Ok(TranslationPipelineResponse {
         task_id: request.task_id,
@@ -132,5 +140,30 @@ fn emit_translation_phase(app_handle: Option<&tauri::AppHandle>, task_id: &str, 
                 phase: phase.to_string(),
             },
         );
+    }
+}
+
+fn stage_report_from_result<T>(
+    stage: TranslationStage,
+    result: &StageResult<T>,
+    success_message: String,
+    skipped_message: &str,
+) -> StageReport {
+    let mut message = if result.executed {
+        success_message
+    } else {
+        skipped_message.to_string()
+    };
+    if !result.warnings.is_empty() {
+        message.push_str(&format!(" | warnings: {}", result.warnings.join("; ")));
+    }
+    StageReport {
+        stage,
+        status: if result.executed {
+            StageStatus::Completed
+        } else {
+            StageStatus::Skipped
+        },
+        message,
     }
 }

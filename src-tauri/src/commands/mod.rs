@@ -9,6 +9,6 @@ pub mod subtitle;
 pub mod system;
 pub mod translation;
 pub mod transcribe;
-pub mod postprocess;
+pub mod transcription;
 pub mod usage;
 pub mod workspace;

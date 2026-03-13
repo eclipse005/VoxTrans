@@ -1,14 +1,14 @@
-use crate::services::translation::domain::{SentenceUnit, TranslatedUnit, TranslationProfile};
+use crate::services::translation::domain::{SentenceUnit, StageResult, TranslatedUnit, TranslationProfile};
 use crate::services::translation::llm::TranslationLlmClient;
 
-pub async fn run(
+pub async fn run_stage(
     llm: &TranslationLlmClient,
     source_language: &str,
     target_language: &str,
     summary: &TranslationProfile,
     units: &[SentenceUnit],
-) -> Result<Vec<TranslatedUnit>, String> {
-    llm.translate_sentences(
+) -> Result<StageResult<Vec<TranslatedUnit>>, String> {
+    let units = llm.translate_sentences(
         source_language,
         target_language,
         Some(summary.translation_style.as_str()),
@@ -17,5 +17,7 @@ pub async fn run(
         &summary.supporting_terms,
         units,
     )
-    .await
+    .await?;
+
+    Ok(StageResult::executed(units))
 }

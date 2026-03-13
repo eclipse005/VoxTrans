@@ -1,7 +1,7 @@
-mod hotword;
+pub mod domain;
+mod mapper;
 mod pipeline;
-mod punctuation;
-mod types;
+pub mod stages;
 
 pub use pipeline::{
     RunPostAsrPipelineRequest, RunPostAsrPipelineResponse, run_post_asr_pipeline,

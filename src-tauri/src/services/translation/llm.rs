@@ -1,4 +1,4 @@
-use crate::llm::LlmInteractRequest;
+use crate::services::llm::LlmInteractRequest;
 use crate::prompt_builder::{
     BuildTranslationProfilePromptRequest, BuildTranslationPromptRequest,
     TranslationPromptTerm, build_translation_profile_prompt, build_translation_prompt,
@@ -258,7 +258,7 @@ impl TranslationLlmClient {
         user_prompt: &str,
         stage: Option<&str>,
     ) -> Result<Value, String> {
-        let response = crate::llm::llm_interact(LlmInteractRequest {
+        let response = crate::services::llm::llm_interact(LlmInteractRequest {
             api_key: self.config.api_key.clone(),
             model: self.config.model.clone(),
             base_url: self.config.base_url.clone(),
@@ -560,3 +560,4 @@ fn extract_translation_text(entry: &Value) -> Option<String> {
     }
     None
 }
+

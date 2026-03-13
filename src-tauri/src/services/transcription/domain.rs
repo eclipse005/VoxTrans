@@ -2,6 +2,41 @@ use serde::Serialize;
 
 use crate::services::transcribe::WordTokenDto;
 
+#[derive(Debug, Clone)]
+pub struct StageResult<T> {
+    pub executed: bool,
+    pub metrics: T,
+    pub warnings: Vec<String>,
+}
+
+impl<T: Default> StageResult<T> {
+    pub fn skipped() -> Self {
+        Self {
+            executed: false,
+            metrics: T::default(),
+            warnings: Vec::new(),
+        }
+    }
+
+    pub fn skipped_with(metrics: T) -> Self {
+        Self {
+            executed: false,
+            metrics,
+            warnings: Vec::new(),
+        }
+    }
+}
+
+impl<T> StageResult<T> {
+    pub fn executed(metrics: T) -> Self {
+        Self {
+            executed: true,
+            metrics,
+            warnings: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PunctuationStats {

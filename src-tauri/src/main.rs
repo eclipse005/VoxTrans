@@ -3,7 +3,6 @@
 mod app_state;
 mod commands;
 mod db;
-mod llm;
 mod prompt_builder;
 mod services;
 
@@ -36,7 +35,7 @@ fn main() {
             commands::subtitle::load_subtitle_editor,
             commands::subtitle::save_subtitle_editor,
             commands::translation::run_translation_pipeline,
-            commands::postprocess::run_post_asr_pipeline,
+            commands::transcription::run_post_asr_pipeline,
             commands::file::get_file_size,
             commands::system::open_in_explorer,
             commands::system::open_output_dir,

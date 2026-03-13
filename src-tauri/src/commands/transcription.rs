@@ -14,11 +14,11 @@ struct TranscribePhaseEvent {
 pub async fn run_post_asr_pipeline(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    request: crate::services::postprocess::RunPostAsrPipelineRequest,
-) -> Result<crate::services::postprocess::RunPostAsrPipelineResponse, String> {
+    request: crate::services::transcription::RunPostAsrPipelineRequest,
+) -> Result<crate::services::transcription::RunPostAsrPipelineResponse, String> {
     let task_id = request.task_id.clone();
 
-    let response = crate::services::postprocess::run_post_asr_pipeline(
+    let response = crate::services::transcription::run_post_asr_pipeline(
         request,
         &state.pool,
         move |phase| {

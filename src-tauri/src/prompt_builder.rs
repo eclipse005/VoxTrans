@@ -1,4 +1,4 @@
-use crate::llm::{LlmTool, LlmToolFunction};
+use crate::services::llm::{LlmTool, LlmToolFunction};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -471,3 +471,4 @@ fn format_ranges_brief(ranges: &[(usize, usize)], max_show: usize) -> String {
     }
     brief.join(" ")
 }
+

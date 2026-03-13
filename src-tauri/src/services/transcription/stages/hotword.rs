@@ -2,12 +2,14 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
-use crate::llm::{LlmInteractRequest, LlmMessageInput, LlmToolCall, LlmToolResult};
+use crate::services::llm::{LlmInteractRequest, LlmMessageInput, LlmToolCall, LlmToolResult};
 use crate::prompt_builder::{BuildHotwordCorrectionPromptsRequest, HotwordPromptTerm};
 use crate::services::preferences::{HotwordCorrection, LlmSettings};
 use crate::services::transcribe::WordTokenDto;
 
-use super::types::{HotwordStats, ReplacementStat, TimedHotwordSegment};
+use crate::services::transcription::domain::{
+    HotwordStats, ReplacementStat, StageResult, TimedHotwordSegment,
+};
 
 const DEFAULT_WINDOW_SIZE: usize = 80;
 const FIRST_PASS_MAX_AGENT_ROUNDS: usize = 20;
@@ -32,16 +34,16 @@ pub fn should_run_hotword_correction(config: &HotwordCorrection, llm: &LlmSettin
     !parse_hotword_terms(&active_group.keyterms).is_empty()
 }
 
-pub async fn run_hotword_correction(
+pub async fn run_stage(
     segments: &mut [TimedHotwordSegment],
     config: &HotwordCorrection,
     llm: &LlmSettings,
     pool: &SqlitePool,
     task_id: &str,
     media_path: &str,
-) -> Result<HotwordStats, String> {
+) -> Result<StageResult<HotwordStats>, String> {
     if !should_run_hotword_correction(config, llm) {
-        return Ok(HotwordStats::default());
+        return Ok(StageResult::skipped());
     }
     let active_group = config
         .groups
@@ -49,7 +51,7 @@ pub async fn run_hotword_correction(
         .find(|g| g.id == config.active_group_id)
         .or_else(|| config.groups.first());
     let Some(active_group) = active_group else {
-        return Ok(HotwordStats::default());
+        return Ok(StageResult::skipped());
     };
     let original_texts = segments
         .iter()
@@ -57,7 +59,7 @@ pub async fn run_hotword_correction(
         .collect::<Vec<_>>();
     let terms = parse_hotword_terms(&active_group.keyterms);
     if terms.is_empty() {
-        return Ok(HotwordStats::default());
+        return Ok(StageResult::skipped());
     }
 
     let prompt_bundle = crate::prompt_builder::build_hotword_correction_prompts(
@@ -124,11 +126,11 @@ pub async fn run_hotword_correction(
         "未发现需要矫正的项".to_string()
     };
 
-    Ok(HotwordStats {
+    Ok(StageResult::executed(HotwordStats {
         changed_count,
         summary,
         replacement_stats,
-    })
+    }))
 }
 
 #[derive(Debug, Default)]
@@ -152,7 +154,7 @@ struct CorrectionRecord {
 async fn run_hotword_agent_session(
     segments: &mut [TimedHotwordSegment],
     system_prompt: &str,
-    tools: &[crate::llm::LlmTool],
+    tools: &[crate::services::llm::LlmTool],
     task_prompt: &str,
     max_rounds: usize,
     state: &mut AgentRuntimeState,
@@ -166,7 +168,7 @@ async fn run_hotword_agent_session(
     let mut no_tool_streak = 0usize;
 
     for _ in 0..max_rounds {
-        let response = crate::llm::llm_interact(LlmInteractRequest {
+        let response = crate::services::llm::llm_interact(LlmInteractRequest {
             api_key: llm.api_key.clone(),
             model: llm.api_model.clone(),
             base_url: if llm.api_base.trim().is_empty() {
@@ -767,3 +769,4 @@ fn split_text_into_words_with_timing(text: &str, start: f64, end: f64) -> Vec<Wo
         })
         .collect()
 }
+

@@ -1,16 +1,19 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use voxtrans_core::subtitle::segmenter::plain_text_from_segments;
-use voxtrans_core::subtitle::srt::{SegmentWord, SubtitleSegment, to_srt_from_segments};
+use voxtrans_core::subtitle::srt::to_srt_from_segments;
 
 use crate::services::preferences::{HotwordCorrection, LlmSettings};
 use crate::services::transcribe::{
     BuildSegmentsRequest, SegmentWithWordsDto, WordTokenDto, build_segments_from_words,
 };
 
-use super::hotword::{run_hotword_correction, should_run_hotword_correction};
-use super::punctuation::run_punctuation_restore;
-use super::types::{HotwordStats, PunctuationStats, TimedHotwordSegment};
+use super::domain::{HotwordStats, PunctuationStats};
+use super::mapper::{flatten_words, to_core_segments, to_segment_words_dto, to_timed_segments};
+use super::stages::{
+    hotword::{run_stage as run_hotword_stage, should_run_hotword_correction},
+    punctuation::run_stage as run_punctuation_stage,
+};
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +37,15 @@ pub struct RunPostAsrPipelineResponse {
     pub words: Vec<WordTokenDto>,
     pub punctuation: PunctuationStats,
     pub hotword: HotwordStats,
+    pub stage_outcomes: Vec<StageOutcome>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StageOutcome {
+    pub stage: String,
+    pub executed: bool,
+    pub warnings: Vec<String>,
 }
 
 pub async fn run_post_asr_pipeline<F>(
@@ -45,17 +57,29 @@ where
     F: FnMut(&str),
 {
     let mut words = request.words.clone();
+    let mut stage_outcomes = Vec::new();
     let punctuation = if request.auto_punc {
         on_phase("punctuation");
-        run_punctuation_restore(
+        let result = run_punctuation_stage(
             &mut words,
             request.threads,
             &request.llm,
             Some(pool),
             Some((&request.task_id, &request.audio_path)),
         )
-        .await?
+        .await?;
+        stage_outcomes.push(StageOutcome {
+            stage: "punctuation".to_string(),
+            executed: result.executed,
+            warnings: result.warnings.clone(),
+        });
+        result.metrics
     } else {
+        stage_outcomes.push(StageOutcome {
+            stage: "punctuation".to_string(),
+            executed: false,
+            warnings: vec!["未启用 AI 标点增强".to_string()],
+        });
         PunctuationStats::default()
     };
 
@@ -68,7 +92,7 @@ where
     let mut segments = to_timed_segments(&built.segments);
     let hotword = if should_run_hotword_correction(&request.hotword_correction, &request.llm) {
         on_phase("hotword");
-        run_hotword_correction(
+        let result = run_hotword_stage(
             &mut segments,
             &request.hotword_correction,
             &request.llm,
@@ -76,8 +100,19 @@ where
             &request.task_id,
             &request.audio_path,
         )
-        .await?
+        .await?;
+        stage_outcomes.push(StageOutcome {
+            stage: "hotword".to_string(),
+            executed: result.executed,
+            warnings: result.warnings.clone(),
+        });
+        result.metrics
     } else {
+        stage_outcomes.push(StageOutcome {
+            stage: "hotword".to_string(),
+            executed: false,
+            warnings: vec!["未启用热词矫正或未配置可用 LLM/术语组".to_string()],
+        });
         HotwordStats::default()
     };
 
@@ -85,23 +120,7 @@ where
     let final_segments = to_core_segments(&segments);
     let text = plain_text_from_segments(&final_segments);
     let srt = to_srt_from_segments(&final_segments);
-    let segments_response = final_segments
-        .iter()
-        .map(|segment| SegmentWithWordsDto {
-            start: segment.start_sec,
-            end: segment.end_sec,
-            text: segment.text.clone(),
-            words: segment
-                .words
-                .iter()
-                .map(|w| WordTokenDto {
-                    start: w.start,
-                    end: w.end,
-                    word: w.word.clone(),
-                })
-                .collect(),
-        })
-        .collect::<Vec<_>>();
+    let segments_response = to_segment_words_dto(&final_segments);
 
     Ok(RunPostAsrPipelineResponse {
         text,
@@ -111,41 +130,6 @@ where
         words: final_words,
         punctuation,
         hotword,
+        stage_outcomes,
     })
-}
-
-fn to_timed_segments(segments: &[SegmentWithWordsDto]) -> Vec<TimedHotwordSegment> {
-    segments
-        .iter()
-        .map(|segment| TimedHotwordSegment {
-            start_ms: (segment.start * 1000.0).round() as i64,
-            end_ms: (segment.end * 1000.0).round() as i64,
-            source_text: segment.text.clone(),
-            words: segment.words.clone(),
-        })
-        .collect()
-}
-
-fn flatten_words(segments: &[TimedHotwordSegment]) -> Vec<WordTokenDto> {
-    segments.iter().flat_map(|s| s.words.clone()).collect()
-}
-
-fn to_core_segments(segments: &[TimedHotwordSegment]) -> Vec<SubtitleSegment> {
-    segments
-        .iter()
-        .map(|segment| SubtitleSegment {
-            start_sec: (segment.start_ms as f64 / 1000.0).max(0.0),
-            end_sec: (segment.end_ms as f64 / 1000.0).max(segment.start_ms as f64 / 1000.0),
-            text: segment.source_text.clone(),
-            words: segment
-                .words
-                .iter()
-                .map(|w| SegmentWord {
-                    start: w.start,
-                    end: w.end,
-                    word: w.word.clone(),
-                })
-                .collect(),
-        })
-        .collect()
 }

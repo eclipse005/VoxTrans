@@ -2,6 +2,34 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StageResult<T> {
+    pub executed: bool,
+    pub metrics: T,
+    pub warnings: Vec<String>,
+}
+
+impl<T> StageResult<T> {
+    pub fn skipped_with(metrics: T) -> Self {
+        Self {
+            executed: false,
+            metrics,
+            warnings: Vec::new(),
+        }
+    }
+}
+
+impl<T> StageResult<T> {
+    pub fn executed(metrics: T) -> Self {
+        Self {
+            executed: true,
+            metrics,
+            warnings: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TranslationPipelineRequest {
     pub task_id: String,
     pub media_path: String,
@@ -110,6 +138,13 @@ pub struct QaSummary {
     pub fixed_total: usize,
     pub unresolved_total: usize,
     pub issues: Vec<QaIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QaStageMetrics {
+    pub cues: Vec<AlignedCue>,
+    pub qa: QaSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
