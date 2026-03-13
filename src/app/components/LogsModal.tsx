@@ -30,6 +30,7 @@ export default function LogsModal({
   const dialogRef = useDialogA11y(visible, onClose);
   const entries = parseLogEntries(content);
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
+  const [isMaximized, setIsMaximized] = useState(false);
   const usageBuckets = [...(usageSummary?.buckets ?? [])].sort((a, b) => a.updatedAt - b.updatedAt);
   if (!visible) return null;
 
@@ -37,12 +38,30 @@ export default function LogsModal({
     <div className="modal-overlay">
       <div
         ref={dialogRef}
-        className="modal-content modal-content-logs"
+        className={`modal-content modal-content-logs ${isMaximized ? "modal-content-logs-maximized" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="logs-modal-title"
         tabIndex={-1}
       >
+        <button
+          className="modal-maximize"
+          onClick={() => {
+            setIsMaximized((prev) => {
+              const next = !prev;
+              if (next && dialogRef.current) {
+                // Clear inline dimensions left by CSS resize so maximize styles can take effect.
+                dialogRef.current.style.width = "";
+                dialogRef.current.style.height = "";
+              }
+              return next;
+            });
+          }}
+          aria-label={isMaximized ? "还原窗口大小" : "最大化窗口"}
+          title={isMaximized ? "还原" : "最大化"}
+        >
+          {isMaximized ? "❐" : "□"}
+        </button>
         <button className="modal-close" onClick={onClose} aria-label="关闭日志">×</button>
         <div className="logs-header">
           <div className="logs-title-block">

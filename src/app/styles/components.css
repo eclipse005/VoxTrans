@@ -1988,6 +1988,18 @@
   cursor: pointer;
 }
 
+.modal-maximize {
+  position: absolute;
+  right: 54px;
+  top: 16px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 999px;
+  background: var(--apple-bg-secondary);
+  cursor: pointer;
+}
+
 .subtitle-find-split-menu-item:hover {
   background: rgba(0, 113, 227, 0.08);
   color: var(--apple-blue);
@@ -2488,14 +2500,38 @@
 
 
 .modal-content-logs {
-  width: min(920px, calc(100vw - 30px));
-  height: min(720px, calc(100vh - 30px));
-  max-width: 920px;
-  max-height: 720px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
+    width: min(920px, calc(100vw - 30px));
+    height: min(720px, calc(100vh - 30px));
+    min-width: 640px;
+    min-height: 420px;
+    max-width: calc(100vw - 30px);
+    max-height: calc(100vh - 30px);
+    resize: both;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .modal-content-logs-maximized {
+    width: calc(100vw - 24px);
+    height: calc(100vh - 24px);
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    resize: none;
+  }
+
+  @media (max-width: 760px) {
+    .modal-content-logs {
+      min-width: 0;
+      min-height: 0;
+      resize: none;
+    }
+
+    .modal-maximize {
+      display: none;
+    }
+  }
 
 .logs-header {
   display: flex;
