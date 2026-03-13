@@ -1,7 +1,7 @@
 use serde_json::Value;
 use sqlx::SqlitePool;
 
-use crate::services::llm::LlmInteractRequest;
+use crate::services::llm::{LlmCallEnvelope, LlmRuntimeContext, LlmStage};
 use crate::prompt_builder::BuildPunctuationRestorePromptRequest;
 use crate::services::preferences::LlmSettings;
 use crate::services::transcribe::WordTokenDto;
@@ -41,7 +41,7 @@ pub async fn run_stage(
                     text: sentence.text.clone(),
                 },
             )?;
-            let response = crate::services::llm::llm_interact(LlmInteractRequest {
+            let response = crate::services::llm::call(LlmCallEnvelope {
                 api_key: llm.api_key.clone(),
                 model: llm.api_model.clone(),
                 base_url: if llm.api_base.trim().is_empty() {
@@ -60,9 +60,11 @@ pub async fn run_stage(
                 max_tokens: None,
                 timeout_secs: Some(120),
                 max_retries: Some(2),
-                log_task_id: log_ctx.map(|v| v.0.to_string()),
-                log_media_path: log_ctx.map(|v| v.1.to_string()),
-                log_stage: Some("punctuation".to_string()),
+                context: Some(LlmRuntimeContext {
+                    task_id: log_ctx.map(|v| v.0.to_string()),
+                    media_path: log_ctx.map(|v| v.1.to_string()),
+                    stage: Some(LlmStage::Punctuation),
+                }),
                 usage_pool: usage_pool.cloned(),
             })
             .await?;

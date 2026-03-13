@@ -2,7 +2,9 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
-use crate::services::llm::{LlmInteractRequest, LlmMessageInput, LlmToolCall, LlmToolResult};
+use crate::services::llm::{
+    LlmCallEnvelope, LlmMessageInput, LlmRuntimeContext, LlmStage, LlmToolCall, LlmToolResult,
+};
 use crate::prompt_builder::{BuildHotwordCorrectionPromptsRequest, HotwordPromptTerm};
 use crate::services::preferences::{HotwordCorrection, LlmSettings};
 use crate::services::transcribe::WordTokenDto;
@@ -168,7 +170,7 @@ async fn run_hotword_agent_session(
     let mut no_tool_streak = 0usize;
 
     for _ in 0..max_rounds {
-        let response = crate::services::llm::llm_interact(LlmInteractRequest {
+        let response = crate::services::llm::call(LlmCallEnvelope {
             api_key: llm.api_key.clone(),
             model: llm.api_model.clone(),
             base_url: if llm.api_base.trim().is_empty() {
@@ -195,9 +197,11 @@ async fn run_hotword_agent_session(
             max_tokens: None,
             timeout_secs: Some(120),
             max_retries: Some(2),
-            log_task_id: Some(task_id.to_string()),
-            log_media_path: Some(media_path.to_string()),
-            log_stage: Some("hotword".to_string()),
+            context: Some(LlmRuntimeContext {
+                task_id: Some(task_id.to_string()),
+                media_path: Some(media_path.to_string()),
+                stage: Some(LlmStage::Hotword),
+            }),
             usage_pool: Some(pool.clone()),
         })
         .await?;

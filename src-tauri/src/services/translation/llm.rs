@@ -1,4 +1,4 @@
-use crate::services::llm::LlmInteractRequest;
+use crate::services::llm::{LlmCallEnvelope, LlmRuntimeContext, LlmStage};
 use crate::prompt_builder::{
     BuildTranslationProfilePromptRequest, BuildTranslationPromptRequest,
     TranslationPromptTerm, build_translation_profile_prompt, build_translation_prompt,
@@ -40,6 +40,16 @@ struct TranslateBatchRequest {
 struct TranslateBatchResult {
     batch_idx: usize,
     units: Vec<TranslatedUnit>,
+}
+
+fn to_llm_stage(stage: Option<&str>) -> LlmStage {
+    match stage.unwrap_or("unknown") {
+        "summary" => LlmStage::Summary,
+        "translate" => LlmStage::Translate,
+        "hotword" => LlmStage::Hotword,
+        "punctuation" => LlmStage::Punctuation,
+        _ => LlmStage::Unknown,
+    }
 }
 
 impl TranslationLlmClient {
@@ -255,7 +265,7 @@ impl TranslationLlmClient {
         user_prompt: &str,
         stage: Option<&str>,
     ) -> Result<Value, String> {
-        let response = crate::services::llm::llm_interact(LlmInteractRequest {
+        let response = crate::services::llm::call(LlmCallEnvelope {
             api_key: self.config.api_key.clone(),
             model: self.config.model.clone(),
             base_url: self.config.base_url.clone(),
@@ -270,9 +280,11 @@ impl TranslationLlmClient {
             max_tokens: None,
             timeout_secs: self.config.timeout_secs,
             max_retries: self.config.max_retries,
-            log_task_id: self.config.log_task_id.clone(),
-            log_media_path: self.config.log_media_path.clone(),
-            log_stage: stage.map(str::to_string),
+            context: Some(LlmRuntimeContext {
+                task_id: self.config.log_task_id.clone(),
+                media_path: self.config.log_media_path.clone(),
+                stage: Some(to_llm_stage(stage)),
+            }),
             usage_pool: self.config.usage_pool.clone(),
         })
         .await?;

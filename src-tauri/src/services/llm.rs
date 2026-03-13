@@ -51,9 +51,39 @@ pub struct LlmToolCallFunction {
     pub arguments: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmStage {
+    Hotword,
+    Punctuation,
+    Summary,
+    Translate,
+    Unknown,
+}
+
+impl LlmStage {
+    fn as_usage_stage(&self) -> &'static str {
+        match self {
+            Self::Hotword => "hotword",
+            Self::Punctuation => "punctuation",
+            Self::Summary => "summary",
+            Self::Translate => "translate",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmRuntimeContext {
+    pub task_id: Option<String>,
+    pub media_path: Option<String>,
+    pub stage: Option<LlmStage>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct LlmInteractRequest {
+pub struct LlmCallEnvelope {
     pub api_key: String,
     pub model: String,
     pub base_url: Option<String>,
@@ -68,9 +98,7 @@ pub struct LlmInteractRequest {
     pub max_tokens: Option<u32>,
     pub timeout_secs: Option<u64>,
     pub max_retries: Option<u32>,
-    pub log_task_id: Option<String>,
-    pub log_media_path: Option<String>,
-    pub log_stage: Option<String>,
+    pub context: Option<LlmRuntimeContext>,
     #[serde(skip, default)]
     pub usage_pool: Option<SqlitePool>,
 }
@@ -128,7 +156,7 @@ fn completion_endpoint(base_url: Option<String>) -> String {
     format!("{}/chat/completions", normalize_base_url(base_url))
 }
 
-fn normalize_messages(request: &LlmInteractRequest) -> Vec<Value> {
+fn normalize_messages(request: &LlmCallEnvelope) -> Vec<Value> {
     let mut out = Vec::new();
     if let Some(system_prompt) = &request.system_prompt {
         let system = system_prompt.trim();
@@ -168,7 +196,7 @@ fn normalize_messages(request: &LlmInteractRequest) -> Vec<Value> {
     out
 }
 
-fn build_payload(request: &LlmInteractRequest) -> Result<Value, String> {
+fn build_payload(request: &LlmCallEnvelope) -> Result<Value, String> {
     let messages = normalize_messages(request);
     if messages.is_empty() {
         return Err("llm_interact requires prompt or messages".to_string());
@@ -284,7 +312,7 @@ fn retry_backoff_ms(attempt: u32) -> u64 {
     (BASE_RETRY_BACKOFF_MS << shift).min(MAX_RETRY_BACKOFF_MS)
 }
 
-fn extract_user_prompt(request: &LlmInteractRequest) -> String {
+fn extract_user_prompt(request: &LlmCallEnvelope) -> String {
     if let Some(prompt) = request.prompt.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         return prompt.to_string();
     }
@@ -302,17 +330,20 @@ fn extract_user_prompt(request: &LlmInteractRequest) -> String {
     String::new()
 }
 
-fn maybe_log_llm(request: &LlmInteractRequest, payload: Value) {
-    let Some(task_id) = request
-        .log_task_id
+fn maybe_log_llm(request: &LlmCallEnvelope, payload: Value) {
+    let Some(context) = request.context.as_ref() else {
+        return;
+    };
+    let Some(task_id) = context
+        .task_id
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
     else {
         return;
     };
-    let Some(media_path) = request
-        .log_media_path
+    let Some(media_path) = context
+        .media_path
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -332,7 +363,7 @@ fn maybe_log_llm(request: &LlmInteractRequest, payload: Value) {
     });
 }
 
-fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractResponse, String> {
+fn run_llm_call_blocking(request: LlmCallEnvelope) -> Result<LlmInteractResponse, String> {
     if request.api_key.trim().is_empty() {
         return Err("apiKey is required".to_string());
     }
@@ -356,7 +387,14 @@ fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractR
 
     let system_prompt = request.system_prompt.clone().unwrap_or_default();
     let user_prompt = extract_user_prompt(&request);
+    let stage = request
+        .context
+        .as_ref()
+        .and_then(|ctx| ctx.stage.as_ref())
+        .map(LlmStage::as_usage_stage)
+        .unwrap_or("unknown");
     let request_log = json!({
+        "stage": stage,
         "systemPromptLength": system_prompt.chars().count(),
         "systemPrompt": system_prompt,
         "userPromptLength": user_prompt.chars().count(),
@@ -447,9 +485,9 @@ fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractR
     Err(final_error)
 }
 
-pub async fn llm_interact(request: LlmInteractRequest) -> Result<LlmInteractResponse, String> {
+pub async fn call(request: LlmCallEnvelope) -> Result<LlmInteractResponse, String> {
     let request_for_blocking = request.clone();
-    let response = spawn_blocking(move || run_llm_interact_blocking(request_for_blocking))
+    let response = spawn_blocking(move || run_llm_call_blocking(request_for_blocking))
         .await
         .map_err(|e| e.to_string())??;
 
@@ -460,7 +498,7 @@ pub async fn llm_interact(request: LlmInteractRequest) -> Result<LlmInteractResp
 pub async fn llm_test_connection(
     request: LlmTestConnectionRequest,
 ) -> Result<LlmTestConnectionResponse, String> {
-    let interact_request = LlmInteractRequest {
+    let call_envelope = LlmCallEnvelope {
         api_key: request.api_key,
         model: request.model.clone(),
         base_url: request.base_url,
@@ -475,13 +513,11 @@ pub async fn llm_test_connection(
         max_tokens: None,
         timeout_secs: request.timeout_secs.or(Some(30)),
         max_retries: request.max_retries.or(Some(1)),
-        log_task_id: None,
-        log_media_path: None,
-        log_stage: None,
+        context: None,
         usage_pool: None,
     };
 
-    let response = spawn_blocking(move || run_llm_interact_blocking(interact_request))
+    let response = spawn_blocking(move || run_llm_call_blocking(call_envelope))
         .await
         .map_err(|e| e.to_string())??;
 
@@ -493,23 +529,25 @@ pub async fn llm_test_connection(
     })
 }
 
-async fn maybe_record_llm_usage(request: &LlmInteractRequest, response: &LlmInteractResponse) {
+async fn maybe_record_llm_usage(request: &LlmCallEnvelope, response: &LlmInteractResponse) {
     let Some(pool) = request.usage_pool.as_ref() else {
         return;
     };
-    let Some(task_id) = request
-        .log_task_id
+    let Some(context) = request.context.as_ref() else {
+        return;
+    };
+    let Some(task_id) = context
+        .task_id
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
     else {
         return;
     };
-    let stage = request
-        .log_stage
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+    let stage = context
+        .stage
+        .as_ref()
+        .map(LlmStage::as_usage_stage)
         .unwrap_or("unknown");
 
     let prompt_tokens = response.prompt_tokens.unwrap_or(0) as i64;

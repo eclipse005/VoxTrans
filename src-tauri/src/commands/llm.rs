@@ -3,10 +3,10 @@ use tauri::State;
 #[tauri::command]
 pub async fn llm_interact(
     state: State<'_, crate::app_state::AppState>,
-    mut request: crate::services::llm::LlmInteractRequest,
+    mut request: crate::services::llm::LlmCallEnvelope,
 ) -> Result<crate::services::llm::LlmInteractResponse, String> {
     request.usage_pool = Some(state.pool.clone());
-    crate::services::llm::llm_interact(request).await
+    crate::services::llm::call(request).await
 }
 
 #[tauri::command]
