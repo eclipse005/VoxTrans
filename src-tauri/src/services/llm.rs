@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tauri::async_runtime::spawn_blocking;
 
+pub mod json;
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmTool {
@@ -58,6 +60,7 @@ pub enum LlmStage {
     Punctuation,
     Summary,
     Translate,
+    Qa,
     Unknown,
 }
 
@@ -68,6 +71,7 @@ impl LlmStage {
             Self::Punctuation => "punctuation",
             Self::Summary => "summary",
             Self::Translate => "translate",
+            Self::Qa => "qa",
             Self::Unknown => "unknown",
         }
     }
@@ -79,6 +83,27 @@ pub struct LlmRuntimeContext {
     pub task_id: Option<String>,
     pub media_path: Option<String>,
     pub stage: Option<LlmStage>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum LlmValidationProfile {
+    TranslateMap {
+        expected_items: usize,
+    },
+    QaDetect {
+        min_index: usize,
+        max_index: usize,
+    },
+    QaPatch {
+        max_index: usize,
+        expected_work_id: Option<String>,
+        expected_index: Option<String>,
+        expected_change_modes: Option<Vec<String>>,
+        expected_source_before: Option<String>,
+        expected_translation_before: Option<String>,
+    },
+    QaReverify,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -99,6 +124,7 @@ pub struct LlmCallEnvelope {
     pub timeout_secs: Option<u64>,
     pub max_retries: Option<u32>,
     pub context: Option<LlmRuntimeContext>,
+    pub validation: Option<LlmValidationProfile>,
     #[serde(skip, default)]
     pub usage_pool: Option<SqlitePool>,
 }
@@ -313,7 +339,12 @@ fn retry_backoff_ms(attempt: u32) -> u64 {
 }
 
 fn extract_user_prompt(request: &LlmCallEnvelope) -> String {
-    if let Some(prompt) = request.prompt.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(prompt) = request
+        .prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         return prompt.to_string();
     }
     if let Some(messages) = &request.messages {
@@ -419,9 +450,20 @@ fn run_llm_call_blocking(request: LlmCallEnvelope) -> Result<LlmInteractResponse
                     .map_err(|e| format!("failed to read llm response body: {e}"))?;
 
                 if status_code.is_success() {
-                    let raw: Value = serde_json::from_str(&body_text)
-                        .map_err(|e| format!("invalid llm response json: {e}; body: {body_text}"))?;
+                    let raw: Value = serde_json::from_str(&body_text).map_err(|e| {
+                        format!("invalid llm response json: {e}; body: {body_text}")
+                    })?;
                     let parsed = parse_llm_response(&raw)?;
+                    if let Err(validation_error) = validate_response(&request, &parsed) {
+                        let error = format!("llm response validation failed: {validation_error}");
+                        if attempt > max_retries {
+                            break error;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(retry_backoff_ms(
+                            attempt,
+                        )));
+                        continue;
+                    }
                     maybe_log_llm(
                         &request,
                         json!({
@@ -514,6 +556,7 @@ pub async fn llm_test_connection(
         timeout_secs: request.timeout_secs.or(Some(30)),
         max_retries: request.max_retries.or(Some(1)),
         context: None,
+        validation: None,
         usage_pool: None,
     };
 
@@ -572,5 +615,380 @@ async fn maybe_record_llm_usage(request: &LlmCallEnvelope, response: &LlmInterac
     .await;
 }
 
+fn validate_response(
+    request: &LlmCallEnvelope,
+    response: &LlmInteractResponse,
+) -> Result<(), String> {
+    let Some(profile) = request.validation.as_ref() else {
+        return Ok(());
+    };
+    match profile {
+        LlmValidationProfile::TranslateMap { expected_items } => validate_translate_map(
+            response.message.as_deref().unwrap_or_default(),
+            *expected_items,
+        ),
+        LlmValidationProfile::QaDetect {
+            min_index,
+            max_index,
+        } => validate_qa_detect(
+            response.message.as_deref().unwrap_or_default(),
+            *min_index,
+            *max_index,
+        ),
+        LlmValidationProfile::QaPatch {
+            max_index,
+            expected_work_id,
+            expected_index,
+            expected_change_modes,
+            expected_source_before,
+            expected_translation_before,
+        } => validate_qa_patch(
+            response.message.as_deref().unwrap_or_default(),
+            *max_index,
+            expected_work_id.as_deref(),
+            expected_index.as_deref(),
+            expected_change_modes.as_deref(),
+            expected_source_before.as_deref(),
+            expected_translation_before.as_deref(),
+        ),
+        LlmValidationProfile::QaReverify => {
+            validate_qa_reverify(response.message.as_deref().unwrap_or_default())
+        }
+    }
+}
 
+fn validate_translate_map(message: &str, expected_items: usize) -> Result<(), String> {
+    if expected_items == 0 {
+        return Ok(());
+    }
+    let value = crate::services::llm::json::parse_llm_json_response(message)?;
+    let obj = value
+        .as_object()
+        .ok_or_else(|| "translate response must be a JSON object".to_string())?;
+    for idx in 1..=expected_items {
+        let key = idx.to_string();
+        let item = obj.get(&key).ok_or_else(|| format!("missing key: {key}"))?;
+        let _item_obj = item
+            .as_object()
+            .ok_or_else(|| format!("item {key} must be an object"))?;
+    }
+    Ok(())
+}
 
+fn validate_qa_detect(message: &str, min_index: usize, max_index: usize) -> Result<(), String> {
+    let value = crate::services::llm::json::parse_llm_json_response(message)?;
+    let obj = value
+        .as_object()
+        .ok_or_else(|| "qa detect response must be a JSON object".to_string())?;
+    let issues = obj
+        .get("issues")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "qa detect response must contain issues[]".to_string())?;
+
+    for (i, issue) in issues.iter().enumerate() {
+        let issue_obj = issue
+            .as_object()
+            .ok_or_else(|| format!("issues[{i}] must be an object"))?;
+        let index = issue_obj
+            .get("index")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .ok_or_else(|| format!("issues[{i}].index missing"))?;
+        let idx = index
+            .parse::<usize>()
+            .map_err(|_| format!("issues[{i}].index must be numeric string"))?;
+        let allowed_min = min_index.max(1);
+        let allowed_max = max_index.max(allowed_min);
+        if idx < allowed_min || idx > allowed_max {
+            return Err(format!(
+                "issues[{i}].index out of range: {idx}, expected {}..={}",
+                allowed_min, allowed_max
+            ));
+        }
+        let _severity = issue_obj
+            .get("severity")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| format!("issues[{i}].severity missing"))?;
+        let _message = issue_obj
+            .get("message")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| format!("issues[{i}].message missing"))?;
+        let _issue_type = issue_obj
+            .get("issueType")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| format!("issues[{i}].issueType missing"))?;
+        let _target_field = issue_obj
+            .get("targetField")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| format!("issues[{i}].targetField missing"))?;
+        let _evidence = issue_obj
+            .get("evidence")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .ok_or_else(|| format!("issues[{i}].evidence missing"))?;
+        if issue_obj.get("fixable").and_then(|v| v.as_bool()).is_none() {
+            return Err(format!("issues[{i}].fixable missing or not boolean"));
+        }
+        let confidence = issue_obj
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| format!("issues[{i}].confidence missing or not number"))?;
+        if !(0.0..=1.0).contains(&confidence) {
+            return Err(format!("issues[{i}].confidence out of range"));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_qa_patch(
+    message: &str,
+    max_index: usize,
+    expected_work_id: Option<&str>,
+    expected_index: Option<&str>,
+    expected_change_modes: Option<&[String]>,
+    expected_source_before: Option<&str>,
+    expected_translation_before: Option<&str>,
+) -> Result<(), String> {
+    let value = crate::services::llm::json::parse_llm_json_response(message)?;
+    let obj = value
+        .as_object()
+        .ok_or_else(|| "qa patch response must be a JSON object".to_string())?;
+    let action = obj
+        .get("action")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .ok_or_else(|| "qa patch response must contain action".to_string())?;
+    if action != "apply" && action != "skip" {
+        return Err("qa patch action must be apply or skip".to_string());
+    }
+    let patch_value = obj.get("patch");
+    if action == "skip" {
+        if let Some(value) = patch_value {
+            if !value.is_null() {
+                return Err("qa patch must be null when action=skip".to_string());
+            }
+        }
+        return Ok(());
+    }
+    let patch = patch_value.and_then(|v| v.as_object()).ok_or_else(|| {
+        "qa patch response must contain patch object when action=apply".to_string()
+    })?;
+    let _work_id = patch
+        .get("workId")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "patch.workId missing".to_string())?;
+    if let Some(expected) = expected_work_id {
+        if !expected.trim().is_empty() && _work_id != expected.trim() {
+            return Err(format!(
+                "patch.workId mismatch: got {}, expected {}",
+                _work_id,
+                expected.trim()
+            ));
+        }
+    }
+    let index = patch
+        .get("index")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "patch.index missing".to_string())?;
+    let idx = index
+        .parse::<usize>()
+        .map_err(|_| "patch.index must be numeric string".to_string())?;
+    if idx == 0 || idx > max_index.max(1) {
+        return Err(format!(
+            "patch.index out of range: {idx}, expected 1..={}",
+            max_index.max(1)
+        ));
+    }
+    if let Some(expected) = expected_index {
+        let expected_trimmed = expected.trim();
+        if !expected_trimmed.is_empty() {
+            let expected_idx = expected_trimmed
+                .parse::<usize>()
+                .map_err(|_| "expected_index must be numeric string".to_string())?;
+            if idx != expected_idx {
+                return Err(format!(
+                    "patch.index mismatch: got {idx}, expected {expected_idx}"
+                ));
+            }
+        }
+    }
+    let _source_before = patch
+        .get("sourceBefore")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "patch.sourceBefore missing".to_string())?;
+    if let Some(expected) = expected_source_before {
+        if _source_before.trim() != expected.trim() {
+            return Err("patch.sourceBefore mismatch".to_string());
+        }
+    }
+    let _source_after = patch
+        .get("sourceAfter")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "patch.sourceAfter missing".to_string())?;
+    let _translation_before = patch
+        .get("translationBefore")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "patch.translationBefore missing".to_string())?;
+    if let Some(expected) = expected_translation_before {
+        if _translation_before.trim() != expected.trim() {
+            return Err("patch.translationBefore mismatch".to_string());
+        }
+    }
+    let _translation_after = patch
+        .get("translationAfter")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "patch.translationAfter missing".to_string())?;
+    let change_mode = patch
+        .get("changeMode")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .ok_or_else(|| "patch.changeMode missing".to_string())?;
+    if !matches!(
+        change_mode,
+        "translation_only" | "source_only" | "source_and_translation"
+    ) {
+        return Err("patch.changeMode invalid".to_string());
+    }
+    if let Some(allowed_modes) = expected_change_modes {
+        let allowed = allowed_modes
+            .iter()
+            .map(|mode| mode.trim())
+            .filter(|mode| !mode.is_empty())
+            .collect::<Vec<_>>();
+        if !allowed.is_empty() && !allowed.iter().any(|mode| *mode == change_mode) {
+            return Err(format!(
+                "patch.changeMode not allowed: {change_mode}, allowed={}",
+                allowed.join(",")
+            ));
+        }
+    }
+    let _reason = patch
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "patch.reason missing".to_string())?;
+    let confidence = patch
+        .get("confidence")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| "patch.confidence missing or not number".to_string())?;
+    if !(0.0..=1.0).contains(&confidence) {
+        return Err("patch.confidence out of range".to_string());
+    }
+    Ok(())
+}
+
+fn validate_qa_reverify(message: &str) -> Result<(), String> {
+    let value = crate::services::llm::json::parse_llm_json_response(message)?;
+    let obj = value
+        .as_object()
+        .ok_or_else(|| "qa reverify response must be a JSON object".to_string())?;
+    let _work_id = obj
+        .get("workId")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "qa reverify workId missing".to_string())?;
+    let status = obj
+        .get("status")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .ok_or_else(|| "qa reverify status missing".to_string())?;
+    if !matches!(status, "resolved" | "unresolved" | "regression") {
+        return Err("qa reverify status invalid".to_string());
+    }
+    let _message = obj
+        .get("message")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "qa reverify message missing".to_string())?;
+    let confidence = obj
+        .get("confidence")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| "qa reverify confidence missing or not number".to_string())?;
+    if !(0.0..=1.0).contains(&confidence) {
+        return Err("qa reverify confidence out of range".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sample_apply_patch_message(change_mode: &str) -> String {
+        json!({
+            "action": "apply",
+            "patch": {
+                "workId": "work-12",
+                "index": "12",
+                "sourceBefore": "hello world",
+                "sourceAfter": "hello world",
+                "translationBefore": "你好，世界",
+                "translationAfter": "你好，世界！",
+                "changeMode": change_mode,
+                "reason": "improve fluency",
+                "confidence": 0.9
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn qa_patch_validation_enforces_expected_scope() {
+        let message = sample_apply_patch_message("translation_only");
+        let ok = validate_qa_patch(
+            &message,
+            120,
+            Some("work-12"),
+            Some("12"),
+            Some(&["translation_only".to_string()]),
+            Some("hello world"),
+            Some("你好，世界"),
+        );
+        assert!(ok.is_ok());
+
+        let err = validate_qa_patch(
+            &message,
+            120,
+            Some("work-13"),
+            Some("12"),
+            Some(&["translation_only".to_string()]),
+            Some("hello world"),
+            Some("你好，世界"),
+        )
+        .unwrap_err();
+        assert!(err.contains("workId mismatch"));
+    }
+
+    #[test]
+    fn qa_patch_validation_enforces_allowed_modes() {
+        let message = sample_apply_patch_message("source_and_translation");
+        let err = validate_qa_patch(
+            &message,
+            120,
+            Some("work-12"),
+            Some("12"),
+            Some(&["translation_only".to_string()]),
+            Some("hello world"),
+            Some("你好，世界"),
+        )
+        .unwrap_err();
+        assert!(err.contains("changeMode not allowed"));
+    }
+}

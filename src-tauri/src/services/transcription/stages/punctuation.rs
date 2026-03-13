@@ -1,8 +1,8 @@
 use serde_json::Value;
 use sqlx::SqlitePool;
 
-use crate::services::llm::{LlmCallEnvelope, LlmRuntimeContext, LlmStage};
 use crate::prompt_builder::BuildPunctuationRestorePromptRequest;
+use crate::services::llm::{LlmCallEnvelope, LlmRuntimeContext, LlmStage};
 use crate::services::preferences::LlmSettings;
 use crate::services::transcribe::WordTokenDto;
 
@@ -65,6 +65,7 @@ pub async fn run_stage(
                     media_path: log_ctx.map(|v| v.1.to_string()),
                     stage: Some(LlmStage::Punctuation),
                 }),
+                validation: None,
                 usage_pool: usage_pool.cloned(),
             })
             .await?;
@@ -151,8 +152,8 @@ fn is_abbreviation_token(token: &str) -> bool {
         .trim_matches(['(', '"', '\'', '[', ')', ']', '】'])
         .to_ascii_lowercase();
     const ABBR: &[&str] = &[
-        "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "st.", "vs.", "etc.", "e.g.",
-        "i.e.", "u.s.", "u.k.",
+        "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "st.", "vs.", "etc.", "e.g.", "i.e.",
+        "u.s.", "u.k.",
     ];
     if ABBR.contains(&normalized.as_str()) {
         return true;
@@ -261,4 +262,3 @@ fn join_word_texts(words: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-

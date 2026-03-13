@@ -11,7 +11,7 @@ export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error"
 export type TranscribeStatus = QueueStatus;
 export type TranslateStatus = "idle" | "queued" | "processing" | "done" | "error";
 export type TranscribePhase = "initializing" | "recognizing" | "punctuation" | "hotword";
-export type TranslatePhase = "summary" | "translate";
+export type TranslatePhase = "summary" | "translate" | "qa";
 
 export type SubtitleCue = {
   id: string;
@@ -47,6 +47,7 @@ export type QueueItem = {
   resultText: string;
   resultSrt: string;
   subtitleSegmentsJson: string;
+  hotwordHintJson?: string;
 };
 
 export type WordToken = {
@@ -197,6 +198,8 @@ export type TaskSummary = {
   lastError: string;
   outputSrtPath: string;
   outputWordsJson: string;
+  hotwordStatus: string;
+  hotwordReplacementsJson: string;
   createdAt: number;
   updatedAt: number;
 } & TaskLanguage & TaskPipelineStatus & TaskAssets;

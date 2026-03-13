@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use voxtrans_core::subtitle::srt::{
-    normalize_cues, parse_srt, to_srt_from_cues, validate_cues,
-};
+use voxtrans_core::subtitle::srt::{normalize_cues, parse_srt, to_srt_from_cues, validate_cues};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,7 +51,10 @@ pub fn load_subtitle_editor(request: SubtitleLoadRequest) -> Result<SubtitleLoad
     let persisted = std::fs::read_to_string(&srt_path).ok();
     let fallback = request.fallback_srt.filter(|s| !s.trim().is_empty());
 
-    let mut content = persisted.or(fallback).unwrap_or_default().replace("\r\n", "\n");
+    let mut content = persisted
+        .or(fallback)
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
 
     let mut using_draft = false;
     if let Ok(draft_content) = std::fs::read_to_string(&draft_path) {

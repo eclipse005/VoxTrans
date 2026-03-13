@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS queue_items (
   result_text TEXT NOT NULL,
   result_srt TEXT NOT NULL,
   subtitle_segments_json TEXT NOT NULL,
+  hotword_hint_json TEXT NOT NULL DEFAULT '',
   sort_order INTEGER NOT NULL
 );
 
@@ -74,6 +75,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   translated_srt_path TEXT NOT NULL DEFAULT '',
   subtitle_segments_json TEXT NOT NULL DEFAULT '[]',
   translate_model TEXT NOT NULL DEFAULT '',
+  hotword_status TEXT NOT NULL DEFAULT '',
+  hotword_changed_count INTEGER NOT NULL DEFAULT 0,
+  hotword_replacements_json TEXT NOT NULL DEFAULT '[]',
   translated_at INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL

@@ -1,4 +1,6 @@
-use super::{MODEL_DOWNLOAD_FILES, REQUIRED_MODEL_FILES, compute_model_download_bytes, resolve_model_dir};
+use super::{
+    MODEL_DOWNLOAD_FILES, REQUIRED_MODEL_FILES, compute_model_download_bytes, resolve_model_dir,
+};
 use crate::app_state::{AppState, ModelDownloadRuntime, ModelDownloadStateSnapshot};
 use serde::Serialize;
 use std::io::{Read, Write};
@@ -232,7 +234,11 @@ fn download_model_files(
         if !(response.status().is_success()
             || response.status() == reqwest::StatusCode::PARTIAL_CONTENT)
         {
-            return Err(format!("download failed: {} -> {}", file_name, response.status()));
+            return Err(format!(
+                "download failed: {} -> {}",
+                file_name,
+                response.status()
+            ));
         }
 
         let mut file = std::fs::OpenOptions::new()
@@ -260,7 +266,8 @@ fn download_model_files(
             if read == 0 {
                 break;
             }
-            file.write_all(&buf[..read]).map_err(|err| err.to_string())?;
+            file.write_all(&buf[..read])
+                .map_err(|err| err.to_string())?;
             downloaded_bytes = downloaded_bytes.saturating_add(read as u64);
 
             let elapsed = last_speed_mark.elapsed().as_secs_f64();

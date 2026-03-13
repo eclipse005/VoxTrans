@@ -15,4 +15,3 @@ pub async fn llm_test_connection(
 ) -> Result<crate::services::llm::LlmTestConnectionResponse, String> {
     crate::services::llm::llm_test_connection(request).await
 }
-

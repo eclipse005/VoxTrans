@@ -61,6 +61,9 @@ function getTranslateProcessingText(item: QueueItem): string {
   if (item.translatePhase === "translate") {
     return "翻译中";
   }
+  if (item.translatePhase === "qa") {
+    return "校对中";
+  }
   return "翻译处理中";
 }
 

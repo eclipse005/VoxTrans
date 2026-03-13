@@ -20,6 +20,8 @@ pub struct QueueItemRecord {
     pub result_text: String,
     pub result_srt: String,
     pub subtitle_segments_json: String,
+    #[serde(default)]
+    pub hotword_hint_json: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -37,7 +39,7 @@ pub struct SaveQueueStateRequest {
 pub async fn load_workspace_state(pool: &SqlitePool) -> Result<WorkspaceStateResponse, String> {
     let rows = sqlx::query_as::<_, QueueItemRow>(
         "SELECT id, path, name, media_kind, size_bytes, transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
-                transcribe_error, translate_status, translate_progress, translate_error, result_text, result_srt, subtitle_segments_json
+                transcribe_error, translate_status, translate_progress, translate_error, result_text, result_srt, subtitle_segments_json, hotword_hint_json
          FROM queue_items
          ORDER BY sort_order ASC, id ASC",
     )
@@ -64,8 +66,8 @@ pub async fn save_queue_state(
         sqlx::query(
             "INSERT INTO queue_items (
                id, path, name, media_kind, size_bytes, transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
-               transcribe_error, translate_status, translate_progress, translate_error, result_text, result_srt, subtitle_segments_json, sort_order
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+               transcribe_error, translate_status, translate_progress, translate_error, result_text, result_srt, subtitle_segments_json, hotword_hint_json, sort_order
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&item.id)
         .bind(&item.path)
@@ -83,6 +85,7 @@ pub async fn save_queue_state(
         .bind(&item.result_text)
         .bind(&item.result_srt)
         .bind(&item.subtitle_segments_json)
+        .bind(&item.hotword_hint_json)
         .bind(index as i64)
         .execute(&mut *tx)
         .await
@@ -110,6 +113,7 @@ struct QueueItemRow {
     result_text: String,
     result_srt: String,
     subtitle_segments_json: String,
+    hotword_hint_json: String,
 }
 
 impl From<QueueItemRow> for QueueItemRecord {
@@ -131,6 +135,7 @@ impl From<QueueItemRow> for QueueItemRecord {
             result_text: row.result_text,
             result_srt: row.result_srt,
             subtitle_segments_json: row.subtitle_segments_json,
+            hotword_hint_json: row.hotword_hint_json,
         }
     }
 }

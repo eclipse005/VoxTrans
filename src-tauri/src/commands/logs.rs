@@ -1,6 +1,4 @@
-use crate::services::logs::{
-    self, AppendTaskLogRequest, ClearTaskLogsRequest, ReadTaskLogRequest,
-};
+use crate::services::logs::{self, AppendTaskLogRequest, ClearTaskLogsRequest, ReadTaskLogRequest};
 
 #[tauri::command]
 pub fn append_task_log(request: AppendTaskLogRequest) -> Result<(), String> {

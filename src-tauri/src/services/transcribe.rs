@@ -85,10 +85,11 @@ where
         options.model_dir = PathBuf::from(model_dir);
     }
 
-    let output = voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
-        on_progress(current, total);
-    })
-    .map_err(|err| err.to_string())?;
+    let output =
+        voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
+            on_progress(current, total);
+        })
+        .map_err(|err| err.to_string())?;
     let words = normalize_word_tokens(words_from_timed_tokens(&output.tokens));
 
     Ok(TranscribeResponse {
@@ -105,9 +106,12 @@ where
     })
 }
 
-pub fn build_segments_from_words(request: BuildSegmentsRequest) -> Result<BuildSegmentsResponse, String> {
+pub fn build_segments_from_words(
+    request: BuildSegmentsRequest,
+) -> Result<BuildSegmentsResponse, String> {
     let audio_path = PathBuf::from(&request.audio_path);
-    let srt_output_path = crate::services::task_path::task_srt_output_path(&request.task_id, &audio_path);
+    let srt_output_path =
+        crate::services::task_path::task_srt_output_path(&request.task_id, &audio_path);
 
     let words: Vec<WordToken> = request.words.into_iter().map(dto_to_word).collect();
     let segments = split_english_segments(&words);

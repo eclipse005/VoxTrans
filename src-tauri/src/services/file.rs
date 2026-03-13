@@ -28,7 +28,9 @@ pub fn get_file_size(path: String) -> Result<u64, String> {
     Ok(metadata.len())
 }
 
-pub fn get_task_translated_srt_path(request: TaskTranslatedSrtPathRequest) -> Result<String, String> {
+pub fn get_task_translated_srt_path(
+    request: TaskTranslatedSrtPathRequest,
+) -> Result<String, String> {
     if request.task_id.trim().is_empty() {
         return Err("taskId is required".to_string());
     }

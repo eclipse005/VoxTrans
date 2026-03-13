@@ -39,6 +39,12 @@ pub struct TaskSnapshot {
     #[serde(default)]
     pub translate_model: String,
     #[serde(default)]
+    pub hotword_status: String,
+    #[serde(default)]
+    pub hotword_changed_count: i64,
+    #[serde(default)]
+    pub hotword_replacements_json: String,
+    #[serde(default)]
     pub translated_at: Option<i64>,
 }
 
@@ -111,6 +117,9 @@ pub struct TaskSummary {
     pub translated_srt_path: String,
     pub subtitle_segments_json: String,
     pub translate_model: String,
+    pub hotword_status: String,
+    pub hotword_changed_count: u64,
+    pub hotword_replacements_json: String,
     pub translated_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -139,6 +148,9 @@ struct TaskSummaryRow {
     translated_srt_path: String,
     subtitle_segments_json: String,
     translate_model: String,
+    hotword_status: String,
+    hotword_changed_count: i64,
+    hotword_replacements_json: String,
     translated_at: Option<i64>,
     created_at: i64,
     updated_at: i64,
@@ -165,9 +177,10 @@ pub async fn record_task_event(
                id, media_path, name, media_kind, size_bytes, last_status, last_error, output_srt_path, output_words_json,
                source_lang, target_lang, transcribe_status, transcribe_error, transcript_srt,
                transcribed_at, translate_status, translate_error,
-               translated_srt, translated_srt_path, subtitle_segments_json, translate_model, translated_at,
+               translated_srt, translated_srt_path, subtitle_segments_json, translate_model,
+               hotword_status, hotword_changed_count, hotword_replacements_json, translated_at,
                created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s','now'), strftime('%s','now'))
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s','now'), strftime('%s','now'))
              ON CONFLICT(id) DO UPDATE SET
                media_path = excluded.media_path,
                name = excluded.name,
@@ -189,6 +202,9 @@ pub async fn record_task_event(
                translated_srt_path = excluded.translated_srt_path,
                subtitle_segments_json = excluded.subtitle_segments_json,
                translate_model = excluded.translate_model,
+               hotword_status = excluded.hotword_status,
+               hotword_changed_count = excluded.hotword_changed_count,
+               hotword_replacements_json = excluded.hotword_replacements_json,
                translated_at = excluded.translated_at,
                updated_at = excluded.updated_at",
         )
@@ -213,6 +229,9 @@ pub async fn record_task_event(
         .bind(task.translated_srt_path)
         .bind(subtitle_segments_json)
         .bind(task.translate_model)
+        .bind(task.hotword_status)
+        .bind(task.hotword_changed_count)
+        .bind(task.hotword_replacements_json)
         .bind(task.translated_at)
         .execute(&mut *tx)
         .await
@@ -291,7 +310,8 @@ pub async fn list_task_summaries(
         "SELECT id, media_path, name, media_kind, size_bytes, last_status, last_error, output_srt_path, output_words_json,
                 source_lang, target_lang, transcribe_status, transcribe_error, transcript_srt,
                 transcribed_at, translate_status, translate_error,
-                translated_srt, translated_srt_path, subtitle_segments_json, translate_model, translated_at,
+                translated_srt, translated_srt_path, subtitle_segments_json, translate_model,
+                hotword_status, hotword_changed_count, hotword_replacements_json, translated_at,
                 created_at, updated_at
          FROM tasks
          ORDER BY updated_at DESC, created_at DESC
@@ -345,6 +365,9 @@ impl From<TaskSummaryRow> for TaskSummary {
             translated_srt_path: row.translated_srt_path,
             subtitle_segments_json: row.subtitle_segments_json,
             translate_model: row.translate_model,
+            hotword_status: row.hotword_status,
+            hotword_changed_count: row.hotword_changed_count.max(0) as u64,
+            hotword_replacements_json: row.hotword_replacements_json,
             translated_at: row.translated_at,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -352,7 +375,10 @@ impl From<TaskSummaryRow> for TaskSummary {
     }
 }
 
-pub async fn clear_task_events(pool: &SqlitePool, request: ClearTaskEventsRequest) -> Result<(), String> {
+pub async fn clear_task_events(
+    pool: &SqlitePool,
+    request: ClearTaskEventsRequest,
+) -> Result<(), String> {
     if let Some(task_id) = request.task_id {
         sqlx::query("DELETE FROM task_events WHERE task_id = ?")
             .bind(task_id)
@@ -404,4 +430,3 @@ pub async fn delete_task_summaries(
     }
     Ok(())
 }
-

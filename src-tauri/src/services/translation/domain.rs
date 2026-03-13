@@ -114,6 +114,24 @@ pub struct TranslationTerm {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HotwordHint {
+    #[serde(default)]
+    pub term_list: Vec<String>,
+    #[serde(default)]
+    pub known_asr_errors: Vec<HotwordKnownAsrError>,
+    #[serde(default)]
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HotwordKnownAsrError {
+    pub wrong: String,
+    pub correct: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StageReport {
     pub stage: TranslationStage,
     pub status: StageStatus,

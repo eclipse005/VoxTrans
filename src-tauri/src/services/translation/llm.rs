@@ -1,10 +1,10 @@
-use crate::services::llm::{LlmCallEnvelope, LlmRuntimeContext, LlmStage};
 use crate::prompt_builder::{
-    BuildTranslationProfilePromptRequest, BuildTranslationPromptRequest,
-    TranslationPromptTerm, build_translation_profile_prompt, build_translation_prompt,
+    BuildTranslationProfilePromptRequest, BuildTranslationPromptRequest, TranslationPromptTerm,
+    build_translation_profile_prompt, build_translation_prompt,
 };
+use crate::services::llm::{LlmCallEnvelope, LlmRuntimeContext, LlmStage, LlmValidationProfile};
 use crate::services::translation::domain::{
-    SentenceUnit, SourceCue, TranslatedUnit, TranslationProfile, TranslationTerm,
+    HotwordHint, SentenceUnit, SourceCue, TranslatedUnit, TranslationProfile, TranslationTerm,
 };
 use crate::services::translation::json_tool::parse_llm_json_response;
 use serde_json::Value;
@@ -48,6 +48,7 @@ fn to_llm_stage(stage: Option<&str>) -> LlmStage {
         "translate" => LlmStage::Translate,
         "hotword" => LlmStage::Hotword,
         "punctuation" => LlmStage::Punctuation,
+        "qa" => LlmStage::Qa,
         _ => LlmStage::Unknown,
     }
 }
@@ -55,6 +56,39 @@ fn to_llm_stage(stage: Option<&str>) -> LlmStage {
 impl TranslationLlmClient {
     pub fn new(config: TranslationLlmRuntimeConfig) -> Self {
         Self { config }
+    }
+
+    pub fn append_main_log(&self, event: &str, payload: &Value) {
+        let Some(task_id) = self
+            .config
+            .log_task_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return;
+        };
+        let Some(media_path) = self
+            .config
+            .log_media_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return;
+        };
+        let message = format!(
+            "{}\n{}",
+            event,
+            serde_json::to_string_pretty(payload).unwrap_or_else(|_| "{}".to_string())
+        );
+        let _ =
+            crate::services::logs::append_task_log(crate::services::logs::AppendTaskLogRequest {
+                task_id: task_id.to_string(),
+                media_path: media_path.to_string(),
+                channel: "main".to_string(),
+                message,
+            });
     }
 
     pub async fn summary_task(
@@ -72,8 +106,7 @@ impl TranslationLlmClient {
             .map(|c| c.source_text.trim().to_string())
             .filter(|s| !s.is_empty())
             .take(120)
-            .collect::<Vec<_>>()
-            ;
+            .collect::<Vec<_>>();
 
         let prompts = build_translation_profile_prompt(BuildTranslationProfilePromptRequest {
             source_language: source_language.to_string(),
@@ -88,6 +121,7 @@ impl TranslationLlmClient {
                 &prompts.system_prompt,
                 &prompts.user_prompt,
                 Some("summary"),
+                None,
             )
             .await?;
         let topic_summary = string_from_json(&raw, &["topicSummary", "topic_summary"])
@@ -104,9 +138,10 @@ impl TranslationLlmClient {
         let primary_terms = terms_array_from_json(&raw, &["primaryTerms", "primary_terms"])
             .map(|subset| filter_terminology_subset(&subset, terms))
             .unwrap_or_default();
-        let supporting_terms = terms_array_from_json(&raw, &["supportingTerms", "supporting_terms"])
-            .map(|subset| filter_terminology_subset(&subset, terms))
-            .unwrap_or_default();
+        let supporting_terms =
+            terms_array_from_json(&raw, &["supportingTerms", "supporting_terms"])
+                .map(|subset| filter_terminology_subset(&subset, terms))
+                .unwrap_or_default();
         let terminology_subset = merge_terms_unique(&primary_terms, &supporting_terms);
 
         Ok(TranslationProfile {
@@ -126,6 +161,7 @@ impl TranslationLlmClient {
         profile_topic_summary: Option<&str>,
         primary_terms: &[TranslationTerm],
         supporting_terms: &[TranslationTerm],
+        _hotword_hint: Option<&HotwordHint>,
         sentences: &[SentenceUnit],
     ) -> Result<Vec<TranslatedUnit>, String> {
         self.validate_config()?;
@@ -175,7 +211,13 @@ impl TranslationLlmClient {
                     .map(|u| u.source_text.clone())
                     .collect::<Vec<_>>();
                 let batch_text = batch_lines.join("\n").to_lowercase();
-                let near_text = format!("{}\n{}\n{}", previous_lines.join("\n"), batch_lines.join("\n"), next_lines.join("\n")).to_lowercase();
+                let near_text = format!(
+                    "{}\n{}\n{}",
+                    previous_lines.join("\n"),
+                    batch_lines.join("\n"),
+                    next_lines.join("\n")
+                )
+                .to_lowercase();
                 let focus_terms = primary_terms
                     .iter()
                     .filter(|t| !t.source.trim().is_empty())
@@ -186,7 +228,11 @@ impl TranslationLlmClient {
                     .iter()
                     .filter(|t| !t.source.trim().is_empty())
                     .filter(|t| near_text.contains(&t.source.to_lowercase()))
-                    .filter(|t| !focus_terms.iter().any(|f| f.source.eq_ignore_ascii_case(&t.source)))
+                    .filter(|t| {
+                        !focus_terms
+                            .iter()
+                            .any(|f| f.source.eq_ignore_ascii_case(&t.source))
+                    })
                     .take(20)
                     .cloned()
                     .collect::<Vec<_>>();
@@ -228,9 +274,7 @@ impl TranslationLlmClient {
                 let system_prompt = system_prompt.clone();
                 let request = batch_request.clone();
                 handles.push(tauri::async_runtime::spawn(async move {
-                    client
-                        .translate_batch(request, &system_prompt)
-                        .await
+                    client.translate_batch(request, &system_prompt).await
                 }));
             }
             for handle in handles {
@@ -259,11 +303,23 @@ impl TranslationLlmClient {
         Ok(())
     }
 
+    pub async fn chat_json_validated(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        stage: Option<&str>,
+        validation: LlmValidationProfile,
+    ) -> Result<Value, String> {
+        self.chat_json(system_prompt, user_prompt, stage, Some(validation))
+            .await
+    }
+
     async fn chat_json(
         &self,
         system_prompt: &str,
         user_prompt: &str,
         stage: Option<&str>,
+        validation: Option<LlmValidationProfile>,
     ) -> Result<Value, String> {
         let response = crate::services::llm::call(LlmCallEnvelope {
             api_key: self.config.api_key.clone(),
@@ -285,6 +341,7 @@ impl TranslationLlmClient {
                 media_path: self.config.log_media_path.clone(),
                 stage: Some(to_llm_stage(stage)),
             }),
+            validation,
             usage_pool: self.config.usage_pool.clone(),
         })
         .await?;
@@ -304,7 +361,14 @@ impl TranslationLlmClient {
         system_prompt: &str,
     ) -> Result<TranslateBatchResult, String> {
         let raw = self
-            .chat_json(system_prompt, &request.user_prompt, Some("translate"))
+            .chat_json(
+                system_prompt,
+                &request.user_prompt,
+                Some("translate"),
+                Some(LlmValidationProfile::TranslateMap {
+                    expected_items: request.sentence_ids_in_order.len(),
+                }),
+            )
             .await?;
 
         let translated_object = raw
@@ -535,6 +599,7 @@ fn extract_translation_text(entry: &Value) -> Option<String> {
             || k.eq_ignore_ascii_case("source")
             || k.eq_ignore_ascii_case("source_text")
             || k.eq_ignore_ascii_case("sentence_id")
+            || k.eq_ignore_ascii_case("index")
             || k.eq_ignore_ascii_case("id")
         {
             continue;
@@ -548,4 +613,3 @@ fn extract_translation_text(entry: &Value) -> Option<String> {
     }
     None
 }
-

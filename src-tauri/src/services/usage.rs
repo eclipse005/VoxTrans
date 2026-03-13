@@ -95,12 +95,14 @@ pub async fn get_task_llm_usage_summary(
     let buckets = rows
         .into_iter()
         .map(
-            |(stage, prompt_tokens, completion_tokens, total_tokens, updated_at)| TaskLlmUsageBucket {
-                stage,
-                prompt_tokens,
-                completion_tokens,
-                total_tokens,
-                updated_at,
+            |(stage, prompt_tokens, completion_tokens, total_tokens, updated_at)| {
+                TaskLlmUsageBucket {
+                    stage,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                    updated_at,
+                }
             },
         )
         .collect::<Vec<_>>();

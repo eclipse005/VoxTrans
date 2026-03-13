@@ -18,10 +18,8 @@ pub async fn run_post_asr_pipeline(
 ) -> Result<crate::services::transcription::RunPostAsrPipelineResponse, String> {
     let task_id = request.task_id.clone();
 
-    let response = crate::services::transcription::run_post_asr_pipeline(
-        request,
-        &state.pool,
-        move |phase| {
+    let response =
+        crate::services::transcription::run_post_asr_pipeline(request, &state.pool, move |phase| {
             let _ = app.emit(
                 "transcribe-phase",
                 TranscribePhaseEvent {
@@ -29,9 +27,8 @@ pub async fn run_post_asr_pipeline(
                     phase: phase.to_string(),
                 },
             );
-        },
-    )
-    .await?;
+        })
+        .await?;
 
     Ok(response)
 }

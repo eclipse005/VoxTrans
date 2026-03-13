@@ -2,10 +2,10 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
+use crate::prompt_builder::{BuildHotwordCorrectionPromptsRequest, HotwordPromptTerm};
 use crate::services::llm::{
     LlmCallEnvelope, LlmMessageInput, LlmRuntimeContext, LlmStage, LlmToolCall, LlmToolResult,
 };
-use crate::prompt_builder::{BuildHotwordCorrectionPromptsRequest, HotwordPromptTerm};
 use crate::services::preferences::{HotwordCorrection, LlmSettings};
 use crate::services::transcribe::WordTokenDto;
 
@@ -20,6 +20,10 @@ const NO_TOOL_RETRY: usize = 2;
 const ACTION_MAX_ROUNDS: usize = 12;
 const NO_IMPROVE_PATIENCE: usize = 2;
 const FOCUS_RESCAN_PADDING: usize = 10;
+const HOTWORD_MAX_CHAR_GROWTH_RATIO: f64 = 2.5;
+const HOTWORD_MIN_CHAR_GROWTH_RATIO: f64 = 0.4;
+const HOTWORD_MAX_TOKEN_DELTA: usize = 3;
+const HOTWORD_NUMERIC_JUMP_THRESHOLD: f64 = 0.2;
 
 pub fn should_run_hotword_correction(config: &HotwordCorrection, llm: &LlmSettings) -> bool {
     if !config.enabled || llm.api_key.trim().is_empty() || llm.api_model.trim().is_empty() {
@@ -68,9 +72,9 @@ pub async fn run_stage(
         BuildHotwordCorrectionPromptsRequest {
             terms: terms
                 .iter()
-                .map(|(name, meaning)| HotwordPromptTerm {
-                    name: name.clone(),
-                    meaning: meaning.clone(),
+                .map(|(hotword, note)| HotwordPromptTerm {
+                    hotword: hotword.clone(),
+                    note: note.clone(),
                 })
                 .collect(),
             total: segments.len(),
@@ -153,6 +157,12 @@ struct CorrectionRecord {
     new_text: String,
 }
 
+#[derive(Debug, Clone)]
+struct ReplacementRequest {
+    old_text: String,
+    new_text: String,
+}
+
 async fn run_hotword_agent_session(
     segments: &mut [TimedHotwordSegment],
     system_prompt: &str,
@@ -202,6 +212,7 @@ async fn run_hotword_agent_session(
                 media_path: Some(media_path.to_string()),
                 stage: Some(LlmStage::Hotword),
             }),
+            validation: None,
             usage_pool: Some(pool.clone()),
         })
         .await?;
@@ -310,30 +321,9 @@ fn execute_hotword_tool_call(
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        let mut replacement_terms = HashSet::new();
-        for rep in &replacements {
-            let old_text = rep
-                .get("old_text")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            let new_text = rep
-                .get("new_text")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            if !old_text.is_empty() && !new_text.is_empty() && old_text != new_text {
-                replacement_terms.insert(old_text);
-            }
-        }
-        let before = replacement_terms
-            .iter()
-            .map(|term| count_matches_for_text(segments, term))
-            .sum::<usize>();
-        let mut changes_count = 0usize;
-
+        let requested_replacement_count = replacements.len();
+        let mut replacement_requests = Vec::<ReplacementRequest>::new();
+        let mut skipped_replacements = Vec::<Value>::new();
         for rep in replacements {
             let old_text = rep
                 .get("old_text")
@@ -350,8 +340,30 @@ fn execute_hotword_tool_call(
             if old_text.is_empty() || new_text.is_empty() || old_text == new_text {
                 continue;
             }
+            if let Some(reason) = replacement_guard_reason(&old_text, &new_text) {
+                skipped_replacements.push(json!({
+                    "oldText": old_text,
+                    "newText": new_text,
+                    "reason": reason,
+                }));
+                continue;
+            }
+            replacement_requests.push(ReplacementRequest { old_text, new_text });
+        }
+        let mut replacement_terms = HashSet::new();
+        for rep in &replacement_requests {
+            replacement_terms.insert(rep.old_text.clone());
+        }
+        let before = replacement_terms
+            .iter()
+            .map(|term| count_matches_for_text(segments, term))
+            .sum::<usize>();
+        let mut changes_count = 0usize;
+
+        for rep in replacement_requests.iter() {
             for (idx, segment) in segments.iter_mut().enumerate() {
-                let (next_text, matches) = replace_in_text(&segment.source_text, &old_text, &new_text);
+                let (next_text, matches) =
+                    replace_in_text(&segment.source_text, &rep.old_text, &rep.new_text);
                 if matches.is_empty() {
                     continue;
                 }
@@ -364,7 +376,7 @@ fn execute_hotword_tool_call(
                         start_idx: m.start,
                         end_idx: m.end,
                         old_text: m.matched_text,
-                        new_text: new_text.clone(),
+                        new_text: rep.new_text.clone(),
                     });
                 }
             }
@@ -388,6 +400,10 @@ fn execute_hotword_tool_call(
         return json!({
           "status": status,
           "changes_count": changes_count,
+          "requestedReplacementCount": requested_replacement_count,
+          "acceptedReplacementCount": replacement_requests.len(),
+          "skippedReplacementCount": skipped_replacements.len(),
+          "skippedReplacements": skipped_replacements,
           "metrics": {
              "before": before,
              "after": after,
@@ -521,6 +537,204 @@ fn count_matches_for_text(segments: &[TimedHotwordSegment], target: &str) -> usi
         .iter()
         .map(|s| find_surface_matches(&s.source_text, target).len())
         .sum()
+}
+
+fn replacement_guard_reason(old_text: &str, new_text: &str) -> Option<&'static str> {
+    if !is_shape_change_safe(old_text, new_text) {
+        return Some("shape_delta_too_large");
+    }
+    if has_time_unit_numeric_conflict(old_text, new_text) {
+        return Some("timeframe_number_shift");
+    }
+    if has_suspicious_numeric_jump(old_text, new_text) {
+        return Some("suspicious_numeric_jump");
+    }
+    None
+}
+
+fn is_shape_change_safe(old_text: &str, new_text: &str) -> bool {
+    let old_len = old_text.chars().filter(|c| !c.is_whitespace()).count();
+    let new_len = new_text.chars().filter(|c| !c.is_whitespace()).count();
+    if old_len == 0 || new_len == 0 {
+        return false;
+    }
+    let ratio = new_len as f64 / old_len as f64;
+    if !(HOTWORD_MIN_CHAR_GROWTH_RATIO..=HOTWORD_MAX_CHAR_GROWTH_RATIO).contains(&ratio) {
+        return false;
+    }
+    let old_tokens = token_count_for_guard(old_text);
+    let new_tokens = token_count_for_guard(new_text);
+    old_tokens.abs_diff(new_tokens) <= HOTWORD_MAX_TOKEN_DELTA
+}
+
+fn token_count_for_guard(text: &str) -> usize {
+    text.split(|c: char| c.is_whitespace() || c == '-' || c == '_' || c == '/')
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .count()
+}
+
+fn has_time_unit_numeric_conflict(old_text: &str, new_text: &str) -> bool {
+    let Some(old_unit) = detect_time_unit(old_text) else {
+        return false;
+    };
+    let Some(new_unit) = detect_time_unit(new_text) else {
+        return false;
+    };
+    if old_unit != new_unit {
+        return false;
+    }
+    let Some(old_number) = extract_primary_numeric_value(old_text) else {
+        return false;
+    };
+    let Some(new_number) = extract_primary_numeric_value(new_text) else {
+        return false;
+    };
+    (old_number - new_number).abs() > f64::EPSILON
+}
+
+fn has_suspicious_numeric_jump(old_text: &str, new_text: &str) -> bool {
+    let Some(old_number) = extract_primary_numeric_value(old_text) else {
+        return false;
+    };
+    let Some(new_number) = extract_primary_numeric_value(new_text) else {
+        return false;
+    };
+    if (old_number - new_number).abs() <= f64::EPSILON {
+        return false;
+    }
+    let old_signed_or_decimal = has_signed_or_decimal_number(old_text);
+    let new_signed_or_decimal = has_signed_or_decimal_number(new_text);
+    !old_signed_or_decimal
+        && new_signed_or_decimal
+        && (old_number - new_number).abs() > HOTWORD_NUMERIC_JUMP_THRESHOLD
+}
+
+fn detect_time_unit(text: &str) -> Option<&'static str> {
+    let words = alpha_words(text);
+    let has_any = |candidates: &[&str]| -> bool {
+        candidates
+            .iter()
+            .any(|candidate| words.iter().any(|word| word == candidate))
+    };
+    if has_any(&["sec", "secs", "second", "seconds"]) {
+        return Some("second");
+    }
+    if has_any(&["min", "mins", "minute", "minutes"]) {
+        return Some("minute");
+    }
+    if has_any(&["hr", "hrs", "hour", "hours"]) {
+        return Some("hour");
+    }
+    if has_any(&["day", "days"]) {
+        return Some("day");
+    }
+    if has_any(&["week", "weeks"]) {
+        return Some("week");
+    }
+    if has_any(&["month", "months"]) {
+        return Some("month");
+    }
+    if has_any(&["year", "years"]) {
+        return Some("year");
+    }
+    None
+}
+
+fn alpha_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_ascii_alphabetic())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_ascii_lowercase())
+        .collect()
+}
+
+fn extract_primary_numeric_value(text: &str) -> Option<f64> {
+    extract_numeric_values(text).into_iter().next()
+}
+
+fn extract_numeric_values(text: &str) -> Vec<f64> {
+    let mut out = extract_numeric_lexemes(text)
+        .into_iter()
+        .filter_map(|lexeme| lexeme.parse::<f64>().ok())
+        .collect::<Vec<_>>();
+    out.extend(
+        alpha_words(text)
+            .into_iter()
+            .filter_map(|word| number_word_to_value(&word)),
+    );
+    out
+}
+
+fn extract_numeric_lexemes(text: &str) -> Vec<String> {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let ch = chars[i];
+        let is_sign = ch == '+' || ch == '-';
+        let starts_number = ch.is_ascii_digit()
+            || (is_sign && i + 1 < chars.len() && chars[i + 1].is_ascii_digit());
+        if !starts_number {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        i += 1;
+        while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+            i += 1;
+        }
+        let lexeme = chars[start..i].iter().collect::<String>();
+        if lexeme.chars().any(|c| c.is_ascii_digit()) {
+            out.push(lexeme);
+        }
+    }
+    out
+}
+
+fn has_signed_or_decimal_number(text: &str) -> bool {
+    extract_numeric_lexemes(text).iter().any(|lexeme| {
+        lexeme.contains('.')
+            || lexeme
+                .chars()
+                .next()
+                .map(|ch| ch == '+' || ch == '-')
+                .unwrap_or(false)
+    })
+}
+
+fn number_word_to_value(word: &str) -> Option<f64> {
+    match word {
+        "zero" => Some(0.0),
+        "one" => Some(1.0),
+        "two" => Some(2.0),
+        "three" => Some(3.0),
+        "four" => Some(4.0),
+        "five" => Some(5.0),
+        "six" => Some(6.0),
+        "seven" => Some(7.0),
+        "eight" => Some(8.0),
+        "nine" => Some(9.0),
+        "ten" => Some(10.0),
+        "eleven" => Some(11.0),
+        "twelve" => Some(12.0),
+        "thirteen" => Some(13.0),
+        "fourteen" => Some(14.0),
+        "fifteen" => Some(15.0),
+        "sixteen" => Some(16.0),
+        "seventeen" => Some(17.0),
+        "eighteen" => Some(18.0),
+        "nineteen" => Some(19.0),
+        "twenty" => Some(20.0),
+        "thirty" => Some(30.0),
+        "forty" => Some(40.0),
+        "fifty" => Some(50.0),
+        "sixty" => Some(60.0),
+        "seventy" => Some(70.0),
+        "eighty" => Some(80.0),
+        "ninety" => Some(90.0),
+        _ => None,
+    }
 }
 
 fn parse_hotword_terms(raw_terms: &[String]) -> Vec<(String, Option<String>)> {
@@ -683,7 +897,8 @@ fn rebuild_words_from_corrections(
             let affected = chunk_map
                 .iter()
                 .filter(|entry| {
-                    !(entry.end_idx <= correction.start_idx || entry.start_idx >= correction.end_idx)
+                    !(entry.end_idx <= correction.start_idx
+                        || entry.start_idx >= correction.end_idx)
                 })
                 .collect::<Vec<_>>();
             if affected.is_empty() {
@@ -706,9 +921,9 @@ fn rebuild_words_from_corrections(
         }
         segment.words = final_words;
         segment.start_ms = ((segment.words[0].start * 1000.0).round() as i64).max(0);
-        segment.end_ms =
-            ((segment.words.last().map(|w| w.end).unwrap_or(0.0) * 1000.0).round() as i64)
-                .max(segment.start_ms);
+        segment.end_ms = ((segment.words.last().map(|w| w.end).unwrap_or(0.0) * 1000.0).round()
+            as i64)
+            .max(segment.start_ms);
     }
 }
 
@@ -774,3 +989,29 @@ fn split_text_into_words_with_timing(text: &str, start: f64, end: f64) -> Vec<Wo
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guard_blocks_timeframe_number_shift() {
+        assert_eq!(
+            replacement_guard_reason("50-minute", "15 minute"),
+            Some("timeframe_number_shift")
+        );
+    }
+
+    #[test]
+    fn guard_blocks_suspicious_numeric_jump() {
+        assert_eq!(
+            replacement_guard_reason("zero level", "-0.27 level"),
+            Some("suspicious_numeric_jump")
+        );
+    }
+
+    #[test]
+    fn guard_allows_equivalent_numeric_normalization() {
+        assert_eq!(replacement_guard_reason("one level", "1 level"), None);
+        assert_eq!(replacement_guard_reason("15 minutes", "15 minute"), None);
+    }
+}

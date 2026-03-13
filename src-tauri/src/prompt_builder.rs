@@ -17,8 +17,8 @@ pub struct BuildHotwordCorrectionPromptsRequest {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct HotwordPromptTerm {
-    pub name: String,
-    pub meaning: Option<String>,
+    pub hotword: String,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -86,6 +86,58 @@ pub struct BuildTranslationPromptResponse {
     pub user_prompt: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildTranslationQaDetectPromptResponse {
+    pub system_prompt: String,
+    pub user_prefix: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildTranslationQaDetectPromptRequest {
+    pub source_language: String,
+    pub target_language: String,
+    pub style: Option<String>,
+    pub profile_topic_summary: Option<String>,
+    pub terminology_subset: Vec<TranslationPromptTerm>,
+    pub total: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildTranslationQaPatchPromptResponse {
+    pub system_prompt: String,
+    pub user_prefix: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildTranslationQaPatchPromptRequest {
+    pub source_language: String,
+    pub target_language: String,
+    pub style: Option<String>,
+    pub profile_topic_summary: Option<String>,
+    pub terminology_subset: Vec<TranslationPromptTerm>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildTranslationQaReverifyPromptResponse {
+    pub system_prompt: String,
+    pub user_prefix: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildTranslationQaReverifyPromptRequest {
+    pub source_language: String,
+    pub target_language: String,
+    pub style: Option<String>,
+    pub profile_topic_summary: Option<String>,
+    pub terminology_subset: Vec<TranslationPromptTerm>,
+}
+
 pub fn build_hotword_correction_prompts(
     request: BuildHotwordCorrectionPromptsRequest,
 ) -> Result<BuildHotwordCorrectionPromptsResponse, String> {
@@ -113,7 +165,7 @@ pub fn build_hotword_correction_prompts(
 ## 音频语言
 {asr_language}
 
-## 术语注册表
+## 热词注册表
 ```json
 {terms_registry}
 ```
@@ -161,7 +213,7 @@ batch_replace(replacements=[
 
     let term_names = terms
         .iter()
-        .map(|t| t.name.as_str())
+        .map(|t| t.hotword.as_str())
         .collect::<Vec<_>>()
         .join(", ");
     let ordered_ranges = build_ordered_ranges(request.total, HOTWORD_WINDOW_SIZE);
@@ -191,7 +243,9 @@ batch_replace(replacements=[
             r#type: "function".to_string(),
             function: LlmToolFunction {
                 name: "batch_replace".to_string(),
-                description: Some("批量执行多处替换。在所有句子中查找并替换多种错误形式".to_string()),
+                description: Some(
+                    "批量执行多处替换。在所有句子中查找并替换多种错误形式".to_string(),
+                ),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -362,19 +416,21 @@ pub fn build_translation_prompt(
         return Err("lines must not be empty".to_string());
     }
     let lines_text = lines.join("\n");
-    let mut output_format = serde_json::Map::new();
+    let mut output_lines = Vec::with_capacity(lines.len() + 2);
+    output_lines.push("{".to_string());
     for (idx, line) in lines.iter().enumerate() {
-        output_format.insert(
-            (idx + 1).to_string(),
-            json!({
-                "origin": line,
-                "translation": format!("{target_language} translation {}.", idx + 1)
-            }),
-        );
+        let key = (idx + 1).to_string();
+        let origin_text = serde_json::to_string(line).map_err(|e| e.to_string())?;
+        let translation_text =
+            serde_json::to_string(&format!("{target_language} translation {}.", idx + 1))
+                .map_err(|e| e.to_string())?;
+        let comma = if idx + 1 == lines.len() { "" } else { "," };
+        output_lines.push(format!(
+            "  \"{key}\": {{\n    \"origin\": {origin_text},\n    \"translation\": {translation_text}\n  }}{comma}"
+        ));
     }
-    let output_format_text =
-        serde_json::to_string_pretty(&serde_json::Value::Object(output_format))
-            .map_err(|e| e.to_string())?;
+    output_lines.push("}".to_string());
+    let output_format_text = output_lines.join("\n");
 
     let system_prompt = format!(
         "You are a professional Netflix subtitle translator, fluent in both {source_language} and {target_language}, as well as their respective cultures. Your translations must be accurate, natural, and appropriate in style and tone."
@@ -391,53 +447,179 @@ pub fn build_translation_prompt(
     })
 }
 
+pub fn build_translation_qa_detect_prompt(
+    request: BuildTranslationQaDetectPromptRequest,
+) -> Result<BuildTranslationQaDetectPromptResponse, String> {
+    let source_language = request.source_language.trim();
+    let target_language = request.target_language.trim();
+    if source_language.is_empty() || target_language.is_empty() {
+        return Err("sourceLanguage and targetLanguage are required".to_string());
+    }
+    let style = request
+        .style
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("自然流畅、忠实原意");
+    let topic = request
+        .profile_topic_summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("无");
+    let terminology_subset =
+        serde_json::to_string(&request.terminology_subset).map_err(|e| e.to_string())?;
+
+    let system_prompt = format!(
+        "You are a subtitle QA detector for {source_language} to {target_language}. \
+Your job is to find viewer-facing subtitle issues in a general audio/video translation product. \
+Do not rely on any hard-coded domain assumptions. Use only the provided runtime context. \
+Prefer improving translated_text. Only flag source_text when a clear ASR error materially harms translation quality. \
+Return JSON only."
+    );
+    let user_prefix = format!(
+        "请检查字幕质量，优先关注最终观看效果。\n\n\
+任务范围：准确性、漏译、术语一致性、人名地名品牌名、数字单位、表达自然度、字幕可读性、上下文一致性。\n\
+只有在 source_text 的明显识别错误会直接影响翻译质量时，才标记 source_text 问题。\n\
+不要输出长篇解释，不要改写字幕。\n\n\
+总字幕数：{}\n翻译风格：{}\n主题摘要：{}\n术语子集：{}\n\n\
+输出严格 JSON：{{\"issues\":[{{\"index\":\"...\",\"severity\":\"high|medium|low\",\"issueType\":\"mistranslation|omission|terminology_consistency|number_unit|named_entity|fluency|readability|asr_source_error|context_consistency\",\"targetField\":\"translation|source|both\",\"message\":\"...\",\"evidence\":\"...\",\"fixable\":true,\"confidence\":0.0}}]}}",
+        request.total, style, topic, terminology_subset
+    );
+
+    Ok(BuildTranslationQaDetectPromptResponse {
+        system_prompt,
+        user_prefix,
+    })
+}
+
+pub fn build_translation_qa_patch_prompt(
+    request: BuildTranslationQaPatchPromptRequest,
+) -> Result<BuildTranslationQaPatchPromptResponse, String> {
+    let source_language = request.source_language.trim();
+    let target_language = request.target_language.trim();
+    if source_language.is_empty() || target_language.is_empty() {
+        return Err("sourceLanguage and targetLanguage are required".to_string());
+    }
+    let style = request
+        .style
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("自然流畅、忠实原意");
+    let topic = request
+        .profile_topic_summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("无");
+    let terminology_subset =
+        serde_json::to_string(&request.terminology_subset).map_err(|e| e.to_string())?;
+
+    let system_prompt = format!(
+        "You are a subtitle QA patch generator for {source_language} to {target_language}. \
+Generate safe single-cue patches for a general audio/video translation product. \
+Prefer improving translated_text. Edit source_text only when a clear ASR error directly harms translation quality. \
+Never change indexes or timeline. Return JSON only."
+    );
+    let user_prefix = format!(
+        "请根据给定的 work item 生成单条字幕修复方案。\n\n\
+修复原则：忠实原意、表达自然、适合字幕观看、前后一致、避免过度改写。\n\
+默认优先修改 translated_text；只有在 source_text 的明显识别错误会影响翻译质量时，才修改 source_text。\n\
+一个 patch 只能修改一个 cue，不能跨 cue 搬运语义。\n\n\
+翻译风格：{}\n主题摘要：{}\n术语子集：{}\n\
+\n\
+输出严格 JSON：{{\"action\":\"apply|skip\",\"patch\":{{\"workId\":\"...\",\"index\":\"...\",\"sourceBefore\":\"...\",\"sourceAfter\":\"...\",\"translationBefore\":\"...\",\"translationAfter\":\"...\",\"changeMode\":\"translation_only|source_only|source_and_translation\",\"reason\":\"...\",\"confidence\":0.0}}}}。\n\
+如果无需修复，输出 {{\"action\":\"skip\",\"patch\":null}}。",
+        style, topic, terminology_subset
+    );
+
+    Ok(BuildTranslationQaPatchPromptResponse {
+        system_prompt,
+        user_prefix,
+    })
+}
+
+pub fn build_translation_qa_reverify_prompt(
+    request: BuildTranslationQaReverifyPromptRequest,
+) -> Result<BuildTranslationQaReverifyPromptResponse, String> {
+    let source_language = request.source_language.trim();
+    let target_language = request.target_language.trim();
+    if source_language.is_empty() || target_language.is_empty() {
+        return Err("sourceLanguage and targetLanguage are required".to_string());
+    }
+    let style = request
+        .style
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("自然流畅、忠实原意");
+    let topic = request
+        .profile_topic_summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("无");
+    let terminology_subset =
+        serde_json::to_string(&request.terminology_subset).map_err(|e| e.to_string())?;
+
+    let system_prompt = format!(
+        "You are a subtitle QA patch verifier for {source_language} to {target_language}. \
+Verify whether a single-cue patch resolved the targeted QA issues without introducing regressions. \
+Use only the provided runtime context. Return JSON only."
+    );
+    let user_prefix = format!(
+        "请根据给定的 work item、补丁前后内容和邻近上下文，判断补丁是否解决了目标问题。\n\n\
+检查重点：目标问题是否解决、译文是否更自然、是否引入新误译或不一致、source_text 是否被不必要地改动。\n\n\
+翻译风格：{}\n主题摘要：{}\n术语子集：{}\n\
+\n\
+输出严格 JSON：{{\"workId\":\"...\",\"status\":\"resolved|unresolved|regression\",\"message\":\"...\",\"confidence\":0.0}}",
+        style, topic, terminology_subset
+    );
+
+    Ok(BuildTranslationQaReverifyPromptResponse {
+        system_prompt,
+        user_prefix,
+    })
+}
+
 fn dedupe_terms(terms: Vec<HotwordPromptTerm>) -> Vec<HotwordPromptTerm> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for term in terms {
-        let name = term.name.trim().to_string();
-        if name.is_empty() {
+        let hotword = term.hotword.trim().to_string();
+        if hotword.is_empty() {
             continue;
         }
-        let key = name.to_lowercase();
+        let key = hotword.to_lowercase();
         if seen.contains(&key) {
             continue;
         }
         seen.insert(key);
-        let meaning = term
-            .meaning
+        let note = term
+            .note
             .as_deref()
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .map(str::to_string);
-        out.push(HotwordPromptTerm { name, meaning });
+        out.push(HotwordPromptTerm { hotword, note });
     }
     out
-}
-
-fn looks_like_acronym(term_name: &str) -> bool {
-    let letters = term_name
-        .chars()
-        .filter(|c| c.is_ascii_alphabetic())
-        .collect::<Vec<_>>();
-    if letters.len() < 2 {
-        return false;
-    }
-    let upper_letters = letters.iter().filter(|c| c.is_ascii_uppercase()).count();
-    upper_letters >= std::cmp::max(2, letters.len().saturating_sub(1))
 }
 
 fn build_term_registry(terms: &[HotwordPromptTerm]) -> Vec<serde_json::Value> {
     terms
         .iter()
         .map(|term| {
-            let name = term.name.trim();
-            let meaning = term.meaning.as_deref().map(str::trim).filter(|v| !v.is_empty());
+            let hotword = term.hotword.trim();
+            let note = term
+                .note
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty());
             json!({
-                "name": name,
-                "meaning": meaning,
-                "canonical_form": if looks_like_acronym(name) { meaning.unwrap_or(name) } else { name },
-                "is_acronym": looks_like_acronym(name),
+                "hotword": hotword,
+                "note": note,
             })
         })
         .collect()
@@ -471,4 +653,3 @@ fn format_ranges_brief(ranges: &[(usize, usize)], max_show: usize) -> String {
     }
     brief.join(" ")
 }
-

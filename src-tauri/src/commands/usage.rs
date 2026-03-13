@@ -2,8 +2,7 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::services::usage::{
-    self, GetTaskLlmUsageSummaryRequest, RecordTaskLlmUsageRequest,
-    TaskLlmUsageSummary,
+    self, GetTaskLlmUsageSummaryRequest, RecordTaskLlmUsageRequest, TaskLlmUsageSummary,
 };
 
 #[tauri::command]

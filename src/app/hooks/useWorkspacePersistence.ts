@@ -85,6 +85,7 @@ function taskSummaryToQueueItem(task: TaskSummary): QueueItem {
     resultText,
     resultSrt: task.transcriptSrt || "",
     subtitleSegmentsJson: JSON.stringify(segments),
+    hotwordHintJson: buildHotwordHintJsonFromSummary(task),
   });
 }
 
@@ -126,6 +127,7 @@ function normalizeQueueItem(item: QueueItem): QueueItem {
     translateProgress: clampProgress(item.translateProgress),
     translateError: item.translateError || "",
     subtitleSegmentsJson: normalizeSubtitleSegmentsJson(item.subtitleSegmentsJson),
+    hotwordHintJson: typeof item.hotwordHintJson === "string" ? item.hotwordHintJson : "",
   });
 }
 
@@ -146,6 +148,7 @@ function normalizeTranslatePhase(value: unknown): QueueItem["translatePhase"] {
   switch (value) {
     case "summary":
     case "translate":
+    case "qa":
       return value;
     default:
       return "";
@@ -225,4 +228,35 @@ function recoverTransientStates(item: QueueItem): QueueItem {
 
   return next;
 }
+
+function buildHotwordHintJsonFromSummary(task: TaskSummary): string {
+  const status = (task.hotwordStatus || "").trim().toLowerCase();
+  const termList: string[] = [];
+  const knownAsrErrors = parseKnownAsrErrors(task.hotwordReplacementsJson);
+  if (status !== "completed" && knownAsrErrors.length === 0) return "";
+  return JSON.stringify({
+    termList,
+    knownAsrErrors,
+    note: "This is reference context from ASR hotword correction. Use only when context clearly matches.",
+  });
+}
+
+function parseKnownAsrErrors(raw: string): Array<{ wrong: string; correct: string }> {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const out: Array<{ wrong: string; correct: string }> = [];
+    for (const item of parsed) {
+      const wrong = String(item?.wrong ?? item?.oldText ?? item?.old_text ?? "").trim();
+      const correct = String(item?.correct ?? item?.newText ?? item?.new_text ?? "").trim();
+      if (!wrong || !correct) continue;
+      out.push({ wrong, correct });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 

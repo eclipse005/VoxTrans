@@ -75,6 +75,7 @@ pub async fn run_translation_pipeline(
         &request.source_language,
         &request.target_language,
         &summary,
+        None,
         &units,
     )
     .await?;
