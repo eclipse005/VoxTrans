@@ -44,6 +44,7 @@ function App() {
     draftApiBase,
     draftApiModel,
     draftAutoPunc,
+    draftThreadsInput,
     hotwordCorrection,
     terms,
     termSource,
@@ -291,12 +292,13 @@ function App() {
       draftProvider: settings.provider,
       draftChunkInput: String(settings.chunkTargetSeconds),
       draftAutoPunc: settings.autoPunc,
+      draftThreadsInput: String(settings.threads),
     }});
     dispatch({ type: "set_ui", payload: {
       settingsTab: "transcribe",
       showSettings: true,
     }});
-  }, [dispatch, refreshModelStatus, settings.autoPunc, settings.chunkTargetSeconds, settings.provider]);
+  }, [dispatch, refreshModelStatus, settings.autoPunc, settings.chunkTargetSeconds, settings.provider, settings.threads]);
 
   const startModelDownload = useCallback(async () => {
     setModelBusy(true);
@@ -340,12 +342,19 @@ function App() {
       pushToast("分段时长必须是数字", "error");
       return;
     }
+    const parsedThreads = Number.parseInt(draftThreadsInput.trim(), 10);
+    if (!Number.isFinite(parsedThreads)) {
+      pushToast("线程数必须是数字", "error");
+      return;
+    }
 
     const clamped = Math.max(60, Math.min(300, parsed));
+    const clampedThreads = Math.max(1, Math.min(16, parsedThreads));
     const nextSettings = {
       provider: draftProvider,
       chunkTargetSeconds: clamped,
       autoPunc: draftAutoPunc,
+      threads: clampedThreads,
     } satisfies SavedSettings;
 
     dispatch({
@@ -354,6 +363,7 @@ function App() {
     });
     dispatch({ type: "set_draft", payload: {
       draftChunkInput: String(clamped),
+      draftThreadsInput: String(clampedThreads),
     }});
 
     try {
@@ -372,7 +382,7 @@ function App() {
       const message = error instanceof Error ? error.message : "设置保存失败";
       pushToast(message, "error");
     }
-  }, [dispatch, draftApiBase, draftApiKey, draftApiModel, draftAutoPunc, draftChunkInput, draftProvider, pushToast]);
+  }, [dispatch, draftApiBase, draftApiKey, draftApiModel, draftAutoPunc, draftChunkInput, draftProvider, draftThreadsInput, pushToast]);
 
   const testLlmConnection = useCallback(async () => {
     if (!draftApiKey.trim()) {
@@ -515,7 +525,6 @@ function App() {
       <Navbar
         termsCount={termsCount}
         onOpenTerms={() => dispatch({ type: "set_ui", payload: { showGlossary: true } })}
-        onOpenLogs={openLogs}
         onOpenSettings={openSettings}
       />
 
@@ -562,6 +571,7 @@ function App() {
               onReplaceText={replaceTextInCues}
               onDeleteCue={removeCue}
               onOpenSrtDir={openSubtitleDir}
+              onOpenLogs={openLogs}
               onClose={() => {}}
             />
           </div>
@@ -582,6 +592,7 @@ function App() {
         draftChunkInput={draftChunkInput}
         draftApiKey={draftApiKey}
         draftAutoPunc={draftAutoPunc}
+        draftThreadsInput={draftThreadsInput}
         draftApiBase={draftApiBase}
         draftApiModel={draftApiModel}
         testingLlm={testingLlm}
@@ -598,6 +609,7 @@ function App() {
         onDraftChunkInputChange={(value) => dispatch({ type: "set_draft", payload: { draftChunkInput: value } })}
         onDraftApiKeyChange={(value) => dispatch({ type: "set_draft", payload: { draftApiKey: value } })}
         onDraftAutoPuncChange={(value) => dispatch({ type: "set_draft", payload: { draftAutoPunc: value } })}
+        onDraftThreadsInputChange={(value) => dispatch({ type: "set_draft", payload: { draftThreadsInput: value } })}
         onDraftApiBaseChange={(value) => dispatch({ type: "set_draft", payload: { draftApiBase: value } })}
         onDraftApiModelChange={(value) => dispatch({ type: "set_draft", payload: { draftApiModel: value } })}
         onOpenModelDir={openModelDir}

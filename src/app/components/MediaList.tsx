@@ -54,6 +54,16 @@ function getTranscribeProcessingText(item: QueueItem): string {
   return "转录处理中";
 }
 
+function getTranslateProcessingText(item: QueueItem): string {
+  if (item.translatePhase === "summary") {
+    return "总结中";
+  }
+  if (item.translatePhase === "translate") {
+    return "翻译中";
+  }
+  return "翻译处理中";
+}
+
 export default function MediaList({
   queue,
   queueCount,
@@ -88,6 +98,8 @@ export default function MediaList({
             const primaryStatus = resolvePrimaryStatus(item);
             const transcribeProcessing = item.transcribeStatus === "processing";
             const transcribeProgressText = transcribeProcessing ? getTranscribeProcessingText(item) : "";
+            const translateProcessing = !transcribeProcessing && item.translateStatus === "processing";
+            const translateProgressText = translateProcessing ? getTranslateProcessingText(item) : "";
 
             return (
               <div key={item.id} className={`file-item ${item.id === activeId ? "active" : ""}`} onClick={() => onSetActiveId(item.id)}>
@@ -104,6 +116,10 @@ export default function MediaList({
                           {transcribeProcessing ? (
                             <span key={`${item.id}-${item.transcribePhase || ""}-${item.transcribeSegmentCurrent}-${item.transcribeSegmentTotal}`} className="task-step task-step-progress">
                               {transcribeProgressText}
+                            </span>
+                          ) : translateProcessing ? (
+                            <span key={`${item.id}-${item.translatePhase || ""}`} className="task-step task-step-progress">
+                              {translateProgressText}
                             </span>
                           ) : primaryStatus === "processing" && item.transcribeSegmentTotal <= 0 ? (
                             <span className="task-status status-processing">准备中</span>

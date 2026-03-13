@@ -42,3 +42,23 @@ pub fn task_srt_draft_path(task_id: &str, audio_path: &Path) -> PathBuf {
     let safe_stem = sanitize_filename_component(&stem);
     task_output_dir(task_id, audio_path).join(format!("{}_en.draft.srt", safe_stem))
 }
+
+pub fn task_translated_srt_output_path(
+    task_id: &str,
+    audio_path: &Path,
+    target_language: &str,
+) -> PathBuf {
+    let stem = audio_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "transcript".to_string());
+    let safe_stem = sanitize_filename_component(&stem);
+    let safe_lang = sanitize_filename_component(target_language.trim());
+    let lang = if safe_lang.is_empty() {
+        "translated".to_string()
+    } else {
+        safe_lang
+    };
+    task_output_dir(task_id, audio_path).join(format!("{}_{}.srt", safe_stem, lang))
+}

@@ -27,6 +27,8 @@ export default function LogsModal({
   onChannelChange,
 }: LogsModalProps) {
   const dialogRef = useDialogA11y(visible, onClose);
+  const entries = parseLogEntries(content);
+  const usageBuckets = [...(usageSummary?.buckets ?? [])].sort((a, b) => a.updatedAt - b.updatedAt);
   if (!visible) return null;
 
   return (
@@ -90,10 +92,10 @@ export default function LogsModal({
             <span className="logs-usage-value">{formatNumber(usageSummary?.completionTokens ?? 0)}</span>
           </div>
           <div className="logs-usage-stages">
-            {(usageSummary?.buckets ?? []).length === 0 ? (
+            {usageBuckets.length === 0 ? (
               <span className="logs-usage-stage-empty">暂无阶段 Token 记录</span>
             ) : (
-              usageSummary?.buckets.map((bucket) => (
+              usageBuckets.map((bucket) => (
                 <span key={bucket.stage} className="logs-usage-stage">
                   {toStageLabel(bucket.stage)}: {formatNumber(bucket.totalTokens)}
                 </span>
@@ -106,7 +108,21 @@ export default function LogsModal({
           {loading ? <div className="logs-empty">加载中...</div> : null}
           {!loading && content.trim().length === 0 ? <div className="logs-empty">暂无日志</div> : null}
           {!loading && content.trim().length > 0 ? (
-            <pre className="logs-text">{content}</pre>
+            <div className="logs-entries">
+              {entries.map((entry, index) => (
+                <article key={`${entry.timestamp}-${entry.event}-${index}`} className="logs-entry">
+                  <div className="logs-entry-head">
+                    <span className="logs-entry-time">{entry.timestamp}</span>
+                    <span className="logs-entry-event">{entry.event}</span>
+                  </div>
+                  {entry.payload != null ? (
+                    <pre className="logs-json">{JSON.stringify(entry.payload, null, 2)}</pre>
+                  ) : entry.body ? (
+                    <pre className="logs-text">{entry.body}</pre>
+                  ) : null}
+                </article>
+              ))}
+            </div>
           ) : null}
         </div>
       </div>
@@ -121,5 +137,46 @@ function formatNumber(value: number): string {
 function toStageLabel(stage: string): string {
   if (stage === "hotword") return "热词矫正";
   if (stage === "punctuation") return "标点恢复";
+  if (stage === "summary") return "总结";
+  if (stage === "translate") return "翻译";
   return stage;
+}
+
+type LogEntry = {
+  timestamp: string;
+  event: string;
+  body: string;
+  payload: unknown | null;
+};
+
+function parseLogEntries(content: string): LogEntry[] {
+  const trimmed = content.trim();
+  if (!trimmed) return [];
+  const blocks = trimmed.split(/\n(?=\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s)/g);
+  const out: LogEntry[] = [];
+  for (const block of blocks) {
+    const normalized = block.trim();
+    if (!normalized) continue;
+    const firstNewline = normalized.indexOf("\n");
+    const header = firstNewline >= 0 ? normalized.slice(0, firstNewline).trim() : normalized;
+    const body = firstNewline >= 0 ? normalized.slice(firstNewline + 1).trim() : "";
+    const match = header.match(/^\[(.+?)\]\s(.+)$/);
+    const timestamp = match?.[1] ?? "";
+    const event = match?.[2] ?? header;
+    let payload: unknown | null = null;
+    if (body.startsWith("{") || body.startsWith("[")) {
+      try {
+        payload = JSON.parse(body);
+      } catch {
+        payload = null;
+      }
+    }
+    out.push({
+      timestamp,
+      event,
+      body,
+      payload,
+    });
+  }
+  return out;
 }

@@ -2,7 +2,7 @@ import { type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState }
 import type { SubtitleCue } from "../../features/media/types";
 import { formatSrtTime, parseSrtTime } from "../../features/media/srt";
 import type { SubtitleSaveState } from "../types";
-import { AlertIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, EditIcon, ReplaceIcon, TrashIcon } from "./Icons";
+import { AlertIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, EditIcon, LogsIcon, ReplaceIcon, TrashIcon } from "./Icons";
 
 type SubtitleEditorModalProps = {
   visible: boolean;
@@ -19,6 +19,7 @@ type SubtitleEditorModalProps = {
   onReplaceText: (findText: string, replaceText: string, scopeCueIds: string[] | null, maxReplacements?: number) => number;
   onDeleteCue: (cueId: string) => void;
   onOpenSrtDir: () => void | Promise<void>;
+  onOpenLogs: () => void | Promise<void>;
   onClose: () => void | Promise<void>;
 };
 
@@ -44,6 +45,7 @@ export default function SubtitleEditorModal({
   onReplaceText,
   onDeleteCue,
   onOpenSrtDir,
+  onOpenLogs,
   onClose,
 }: SubtitleEditorModalProps) {
   const [timeErrorByCue, setTimeErrorByCue] = useState<Record<string, string>>({});
@@ -339,7 +341,7 @@ export default function SubtitleEditorModal({
       ) : null}
 
       <div className="subtitle-editor-header">
-        <div>
+        <div className="subtitle-header-main">
           <div className="subtitle-title-row">
             <h3 className="apple-heading-small">字幕编辑器</h3>
             <span className="subtitle-count-badge">{cues.length} 条</span>
@@ -360,6 +362,21 @@ export default function SubtitleEditorModal({
               {srtPath || "--"}
             </button>
           </div>
+        </div>
+        <div className="subtitle-header-actions">
+          <button
+            type="button"
+            className="subtitle-header-icon-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              void onOpenLogs();
+            }}
+            aria-label="打开任务日志"
+            title="日志"
+          >
+            <LogsIcon />
+            <span>日志</span>
+          </button>
         </div>
       </div>
 

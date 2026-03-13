@@ -42,6 +42,50 @@ pub struct BuildPunctuationRestorePromptResponse {
     pub user_prompt: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildTranslationProfilePromptRequest {
+    pub source_language: String,
+    pub target_language: String,
+    pub style: Option<String>,
+    pub terms: Vec<TranslationPromptTerm>,
+    pub sample_texts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslationPromptTerm {
+    pub source: String,
+    pub target: String,
+    pub note: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildTranslationProfilePromptResponse {
+    pub system_prompt: String,
+    pub user_prompt: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildTranslationPromptRequest {
+    pub source_language: String,
+    pub target_language: String,
+    pub style: Option<String>,
+    pub profile_topic_summary: Option<String>,
+    pub terminology_subset: Vec<TranslationPromptTerm>,
+    pub shared_prompt: String,
+    pub lines: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildTranslationPromptResponse {
+    pub system_prompt: String,
+    pub user_prompt: String,
+}
+
 pub fn build_hotword_correction_prompts(
     request: BuildHotwordCorrectionPromptsRequest,
 ) -> Result<BuildHotwordCorrectionPromptsResponse, String> {
@@ -217,6 +261,131 @@ pub fn build_punctuation_restore_prompt(
     .join("\n");
 
     Ok(BuildPunctuationRestorePromptResponse {
+        system_prompt,
+        user_prompt,
+    })
+}
+
+pub fn build_translation_profile_prompt(
+    request: BuildTranslationProfilePromptRequest,
+) -> Result<BuildTranslationProfilePromptResponse, String> {
+    let source_language = request.source_language.trim();
+    let target_language = request.target_language.trim();
+    if source_language.is_empty() || target_language.is_empty() {
+        return Err("sourceLanguage and targetLanguage are required".to_string());
+    }
+
+    let style = request
+        .style
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("自然流畅、忠实原意");
+    let sample_items = request
+        .sample_texts
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .take(120)
+        .collect::<Vec<_>>();
+    let sample = sample_items.join("\n");
+    let front = sample_items
+        .iter()
+        .take(40)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let middle = sample_items
+        .iter()
+        .skip(sample_items.len().saturating_div(2))
+        .take(40)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let back = sample_items
+        .iter()
+        .rev()
+        .take(40)
+        .copied()
+        .collect::<Vec<_>>();
+    let back = back.into_iter().rev().collect::<Vec<_>>().join("\n");
+    let terms = if request.terms.is_empty() {
+        "[]".to_string()
+    } else {
+        serde_json::to_string(&request.terms).map_err(|e| e.to_string())?
+    };
+
+    let system_prompt =
+        "You are a video translation expert and domain analysis consultant. Output JSON only."
+            .to_string();
+
+    let user_prompt = format!(
+        "## Role\nYou are a video translation expert and domain analysis consultant, specializing in {source_language} comprehension and {target_language} expression optimization.\n\n## Task\nAnalyze the {source_language} video content and:\n1. Identify the video domain/field\n2. Summarize the main topic in two sentences\n3. From the provided custom terms list, select only terms that are high-priority for this specific video's translation\n4. Do NOT extract new terms - only filter from the provided list\n\n### Custom Terms List (source/target/note)\n{terms}\n\n## Steps\n1. Domain Identification from front/middle/back sections\n2. Topic Summary: exactly two sentences\n3. Term Selection:\n   - primaryTerms: highly likely to matter for this video and should be prioritized\n   - supportingTerms: additional related terms useful as context when ASR may have misrecognized terms\n   - primaryTerms should be compact and strict\n   - supportingTerms can be broader but still meaningfully related\n   - Do not duplicate terms between the two groups\n   - Keep original term objects unchanged\n\n## INPUT\n### Front Section:\n{front}\n\n### Middle Section:\n{middle}\n\n### Back Section:\n{back}\n\n### Full Sample (fallback reference):\n{sample}\n\n## Output in only JSON format and no other text\n```json\n{{\n  \"theme\": \"Two-sentence video summary in {source_language}\",\n  \"translationStyle\": \"{style}\",\n  \"primaryTerms\": [{{\"source\":\"...\",\"target\":\"...\",\"note\":\"...\"}}],\n  \"supportingTerms\": [{{\"source\":\"...\",\"target\":\"...\",\"note\":\"...\"}}]\n}}\n```\n\nNote: Start your answer with ```json and end with ```, do not add any other text."
+    );
+
+    Ok(BuildTranslationProfilePromptResponse {
+        system_prompt,
+        user_prompt,
+    })
+}
+
+pub fn build_translation_prompt(
+    request: BuildTranslationPromptRequest,
+) -> Result<BuildTranslationPromptResponse, String> {
+    let source_language = request.source_language.trim();
+    let target_language = request.target_language.trim();
+    if source_language.is_empty() || target_language.is_empty() {
+        return Err("sourceLanguage and targetLanguage are required".to_string());
+    }
+
+    let style = request
+        .style
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("自然流畅、忠实原意");
+    let topic = request
+        .profile_topic_summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("无");
+    let terminology_subset =
+        serde_json::to_string(&request.terminology_subset).map_err(|e| e.to_string())?;
+    let lines = request
+        .lines
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return Err("lines must not be empty".to_string());
+    }
+    let lines_text = lines.join("\n");
+    let mut output_format = serde_json::Map::new();
+    for (idx, line) in lines.iter().enumerate() {
+        output_format.insert(
+            (idx + 1).to_string(),
+            json!({
+                "origin": line,
+                "translation": format!("{target_language} translation {}.", idx + 1)
+            }),
+        );
+    }
+    let output_format_text =
+        serde_json::to_string_pretty(&serde_json::Value::Object(output_format))
+            .map_err(|e| e.to_string())?;
+
+    let system_prompt = format!(
+        "You are a professional Netflix subtitle translator, fluent in both {source_language} and {target_language}, as well as their respective cultures. Your translations must be accurate, natural, and appropriate in style and tone."
+    );
+
+    let user_prompt = format!(
+        "## Task\nTranslate the following {source_language} subtitles into {target_language} line by line.\n\n{shared}\n\n## Translation Principles\n1. Accurately convey original meaning without arbitrary additions or omissions\n2. Use idiomatic {target_language} that flows naturally\n3. Treat Stable Video Context as the global source of truth for theme and high-priority terminology\n4. If a primary term is relevant, use its exact target form consistently; do not paraphrase or normalize it\n5. focus_terms are exact local term hits in the current batch and should be prioritized strongly\n6. jit_supporting_terms are on-demand supplementary hints; use them only when they clearly match the source meaning\n7. Use Dynamic Batch Context only to resolve local ambiguity from nearby lines\n8. Translate each current input line only; you may reorder within a line for natural expression, but never move meaning across lines\n9. Keep the number of output lines exactly the same as the number of input lines\n\n## Input\n<subtitles>\n{lines_text}\n</subtitles>\n\n## Metadata\n- 目标语言: {target_language}\n- 翻译风格: {style}\n- 主题摘要: {topic}\n- 术语子集: {terminology_subset}\n\n## Output in only JSON format and no other text\n```json\n{output_format_text}\n```\n\nNote: Start your answer with ```json and end with ```, do not add any other text.",
+        shared = request.shared_prompt,
+    );
+
+    Ok(BuildTranslationPromptResponse {
         system_prompt,
         user_prompt,
     })

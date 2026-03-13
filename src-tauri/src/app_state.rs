@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,4 +42,5 @@ impl Default for ModelDownloadRuntime {
 pub struct AppState {
     pub pool: SqlitePool,
     pub model_download: Arc<Mutex<ModelDownloadRuntime>>,
+    pub llm_settings: Arc<RwLock<crate::services::preferences::LlmSettings>>,
 }

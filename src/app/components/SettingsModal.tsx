@@ -16,6 +16,7 @@ type SettingsModalProps = {
   draftApiBase: string;
   draftApiModel: string;
   testingLlm: boolean;
+  draftThreadsInput: string;
   modelDir: string;
   modelReady: boolean;
   modelDownload: ModelDownloadStateSnapshot;
@@ -29,6 +30,7 @@ type SettingsModalProps = {
   onDraftChunkInputChange: (value: string) => void;
   onDraftApiKeyChange: (value: string) => void;
   onDraftAutoPuncChange: (value: boolean) => void;
+  onDraftThreadsInputChange: (value: string) => void;
   onDraftApiBaseChange: (value: string) => void;
   onDraftApiModelChange: (value: string) => void;
   onOpenModelDir: () => void | Promise<void>;
@@ -69,6 +71,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftApiBase,
     draftApiModel,
     testingLlm,
+    draftThreadsInput,
     modelDir,
     modelReady,
     modelDownload,
@@ -82,6 +85,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftChunkInputChange,
     onDraftApiKeyChange,
     onDraftAutoPuncChange,
+    onDraftThreadsInputChange,
     onDraftApiBaseChange,
     onDraftApiModelChange,
     onOpenModelDir,
@@ -554,6 +558,16 @@ export default function SettingsModal(props: SettingsModalProps) {
                         value={draftChunkInput}
                         onChange={(e) => onDraftChunkInputChange(e.target.value.replace(/[^0-9]/g, ""))}
                         placeholder="60 - 300"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>线程数</label>
+                      <input
+                        className="apple-input"
+                        inputMode="numeric"
+                        value={draftThreadsInput}
+                        onChange={(e) => onDraftThreadsInputChange(e.target.value.replace(/[^0-9]/g, ""))}
+                        placeholder="1 - 16"
                       />
                     </div>
                   </div>

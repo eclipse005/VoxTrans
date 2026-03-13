@@ -1,13 +1,12 @@
-import { BookIcon, LogsIcon, SettingsIcon } from "./Icons";
+import { BookIcon, SettingsIcon } from "./Icons";
 
 type NavbarProps = {
   termsCount: number;
   onOpenTerms: () => void;
   onOpenSettings: () => void;
-  onOpenLogs: () => void;
 };
 
-export default function Navbar({ termsCount, onOpenTerms, onOpenSettings, onOpenLogs }: NavbarProps) {
+export default function Navbar({ termsCount, onOpenTerms, onOpenSettings }: NavbarProps) {
   return (
     <nav className="apple-navbar">
       <div className="apple-navbar-content">
@@ -17,10 +16,6 @@ export default function Navbar({ termsCount, onOpenTerms, onOpenSettings, onOpen
             <BookIcon />
             <span>术语</span>
             {termsCount > 0 ? <span className="badge show">{termsCount}</span> : null}
-          </button>
-          <button className="nav-button" onClick={onOpenLogs}>
-            <LogsIcon />
-            <span>日志</span>
           </button>
           <button className="nav-button" onClick={onOpenSettings}>
             <SettingsIcon />

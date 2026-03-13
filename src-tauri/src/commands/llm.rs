@@ -1,7 +1,11 @@
+use tauri::State;
+
 #[tauri::command]
 pub async fn llm_interact(
-    request: crate::llm::LlmInteractRequest,
+    state: State<'_, crate::app_state::AppState>,
+    mut request: crate::llm::LlmInteractRequest,
 ) -> Result<crate::llm::LlmInteractResponse, String> {
+    request.usage_pool = Some(state.pool.clone());
     crate::llm::llm_interact(request).await
 }
 

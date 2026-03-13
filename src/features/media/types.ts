@@ -4,12 +4,14 @@ export type SavedSettings = {
   provider: Provider;
   chunkTargetSeconds: number;
   autoPunc: boolean;
+  threads: number;
 };
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
 export type TranslateStatus = "idle" | "queued" | "processing" | "done" | "error";
 export type TranscribePhase = "initializing" | "recognizing" | "punctuation" | "hotword";
+export type TranslatePhase = "summary" | "translate";
 
 export type SubtitleCue = {
   id: string;
@@ -39,6 +41,7 @@ export type QueueItem = {
   transcribePhase?: TranscribePhase | "";
   transcribeError: string;
   translateStatus: TranslateStatus;
+  translatePhase?: TranslatePhase | "";
   translateProgress: number;
   translateError: string;
   resultText: string;

@@ -4,6 +4,7 @@ use sqlx::SqlitePool;
 const KEY_PROVIDER: &str = "settings.provider";
 const KEY_CHUNK_TARGET_SECONDS: &str = "settings.chunkTargetSeconds";
 const KEY_AUTO_PUNC: &str = "settings.autoPunc";
+const KEY_THREADS: &str = "settings.threads";
 const KEY_LLM_API_KEY: &str = "llm.apiKey";
 const KEY_LLM_API_BASE: &str = "llm.apiBase";
 const KEY_LLM_API_MODEL: &str = "llm.apiModel";
@@ -14,6 +15,7 @@ pub struct SavedSettings {
     pub provider: String,
     pub chunk_target_seconds: u32,
     pub auto_punc: bool,
+    pub threads: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -91,9 +93,13 @@ pub async fn load_user_preferences(pool: &SqlitePool) -> Result<UserPreferencesR
     })
 }
 
+pub async fn load_llm_settings(pool: &SqlitePool) -> Result<LlmSettings, String> {
+    load_llm(pool).await
+}
+
 pub async fn save_app_settings(
     pool: &SqlitePool,
-    request: SaveAppSettingsRequest,
+    request: &SaveAppSettingsRequest,
 ) -> Result<(), String> {
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     set_setting(&mut *tx, KEY_PROVIDER, &request.settings.provider).await?;
@@ -107,6 +113,12 @@ pub async fn save_app_settings(
         &mut *tx,
         KEY_AUTO_PUNC,
         if request.settings.auto_punc { "1" } else { "0" },
+    )
+    .await?;
+    set_setting(
+        &mut *tx,
+        KEY_THREADS,
+        &request.settings.threads.clamp(1, 16).to_string(),
     )
     .await?;
     set_setting(&mut *tx, KEY_LLM_API_KEY, &request.llm.api_key).await?;
@@ -214,11 +226,17 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
             normalized == "1" || normalized == "true" || normalized == "yes"
         })
         .unwrap_or(true);
+    let threads = get_setting(pool, KEY_THREADS)
+        .await?
+        .and_then(|v| v.parse::<u32>().ok())
+        .map(|v| v.clamp(1, 16))
+        .unwrap_or(4);
 
     Ok(SavedSettings {
         provider,
         chunk_target_seconds,
         auto_punc,
+        threads,
     })
 }
 

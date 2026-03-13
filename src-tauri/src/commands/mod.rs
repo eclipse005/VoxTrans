@@ -7,6 +7,7 @@ pub mod preferences;
 pub mod prompts;
 pub mod subtitle;
 pub mod system;
+pub mod translation;
 pub mod transcribe;
 pub mod usage;
 pub mod workspace;

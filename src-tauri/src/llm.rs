@@ -1,7 +1,8 @@
-use crate::prompts::{LLM_CONNECT_TEST_SYSTEM_PROMPT, LLM_CONNECT_TEST_USER_PROMPT};
+use crate::prompt_builder::{LLM_CONNECT_TEST_SYSTEM_PROMPT, LLM_CONNECT_TEST_USER_PROMPT};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sqlx::SqlitePool;
 use tauri::async_runtime::spawn_blocking;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -19,14 +20,14 @@ pub struct LlmToolFunction {
     pub parameters: Value,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmToolResult {
     pub tool_call_id: String,
     pub content: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmMessageInput {
     pub role: String,
@@ -67,6 +68,11 @@ pub struct LlmInteractRequest {
     pub max_tokens: Option<u32>,
     pub timeout_secs: Option<u64>,
     pub max_retries: Option<u32>,
+    pub log_task_id: Option<String>,
+    pub log_media_path: Option<String>,
+    pub log_stage: Option<String>,
+    #[serde(skip, default)]
+    pub usage_pool: Option<SqlitePool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -278,6 +284,54 @@ fn retry_backoff_ms(attempt: u32) -> u64 {
     (BASE_RETRY_BACKOFF_MS << shift).min(MAX_RETRY_BACKOFF_MS)
 }
 
+fn extract_user_prompt(request: &LlmInteractRequest) -> String {
+    if let Some(prompt) = request.prompt.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        return prompt.to_string();
+    }
+    if let Some(messages) = &request.messages {
+        let user_parts = messages
+            .iter()
+            .filter(|m| m.role.eq_ignore_ascii_case("user"))
+            .filter_map(|m| m.content.as_deref().map(str::trim))
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+        if !user_parts.is_empty() {
+            return user_parts.join("\n");
+        }
+    }
+    String::new()
+}
+
+fn maybe_log_llm(request: &LlmInteractRequest, payload: Value) {
+    let Some(task_id) = request
+        .log_task_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return;
+    };
+    let Some(media_path) = request
+        .log_media_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return;
+    };
+
+    let message = format!(
+        "llm.exchange\n{}",
+        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+    );
+    let _ = crate::services::logs::append_task_log(crate::services::logs::AppendTaskLogRequest {
+        task_id: task_id.to_string(),
+        media_path: media_path.to_string(),
+        channel: "llm".to_string(),
+        message,
+    });
+}
+
 fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractResponse, String> {
     if request.api_key.trim().is_empty() {
         return Err("apiKey is required".to_string());
@@ -300,6 +354,11 @@ fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractR
         .build()
         .map_err(|e| format!("failed to build llm client: {e}"))?;
 
+    let request_log = json!({
+        "systemPrompt": request.system_prompt,
+        "userPrompt": extract_user_prompt(&request),
+    });
+
     let mut attempt: u32 = 0;
     let final_error = loop {
         attempt += 1;
@@ -320,7 +379,17 @@ fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractR
                 if status_code.is_success() {
                     let raw: Value = serde_json::from_str(&body_text)
                         .map_err(|e| format!("invalid llm response json: {e}; body: {body_text}"))?;
-                    return parse_llm_response(&raw);
+                    let parsed = parse_llm_response(&raw)?;
+                    maybe_log_llm(
+                        &request,
+                        json!({
+                            "request": request_log.clone(),
+                            "response": {
+                                "message": parsed.message.clone().unwrap_or_default(),
+                            }
+                        }),
+                    );
+                    return Ok(parsed);
                 }
 
                 let error = match serde_json::from_str::<Value>(&body_text) {
@@ -344,18 +413,41 @@ fn run_llm_interact_blocking(request: LlmInteractRequest) -> Result<LlmInteractR
     };
 
     if attempt > 1 {
-        return Err(format!(
+        let err = format!(
             "llm request exhausted after {attempt}/{total_attempts} attempts: {}",
             final_error
-        ));
+        );
+        maybe_log_llm(
+            &request,
+            json!({
+                "request": request_log.clone(),
+                "response": {
+                    "message": err,
+                }
+            }),
+        );
+        return Err(err);
     }
+    maybe_log_llm(
+        &request,
+        json!({
+            "request": request_log,
+            "response": {
+                "message": final_error,
+            }
+        }),
+    );
     Err(final_error)
 }
 
 pub async fn llm_interact(request: LlmInteractRequest) -> Result<LlmInteractResponse, String> {
-    spawn_blocking(move || run_llm_interact_blocking(request))
+    let request_for_blocking = request.clone();
+    let response = spawn_blocking(move || run_llm_interact_blocking(request_for_blocking))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+
+    maybe_record_llm_usage(&request, &response).await;
+    Ok(response)
 }
 
 pub async fn llm_test_connection(
@@ -376,6 +468,10 @@ pub async fn llm_test_connection(
         max_tokens: None,
         timeout_secs: request.timeout_secs.or(Some(30)),
         max_retries: request.max_retries.or(Some(1)),
+        log_task_id: None,
+        log_media_path: None,
+        log_stage: None,
+        usage_pool: None,
     };
 
     let response = spawn_blocking(move || run_llm_interact_blocking(interact_request))
@@ -388,6 +484,47 @@ pub async fn llm_test_connection(
         finish_reason: response.finish_reason,
         model: request.model,
     })
+}
+
+async fn maybe_record_llm_usage(request: &LlmInteractRequest, response: &LlmInteractResponse) {
+    let Some(pool) = request.usage_pool.as_ref() else {
+        return;
+    };
+    let Some(task_id) = request
+        .log_task_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return;
+    };
+    let stage = request
+        .log_stage
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown");
+
+    let prompt_tokens = response.prompt_tokens.unwrap_or(0) as i64;
+    let completion_tokens = response.completion_tokens.unwrap_or(0) as i64;
+    let total_tokens = response
+        .total_tokens
+        .unwrap_or((prompt_tokens + completion_tokens).max(0) as u64) as i64;
+    if prompt_tokens <= 0 && completion_tokens <= 0 && total_tokens <= 0 {
+        return;
+    }
+
+    let _ = crate::services::usage::record_task_llm_usage(
+        pool,
+        crate::services::usage::RecordTaskLlmUsageRequest {
+            task_id: task_id.to_string(),
+            stage: stage.to_string(),
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        },
+    )
+    .await;
 }
 
 

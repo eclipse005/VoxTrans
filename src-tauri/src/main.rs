@@ -4,7 +4,7 @@ mod app_state;
 mod commands;
 mod db;
 mod llm;
-mod prompts;
+mod prompt_builder;
 mod services;
 
 use std::sync::Arc;
@@ -16,11 +16,15 @@ fn main() {
         .setup(|app| {
             let app_handle = app.handle().clone();
             let pool = tauri::async_runtime::block_on(async { db::init_pool(&app_handle).await })?;
+            let llm_settings = tauri::async_runtime::block_on(async {
+                services::preferences::load_llm_settings(&pool).await
+            })?;
             app.manage(app_state::AppState {
                 pool,
                 model_download: Arc::new(std::sync::Mutex::new(
                     app_state::ModelDownloadRuntime::default(),
                 )),
+                llm_settings: Arc::new(std::sync::RwLock::new(llm_settings)),
             });
             Ok(())
         })
@@ -28,8 +32,10 @@ fn main() {
             commands::transcribe::transcribe,
             commands::transcribe::build_segments_from_words,
             commands::file::save_srt,
+            commands::file::get_task_translated_srt_path,
             commands::subtitle::load_subtitle_editor,
             commands::subtitle::save_subtitle_editor,
+            commands::translation::run_translation_pipeline,
             commands::file::get_file_size,
             commands::system::open_in_explorer,
             commands::system::open_output_dir,
@@ -55,6 +61,8 @@ fn main() {
             commands::usage::get_task_llm_usage_summary,
             commands::prompts::build_hotword_correction_prompts,
             commands::prompts::build_punctuation_restore_prompt,
+            commands::prompts::build_translation_profile_prompt,
+            commands::prompts::build_translation_prompt,
             commands::llm::llm_interact,
             commands::llm::llm_test_connection
         ])

@@ -1,1 +1,0 @@
-ALTER TABLE tasks ADD COLUMN output_words_json TEXT NOT NULL DEFAULT '';

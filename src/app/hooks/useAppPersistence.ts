@@ -26,6 +26,7 @@ export function useAppPersistence(terms: TermEntry[], hotwordCorrection: Hotword
             provider,
             chunkTargetSeconds: res.settings.chunkTargetSeconds,
             autoPunc: res.settings.autoPunc ?? true,
+            threads: Number.isFinite(res.settings.threads) ? Math.max(1, Math.min(16, Math.round(res.settings.threads))) : 4,
           },
         });
         dispatch({
@@ -34,6 +35,9 @@ export function useAppPersistence(terms: TermEntry[], hotwordCorrection: Hotword
             draftProvider: provider,
             draftChunkInput: String(res.settings.chunkTargetSeconds),
             draftAutoPunc: res.settings.autoPunc ?? true,
+            draftThreadsInput: String(
+              Number.isFinite(res.settings.threads) ? Math.max(1, Math.min(16, Math.round(res.settings.threads))) : 4,
+            ),
             draftApiKey: res.llm.apiKey ?? "",
             draftApiBase: res.llm.apiBase ?? "",
             draftApiModel: res.llm.apiModel ?? "",

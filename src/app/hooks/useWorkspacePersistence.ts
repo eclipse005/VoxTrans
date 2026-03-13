@@ -79,6 +79,7 @@ function taskSummaryToQueueItem(task: TaskSummary): QueueItem {
     transcribePhase: "",
     transcribeError: task.transcribeError || task.lastError || "",
     translateStatus: task.translateStatus || "idle",
+    translatePhase: "",
     translateProgress: task.translateStatus === "done" ? 100 : 0,
     translateError: task.translateError || "",
     resultText,
@@ -121,6 +122,7 @@ function normalizeQueueItem(item: QueueItem): QueueItem {
     transcribePhase: normalizeTranscribePhase(item.transcribePhase),
     transcribeError: item.transcribeError || "",
     translateStatus: normalizeTranslateStatus(item.translateStatus),
+    translatePhase: normalizeTranslatePhase(item.translatePhase),
     translateProgress: clampProgress(item.translateProgress),
     translateError: item.translateError || "",
     subtitleSegmentsJson: normalizeSubtitleSegmentsJson(item.subtitleSegmentsJson),
@@ -137,6 +139,16 @@ function normalizeTranslateStatus(value: string): TranslateStatus {
       return value;
     default:
       return "idle";
+  }
+}
+
+function normalizeTranslatePhase(value: unknown): QueueItem["translatePhase"] {
+  switch (value) {
+    case "summary":
+    case "translate":
+      return value;
+    default:
+      return "";
   }
 }
 
@@ -205,6 +217,7 @@ function recoverTransientStates(item: QueueItem): QueueItem {
     next = {
       ...next,
       translateStatus: "error",
+      translatePhase: "",
       translateProgress: 0,
       translateError: next.translateError || "任务在上次退出时中断，请重试",
     };

@@ -18,7 +18,15 @@ pub async fn save_app_settings(
     state: State<'_, AppState>,
     request: SaveAppSettingsRequest,
 ) -> Result<(), String> {
-    preferences::save_app_settings(&state.pool, request).await
+    preferences::save_app_settings(&state.pool, &request).await?;
+    {
+        let mut guard = state
+            .llm_settings
+            .write()
+            .map_err(|_| "llm settings lock poisoned".to_string())?;
+        *guard = request.llm.clone();
+    }
+    Ok(())
 }
 
 #[tauri::command]

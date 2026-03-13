@@ -49,6 +49,7 @@ type TemporarySentence = {
 type PunctuationRestoreArgs = {
   words: WordToken[];
   llm: LlmConfig;
+  maxConcurrency?: number;
   invokeLlm: (request: LlmInteractRequest) => Promise<LlmInteractResponse>;
 };
 
@@ -93,6 +94,7 @@ export async function restorePunctuationOnWords(
   args: PunctuationRestoreArgs,
 ): Promise<PunctuationRestoreResult> {
   const { words, llm, invokeLlm } = args;
+  const maxConcurrency = Math.max(1, Math.min(16, Math.floor(args.maxConcurrency ?? 1)));
   if (!words.length) {
     return {
       words,
@@ -107,7 +109,9 @@ export async function restorePunctuationOnWords(
 
   const working = words.map((word) => ({ ...word }));
   const sentences = splitTemporarySentences(working);
-  const suspicious = sentences.filter((sentence) => isSuspiciousSentence(sentence.text));
+  const suspicious = sentences
+    .map((sentence, sentenceIndex) => ({ sentence, sentenceIndex }))
+    .filter((item) => isSuspiciousSentence(item.sentence.text));
   let restoredCount = 0;
   let acceptedCount = 0;
   let rejectedCount = 0;
@@ -117,8 +121,19 @@ export async function restorePunctuationOnWords(
     restoredText: string;
   }> = [];
 
-  for (const sentence of suspicious) {
-    const sentenceIndex = sentences.findIndex((item) => item.startWord === sentence.startWord && item.endWordExclusive === sentence.endWordExclusive);
+  type RestoreAttempt = {
+    sentence: TemporarySentence;
+    sentenceIndex: number;
+    status: "restored" | "rejected" | "accepted";
+    projected?: string[];
+    originalText: string;
+    restoredText?: string;
+  };
+
+  const attempts = await mapWithConcurrency(
+    suspicious,
+    maxConcurrency,
+    async ({ sentence, sentenceIndex }): Promise<RestoreAttempt> => {
     const prompt = await invoke<BuildPunctuationRestorePromptResponse>("build_punctuation_restore_prompt", {
       request: { text: sentence.text },
     });
@@ -136,35 +151,75 @@ export async function restorePunctuationOnWords(
     const parsed = parseJsonText(rawText);
     const restoredText = typeof parsed?.text === "string" ? parsed.text.trim() : "";
     if (!restoredText) {
-      rejectedCount += 1;
-      continue;
+      return {
+        sentence,
+        sentenceIndex,
+        status: "rejected",
+        originalText: sentence.text,
+      };
     }
 
-    restoredCount += 1;
     const originalTokens = working
       .slice(sentence.startWord, sentence.endWordExclusive)
       .map((word) => word.word ?? "");
     const projected = projectRestoredTextToWordTokens(restoredText, originalTokens.length);
     if (!projected) {
-      rejectedCount += 1;
-      continue;
+      return {
+        sentence,
+        sentenceIndex,
+        status: "restored",
+        originalText: sentence.text,
+        restoredText,
+      };
     }
 
     if (!sameLexicalTokens(originalTokens, projected)) {
+      return {
+        sentence,
+        sentenceIndex,
+        status: "restored",
+        originalText: sentence.text,
+        restoredText,
+      };
+    }
+
+      return {
+        sentence,
+        sentenceIndex,
+        status: "accepted",
+        projected,
+        originalText: sentence.text,
+        restoredText: joinWordTexts(projected),
+      };
+    },
+  );
+
+  // Apply accepted results in original suspicious order so final write-back is deterministic.
+  for (const attempt of attempts) {
+    if (attempt.status === "rejected") {
       rejectedCount += 1;
       continue;
     }
 
-    for (let i = sentence.startWord, j = 0; i < sentence.endWordExclusive; i += 1, j += 1) {
-      working[i].word = projected[j];
-    }
-    acceptedCount += 1;
-    if (changedExamples.length < 8) {
-      changedExamples.push({
-        sentenceIndex: sentenceIndex >= 0 ? sentenceIndex : 0,
-        originalText: sentence.text,
-        restoredText: joinWordTexts(projected),
-      });
+    restoredCount += 1;
+    if (attempt.status === "accepted" && attempt.projected) {
+      for (
+        let i = attempt.sentence.startWord, j = 0;
+        i < attempt.sentence.endWordExclusive;
+        i += 1, j += 1
+      ) {
+        working[i].word = attempt.projected[j];
+      }
+      acceptedCount += 1;
+      if (changedExamples.length < 8) {
+        changedExamples.push({
+          sentenceIndex: attempt.sentenceIndex,
+          originalText: attempt.originalText,
+          restoredText: attempt.restoredText ?? "",
+        });
+      }
+    } else {
+      rejectedCount += 1;
     }
   }
 
@@ -333,4 +388,25 @@ function normalizeLexical(token: string): string {
 
 function joinWordTexts(words: string[]): string {
   return words.map((word) => word.trim()).filter(Boolean).join(" ");
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  maxConcurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(maxConcurrency, items.length) }, async () => {
+    while (true) {
+      const current = cursor;
+      cursor += 1;
+      if (current >= items.length) break;
+      results[current] = await mapper(items[current], current);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }

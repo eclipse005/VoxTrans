@@ -20,6 +20,7 @@ export type AppState = {
   draftApiBase: string;
   draftApiModel: string;
   draftAutoPunc: boolean;
+  draftThreadsInput: string;
   hotwordCorrection: HotwordCorrection;
   terms: TermEntry[];
   termSource: string;
@@ -105,6 +106,7 @@ export type SettingsAction =
           | "draftApiBase"
           | "draftApiModel"
           | "draftAutoPunc"
+          | "draftThreadsInput"
           | "hotwordCorrection"
         >
       >;
@@ -129,6 +131,7 @@ export const defaultSettings: SavedSettings = {
   provider: "cuda",
   chunkTargetSeconds: 300,
   autoPunc: true,
+  threads: 4,
 };
 
 const defaultHotwordCorrection: HotwordCorrection = {
@@ -153,6 +156,7 @@ export const initialAppState: AppState = {
   draftApiBase: "",
   draftApiModel: "",
   draftAutoPunc: true,
+  draftThreadsInput: String(defaultSettings.threads),
   hotwordCorrection: defaultHotwordCorrection,
   terms: [],
   termSource: "",
