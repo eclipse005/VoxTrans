@@ -54,7 +54,7 @@ export default function MediaList({
           <button className="file-list-icon-btn" disabled={isProcessing} onClick={onProcessQueue} title="全部开始" aria-label="全部开始">
             <PlayIcon />
           </button>
-          <button className="file-list-icon-btn" disabled={isProcessing} onClick={onClearQueue} title="清空" aria-label="清空">
+          <button className="file-list-icon-btn file-list-icon-btn-danger" disabled={isProcessing} onClick={onClearQueue} title="清空" aria-label="清空">
             <TrashIcon />
           </button>
         </div>

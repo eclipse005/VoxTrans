@@ -51,9 +51,10 @@
   font-size: 13px;
 }
 
-.nav-button:hover {
-  border-color: #d3d8e3;
-  background-color: #ffffff;
+.nav-button:hover:not(:disabled) {
+  border-color: rgba(0, 113, 227, 0.45);
+  background: rgba(0, 113, 227, 0.08);
+  color: var(--apple-blue);
 }
 
 .badge {

@@ -82,7 +82,7 @@ export default function LogsModal({
                   <RefreshIcon />
                 </button>
                 <button
-                  className="file-list-icon-btn"
+                  className="file-list-icon-btn file-list-icon-btn-danger"
                   onClick={() => { void onClear(); }}
                   disabled={loading || content.trim().length === 0}
                   title="清空"

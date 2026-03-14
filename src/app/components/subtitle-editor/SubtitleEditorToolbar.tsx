@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ReplaceIcon } from "../Icons";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, MergeIcon, PlusIcon, ReplaceIcon, SplitIcon } from "../Icons";
 
 type SubtitleEditorToolbarProps = {
   findText: string;
@@ -126,26 +126,29 @@ export default function SubtitleEditorToolbar({
 
         <div className="subtitle-row-actions subtitle-batch-actions">
           <button
-            className="apple-button apple-button-secondary subtitle-mini-btn"
+            className="nav-button subtitle-batch-btn"
             onClick={onAddCue}
             disabled={isBatchAnimating}
           >
+            <PlusIcon />
             新增字幕段
           </button>
           <button
-            className="apple-button apple-button-secondary subtitle-mini-btn"
+            className="nav-button subtitle-batch-btn"
             disabled={selectedCount < 2 || isBatchAnimating}
             onClick={onMergeSelected}
             title={selectedCount >= 2 ? `合并 ${selectedCount} 条` : "请选择至少两条字幕"}
           >
+            <MergeIcon />
             {selectedCount >= 2 ? `合并(${selectedCount})` : "合并"}
           </button>
           <button
-            className="apple-button apple-button-secondary subtitle-mini-btn"
+            className="nav-button subtitle-batch-btn"
             disabled={selectedCount < 1 || isBatchAnimating}
             onClick={onSplitSelected}
             title={selectedCount >= 1 ? `拆分 ${selectedCount} 条` : "请选择字幕"}
           >
+            <SplitIcon />
             {selectedCount >= 1 ? `拆分(${selectedCount})` : "拆分"}
           </button>
         </div>

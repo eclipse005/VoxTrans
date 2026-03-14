@@ -136,7 +136,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                 <div className="model-path-row">
                   <input className="apple-input" value={modelDir} readOnly />
                   <button
-                    className="model-icon-btn"
+                    className="file-list-icon-btn"
                     type="button"
                     title="打开目录"
                     aria-label="打开模型目录"
@@ -162,7 +162,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                 </div>
                 {modelDownload.phase === "downloading" ? (
                   <button
-                    className="model-icon-btn"
+                    className="file-list-icon-btn"
                     type="button"
                     title="取消下载"
                     aria-label="取消下载"
@@ -172,7 +172,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                   </button>
                 ) : modelReady ? (
                   <button
-                    className="model-icon-btn model-icon-btn-success"
+                    className="file-list-icon-btn model-progress-done-btn"
                     type="button"
                     title="已下载完成"
                     aria-label="已下载完成"
@@ -182,7 +182,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                   </button>
                 ) : (
                   <button
-                    className="model-icon-btn"
+                    className="file-list-icon-btn"
                     type="button"
                     title="下载模型"
                     aria-label="下载模型"
@@ -197,7 +197,10 @@ export default function SettingsModal(props: SettingsModalProps) {
           </div>
         </div>
         <div className="settings-footer">
-          <button className="apple-button" onClick={onSave}>保存设置</button>
+          <button className="nav-button" onClick={onSave} title="保存设置" aria-label="保存设置">
+            <CheckIcon />
+            <span>保存</span>
+          </button>
         </div>
       </div>
     </div>
