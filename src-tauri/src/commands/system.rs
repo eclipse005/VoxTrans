@@ -23,11 +23,8 @@ pub fn open_output_dir() -> Result<(), String> {
 
 #[tauri::command]
 pub fn open_task_output_dir(request: OpenTaskOutputDirRequest) -> Result<(), String> {
-    if request.task_id.trim().is_empty() {
-        return Err("taskId is required".to_string());
-    }
-    if request.media_path.trim().is_empty() {
-        return Err("mediaPath is required".to_string());
+    if request.task_id.trim().is_empty() || request.media_path.trim().is_empty() {
+        return open_output_dir();
     }
 
     let task_dir = crate::services::task_path::task_output_dir(

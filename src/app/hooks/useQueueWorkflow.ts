@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow, type DragDropEvent } from "@tauri-apps/api/window";
+import {
+  appendTaskLog as appendTaskLogApi,
+  getFileSize,
+  runPostAsrPipeline,
+  saveSrt,
+  transcribeMedia,
+} from "../api/transcribe";
+import { deleteTaskSummaries } from "../api/workspace";
 import type {
   BuildSegmentsResponse,
   QueueItem,
   SavedSettings,
   SubtitleSegment,
-  TranscribeResponse,
 } from "../../features/media/types";
 import { detectMediaKind, fileName } from "../../features/media/utils";
 import type { AppAction } from "../state/appReducer";
@@ -35,14 +41,6 @@ type UseQueueWorkflowArgs = {
   pushToast: PushToast;
 };
 
-type PostAsrPipelineResponse = {
-  text: string;
-  srt: string;
-  srtOutputPath: string;
-  segments: BuildSegmentsResponse["segments"];
-  words: TranscribeResponse["words"];
-};
-
 export function useQueueWorkflow({
   queue,
   settings,
@@ -61,13 +59,11 @@ export function useQueueWorkflow({
     payload?: Record<string, unknown>,
   ) => {
     try {
-      await invoke("append_task_log", {
-        request: {
-          taskId: item.id,
-          mediaPath: item.path,
-          channel,
-          message: formatTaskLogLine(eventType, payload),
-        },
+      await appendTaskLogApi({
+        taskId: item.id,
+        mediaPath: item.path,
+        channel,
+        message: formatTaskLogLine(eventType, payload),
       });
     } catch (error) {
       // Log write failures must not affect core workflow.
@@ -82,7 +78,7 @@ export function useQueueWorkflow({
       paths.map(async (path) => {
         let sizeBytes = 0;
         try {
-          sizeBytes = await invoke<number>("get_file_size", { path });
+          sizeBytes = await getFileSize(path);
         } catch {
           sizeBytes = 0;
         }
@@ -280,13 +276,11 @@ export function useQueueWorkflow({
         mediaPath: item.path,
       });
 
-      const response = await invoke<TranscribeResponse>("transcribe", {
-        request: {
-          taskId: item.id,
-          audioPath: item.path,
-          provider: settings.provider,
-          chunkTargetSeconds: settings.chunkTargetSeconds,
-        },
+      const response = await transcribeMedia({
+        taskId: item.id,
+        audioPath: item.path,
+        provider: settings.provider,
+        chunkTargetSeconds: settings.chunkTargetSeconds,
       });
       void appendTaskLog("main", item, "transcribe.asr.completed", {
         segmentTotal: response.segmentTotal,
@@ -294,20 +288,16 @@ export function useQueueWorkflow({
         transcribeElapsedSec: round2(response.transcribeElapsedSec),
         executionProvider: response.executionProvider,
       });
-      const processed = await invoke<PostAsrPipelineResponse>("run_post_asr_pipeline", {
-        request: {
-          taskId: item.id,
-          audioPath: item.path,
-          words: response.words,
-          subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
-        },
+      const processed = await runPostAsrPipeline({
+        taskId: item.id,
+        audioPath: item.path,
+        words: response.words,
+        subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
       });
 
-      await invoke("save_srt", {
-        request: {
-          outputPath: processed.srtOutputPath,
-          content: processed.srt,
-        },
+      await saveSrt({
+        outputPath: processed.srtOutputPath,
+        content: processed.srt,
       });
 
       const normalizedSegments = toSubtitleSegmentsFromBuilt(processed.segments);
@@ -420,9 +410,7 @@ export function useQueueWorkflow({
     }
     dispatch({ type: "clear_queue" });
     try {
-      await invoke("delete_task_summaries", {
-        request: { taskId: null, mediaPath: null },
-      });
+      await deleteTaskSummaries({ taskId: null, mediaPath: null });
     } catch {
       // Queue is already cleared in UI; ignore history cleanup failure.
     }
@@ -432,9 +420,7 @@ export function useQueueWorkflow({
   const removeItem = useCallback((id: string) => {
     const item = queue.find((q) => q.id === id);
     if (item) {
-      void invoke("delete_task_summaries", {
-        request: { taskId: item.id, mediaPath: item.path },
-      });
+      void deleteTaskSummaries({ taskId: item.id, mediaPath: item.path });
     }
     dispatch({ type: "remove_queue_item", id });
   }, [dispatch, queue]);

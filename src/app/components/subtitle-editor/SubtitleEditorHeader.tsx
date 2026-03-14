@@ -1,0 +1,75 @@
+import type { SubtitleSaveState } from "../../types";
+import { LogsIcon } from "../Icons";
+
+type SubtitleEditorHeaderProps = {
+  cueCount: number;
+  saveState: SubtitleSaveState;
+  taskName: string;
+  srtPath: string;
+  onOpenSrtDir: () => void | Promise<void>;
+  onOpenLogs: () => void | Promise<void>;
+};
+
+function saveStateLabel(state: SubtitleSaveState): string {
+  if (state === "saving") return "自动保存中...";
+  if (state === "saved") return "已自动保存";
+  if (state === "error") return "保存失败";
+  return "等待编辑";
+}
+
+export default function SubtitleEditorHeader({
+  cueCount,
+  saveState,
+  taskName,
+  srtPath,
+  onOpenSrtDir,
+  onOpenLogs,
+}: SubtitleEditorHeaderProps) {
+  return (
+    <div className="subtitle-editor-header">
+      <div className="subtitle-header-main">
+        <div className="subtitle-title-row">
+          <h3 className="apple-heading-small">字幕编辑器</h3>
+          <span className="subtitle-count-badge">{cueCount} 条</span>
+          <span className={`subtitle-save-indicator subtitle-save-${saveState}`}>{saveStateLabel(saveState)}</span>
+        </div>
+        <div className="apple-body-small subtitle-editor-meta" title={`任务: ${taskName} · 输出: ${srtPath || "--"}`}>
+          <div className="subtitle-meta-row">
+            <span className="subtitle-meta-label">任务:</span>
+            <span className="subtitle-meta-value">{taskName || "--"}</span>
+          </div>
+          <div className="subtitle-meta-row">
+            <span className="subtitle-meta-label">输出:</span>
+            <button
+              type="button"
+              className="subtitle-output-link"
+              onClick={(e) => {
+                e.stopPropagation();
+                void onOpenSrtDir();
+              }}
+              aria-label={srtPath ? "打开字幕输出目录" : "打开输出目录"}
+              title={srtPath ? "打开字幕输出目录" : "打开输出目录"}
+            >
+              {srtPath || "--"}
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="subtitle-header-actions">
+        <button
+          type="button"
+          className="subtitle-header-icon-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            void onOpenLogs();
+          }}
+          aria-label="打开任务日志"
+          title="日志"
+        >
+          <LogsIcon />
+          <span>日志</span>
+        </button>
+      </div>
+    </div>
+  );
+}

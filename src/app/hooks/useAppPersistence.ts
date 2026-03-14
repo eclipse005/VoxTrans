@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { loadUserPreferences } from "../api/preferences";
 import type { Provider, UserPreferencesResponse } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 
@@ -10,7 +10,7 @@ export function useAppPersistence(dispatch: DispatchState) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await invoke<UserPreferencesResponse>("load_user_preferences");
+        const res: UserPreferencesResponse = await loadUserPreferences();
         if (cancelled) return;
         const provider = (res.settings.provider === "cpu"
           || res.settings.provider === "cuda")

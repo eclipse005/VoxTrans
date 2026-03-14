@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { QueueItem, SubtitleSegment, TaskSummary, TranscribeStatus, WorkspaceStateResponse } from "../../features/media/types";
+import { listTaskSummaries } from "../api/history";
+import { loadWorkspaceState, saveQueueState } from "../api/workspace";
+import type { QueueItem, SubtitleSegment, TaskSummary, TranscribeStatus } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 
 type DispatchState = (action: AppAction) => void;
@@ -21,10 +22,8 @@ export function useWorkspacePersistence({
     let cancelled = false;
     (async () => {
       try {
-        const res = await invoke<WorkspaceStateResponse>("load_workspace_state");
-        const history = await invoke<TaskSummary[]>("list_task_summaries", {
-          request: { limit: 500 },
-        });
+        const res = await loadWorkspaceState();
+        const history: TaskSummary[] = await listTaskSummaries({ limit: 500 });
         if (cancelled) return;
 
         const queueItems = Array.isArray(res.queue) ? res.queue.map(normalizeQueueItem) : [];
@@ -57,7 +56,7 @@ export function useWorkspacePersistence({
     }
 
     queueSaveTimerRef.current = window.setTimeout(() => {
-      void invoke("save_queue_state", { request: { queue } });
+      void saveQueueState({ queue });
     }, 300);
   }, [queue]);
 }
