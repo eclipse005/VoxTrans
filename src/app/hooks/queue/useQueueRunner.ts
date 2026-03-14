@@ -1,0 +1,215 @@
+import { useCallback, useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
+import {
+  appendTaskLog as appendTaskLogApi,
+  runPostAsrPipeline,
+  saveSrt,
+  transcribeMedia,
+} from "../../api/transcribe";
+import type {
+  BuildSegmentsResponse,
+  QueueItem,
+  SavedSettings,
+  SubtitleSegment,
+  TranscribePhase,
+} from "../../../features/media/types";
+import type { AppAction } from "../../state/appReducer";
+import {
+  applyTranscribePhase,
+  applyTranscribeProgress,
+  setDoneState,
+  setErrorState,
+  setProcessingState,
+} from "../../state/queueDomainActions";
+import { reportError, toUserErrorMessage } from "../../utils/errors";
+
+type DispatchState = (action: AppAction) => void;
+type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
+
+type TranscribeProgressEvent = {
+  taskId: string;
+  currentSegment: number;
+  totalSegments: number;
+};
+
+type TranscribePhaseEvent = {
+  taskId: string;
+  phase: TranscribePhase;
+};
+
+type UseQueueRunnerArgs = {
+  settings: SavedSettings;
+  dispatch: DispatchState;
+  pushToast: PushToast;
+  isTaskPresent: (taskId: string) => boolean;
+};
+
+export function useQueueRunner({
+  settings,
+  dispatch,
+  pushToast,
+  isTaskPresent,
+}: UseQueueRunnerArgs) {
+  const appendTaskLog = useCallback(async (
+    channel: "main",
+    item: Pick<QueueItem, "id" | "path">,
+    eventType: string,
+    payload?: Record<string, unknown>,
+  ) => {
+    try {
+      await appendTaskLogApi({
+        taskId: item.id,
+        mediaPath: item.path,
+        channel,
+        message: formatTaskLogLine(eventType, payload),
+      });
+    } catch (error) {
+      // Log write failures must not affect core workflow.
+      reportError(error, "appendTaskLog");
+    }
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenProgress: undefined | (() => void);
+
+    listen<TranscribeProgressEvent>("transcribe-progress", (event) => {
+      const payload = event.payload;
+      if (!payload?.taskId) return;
+      applyTranscribeProgress(dispatch, {
+        taskId: payload.taskId,
+        currentSegment: payload.currentSegment,
+        totalSegments: payload.totalSegments,
+      });
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
+        unlistenProgress = fn;
+      })
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      if (unlistenProgress) unlistenProgress();
+    };
+  }, [dispatch]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenPhase: undefined | (() => void);
+    listen<TranscribePhaseEvent>("transcribe-phase", (event) => {
+      const payload = event.payload;
+      if (!payload?.taskId) return;
+      applyTranscribePhase(dispatch, {
+        taskId: payload.taskId,
+        phase: payload.phase,
+      });
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
+        unlistenPhase = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      if (unlistenPhase) unlistenPhase();
+    };
+  }, [dispatch]);
+
+  const runTranscribe = useCallback(async (item: QueueItem) => {
+    if (!isTaskPresent(item.id)) return;
+    setProcessingState(dispatch, item.id);
+    if (!isTaskPresent(item.id)) return;
+
+    try {
+      void appendTaskLog("main", item, "transcribe.started", {
+        chunkTargetSeconds: settings.chunkTargetSeconds,
+        provider: settings.provider,
+        mediaPath: item.path,
+      });
+
+      const response = await transcribeMedia({
+        taskId: item.id,
+        audioPath: item.path,
+        provider: settings.provider,
+        chunkTargetSeconds: settings.chunkTargetSeconds,
+      });
+      if (!isTaskPresent(item.id)) return;
+      void appendTaskLog("main", item, "transcribe.asr.completed", {
+        segmentTotal: response.segmentTotal,
+        audioDurationSec: round2(response.audioDurationSec),
+        transcribeElapsedSec: round2(response.transcribeElapsedSec),
+        executionProvider: response.executionProvider,
+      });
+      const processed = await runPostAsrPipeline({
+        taskId: item.id,
+        audioPath: item.path,
+        words: response.words,
+        subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
+      });
+      if (!isTaskPresent(item.id)) return;
+
+      await saveSrt({
+        outputPath: processed.srtOutputPath,
+        content: processed.srt,
+      });
+      if (!isTaskPresent(item.id)) return;
+
+      const normalizedSegments = toSubtitleSegmentsFromBuilt(processed.segments);
+      setDoneState(dispatch, item.id, {
+        subtitleSegmentsJson: JSON.stringify(normalizedSegments),
+        resultText: processed.text,
+        resultSrt: processed.srt,
+        segmentTotal: response.segmentTotal,
+      });
+      if (!isTaskPresent(item.id)) return;
+      pushToast(`已完成：${item.name}，SRT 已保存到 ${processed.srtOutputPath}`, "success");
+    } catch (err) {
+      if (!isTaskPresent(item.id)) return;
+      reportError(err, "runTranscribe");
+      const errorMessage = toUserErrorMessage(err, "转录失败，请检查模型和运行时配置");
+      setErrorState(dispatch, item.id, errorMessage);
+      pushToast(`失败：${item.name}，${errorMessage}`, "error");
+      void appendTaskLog("main", item, "transcribe.failed", { error: errorMessage });
+    }
+  }, [
+    dispatch,
+    pushToast,
+    appendTaskLog,
+    isTaskPresent,
+    settings.chunkTargetSeconds,
+    settings.provider,
+    settings.subtitleMaxWordsPerSegment,
+  ]);
+
+  return {
+    runTranscribe,
+  };
+}
+
+function toSubtitleSegmentsFromBuilt(segments: BuildSegmentsResponse["segments"]): SubtitleSegment[] {
+  return segments.map((segment) => ({
+    startMs: Math.max(0, Math.round(segment.start * 1000)),
+    endMs: Math.max(0, Math.round(segment.end * 1000)),
+    sourceText: segment.text ?? "",
+    translatedText: "",
+  }));
+}
+
+function formatTaskLogLine(eventType: string, payload?: Record<string, unknown>): string {
+  if (!payload || Object.keys(payload).length === 0) {
+    return eventType;
+  }
+  return `${eventType}\n${JSON.stringify(payload, null, 2)}`;
+}
+
+function round2(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 100) / 100;
+}

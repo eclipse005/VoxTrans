@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import { listTaskSummaries } from "../api/history";
 import { loadWorkspaceState, saveQueueState } from "../api/workspace";
-import type { QueueItem, SubtitleSegment, TaskSummary, TranscribeStatus } from "../../features/media/types";
+import { normalizeTranscribeStatus, transitionQueueItemStatus } from "../../features/media/stateMachine";
+import type { QueueItem, SubtitleSegment, TaskSummary } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 
 type DispatchState = (action: AppAction) => void;
@@ -83,19 +84,6 @@ function taskSummaryToQueueItem(task: TaskSummary): QueueItem {
   });
 }
 
-function normalizeTranscribeStatus(value: string): TranscribeStatus {
-  switch (value) {
-    case "queued":
-    case "processing":
-    case "done":
-    case "error":
-    case "pending":
-      return value;
-    default:
-      return "pending";
-  }
-}
-
 function dedupeById(items: QueueItem[]): QueueItem[] {
   const seen = new Set<string>();
   const deduped: QueueItem[] = [];
@@ -167,15 +155,13 @@ function parseSubtitleSegments(raw: string): SubtitleSegment[] {
 
 function recoverTransientStates(item: QueueItem): QueueItem {
   if (item.transcribeStatus === "processing") {
-    return {
-      ...item,
-      transcribeStatus: "error",
+    return transitionQueueItemStatus(item, "error", {
       transcribeProgress: 0,
       transcribeSegmentCurrent: 0,
       transcribeSegmentTotal: 0,
       transcribePhase: "",
       transcribeError: item.transcribeError || "任务在上次退出时中断，请重试",
-    };
+    });
   }
 
   return item;
