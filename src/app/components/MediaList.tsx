@@ -1,6 +1,6 @@
-import type { QueueItem, QueueStatus, TranslateStatus } from "../../features/media/types";
+import type { QueueItem, QueueStatus } from "../../features/media/types";
 import { formatBytes, statusLabel } from "../../features/media/utils";
-import { AudioFileIcon, MicIcon, PlayIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
+import { AudioFileIcon, MicIcon, PlayIcon, TrashIcon, VideoFileIcon } from "./Icons";
 
 type MediaListProps = {
   queue: QueueItem[];
@@ -10,7 +10,6 @@ type MediaListProps = {
   onSetActiveId: (id: string) => void;
   onProcessQueue: () => void | Promise<void>;
   onClearQueue: () => void;
-  onTranslateSingle: (item: QueueItem) => void;
   onProcessSingle: (item: QueueItem) => void | Promise<void>;
   onRemoveItem: (id: string) => void;
 };
@@ -23,28 +22,10 @@ function inferMediaKind(item: QueueItem): "audio" | "video" {
 }
 
 function resolvePrimaryStatus(item: QueueItem): QueueStatus {
-  if (item.transcribeStatus !== "done") {
-    return item.transcribeStatus;
-  }
-
-  return mapTranslateToQueueStatus(item.translateStatus);
-}
-
-function mapTranslateToQueueStatus(status: TranslateStatus): QueueStatus {
-  if (status === "idle") return "done";
-  if (status === "queued") return "queued";
-  if (status === "processing") return "processing";
-  if (status === "done") return "done";
-  return "error";
+  return item.transcribeStatus;
 }
 
 function getTranscribeProcessingText(item: QueueItem): string {
-  if (item.transcribePhase === "hotword") {
-    return "热词矫正中";
-  }
-  if (item.transcribePhase === "punctuation") {
-    return "标点恢复中";
-  }
   if (item.transcribePhase === "initializing") {
     return "转录准备中";
   }
@@ -52,19 +33,6 @@ function getTranscribeProcessingText(item: QueueItem): string {
     return `转录处理中 ${Math.min(item.transcribeSegmentCurrent || 0, item.transcribeSegmentTotal)}/${item.transcribeSegmentTotal}`;
   }
   return "转录处理中";
-}
-
-function getTranslateProcessingText(item: QueueItem): string {
-  if (item.translatePhase === "summary") {
-    return "总结中";
-  }
-  if (item.translatePhase === "translate") {
-    return "翻译中";
-  }
-  if (item.translatePhase === "qa") {
-    return "校对中";
-  }
-  return "翻译处理中";
 }
 
 export default function MediaList({
@@ -75,7 +43,6 @@ export default function MediaList({
   onSetActiveId,
   onProcessQueue,
   onClearQueue,
-  onTranslateSingle,
   onProcessSingle,
   onRemoveItem,
 }: MediaListProps) {
@@ -101,8 +68,6 @@ export default function MediaList({
             const primaryStatus = resolvePrimaryStatus(item);
             const transcribeProcessing = item.transcribeStatus === "processing";
             const transcribeProgressText = transcribeProcessing ? getTranscribeProcessingText(item) : "";
-            const translateProcessing = !transcribeProcessing && item.translateStatus === "processing";
-            const translateProgressText = translateProcessing ? getTranslateProcessingText(item) : "";
 
             return (
               <div key={item.id} className={`file-item ${item.id === activeId ? "active" : ""}`} onClick={() => onSetActiveId(item.id)}>
@@ -120,10 +85,6 @@ export default function MediaList({
                             <span key={`${item.id}-${item.transcribePhase || ""}-${item.transcribeSegmentCurrent}-${item.transcribeSegmentTotal}`} className="task-step task-step-progress">
                               {transcribeProgressText}
                             </span>
-                          ) : translateProcessing ? (
-                            <span key={`${item.id}-${item.translatePhase || ""}`} className="task-step task-step-progress">
-                              {translateProgressText}
-                            </span>
                           ) : primaryStatus === "processing" && item.transcribeSegmentTotal <= 0 ? (
                             <span className="task-status status-processing">准备中</span>
                           ) : (
@@ -134,13 +95,10 @@ export default function MediaList({
                         </div>
                       </div>
                       <div className="file-actions">
-                        <button className="file-action-btn" title="转译" onClick={(e) => { e.stopPropagation(); onTranslateSingle(item); }}>
-                          <TranslateIcon />
-                        </button>
                         <button className="file-action-btn" title="转录" disabled={item.transcribeStatus === "processing"} onClick={(e) => { e.stopPropagation(); void onProcessSingle(item); }}>
                           <MicIcon />
                         </button>
-                        <button className="file-action-btn delete" title="删除" disabled={item.transcribeStatus === "processing" || item.translateStatus === "processing"} onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>
+                        <button className="file-action-btn delete" title="删除" disabled={item.transcribeStatus === "processing"} onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>
                           <TrashIcon />
                         </button>
                       </div>

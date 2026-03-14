@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { QueueItem, SubtitleSegment, TaskSummary, TranscribeStatus, TranslateStatus, WorkspaceStateResponse } from "../../features/media/types";
+import type { QueueItem, SubtitleSegment, TaskSummary, TranscribeStatus, WorkspaceStateResponse } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 
 type DispatchState = (action: AppAction) => void;
@@ -78,14 +78,9 @@ function taskSummaryToQueueItem(task: TaskSummary): QueueItem {
     transcribeSegmentTotal: 0,
     transcribePhase: "",
     transcribeError: task.transcribeError || task.lastError || "",
-    translateStatus: task.translateStatus || "idle",
-    translatePhase: "",
-    translateProgress: task.translateStatus === "done" ? 100 : 0,
-    translateError: task.translateError || "",
     resultText,
     resultSrt: task.transcriptSrt || "",
     subtitleSegmentsJson: JSON.stringify(segments),
-    hotwordHintJson: buildHotwordHintJsonFromSummary(task),
   });
 }
 
@@ -122,45 +117,15 @@ function normalizeQueueItem(item: QueueItem): QueueItem {
     transcribeSegmentTotal: Math.max(0, item.transcribeSegmentTotal || 0),
     transcribePhase: normalizeTranscribePhase(item.transcribePhase),
     transcribeError: item.transcribeError || "",
-    translateStatus: normalizeTranslateStatus(item.translateStatus),
-    translatePhase: normalizeTranslatePhase(item.translatePhase),
-    translateProgress: clampProgress(item.translateProgress),
-    translateError: item.translateError || "",
     subtitleSegmentsJson: normalizeSubtitleSegmentsJson(item.subtitleSegmentsJson),
-    hotwordHintJson: typeof item.hotwordHintJson === "string" ? item.hotwordHintJson : "",
   });
-}
-
-function normalizeTranslateStatus(value: string): TranslateStatus {
-  switch (value) {
-    case "queued":
-    case "processing":
-    case "done":
-    case "error":
-    case "idle":
-      return value;
-    default:
-      return "idle";
-  }
-}
-
-function normalizeTranslatePhase(value: unknown): QueueItem["translatePhase"] {
-  switch (value) {
-    case "summary":
-    case "translate":
-    case "qa":
-      return value;
-    default:
-      return "";
-  }
 }
 
 function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] {
   switch (value) {
     case "initializing":
     case "recognizing":
-    case "punctuation":
-    case "hotword":
+    case "segment":
       return value;
     default:
       return "";
@@ -202,61 +167,17 @@ function parseSubtitleSegments(raw: string): SubtitleSegment[] {
 }
 
 function recoverTransientStates(item: QueueItem): QueueItem {
-  let next = { ...item };
-
-  if (next.transcribeStatus === "processing") {
-    next = {
-      ...next,
+  if (item.transcribeStatus === "processing") {
+    return {
+      ...item,
       transcribeStatus: "error",
       transcribeProgress: 0,
       transcribeSegmentCurrent: 0,
       transcribeSegmentTotal: 0,
       transcribePhase: "",
-      transcribeError: next.transcribeError || "任务在上次退出时中断，请重试",
+      transcribeError: item.transcribeError || "任务在上次退出时中断，请重试",
     };
   }
 
-  if (next.translateStatus === "processing") {
-    next = {
-      ...next,
-      translateStatus: "error",
-      translatePhase: "",
-      translateProgress: 0,
-      translateError: next.translateError || "任务在上次退出时中断，请重试",
-    };
-  }
-
-  return next;
+  return item;
 }
-
-function buildHotwordHintJsonFromSummary(task: TaskSummary): string {
-  const status = (task.hotwordStatus || "").trim().toLowerCase();
-  const termList: string[] = [];
-  const knownAsrErrors = parseKnownAsrErrors(task.hotwordReplacementsJson);
-  if (status !== "completed" && knownAsrErrors.length === 0) return "";
-  return JSON.stringify({
-    termList,
-    knownAsrErrors,
-    note: "This is reference context from ASR hotword correction. Use only when context clearly matches.",
-  });
-}
-
-function parseKnownAsrErrors(raw: string): Array<{ wrong: string; correct: string }> {
-  if (!raw?.trim()) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const out: Array<{ wrong: string; correct: string }> = [];
-    for (const item of parsed) {
-      const wrong = String(item?.wrong ?? item?.oldText ?? item?.old_text ?? "").trim();
-      const correct = String(item?.correct ?? item?.newText ?? item?.new_text ?? "").trim();
-      if (!wrong || !correct) continue;
-      out.push({ wrong, correct });
-    }
-    return out;
-  } catch {
-    return [];
-  }
-}
-
-

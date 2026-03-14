@@ -49,15 +49,19 @@ pub fn normalize_word_tokens(raw_words: Vec<WordToken>) -> Vec<WordToken> {
     out
 }
 
-pub fn split_english_segments(words: &[WordToken]) -> Vec<SubtitleSegment> {
+pub fn split_english_segments(
+    words: &[WordToken],
+    max_words_per_segment: usize,
+) -> Vec<SubtitleSegment> {
     if words.is_empty() {
         return Vec::new();
     }
 
+    let max_words = max_words_per_segment.clamp(8, 40);
     let semantic_segments = split_by_semantic_boundary(words, 2000.0);
     let mut balanced: Vec<Vec<WordToken>> = Vec::new();
     for segment in semantic_segments {
-        balanced.extend(recursive_balance_split(&segment, 20));
+        balanced.extend(recursive_balance_split(&segment, max_words));
     }
 
     balanced

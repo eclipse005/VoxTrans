@@ -14,14 +14,9 @@ pub struct QueueItemRecord {
     pub transcribe_segment_current: u32,
     pub transcribe_segment_total: u32,
     pub transcribe_error: String,
-    pub translate_status: String,
-    pub translate_progress: u32,
-    pub translate_error: String,
     pub result_text: String,
     pub result_srt: String,
     pub subtitle_segments_json: String,
-    #[serde(default)]
-    pub hotword_hint_json: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -38,8 +33,9 @@ pub struct SaveQueueStateRequest {
 
 pub async fn load_workspace_state(pool: &SqlitePool) -> Result<WorkspaceStateResponse, String> {
     let rows = sqlx::query_as::<_, QueueItemRow>(
-        "SELECT id, path, name, media_kind, size_bytes, transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
-                transcribe_error, translate_status, translate_progress, translate_error, result_text, result_srt, subtitle_segments_json, hotword_hint_json
+        "SELECT id, path, name, media_kind, size_bytes,
+                transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
+                transcribe_error, result_text, result_srt, subtitle_segments_json
          FROM queue_items
          ORDER BY sort_order ASC, id ASC",
     )
@@ -65,9 +61,10 @@ pub async fn save_queue_state(
     for (index, item) in request.queue.iter().enumerate() {
         sqlx::query(
             "INSERT INTO queue_items (
-               id, path, name, media_kind, size_bytes, transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
-               transcribe_error, translate_status, translate_progress, translate_error, result_text, result_srt, subtitle_segments_json, hotword_hint_json, sort_order
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+               id, path, name, media_kind, size_bytes,
+               transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
+               transcribe_error, result_text, result_srt, subtitle_segments_json, sort_order
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&item.id)
         .bind(&item.path)
@@ -79,13 +76,9 @@ pub async fn save_queue_state(
         .bind(item.transcribe_segment_current as i64)
         .bind(item.transcribe_segment_total as i64)
         .bind(&item.transcribe_error)
-        .bind(&item.translate_status)
-        .bind(item.translate_progress as i64)
-        .bind(&item.translate_error)
         .bind(&item.result_text)
         .bind(&item.result_srt)
         .bind(&item.subtitle_segments_json)
-        .bind(&item.hotword_hint_json)
         .bind(index as i64)
         .execute(&mut *tx)
         .await
@@ -107,13 +100,9 @@ struct QueueItemRow {
     transcribe_segment_current: i64,
     transcribe_segment_total: i64,
     transcribe_error: String,
-    translate_status: String,
-    translate_progress: i64,
-    translate_error: String,
     result_text: String,
     result_srt: String,
     subtitle_segments_json: String,
-    hotword_hint_json: String,
 }
 
 impl From<QueueItemRow> for QueueItemRecord {
@@ -129,13 +118,9 @@ impl From<QueueItemRow> for QueueItemRecord {
             transcribe_segment_current: row.transcribe_segment_current.max(0) as u32,
             transcribe_segment_total: row.transcribe_segment_total.max(0) as u32,
             transcribe_error: row.transcribe_error,
-            translate_status: row.translate_status,
-            translate_progress: row.translate_progress.clamp(0, 100) as u32,
-            translate_error: row.translate_error,
             result_text: row.result_text,
             result_srt: row.result_srt,
             subtitle_segments_json: row.subtitle_segments_json,
-            hotword_hint_json: row.hotword_hint_json,
         }
     }
 }

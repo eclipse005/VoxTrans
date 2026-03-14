@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-const MODEL_DIR_NAME: &str = "parakeet-tdt-0.6b-v2";
-
 pub fn resolve_model_dir() -> PathBuf {
     if let Ok(custom_dir) = std::env::var("VOXTRANS_MODEL_DIR") {
         let path = PathBuf::from(custom_dir);
@@ -14,7 +12,7 @@ pub fn resolve_model_dir() -> PathBuf {
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
-    exe_dir.join("model").join(MODEL_DIR_NAME)
+    exe_dir.join("model")
 }
 
 pub fn open_model_dir() -> Result<(), String> {

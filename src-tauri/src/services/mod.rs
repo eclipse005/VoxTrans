@@ -1,6 +1,5 @@
 pub mod file;
 pub mod history;
-pub mod llm;
 pub mod logs;
 pub mod model;
 pub mod output;
@@ -10,6 +9,4 @@ pub mod system;
 pub mod task_path;
 pub mod transcribe;
 pub mod transcription;
-pub mod translation;
-pub mod usage;
 pub mod workspace;

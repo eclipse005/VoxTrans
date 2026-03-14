@@ -3,15 +3,12 @@ export type Provider = "cpu" | "cuda";
 export type SavedSettings = {
   provider: Provider;
   chunkTargetSeconds: number;
-  autoPunc: boolean;
-  threads: number;
+  subtitleMaxWordsPerSegment: number;
 };
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
-export type TranslateStatus = "idle" | "queued" | "processing" | "done" | "error";
-export type TranscribePhase = "initializing" | "recognizing" | "punctuation" | "hotword";
-export type TranslatePhase = "summary" | "translate" | "qa";
+export type TranscribePhase = "initializing" | "recognizing" | "segment";
 
 export type SubtitleCue = {
   id: string;
@@ -40,14 +37,9 @@ export type QueueItem = {
   transcribeSegmentTotal: number;
   transcribePhase?: TranscribePhase | "";
   transcribeError: string;
-  translateStatus: TranslateStatus;
-  translatePhase?: TranslatePhase | "";
-  translateProgress: number;
-  translateError: string;
   resultText: string;
   resultSrt: string;
   subtitleSegmentsJson: string;
-  hotwordHintJson?: string;
 };
 
 export type WordToken = {
@@ -76,6 +68,7 @@ export type BuildSegmentsRequest = {
   taskId: string;
   audioPath: string;
   words: WordToken[];
+  subtitleMaxWordsPerSegment: number;
 };
 
 export type BuildSegmentsResponse = {
@@ -111,81 +104,16 @@ export type SubtitleSaveResponse = {
   warnings: string[];
 };
 
-export type LlmTestConnectionRequest = {
-  apiKey: string;
-  baseUrl?: string | null;
-  model: string;
-  timeoutSecs?: number | null;
-};
-
-export type LlmTestConnectionResponse = {
-  ok: boolean;
-  message: string;
-  finishReason?: string | null;
-  model: string;
-};
-
-export type DbTermEntry = {
-  id: string;
-  source: string;
-  target: string;
-  note: string;
-};
-
-export type DbHotwordGroup = {
-  id: string;
-  name: string;
-  keyterms: string[];
-};
-
-export type DbHotwordCorrection = {
-  enabled: boolean;
-  activeGroupId: string;
-  groups: DbHotwordGroup[];
-};
-
-export type DbLlmSettings = {
-  apiKey: string;
-  apiBase: string;
-  apiModel: string;
-};
-
 export type UserPreferencesResponse = {
   settings: SavedSettings;
-  llm: DbLlmSettings;
-  terms: DbTermEntry[];
-  hotwordCorrection: DbHotwordCorrection;
 };
 
 export type SaveAppSettingsRequest = {
   settings: SavedSettings;
-  llm: DbLlmSettings;
 };
 
 export type WorkspaceStateResponse = {
   queue: QueueItem[];
-};
-
-export type TaskLanguage = {
-  sourceLang: string;
-  targetLang: string;
-};
-
-export type TaskPipelineStatus = {
-  transcribeStatus: TranscribeStatus;
-  transcribeError: string;
-  transcribedAt: number | null;
-  translateStatus: TranslateStatus;
-  translateError: string;
-  translatedAt: number | null;
-};
-
-export type TaskAssets = {
-  transcriptSrt: string;
-  translatedSrt: string;
-  translatedSrtPath: string;
-  subtitleSegmentsJson: string;
-  translateModel: string;
 };
 
 export type TaskSummary = {
@@ -198,28 +126,13 @@ export type TaskSummary = {
   lastError: string;
   outputSrtPath: string;
   outputWordsJson: string;
-  hotwordStatus: string;
-  hotwordReplacementsJson: string;
+  transcribeStatus: TranscribeStatus;
+  transcribeError: string;
+  transcriptSrt: string;
+  subtitleSegmentsJson: string;
+  transcribedAt: number | null;
   createdAt: number;
   updatedAt: number;
-} & TaskLanguage & TaskPipelineStatus & TaskAssets;
-
-export type TaskLogChannel = "main" | "llm";
-
-export type TaskLlmUsageBucket = {
-  stage: string;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  updatedAt: number;
-};
-
-export type TaskLlmUsageSummary = {
-  taskId: string;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  buckets: TaskLlmUsageBucket[];
 };
 
 export type ModelDownloadStateSnapshot = {
@@ -237,4 +150,3 @@ export type ModelStatusResponse = {
   ready: boolean;
   download: ModelDownloadStateSnapshot;
 };
-

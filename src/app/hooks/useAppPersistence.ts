@@ -1,14 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Provider, UserPreferencesResponse } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
-import type { HotwordCorrection, TermEntry } from "../types";
 
 type DispatchState = (action: AppAction) => void;
 
-export function useAppPersistence(terms: TermEntry[], hotwordCorrection: HotwordCorrection, dispatch: DispatchState) {
-  const hydratedRef = useRef(false);
-
+export function useAppPersistence(dispatch: DispatchState) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -18,35 +15,32 @@ export function useAppPersistence(terms: TermEntry[], hotwordCorrection: Hotword
         const provider = (res.settings.provider === "cpu"
           || res.settings.provider === "cuda")
           ? res.settings.provider as Provider
-          : "cuda";
-        dispatch({ type: "set_terms", terms: res.terms });
+          : "cpu";
+        const chunkTargetSeconds = Number.isFinite(res.settings.chunkTargetSeconds)
+          ? Math.max(60, Math.min(300, Math.round(res.settings.chunkTargetSeconds)))
+          : 300;
+        const subtitleMaxWordsPerSegment = Number.isFinite(res.settings.subtitleMaxWordsPerSegment)
+          ? Math.max(8, Math.min(40, Math.round(res.settings.subtitleMaxWordsPerSegment)))
+          : 20;
+
         dispatch({
           type: "set_settings",
           settings: {
             provider,
-            chunkTargetSeconds: res.settings.chunkTargetSeconds,
-            autoPunc: res.settings.autoPunc ?? true,
-            threads: Number.isFinite(res.settings.threads) ? Math.max(1, Math.min(16, Math.round(res.settings.threads))) : 4,
+            chunkTargetSeconds,
+            subtitleMaxWordsPerSegment,
           },
         });
         dispatch({
           type: "set_draft",
           payload: {
             draftProvider: provider,
-            draftChunkInput: String(res.settings.chunkTargetSeconds),
-            draftAutoPunc: res.settings.autoPunc ?? true,
-            draftThreadsInput: String(
-              Number.isFinite(res.settings.threads) ? Math.max(1, Math.min(16, Math.round(res.settings.threads))) : 4,
-            ),
-            draftApiKey: res.llm.apiKey ?? "",
-            draftApiBase: res.llm.apiBase ?? "",
-            draftApiModel: res.llm.apiModel ?? "",
-            hotwordCorrection: res.hotwordCorrection,
+            draftChunkInput: String(chunkTargetSeconds),
+            draftSubtitleMaxWordsInput: String(subtitleMaxWordsPerSegment),
           },
         });
-        hydratedRef.current = true;
       } catch {
-        hydratedRef.current = true;
+        // Use default settings when DB read fails.
       }
     })();
 
@@ -54,18 +48,4 @@ export function useAppPersistence(terms: TermEntry[], hotwordCorrection: Hotword
       cancelled = true;
     };
   }, [dispatch]);
-
-  useEffect(() => {
-    if (!hydratedRef.current) return;
-    void invoke("save_terms", { request: { terms } });
-  }, [terms]);
-
-  useEffect(() => {
-    if (!hydratedRef.current) return;
-    void invoke("save_hotword_correction", {
-      request: {
-        hotwordCorrection,
-      },
-    });
-  }, [hotwordCorrection]);
 }

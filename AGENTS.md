@@ -54,7 +54,7 @@ Run commands from the repository root.
 - Frontend lint: `npm run lint`
 - Frontend build: `npm run build`
 - Desktop release bundle: `npm run tauri build`
-- Rust check (desktop crate): `cargo check -p voxtrans-desktop`
+- Rust check (desktop crate): `cargo check -p voxtrans`
 - Rust check (core crate): `cargo check -p voxtrans-core`
 - Rust check (workspace): `cargo check --workspace`
 
@@ -87,7 +87,7 @@ Before finishing a code change, run the relevant checks for the areas touched:
 
 1. `npm run lint`
 2. `npm run build`
-3. `cargo check -p voxtrans-desktop`
+3. `cargo check -p voxtrans`
 
 If core logic changed, also run:
 
@@ -96,7 +96,7 @@ If core logic changed, also run:
 Practical scope examples:
 
 - Frontend-only changes: run `npm run lint` and `npm run build`
-- Tauri/Rust changes: also run `cargo check -p voxtrans-desktop`
+- Tauri/Rust changes: also run `cargo check -p voxtrans`
 - Core transcription logic changes: also run `cargo check -p voxtrans-core`
 
 If any required step fails, fix the issue before finishing.

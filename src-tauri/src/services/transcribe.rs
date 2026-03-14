@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "windows")]
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use voxtrans_core::subtitle::segmenter::{
     WordToken, normalize_word_tokens, plain_text_from_segments, split_english_segments,
@@ -51,6 +53,7 @@ pub struct BuildSegmentsRequest {
     pub task_id: String,
     pub audio_path: String,
     pub words: Vec<WordTokenDto>,
+    pub subtitle_max_words_per_segment: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,12 +87,21 @@ where
     if let Some(model_dir) = request.model_dir {
         options.model_dir = PathBuf::from(model_dir);
     }
+    if matches!(options.provider, Provider::Cuda) {
+        ensure_cuda_runtime_ready()?;
+    }
 
-    let output =
-        voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
-            on_progress(current, total);
-        })
-        .map_err(|err| err.to_string())?;
+    let output = voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
+        on_progress(current, total);
+    })
+    .map_err(|err| {
+        format!(
+            "{} (audio: {}, modelDir: {})",
+            err,
+            options.audio_path.display(),
+            options.model_dir.display()
+        )
+    })?;
     let words = normalize_word_tokens(words_from_timed_tokens(&output.tokens));
 
     Ok(TranscribeResponse {
@@ -114,7 +126,7 @@ pub fn build_segments_from_words(
         crate::services::task_path::task_srt_output_path(&request.task_id, &audio_path);
 
     let words: Vec<WordToken> = request.words.into_iter().map(dto_to_word).collect();
-    let segments = split_english_segments(&words);
+    let segments = split_english_segments(&words, request.subtitle_max_words_per_segment as usize);
     let srt = to_srt_from_segments(&segments);
     let text = plain_text_from_segments(&segments);
 
@@ -166,4 +178,65 @@ fn segment_to_response(
             })
             .collect(),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_cuda_runtime_ready() -> Result<(), String> {
+    let required = [
+        "onnxruntime_providers_shared.dll",
+        "onnxruntime_providers_cuda.dll",
+        "cudart64_12.dll",
+        "cublas64_12.dll",
+        "cublasLt64_12.dll",
+        "cudnn64_9.dll",
+    ];
+    let search_dirs = dll_search_dirs();
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !dll_exists_in_dirs(name, &search_dirs))
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let dirs_text = search_dirs
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<String>>()
+        .join("; ");
+    Err(format!(
+        "CUDA runtime check failed. Missing DLLs: {}. Place missing files next to VoxTrans.exe or add their folder to PATH. Searched: {}",
+        missing.join(", "),
+        dirs_text
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ensure_cuda_runtime_ready() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn dll_search_dirs() -> Vec<PathBuf> {
+    let mut set = BTreeSet::new();
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            set.insert(exe_dir.to_path_buf());
+        }
+    }
+    if let Ok(path_var) = std::env::var("PATH") {
+        for p in std::env::split_paths(&path_var) {
+            if !p.as_os_str().is_empty() {
+                set.insert(p);
+            }
+        }
+    }
+    set.into_iter().collect()
+}
+
+#[cfg(target_os = "windows")]
+fn dll_exists_in_dirs(file_name: &str, dirs: &[PathBuf]) -> bool {
+    dirs.iter().any(|dir| dir.join(file_name).is_file())
 }

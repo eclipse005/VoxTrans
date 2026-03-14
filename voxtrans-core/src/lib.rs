@@ -280,7 +280,7 @@ impl Drop for TemporaryAudioFile {
 }
 
 fn ffmpeg_command() -> Command {
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = Command::new(resolve_ffmpeg_program());
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -288,6 +288,36 @@ fn ffmpeg_command() -> Command {
         cmd.creation_flags(0x08000000);
     }
     cmd
+}
+
+fn resolve_ffmpeg_program() -> PathBuf {
+    if let Ok(custom) = std::env::var("VOXTRANS_FFMPEG_PATH") {
+        let custom_path = PathBuf::from(custom);
+        if custom_path.exists() {
+            return custom_path;
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            #[cfg(target_os = "windows")]
+            let bundled = exe_dir.join("bin").join("ffmpeg.exe");
+            #[cfg(not(target_os = "windows"))]
+            let bundled = exe_dir.join("bin").join("ffmpeg");
+            if bundled.exists() {
+                return bundled;
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        PathBuf::from("ffmpeg.exe")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from("ffmpeg")
+    }
 }
 
 fn prepare_audio_for_transcription(

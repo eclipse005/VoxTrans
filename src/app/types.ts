@@ -13,18 +13,5 @@ export type TermEntry = {
   note: string;
 };
 
-export type HotwordGroup = {
-  id: string;
-  name: string;
-  keyterms: string[];
-};
-
-export type HotwordCorrection = {
-  enabled: boolean;
-  activeGroupId: string;
-  groups: HotwordGroup[];
-};
-
 export type UploadTab = "local" | "youtube";
-export type SettingsTab = "transcribe" | "llm" | "hotword" | "advanced";
 export type SubtitleSaveState = "idle" | "saving" | "saved" | "error";

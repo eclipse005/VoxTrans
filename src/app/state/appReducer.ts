@@ -1,5 +1,5 @@
 import type { QueueItem, SavedSettings, SubtitleCue } from "../../features/media/types";
-import type { HotwordCorrection, SettingsTab, SubtitleSaveState, TermEntry, ToastState, UploadTab } from "../types";
+import type { SubtitleSaveState, ToastState, UploadTab } from "../types";
 import { reduceQueueState } from "./queueReducer";
 import { reduceSettingsState } from "./settingsReducer";
 import { reduceSubtitleState } from "./subtitleReducer";
@@ -10,30 +10,11 @@ export type AppState = {
   dragActive: boolean;
   activeTab: UploadTab;
   showSettings: boolean;
-  showGlossary: boolean;
   showLogs: boolean;
   settings: SavedSettings;
   draftProvider: SavedSettings["provider"];
   draftChunkInput: string;
-  settingsTab: SettingsTab;
-  draftApiKey: string;
-  draftApiBase: string;
-  draftApiModel: string;
-  draftAutoPunc: boolean;
-  draftThreadsInput: string;
-  hotwordCorrection: HotwordCorrection;
-  terms: TermEntry[];
-  termSource: string;
-  termTarget: string;
-  termNote: string;
-  termSearch: string;
-  showImportTerms: boolean;
-  importTermsText: string;
-  selectedTermId: string | null;
-  editingTermId: string | null;
-  editSource: string;
-  editTarget: string;
-  editNote: string;
+  draftSubtitleMaxWordsInput: string;
   youtubeUrl: string;
   youtubeQuality: string;
   toast: ToastState | null;
@@ -59,12 +40,9 @@ export type UiAction = {
       | "dragActive"
       | "activeTab"
       | "showSettings"
-      | "showGlossary"
       | "showLogs"
-      | "showImportTerms"
       | "youtubeUrl"
       | "youtubeQuality"
-      | "settingsTab"
     >
   >;
 };
@@ -102,42 +80,18 @@ export type SettingsAction =
           AppState,
           | "draftProvider"
           | "draftChunkInput"
-          | "draftApiKey"
-          | "draftApiBase"
-          | "draftApiModel"
-          | "draftAutoPunc"
-          | "draftThreadsInput"
-          | "hotwordCorrection"
+          | "draftSubtitleMaxWordsInput"
         >
       >;
     }
-  | { type: "set_toast"; toast: ToastState | null }
-  | {
-      type: "set_term_form";
-      payload: Partial<Pick<AppState, "termSource" | "termTarget" | "termNote" | "termSearch" | "importTermsText">>;
-    }
-  | {
-      type: "set_term_editing";
-      payload: Partial<Pick<AppState, "selectedTermId" | "editingTermId" | "editSource" | "editTarget" | "editNote">>;
-    }
-  | { type: "set_terms"; terms: TermEntry[] }
-  | { type: "add_term"; term: TermEntry }
-  | { type: "remove_term"; id: string }
-  | { type: "update_term"; id: string; source: string; target: string; note: string };
+  | { type: "set_toast"; toast: ToastState | null };
 
 export type AppAction = UiAction | QueueAction | SubtitleAction | SettingsAction;
 
 export const defaultSettings: SavedSettings = {
-  provider: "cuda",
+  provider: "cpu",
   chunkTargetSeconds: 300,
-  autoPunc: true,
-  threads: 4,
-};
-
-const defaultHotwordCorrection: HotwordCorrection = {
-  enabled: true,
-  activeGroupId: "group-0",
-  groups: [{ id: "group-0", name: "默认分组", keyterms: [] }],
+  subtitleMaxWordsPerSegment: 20,
 };
 
 export const initialAppState: AppState = {
@@ -146,30 +100,11 @@ export const initialAppState: AppState = {
   dragActive: false,
   activeTab: "local",
   showSettings: false,
-  showGlossary: false,
   showLogs: false,
   settings: defaultSettings,
   draftProvider: defaultSettings.provider,
   draftChunkInput: String(defaultSettings.chunkTargetSeconds),
-  settingsTab: "transcribe",
-  draftApiKey: "",
-  draftApiBase: "",
-  draftApiModel: "",
-  draftAutoPunc: true,
-  draftThreadsInput: String(defaultSettings.threads),
-  hotwordCorrection: defaultHotwordCorrection,
-  terms: [],
-  termSource: "",
-  termTarget: "",
-  termNote: "",
-  termSearch: "",
-  showImportTerms: false,
-  importTermsText: "",
-  selectedTermId: null,
-  editingTermId: null,
-  editSource: "",
-  editTarget: "",
-  editNote: "",
+  draftSubtitleMaxWordsInput: String(defaultSettings.subtitleMaxWordsPerSegment),
   youtubeUrl: "",
   youtubeQuality: "",
   toast: null,
@@ -222,12 +157,5 @@ function isSettingsAction(action: AppAction): action is SettingsAction {
     action.type === "set_settings"
     || action.type === "set_draft"
     || action.type === "set_toast"
-    || action.type === "set_term_form"
-    || action.type === "set_term_editing"
-    || action.type === "set_terms"
-    || action.type === "add_term"
-    || action.type === "remove_term"
-    || action.type === "update_term"
   );
 }
-

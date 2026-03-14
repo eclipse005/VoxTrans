@@ -3,18 +3,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow, type DragDropEvent } from "@tauri-apps/api/window";
-import { cuesToSrt } from "../../features/media/srt";
 import type {
   BuildSegmentsResponse,
   QueueItem,
   SavedSettings,
   SubtitleSegment,
-  SubtitleCue,
   TranscribeResponse,
 } from "../../features/media/types";
 import { detectMediaKind, fileName } from "../../features/media/utils";
 import type { AppAction } from "../state/appReducer";
-import type { HotwordCorrection } from "../types";
 import { reportError, toUserErrorMessage } from "../utils/errors";
 
 type DispatchState = (action: AppAction) => void;
@@ -28,69 +25,14 @@ type TranscribeProgressEvent = {
 
 type TranscribePhaseEvent = {
   taskId: string;
-  phase: "punctuation" | "hotword";
-};
-
-type TranslateProgressEvent = {
-  taskId: string;
-  phase: "summary" | "translate";
+  phase: "segment";
 };
 
 type UseQueueWorkflowArgs = {
   queue: QueueItem[];
   settings: SavedSettings;
-  llmSettings: {
-    apiKey: string;
-    apiBase: string;
-    apiModel: string;
-  };
-  hotwordCorrection: HotwordCorrection;
   dispatch: DispatchState;
   pushToast: PushToast;
-};
-
-type TranslationPipelineRequest = {
-  taskId: string;
-  mediaPath: string;
-  sourceLanguage: string;
-  targetLanguage: string;
-  style?: string | null;
-  threads?: number;
-  terminologyGroupIds: string[];
-  cues: Array<{
-    cueId: string;
-    startMs: number;
-    endMs: number;
-    sourceText: string;
-  }>;
-  words: Array<{
-    start: number;
-    end: number;
-    word: string;
-  }>;
-};
-
-type TranslationPipelineResponse = {
-  taskId: string;
-  summary: {
-    topicSummary: string;
-    translationStyle: string;
-    terminologySubset: Array<{
-      source: string;
-      target: string;
-      note: string;
-    }>;
-  };
-  stages: Array<{
-    stage: "summary" | "translate" | "align" | "qa";
-    status: "skipped" | "completed" | "failed";
-    message: string;
-  }>;
-  cues: Array<{
-    cueId: string;
-    sourceText: string;
-    translatedText: string;
-  }>;
 };
 
 type PostAsrPipelineResponse = {
@@ -99,29 +41,11 @@ type PostAsrPipelineResponse = {
   srtOutputPath: string;
   segments: BuildSegmentsResponse["segments"];
   words: TranscribeResponse["words"];
-  punctuation: {
-    sentenceTotal: number;
-    suspiciousCount: number;
-    restoredCount: number;
-    acceptedCount: number;
-    rejectedCount: number;
-  };
-  hotword: {
-    changedCount: number;
-    summary: string;
-    replacementStats: Array<{
-      oldText: string;
-      newText: string;
-      count: number;
-    }>;
-  };
 };
 
 export function useQueueWorkflow({
   queue,
   settings,
-  llmSettings,
-  hotwordCorrection,
   dispatch,
   pushToast,
 }: UseQueueWorkflowArgs) {
@@ -131,7 +55,7 @@ export function useQueueWorkflow({
   const queueBusy = hasProcessingTask || hasQueuedTask;
 
   const appendTaskLog = useCallback(async (
-    channel: "main" | "llm",
+    channel: "main",
     item: Pick<QueueItem, "id" | "path">,
     eventType: string,
     payload?: Record<string, unknown>,
@@ -145,8 +69,9 @@ export function useQueueWorkflow({
           message: formatTaskLogLine(eventType, payload),
         },
       });
-    } catch {
+    } catch (error) {
       // Log write failures must not affect core workflow.
+      reportError(error, "appendTaskLog");
     }
   }, []);
 
@@ -174,10 +99,6 @@ export function useQueueWorkflow({
           transcribeSegmentTotal: 0,
           transcribePhase: "",
           transcribeError: "",
-          translateStatus: "idle",
-          translatePhase: "",
-          translateProgress: 0,
-          translateError: "",
           resultText: "",
           resultSrt: "",
           subtitleSegmentsJson: "[]",
@@ -214,7 +135,6 @@ export function useQueueWorkflow({
       const insideLogical = logicalX >= rect.left && logicalX <= rect.right && logicalY >= rect.top && logicalY <= rect.bottom;
       if (insideLogical) return true;
 
-      // Fallback for environments that already report logical coordinates.
       return position.x >= rect.left && position.x <= rect.right && position.y >= rect.top && position.y <= rect.bottom;
     };
 
@@ -242,9 +162,7 @@ export function useQueueWorkflow({
         }
         unlisten = fn;
       })
-      .catch(() => {
-        // Drag-drop listener is optional, click-upload always works.
-      });
+      .catch(() => {});
 
     return () => {
       disposed = true;
@@ -281,9 +199,7 @@ export function useQueueWorkflow({
         }
         unlistenProgress = fn;
       })
-      .catch(() => {
-        // Progress events are optional.
-      });
+      .catch(() => {});
 
     return () => {
       disposed = true;
@@ -320,41 +236,6 @@ export function useQueueWorkflow({
     };
   }, [dispatch]);
 
-  useEffect(() => {
-    let disposed = false;
-    let unlistenTranslateProgress: undefined | (() => void);
-
-    listen<TranslateProgressEvent>("translate-progress", (event) => {
-      const payload = event.payload;
-      if (!payload?.taskId) return;
-      dispatch({
-        type: "patch_queue_item",
-        id: payload.taskId,
-        updater: (old) => ({
-          ...old,
-          translateStatus: old.translateStatus === "processing" ? old.translateStatus : "processing",
-          translatePhase: payload.phase === "translate" ? "translate" : "summary",
-          translateProgress: payload.phase === "translate" ? Math.max(old.translateProgress, 55) : Math.max(old.translateProgress, 15),
-        }),
-      });
-    })
-      .then((fn) => {
-        if (disposed) {
-          fn();
-          return;
-        }
-        unlistenTranslateProgress = fn;
-      })
-      .catch(() => {
-        // Translate progress events are optional.
-      });
-
-    return () => {
-      disposed = true;
-      if (unlistenTranslateProgress) unlistenTranslateProgress();
-    };
-  }, [dispatch]);
-
   const pickFiles = useCallback(async () => {
     try {
       const picked = await open({
@@ -376,140 +257,6 @@ export function useQueueWorkflow({
       pushToast(toUserErrorMessage(error, "打开文件选择器失败"), "error");
     }
   }, [appendPaths, pushToast]);
-
-  const runTranslate = useCallback(async (
-    taskId: string,
-    options?: {
-      fromTranscribe?: boolean;
-      segmentsOverride?: SubtitleSegment[];
-    },
-  ) => {
-    const task = queue.find((item) => item.id === taskId);
-    if (!task) return;
-    if (task.translateStatus === "processing") return;
-
-    if (!options?.fromTranscribe && task.transcribeStatus !== "done") {
-      throw new Error("请先完成转录");
-    }
-
-    const segments = options?.segmentsOverride ?? parseSubtitleSegments(task.subtitleSegmentsJson);
-    if (segments.length === 0) {
-      throw new Error("未找到可翻译字幕，请先完成转录并生成字幕");
-    }
-
-    dispatch({
-      type: "patch_queue_item",
-      id: task.id,
-      updater: (old) => ({
-        ...old,
-        translateStatus: "processing",
-        translatePhase: "summary",
-        translateProgress: 15,
-        translateError: "",
-      }),
-    });
-
-    try {
-      void appendTaskLog("main", task, "translate.started", {
-        sourceLanguage: "en",
-        targetLanguage: "zh",
-        cueTotal: segments.length,
-      });
-      const cues = segments.map((segment, index) => ({
-        cueId: cueIdForTranslate(index, segment.startMs),
-        startMs: Math.max(0, Math.round(segment.startMs)),
-        endMs: Math.max(Math.round(segment.startMs), Math.round(segment.endMs)),
-        sourceText: segment.sourceText ?? "",
-      }));
-
-      const translated = await invoke<TranslationPipelineResponse>("run_translation_pipeline", {
-        request: {
-          taskId: task.id,
-          mediaPath: task.path,
-          sourceLanguage: "en",
-          targetLanguage: "zh",
-          style: null,
-          threads: settings.threads,
-          terminologyGroupIds: [],
-          cues,
-          words: [],
-        } satisfies TranslationPipelineRequest,
-      });
-      void appendTaskLog("main", task, "translate.summary.completed", {
-        topicSummary: translated.summary?.topicSummary ?? "",
-        translationStyle: translated.summary?.translationStyle ?? "",
-        terminologySubsetSize: Array.isArray(translated.summary?.terminologySubset)
-          ? translated.summary.terminologySubset.length
-          : 0,
-      });
-      if (Array.isArray(translated.stages)) {
-        for (const stage of translated.stages) {
-          void appendTaskLog("main", task, `translate.stage.${stage.stage}.${stage.status}`, {
-            message: stage.message,
-          });
-        }
-      }
-
-      const translatedMap = new Map(
-        (translated.cues ?? []).map((cue) => [cue.cueId, cue.translatedText ?? ""]),
-      );
-      const mergedRaw = segments.map((segment, index) => ({
-        ...segment,
-        translatedText: (translatedMap.get(cueIdForTranslate(index, segment.startMs)) ?? "").trim(),
-      }));
-      const merged = beautifyTranslatedSegments(mergedRaw);
-
-      const translatedSrt = toTranslatedSrtFromSegments(merged);
-      const translatedSrtPath = await invoke<string>("get_task_translated_srt_path", {
-        request: {
-          taskId: task.id,
-          mediaPath: task.path,
-          targetLanguage: "zh",
-        },
-      });
-      await invoke("save_srt", {
-        request: {
-          outputPath: translatedSrtPath,
-          content: translatedSrt,
-        },
-      });
-
-      dispatch({
-        type: "patch_queue_item",
-        id: task.id,
-        updater: (old) => ({
-          ...old,
-          subtitleSegmentsJson: JSON.stringify(merged),
-          translateStatus: "done",
-          translatePhase: "",
-          translateProgress: 100,
-          translateError: "",
-        }),
-      });
-
-      void appendTaskLog("main", task, "translate.completed", {
-        translatedCueTotal: merged.length,
-        translatedSrtPath,
-        profileSummary: translated.summary?.topicSummary ?? "",
-      });
-      pushToast(`翻译完成：${task.name}`, "success");
-    } catch (error) {
-      const message = toUserErrorMessage(error, "翻译失败");
-      dispatch({
-        type: "patch_queue_item",
-        id: task.id,
-        updater: (old) => ({
-          ...old,
-          translateStatus: "error",
-          translatePhase: "",
-          translateProgress: 0,
-          translateError: message,
-        }),
-      });
-      void appendTaskLog("main", task, "translate.failed", { error: message });
-      pushToast(`翻译失败：${task.name}，${message}`, "error");
-    }
-  }, [appendTaskLog, dispatch, pushToast, queue, settings.threads]);
 
   const runTranscribe = useCallback(async (item: QueueItem) => {
     dispatch({
@@ -546,53 +293,15 @@ export function useQueueWorkflow({
         audioDurationSec: round2(response.audioDurationSec),
         transcribeElapsedSec: round2(response.transcribeElapsedSec),
         executionProvider: response.executionProvider,
-        segmentDurationsSec: Array.isArray(response.segmentDurationsSec)
-          ? response.segmentDurationsSec.map(round2)
-          : [],
       });
       const processed = await invoke<PostAsrPipelineResponse>("run_post_asr_pipeline", {
         request: {
           taskId: item.id,
           audioPath: item.path,
           words: response.words,
-          autoPunc: settings.autoPunc,
-          threads: settings.threads,
-          llm: llmSettings,
-          hotwordCorrection,
+          subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
         },
       });
-      const hasLlmConfig = Boolean(llmSettings.apiKey.trim() && llmSettings.apiModel.trim());
-      if (settings.autoPunc) {
-        if (!hasLlmConfig) {
-          void appendTaskLog("main", item, "punc.skipped", {
-            reason: "自动标点增强已启用，但未配置 LLM Key/Model，已跳过",
-          });
-        } else if (processed.punctuation.suspiciousCount > 0) {
-          void appendTaskLog("main", item, "punc.completed", processed.punctuation);
-        } else {
-          void appendTaskLog("main", item, "punc.skipped", {
-            reason: "未检测到可疑句，跳过标点恢复",
-            sentenceTotal: processed.punctuation.sentenceTotal,
-            suspiciousCount: 0,
-          });
-        }
-      } else {
-        void appendTaskLog("main", item, "punc.skipped", {
-          reason: "未启用 AI 标点增强",
-        });
-      }
-
-      if (shouldRunHotwordCorrection(hotwordCorrection, llmSettings)) {
-        void appendTaskLog("main", item, "hotword.completed", {
-          changedCount: processed.hotword.changedCount,
-          replacements: processed.hotword.replacementStats,
-          report: processed.hotword.summary || buildHotwordReport(processed.hotword.changedCount, processed.hotword.replacementStats),
-        });
-      } else {
-        void appendTaskLog("main", item, "hotword.skipped", {
-          reason: "未启用热词矫正或未配置可用 LLM/术语组",
-        });
-      }
 
       await invoke("save_srt", {
         request: {
@@ -601,7 +310,6 @@ export function useQueueWorkflow({
         },
       });
 
-      const shouldStartTranslate = item.translateStatus === "queued";
       const normalizedSegments = toSubtitleSegmentsFromBuilt(processed.segments);
       dispatch({
         type: "patch_queue_item",
@@ -620,12 +328,6 @@ export function useQueueWorkflow({
         }),
       });
       pushToast(`已完成：${item.name}，SRT 已保存到 ${processed.srtOutputPath}`, "success");
-      if (shouldStartTranslate) {
-        void runTranslate(item.id, {
-          fromTranscribe: true,
-          segmentsOverride: normalizedSegments,
-        });
-      }
     } catch (err) {
       reportError(err, "runTranscribe");
       const errorMessage = toUserErrorMessage(err, "转录失败，请检查模型和运行时配置");
@@ -647,15 +349,11 @@ export function useQueueWorkflow({
     }
   }, [
     dispatch,
-    hotwordCorrection,
-    llmSettings,
     pushToast,
     appendTaskLog,
-    settings.autoPunc,
     settings.chunkTargetSeconds,
     settings.provider,
-    settings.threads,
-    runTranslate,
+    settings.subtitleMaxWordsPerSegment,
   ]);
 
   useEffect(() => {
@@ -690,7 +388,6 @@ export function useQueueWorkflow({
           transcribeError: "",
         }),
       });
-      // Queue state updates are UI-level events; avoid writing them into main task flow log.
     }
 
     pushToast(`开始批量处理，共 ${pendingCount} 个文件`, "info");
@@ -732,39 +429,6 @@ export function useQueueWorkflow({
     pushToast("队列已清空", "info");
   }, [dispatch, pushToast, queueBusy]);
 
-  const translateSingle = useCallback((item: QueueItem) => {
-    dispatch({ type: "set_ui", payload: { activeId: item.id } });
-    const needsTranscribeFirst = item.transcribeStatus !== "done";
-    dispatch({
-      type: "patch_queue_item",
-      id: item.id,
-      updater: (old) => ({
-        ...old,
-        translateStatus: "queued",
-        translatePhase: "",
-        translateProgress: 0,
-        translateError: "",
-        transcribeStatus:
-          needsTranscribeFirst && (old.transcribeStatus === "pending" || old.transcribeStatus === "error")
-            ? "queued"
-            : old.transcribeStatus,
-        transcribePhase:
-          needsTranscribeFirst && (old.transcribeStatus === "pending" || old.transcribeStatus === "error")
-            ? ""
-            : old.transcribePhase,
-        transcribeError:
-          needsTranscribeFirst && (old.transcribeStatus === "pending" || old.transcribeStatus === "error")
-            ? ""
-            : old.transcribeError,
-      }),
-    });
-    if (needsTranscribeFirst) {
-      pushToast(`已加入转译队列：先转录再翻译（${item.name}）`, "info");
-    } else {
-      void runTranslate(item.id);
-    }
-  }, [dispatch, pushToast, runTranslate]);
-
   const removeItem = useCallback((id: string) => {
     const item = queue.find((q) => q.id === id);
     if (item) {
@@ -783,7 +447,6 @@ export function useQueueWorkflow({
     processQueue,
     processSingle,
     clearQueue,
-    translateSingle,
     removeItem,
   };
 }
@@ -794,64 +457,6 @@ function toSubtitleSegmentsFromBuilt(segments: BuildSegmentsResponse["segments"]
     endMs: Math.max(0, Math.round(segment.end * 1000)),
     sourceText: segment.text ?? "",
     translatedText: "",
-  }));
-}
-
-function toTranslatedSrtFromSegments(segments: SubtitleSegment[]): string {
-  const cues: SubtitleCue[] = segments.map((segment, index) => ({
-    id: `tr-${index}-${segment.startMs}`,
-    startMs: Math.max(0, Math.round(segment.startMs)),
-    endMs: Math.max(Math.round(segment.startMs), Math.round(segment.endMs)),
-    text: (segment.translatedText || segment.sourceText || "").trim(),
-    translatedText: segment.translatedText || "",
-  }));
-  return cuesToSrt(cues);
-}
-
-function cueIdForTranslate(index: number, startMs: number): string {
-  return `cue-${index}-${Math.max(0, Math.round(startMs))}`;
-}
-
-function parseSubtitleSegments(raw: string): SubtitleSegment[] {
-  if (!raw?.trim()) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((segment) => {
-        const startMs = Number(segment?.startMs ?? 0);
-        const endMs = Number(segment?.endMs ?? startMs);
-        const sourceText = String(segment?.sourceText ?? "");
-        const translatedText = String(segment?.translatedText ?? "");
-        if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
-        return {
-          startMs: Math.max(0, Math.round(startMs)),
-          endMs: Math.max(0, Math.round(endMs)),
-          sourceText,
-          translatedText,
-        } satisfies SubtitleSegment;
-      })
-      .filter((segment): segment is SubtitleSegment => segment !== null);
-  } catch {
-    return [];
-  }
-}
-
-function beautifyTranslatedText(text: string): string {
-  if (!text) return "";
-  return text
-    .replace(/[，,]+/g, " ")
-    .replace(/([\u4e00-\u9fff])([A-Za-z0-9])/g, "$1 $2")
-    .replace(/([A-Za-z0-9])([\u4e00-\u9fff])/g, "$1 $2")
-    .replace(/[。.]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function beautifyTranslatedSegments(segments: SubtitleSegment[]): SubtitleSegment[] {
-  return segments.map((segment) => ({
-    ...segment,
-    translatedText: beautifyTranslatedText(segment.translatedText || ""),
   }));
 }
 
@@ -866,40 +471,3 @@ function round2(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.round(value * 100) / 100;
 }
-
-function buildHotwordReport(
-  changedCount: number,
-  replacementStats: Array<{ oldText: string; newText: string; count: number }>,
-): string {
-  if (changedCount <= 0) {
-    return "矫正完成: 0 处修改";
-  }
-
-  const lines = [`矫正完成: ${changedCount} 处修改`, ""];
-  const stats = replacementStats.length > 0
-    ? replacementStats
-    : [{ oldText: "（未知）", newText: "（未知）", count: changedCount }];
-  for (const stat of stats) {
-    lines.push(`  ${stat.oldText} -> ${stat.newText}: ${stat.count} 处`);
-  }
-  return lines.join("\n");
-}
-
-function shouldRunHotwordCorrection(
-  config: HotwordCorrection,
-  llm: { apiKey: string; apiModel: string },
-): boolean {
-  if (!config.enabled || !llm.apiKey.trim() || !llm.apiModel.trim()) {
-    return false;
-  }
-  const active = config.groups.find((g) => g.id === config.activeGroupId) ?? config.groups[0];
-  if (!active || !Array.isArray(active.keyterms)) {
-    return false;
-  }
-  return active.keyterms.some((term) => String(term ?? "").trim().length > 0);
-}
-
-
-
-
-

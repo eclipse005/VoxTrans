@@ -63,7 +63,7 @@ pub fn clear_task_logs(request: ClearTaskLogsRequest) -> Result<(), String> {
     let channels = if let Some(channel) = request.channel.as_deref() {
         vec![channel.to_string()]
     } else {
-        vec!["main".to_string(), "llm".to_string()]
+        vec!["main".to_string()]
     };
 
     for channel in channels {
@@ -87,8 +87,7 @@ fn task_log_path(task_id: &str, media_path: &str, channel: &str) -> Result<PathB
 
     let file_name = match channel.trim() {
         "main" => "main.log",
-        "llm" => "llm.log",
-        _ => return Err("channel must be main or llm".to_string()),
+        _ => return Err("channel must be main".to_string()),
     };
 
     let task_dir = task_output_dir(task_id, Path::new(media_path));
@@ -103,7 +102,7 @@ fn task_output_dir(task_id: &str, audio_path: &Path) -> PathBuf {
         .unwrap_or_else(|| "transcript".to_string());
     let safe_stem = sanitize_filename_component(&stem);
     let safe_task_id = sanitize_filename_component(task_id);
-    resolve_output_dir().join(format!("{}_{}", safe_stem, safe_task_id))
+    crate::services::output::resolve_output_dir().join(format!("{}_{}", safe_stem, safe_task_id))
 }
 
 fn sanitize_filename_component(raw: &str) -> String {
@@ -116,20 +115,4 @@ fn sanitize_filename_component(raw: &str) -> String {
         .trim()
         .trim_matches('.')
         .to_string()
-}
-
-fn resolve_output_dir() -> PathBuf {
-    if let Ok(custom_dir) = std::env::var("VOXTRANS_OUTPUT_DIR") {
-        let path = PathBuf::from(custom_dir);
-        if !path.as_os_str().is_empty() {
-            return path;
-        }
-    }
-
-    let tauri_manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let project_root = tauri_manifest_dir
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or(tauri_manifest_dir);
-    project_root.join("output")
 }

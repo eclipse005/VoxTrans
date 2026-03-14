@@ -1,14 +1,10 @@
 pub mod file;
 pub mod history;
-pub mod llm;
 pub mod logs;
 pub mod model;
 pub mod preferences;
-pub mod prompts;
 pub mod subtitle;
 pub mod system;
 pub mod transcribe;
 pub mod transcription;
-pub mod translation;
-pub mod usage;
 pub mod workspace;

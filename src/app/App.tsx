@@ -2,19 +2,15 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
-  LlmTestConnectionResponse,
   ModelDownloadStateSnapshot,
   ModelStatusResponse,
   SavedSettings,
-  TaskLlmUsageSummary,
-  TaskLogChannel,
 } from "../features/media/types";
 import MediaList from "./components/MediaList";
 import LogsModal from "./components/LogsModal";
 import Navbar from "./components/Navbar";
 import SettingsModal from "./components/SettingsModal";
 import SubtitleEditorModal from "./components/SubtitleEditorModal";
-import TermsModal from "./components/TermsModal";
 import Toast from "./components/Toast";
 import UploadPanel from "./components/UploadPanel";
 import { useAppPersistence } from "./hooks/useAppPersistence";
@@ -23,8 +19,6 @@ import { useSubtitleWorkflow } from "./hooks/useSubtitleWorkflow";
 import { useToast } from "./hooks/useToast";
 import { useWorkspacePersistence } from "./hooks/useWorkspacePersistence";
 import { appReducer, initialAppState } from "./state/appReducer";
-import type { TermEntry } from "./types";
-import { parseImportedTerms } from "./utils/termsImport";
 
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
@@ -34,30 +28,11 @@ function App() {
     dragActive,
     activeTab,
     showSettings,
-    showGlossary,
     showLogs,
     settings,
     draftProvider,
     draftChunkInput,
-    settingsTab,
-    draftApiKey,
-    draftApiBase,
-    draftApiModel,
-    draftAutoPunc,
-    draftThreadsInput,
-    hotwordCorrection,
-    terms,
-    termSource,
-    termTarget,
-    termNote,
-    termSearch,
-    showImportTerms,
-    importTermsText,
-    selectedTermId,
-    editingTermId,
-    editSource,
-    editTarget,
-    editNote,
+    draftSubtitleMaxWordsInput,
     youtubeUrl,
     toast,
     subtitleTaskId,
@@ -71,15 +46,12 @@ function App() {
   } = state;
 
   const { pushToast } = useToast(dispatch);
-  const [testingLlm, setTestingLlm] = useState(false);
   const [logTaskContext, setLogTaskContext] = useState<{
     taskId: string;
     mediaPath: string;
     taskName: string;
   } | null>(null);
-  const [logChannel, setLogChannel] = useState<TaskLogChannel>("main");
   const [logContent, setLogContent] = useState("");
-  const [logUsageSummary, setLogUsageSummary] = useState<TaskLlmUsageSummary | null>(null);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [modelDir, setModelDir] = useState("");
   const [modelReady, setModelReady] = useState(false);
@@ -93,7 +65,7 @@ function App() {
   const [modelBusy, setModelBusy] = useState(false);
   const lastModelStatusRefreshAtRef = useRef(0);
 
-  useAppPersistence(terms, hotwordCorrection, dispatch);
+  useAppPersistence(dispatch);
   useWorkspacePersistence({
     queue,
     dispatch,
@@ -106,17 +78,10 @@ function App() {
     processQueue,
     processSingle,
     clearQueue,
-    translateSingle,
     removeItem,
   } = useQueueWorkflow({
     queue,
     settings,
-    llmSettings: {
-      apiKey: draftApiKey,
-      apiBase: draftApiBase,
-      apiModel: draftApiModel,
-    },
-    hotwordCorrection,
     dispatch,
     pushToast,
   });
@@ -142,50 +107,29 @@ function App() {
     pushToast,
   });
 
-  const termsCount = terms.length;
   const activeQueueItem = useMemo(
     () => queue.find((item) => item.id === activeId) ?? null,
     [queue, activeId],
   );
-  const settingsTabIndex = settingsTab === "transcribe" ? 0 : settingsTab === "llm" ? 1 : settingsTab === "hotword" ? 2 : 3;
-  const tabIndicatorStyle = { ["--tab-index" as string]: settingsTabIndex } as Record<string, number>;
   const loadLogs = useCallback(async () => {
     if (!logTaskContext) return;
     setLoadingLogs(true);
     try {
-      const [contentResult, usageResult] = await Promise.allSettled([
-        invoke<string>("read_task_log", {
-          request: {
-            taskId: logTaskContext.taskId,
-            mediaPath: logTaskContext.mediaPath,
-            channel: logChannel,
-          },
-        }),
-        invoke<TaskLlmUsageSummary>("get_task_llm_usage_summary", {
-          request: {
-            taskId: logTaskContext.taskId,
-          },
-        }),
-      ]);
-
-      if (contentResult.status === "fulfilled") {
-        setLogContent(contentResult.value || "");
-      } else {
-        throw contentResult.reason;
-      }
-
-      if (usageResult.status === "fulfilled") {
-        setLogUsageSummary(usageResult.value ?? null);
-      } else {
-        setLogUsageSummary(null);
-      }
+      const content = await invoke<string>("read_task_log", {
+        request: {
+          taskId: logTaskContext.taskId,
+          mediaPath: logTaskContext.mediaPath,
+          channel: "main",
+        },
+      });
+      setLogContent(content || "");
     } catch (error) {
       const message = error instanceof Error ? error.message : "加载日志失败";
       pushToast(message, "error");
     } finally {
       setLoadingLogs(false);
     }
-  }, [logChannel, logTaskContext, pushToast]);
+  }, [logTaskContext, pushToast]);
 
   const openLogs = useCallback(() => {
     if (!activeQueueItem) {
@@ -197,19 +141,19 @@ function App() {
       mediaPath: activeQueueItem.path,
       taskName: activeQueueItem.name,
     });
-    setLogChannel("main");
     setLogContent("");
-    setLogUsageSummary(null);
     dispatch({ type: "set_ui", payload: { showLogs: true } });
   }, [activeQueueItem, dispatch, pushToast]);
 
   const openSubtitleDir = useCallback(async () => {
     try {
-      if (subtitleSrtPath) {
-        const normalized = subtitleSrtPath.replace(/\\/g, "/");
-        const splitAt = normalized.lastIndexOf("/");
-        const parentDir = splitAt > 0 ? subtitleSrtPath.slice(0, splitAt) : subtitleSrtPath;
-        await invoke("open_in_explorer", { path: parentDir });
+      if (subtitleTaskId && subtitleMediaPath) {
+        await invoke("open_task_output_dir", {
+          request: {
+            taskId: subtitleTaskId,
+            mediaPath: subtitleMediaPath,
+          },
+        });
       } else {
         await invoke("open_output_dir");
       }
@@ -217,7 +161,7 @@ function App() {
       const message = error instanceof Error ? error.message : "打开字幕目录失败";
       pushToast(message, "error");
     }
-  }, [pushToast, subtitleSrtPath]);
+  }, [pushToast, subtitleMediaPath, subtitleTaskId]);
 
   const clearLogs = useCallback(async () => {
     if (!logTaskContext) return;
@@ -226,7 +170,7 @@ function App() {
         request: {
           taskId: logTaskContext.taskId,
           mediaPath: logTaskContext.mediaPath,
-          channel: logChannel,
+          channel: "main",
         },
       });
       setLogContent("");
@@ -235,12 +179,30 @@ function App() {
       const message = error instanceof Error ? error.message : "清空日志失败";
       pushToast(message, "error");
     }
-  }, [logChannel, logTaskContext, pushToast]);
+  }, [logTaskContext, pushToast]);
+
+  const openLogDir = useCallback(async () => {
+    try {
+      if (logTaskContext?.taskId && logTaskContext.mediaPath) {
+        await invoke("open_task_output_dir", {
+          request: {
+            taskId: logTaskContext.taskId,
+            mediaPath: logTaskContext.mediaPath,
+          },
+        });
+      } else {
+        await invoke("open_output_dir");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "打开日志目录失败";
+      pushToast(message, "error");
+    }
+  }, [logTaskContext, pushToast]);
 
   useEffect(() => {
     if (!showLogs || !logTaskContext) return;
     void loadLogs();
-  }, [showLogs, logTaskContext, logChannel, loadLogs]);
+  }, [showLogs, logTaskContext, loadLogs]);
 
   const refreshModelStatus = useCallback(async () => {
     try {
@@ -291,14 +253,10 @@ function App() {
     dispatch({ type: "set_draft", payload: {
       draftProvider: settings.provider,
       draftChunkInput: String(settings.chunkTargetSeconds),
-      draftAutoPunc: settings.autoPunc,
-      draftThreadsInput: String(settings.threads),
+      draftSubtitleMaxWordsInput: String(settings.subtitleMaxWordsPerSegment),
     }});
-    dispatch({ type: "set_ui", payload: {
-      settingsTab: "transcribe",
-      showSettings: true,
-    }});
-  }, [dispatch, refreshModelStatus, settings.autoPunc, settings.chunkTargetSeconds, settings.provider, settings.threads]);
+    dispatch({ type: "set_ui", payload: { showSettings: true } });
+  }, [dispatch, refreshModelStatus, settings.chunkTargetSeconds, settings.provider, settings.subtitleMaxWordsPerSegment]);
 
   const startModelDownload = useCallback(async () => {
     setModelBusy(true);
@@ -342,19 +300,17 @@ function App() {
       pushToast("分段时长必须是数字", "error");
       return;
     }
-    const parsedThreads = Number.parseInt(draftThreadsInput.trim(), 10);
-    if (!Number.isFinite(parsedThreads)) {
-      pushToast("线程数必须是数字", "error");
+    const clamped = Math.max(60, Math.min(300, parsed));
+    const parsedSubtitleWords = Number.parseInt(draftSubtitleMaxWordsInput.trim(), 10);
+    if (!Number.isFinite(parsedSubtitleWords)) {
+      pushToast("字幕长度必须是数字", "error");
       return;
     }
-
-    const clamped = Math.max(60, Math.min(300, parsed));
-    const clampedThreads = Math.max(1, Math.min(16, parsedThreads));
+    const clampedSubtitleWords = Math.max(8, Math.min(40, parsedSubtitleWords));
     const nextSettings = {
       provider: draftProvider,
       chunkTargetSeconds: clamped,
-      autoPunc: draftAutoPunc,
-      threads: clampedThreads,
+      subtitleMaxWordsPerSegment: clampedSubtitleWords,
     } satisfies SavedSettings;
 
     dispatch({
@@ -363,18 +319,13 @@ function App() {
     });
     dispatch({ type: "set_draft", payload: {
       draftChunkInput: String(clamped),
-      draftThreadsInput: String(clampedThreads),
+      draftSubtitleMaxWordsInput: String(clampedSubtitleWords),
     }});
 
     try {
       await invoke("save_app_settings", {
         request: {
           settings: nextSettings,
-          llm: {
-            apiKey: draftApiKey,
-            apiBase: draftApiBase,
-            apiModel: draftApiModel,
-          },
         },
       });
       pushToast("设置已保存（后续任务生效）", "success");
@@ -382,149 +333,17 @@ function App() {
       const message = error instanceof Error ? error.message : "设置保存失败";
       pushToast(message, "error");
     }
-  }, [dispatch, draftApiBase, draftApiKey, draftApiModel, draftAutoPunc, draftChunkInput, draftProvider, draftThreadsInput, pushToast]);
-
-  const testLlmConnection = useCallback(async () => {
-    if (!draftApiKey.trim()) {
-      pushToast("请先填写 API Key", "error");
-      return;
-    }
-    if (!draftApiModel.trim()) {
-      pushToast("请先填写 Model", "error");
-      return;
-    }
-
-    setTestingLlm(true);
-    try {
-      const res = await invoke<LlmTestConnectionResponse>("llm_test_connection", {
-        request: {
-          apiKey: draftApiKey,
-          baseUrl: draftApiBase || null,
-          model: draftApiModel,
-          timeoutSecs: 30,
-        },
-      });
-      if (res.ok) {
-        pushToast(`连通成功：${res.model}`, "success");
-      } else {
-        pushToast(res.message || "连通失败", "error");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "连通失败";
-      pushToast(message, "error");
-    } finally {
-      setTestingLlm(false);
-    }
-  }, [draftApiBase, draftApiKey, draftApiModel, pushToast]);
-
-  const addTerm = useCallback(() => {
-    const source = termSource.trim();
-    const target = termTarget.trim();
-    if (!source || !target) {
-      pushToast("术语的源词和目标词不能为空", "error");
-      return;
-    }
-
-    const exists = terms.some((item) => item.source.toLowerCase() === source.toLowerCase());
-    if (exists) {
-      pushToast("术语已存在，请直接修改", "error");
-      return;
-    }
-
-    const next = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      source,
-      target,
-      note: termNote.trim(),
-    } satisfies TermEntry;
-
-    dispatch({ type: "add_term", term: next });
-    dispatch({ type: "set_term_form", payload: {
-      termSource: "",
-      termTarget: "",
-      termNote: "",
-    }});
-  }, [dispatch, pushToast, termNote, termSource, termTarget, terms]);
-
-  const removeTerm = useCallback((id: string) => {
-    dispatch({ type: "remove_term", id });
-  }, []);
-
-  const startEditTerm = useCallback((term: TermEntry) => {
-    dispatch({ type: "set_term_editing", payload: {
-      editingTermId: term.id,
-      selectedTermId: null,
-      editSource: term.source,
-      editTarget: term.target,
-      editNote: term.note,
-    }});
-  }, [dispatch]);
-
-  const cancelEditTerm = useCallback(() => {
-    dispatch({ type: "set_term_editing", payload: {
-      editingTermId: null,
-      editSource: "",
-      editTarget: "",
-      editNote: "",
-    }});
-  }, [dispatch]);
-
-  const saveEditTerm = useCallback(() => {
-    if (!editingTermId) return;
-    const source = editSource.trim();
-    const target = editTarget.trim();
-    if (!source || !target) {
-      pushToast("请输入原词和目标词", "error");
-      return;
-    }
-
-    dispatch({
-      type: "update_term",
-      id: editingTermId,
-      source,
-      target,
-      note: editNote.trim(),
-    });
-    dispatch({ type: "set_term_editing", payload: { editingTermId: null } });
-    pushToast("术语已更新", "success");
-  }, [dispatch, editNote, editSource, editTarget, editingTermId, pushToast]);
-
-  const importTerms = useCallback(() => {
-    const { imported, duplicateCount, invalidCount } = parseImportedTerms(importTermsText, terms);
-    if (!imported.length) {
-      pushToast("没有可导入术语，请检查格式", "error");
-      return;
-    }
-
-    dispatch({ type: "set_terms", terms: [...imported, ...terms] });
-    dispatch({ type: "set_ui", payload: {
-      showImportTerms: false,
-    }});
-    dispatch({ type: "set_term_form", payload: {
-      importTermsText: "",
-    }});
-
-    const stats: string[] = [`已导入 ${imported.length} 条`];
-    if (duplicateCount > 0) stats.push(`重复 ${duplicateCount} 条`);
-    if (invalidCount > 0) stats.push(`无效 ${invalidCount} 条`);
-    pushToast(stats.join("，"), "success");
-  }, [dispatch, importTermsText, pushToast, terms]);
-
-  const filteredTerms = useMemo(() => {
-    const keyword = termSearch.trim().toLowerCase();
-    if (!keyword) return terms;
-    return terms.filter((item) => (
-      item.source.toLowerCase().includes(keyword)
-      || item.target.toLowerCase().includes(keyword)
-      || item.note.toLowerCase().includes(keyword)
-    ));
-  }, [termSearch, terms]);
+  }, [
+    dispatch,
+    draftChunkInput,
+    draftProvider,
+    draftSubtitleMaxWordsInput,
+    pushToast,
+  ]);
 
   return (
     <div className="apple-style app-root">
       <Navbar
-        termsCount={termsCount}
-        onOpenTerms={() => dispatch({ type: "set_ui", payload: { showGlossary: true } })}
         onOpenSettings={openSettings}
       />
 
@@ -548,7 +367,6 @@ function App() {
             onSetActiveId={(id) => dispatch({ type: "set_ui", payload: { activeId: activeId === id ? "" : id } })}
             onProcessQueue={processQueue}
             onClearQueue={clearQueue}
-            onTranslateSingle={translateSingle}
             onProcessSingle={processSingle}
             onRemoveItem={removeItem}
           />
@@ -586,84 +404,32 @@ function App() {
 
       <SettingsModal
         visible={showSettings}
-        settingsTab={settingsTab}
-        tabIndicatorStyle={tabIndicatorStyle}
         draftProvider={draftProvider}
         draftChunkInput={draftChunkInput}
-        draftApiKey={draftApiKey}
-        draftAutoPunc={draftAutoPunc}
-        draftThreadsInput={draftThreadsInput}
-        draftApiBase={draftApiBase}
-        draftApiModel={draftApiModel}
-        testingLlm={testingLlm}
+        draftSubtitleMaxWordsInput={draftSubtitleMaxWordsInput}
         modelDir={modelDir}
         modelReady={modelReady}
         modelDownload={modelDownload}
         modelBusy={modelBusy}
-        hotwordCorrection={hotwordCorrection}
         onClose={() => dispatch({ type: "set_ui", payload: { showSettings: false } })}
         onSave={saveSettings}
-        onTestLlmConnection={testLlmConnection}
-        onSettingsTabChange={(tab) => dispatch({ type: "set_ui", payload: { settingsTab: tab } })}
         onDraftProviderChange={(value) => dispatch({ type: "set_draft", payload: { draftProvider: value } })}
         onDraftChunkInputChange={(value) => dispatch({ type: "set_draft", payload: { draftChunkInput: value } })}
-        onDraftApiKeyChange={(value) => dispatch({ type: "set_draft", payload: { draftApiKey: value } })}
-        onDraftAutoPuncChange={(value) => dispatch({ type: "set_draft", payload: { draftAutoPunc: value } })}
-        onDraftThreadsInputChange={(value) => dispatch({ type: "set_draft", payload: { draftThreadsInput: value } })}
-        onDraftApiBaseChange={(value) => dispatch({ type: "set_draft", payload: { draftApiBase: value } })}
-        onDraftApiModelChange={(value) => dispatch({ type: "set_draft", payload: { draftApiModel: value } })}
+        onDraftSubtitleMaxWordsInputChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleMaxWordsInput: value } })}
         onOpenModelDir={openModelDir}
         onStartModelDownload={startModelDownload}
         onCancelModelDownload={cancelModelDownload}
-        onHotwordCorrectionChange={(value) => dispatch({ type: "set_draft", payload: { hotwordCorrection: value } })}
-      />
-
-      <TermsModal
-        visible={showGlossary}
-        termsCount={termsCount}
-        termSource={termSource}
-        termTarget={termTarget}
-        termNote={termNote}
-        termSearch={termSearch}
-        showImportTerms={showImportTerms}
-        importTermsText={importTermsText}
-        filteredTerms={filteredTerms}
-        selectedTermId={selectedTermId}
-        editingTermId={editingTermId}
-        editSource={editSource}
-        editTarget={editTarget}
-        editNote={editNote}
-        onClose={() => dispatch({ type: "set_ui", payload: { showGlossary: false } })}
-        onAddTerm={addTerm}
-        onClearTerms={() => dispatch({ type: "set_terms", terms: [] })}
-        onToggleImportTerms={() => dispatch({ type: "set_ui", payload: { showImportTerms: !showImportTerms } })}
-        onImportTerms={importTerms}
-        onRemoveTerm={removeTerm}
-        onStartEditTerm={startEditTerm}
-        onCancelEditTerm={cancelEditTerm}
-        onSaveEditTerm={saveEditTerm}
-        onTermSourceChange={(value) => dispatch({ type: "set_term_form", payload: { termSource: value } })}
-        onTermTargetChange={(value) => dispatch({ type: "set_term_form", payload: { termTarget: value } })}
-        onTermNoteChange={(value) => dispatch({ type: "set_term_form", payload: { termNote: value } })}
-        onTermSearchChange={(value) => dispatch({ type: "set_term_form", payload: { termSearch: value } })}
-        onImportTermsTextChange={(value) => dispatch({ type: "set_term_form", payload: { importTermsText: value } })}
-        onSelectedTermIdChange={(id) => dispatch({ type: "set_term_editing", payload: { selectedTermId: id } })}
-        onEditSourceChange={(value) => dispatch({ type: "set_term_editing", payload: { editSource: value } })}
-        onEditTargetChange={(value) => dispatch({ type: "set_term_editing", payload: { editTarget: value } })}
-        onEditNoteChange={(value) => dispatch({ type: "set_term_editing", payload: { editNote: value } })}
       />
 
       <LogsModal
         visible={showLogs}
         loading={loadingLogs}
         taskName={logTaskContext?.taskName || ""}
-        activeChannel={logChannel}
         content={logContent}
-        usageSummary={logUsageSummary}
         onClose={() => dispatch({ type: "set_ui", payload: { showLogs: false } })}
         onRefresh={loadLogs}
         onClear={clearLogs}
-        onChannelChange={setLogChannel}
+        onOpenDir={openLogDir}
       />
 
       <Toast toast={toast} />

@@ -867,7 +867,7 @@
   left: 6px;
   top: 6px;
   height: calc(100% - 12px);
-  width: calc((100% - 36px) / 4);
+  width: calc((100% - 20px) / 2);
   border-radius: 8px;
   background-color: #fff;
   box-shadow: var(--apple-shadow-sm);
@@ -1590,6 +1590,10 @@
   padding-right: 44px;
 }
 
+.subtitle-inline-content .subtitle-editor-header {
+  padding-right: 0;
+}
+
 .subtitle-header-main {
   flex: 1;
   min-width: 0;
@@ -1650,25 +1654,38 @@
   width: 100%;
   max-width: none;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   min-width: 0;
   margin: 4px 0 0;
 }
 
-.subtitle-meta-prefix {
-  flex: 0 1 auto;
+.subtitle-meta-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.subtitle-meta-label {
+  flex: 0 0 auto;
+  color: var(--apple-text-secondary);
+}
+
+.subtitle-meta-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .subtitle-output-link {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: 100%;
-  display: inline-block;
+  max-width: none;
+  display: inline;
   border: none;
   background: transparent;
   color: var(--apple-blue);
@@ -1677,9 +1694,9 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .subtitle-output-link:hover:not(:disabled) {
@@ -2536,8 +2553,8 @@
 .logs-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 8px;
   padding-right: 44px;
 }
 
@@ -2547,6 +2564,12 @@
 
 .logs-title-block {
   min-width: 0;
+}
+
+.logs-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .logs-task-name {
