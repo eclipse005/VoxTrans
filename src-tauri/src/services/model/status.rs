@@ -1,5 +1,5 @@
 use super::{REQUIRED_MODEL_FILES, compute_model_download_bytes, resolve_model_dir};
-use crate::app_state::{AppState, ModelDownloadStateSnapshot};
+use crate::app_state::{AppState, ModelDownloadPhase, ModelDownloadStateSnapshot};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -28,26 +28,26 @@ pub fn get_model_status(state: &AppState) -> Result<ModelStatusResponse, String>
         .snapshot
         .clone();
     let (downloaded_bytes, total_bytes) = compute_model_download_bytes(&model_dir);
-    let phase = if snapshot_in_memory.phase == "downloading" {
-        "downloading".to_string()
+    let phase = if snapshot_in_memory.phase == ModelDownloadPhase::Downloading {
+        ModelDownloadPhase::Downloading
     } else if missing_files.is_empty() {
-        "completed".to_string()
+        ModelDownloadPhase::Completed
     } else if downloaded_bytes > 0 {
-        if snapshot_in_memory.phase == "cancelled" {
-            "cancelled".to_string()
-        } else if snapshot_in_memory.phase == "failed" {
-            "failed".to_string()
+        if snapshot_in_memory.phase == ModelDownloadPhase::Cancelled {
+            ModelDownloadPhase::Cancelled
+        } else if snapshot_in_memory.phase == ModelDownloadPhase::Failed {
+            ModelDownloadPhase::Failed
         } else {
-            "idle".to_string()
+            ModelDownloadPhase::Idle
         }
     } else {
-        "idle".to_string()
+        ModelDownloadPhase::Idle
     };
     let snapshot = ModelDownloadStateSnapshot {
         phase,
         downloaded_bytes,
         total_bytes,
-        speed_bytes_per_sec: if snapshot_in_memory.phase == "downloading" {
+        speed_bytes_per_sec: if snapshot_in_memory.phase == ModelDownloadPhase::Downloading {
             snapshot_in_memory.speed_bytes_per_sec
         } else {
             0

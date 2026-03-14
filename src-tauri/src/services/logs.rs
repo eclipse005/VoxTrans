@@ -2,7 +2,7 @@ use chrono::Local;
 use serde::Deserialize;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,29 +90,9 @@ fn task_log_path(task_id: &str, media_path: &str, channel: &str) -> Result<PathB
         _ => return Err("channel must be main".to_string()),
     };
 
-    let task_dir = task_output_dir(task_id, Path::new(media_path));
+    let task_dir = crate::services::task_path::task_output_dir(
+        task_id,
+        std::path::Path::new(media_path),
+    );
     Ok(task_dir.join("log").join(file_name))
-}
-
-fn task_output_dir(task_id: &str, audio_path: &Path) -> PathBuf {
-    let stem = audio_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "transcript".to_string());
-    let safe_stem = sanitize_filename_component(&stem);
-    let safe_task_id = sanitize_filename_component(task_id);
-    crate::services::output::resolve_output_dir().join(format!("{}_{}", safe_stem, safe_task_id))
-}
-
-fn sanitize_filename_component(raw: &str) -> String {
-    raw.chars()
-        .map(|ch| match ch {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
-            _ => ch,
-        })
-        .collect::<String>()
-        .trim()
-        .trim_matches('.')
-        .to_string()
 }

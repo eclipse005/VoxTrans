@@ -1,7 +1,9 @@
 use super::{
     MODEL_DOWNLOAD_FILES, REQUIRED_MODEL_FILES, compute_model_download_bytes, resolve_model_dir,
 };
-use crate::app_state::{AppState, ModelDownloadRuntime, ModelDownloadStateSnapshot};
+use crate::app_state::{
+    AppState, ModelDownloadPhase, ModelDownloadRuntime, ModelDownloadStateSnapshot,
+};
 use serde::Serialize;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -12,7 +14,7 @@ use tauri::Emitter;
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ModelDownloadProgressEvent {
-    phase: String,
+    phase: ModelDownloadPhase,
     downloaded_bytes: u64,
     total_bytes: u64,
     speed_bytes_per_sec: u64,
@@ -27,12 +29,12 @@ pub fn start_model_download(app: tauri::AppHandle, state: &AppState) -> Result<(
         let mut guard = model_download
             .lock()
             .map_err(|_| "model download state lock poisoned".to_string())?;
-        if guard.snapshot.phase == "downloading" {
+        if guard.snapshot.phase == ModelDownloadPhase::Downloading {
             return Ok(());
         }
         guard.cancel_flag = Some(Arc::new(AtomicBool::new(false)));
         guard.snapshot = ModelDownloadStateSnapshot {
-            phase: "downloading".to_string(),
+            phase: ModelDownloadPhase::Downloading,
             downloaded_bytes,
             total_bytes,
             speed_bytes_per_sec: 0,
@@ -53,7 +55,7 @@ pub fn start_model_download(app: tauri::AppHandle, state: &AppState) -> Result<(
                 let _ = set_model_download_snapshot(
                     &app,
                     &model_download,
-                    "failed",
+                    ModelDownloadPhase::Failed,
                     0,
                     0,
                     0,
@@ -65,7 +67,7 @@ pub fn start_model_download(app: tauri::AppHandle, state: &AppState) -> Result<(
                 let _ = set_model_download_snapshot(
                     &app,
                     &model_download,
-                    "failed",
+                    ModelDownloadPhase::Failed,
                     0,
                     0,
                     0,
@@ -106,7 +108,7 @@ fn emit_model_download_progress(app: &tauri::AppHandle, snapshot: &ModelDownload
 fn set_model_download_snapshot(
     app: &tauri::AppHandle,
     runtime: &Arc<Mutex<ModelDownloadRuntime>>,
-    phase: &str,
+    phase: ModelDownloadPhase,
     downloaded_bytes: u64,
     total_bytes: u64,
     speed_bytes_per_sec: u64,
@@ -114,7 +116,7 @@ fn set_model_download_snapshot(
     clear_cancel_flag: bool,
 ) -> Result<(), String> {
     let snapshot = ModelDownloadStateSnapshot {
-        phase: phase.to_string(),
+        phase,
         downloaded_bytes,
         total_bytes,
         speed_bytes_per_sec,
@@ -182,7 +184,7 @@ fn download_model_files(
     set_model_download_snapshot(
         app,
         runtime,
-        "downloading",
+        ModelDownloadPhase::Downloading,
         downloaded_bytes,
         total_bytes,
         0,
@@ -195,7 +197,7 @@ fn download_model_files(
             set_model_download_snapshot(
                 app,
                 runtime,
-                "cancelled",
+                ModelDownloadPhase::Cancelled,
                 downloaded_bytes,
                 total_bytes,
                 0,
@@ -253,7 +255,7 @@ fn download_model_files(
                 set_model_download_snapshot(
                     app,
                     runtime,
-                    "cancelled",
+                    ModelDownloadPhase::Cancelled,
                     downloaded_bytes,
                     total_bytes,
                     0,
@@ -279,7 +281,7 @@ fn download_model_files(
                 set_model_download_snapshot(
                     app,
                     runtime,
-                    "downloading",
+                    ModelDownloadPhase::Downloading,
                     downloaded_bytes,
                     total_bytes,
                     speed,
@@ -293,7 +295,7 @@ fn download_model_files(
         set_model_download_snapshot(
             app,
             runtime,
-            "downloading",
+            ModelDownloadPhase::Downloading,
             downloaded_bytes,
             total_bytes,
             0,
@@ -311,7 +313,7 @@ fn download_model_files(
         set_model_download_snapshot(
             app,
             runtime,
-            "completed",
+            ModelDownloadPhase::Completed,
             downloaded_bytes,
             total_bytes.max(downloaded_bytes),
             0,
@@ -323,7 +325,7 @@ fn download_model_files(
         set_model_download_snapshot(
             app,
             runtime,
-            "failed",
+            ModelDownloadPhase::Failed,
             downloaded_bytes,
             total_bytes.max(downloaded_bytes),
             0,

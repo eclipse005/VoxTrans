@@ -2,10 +2,20 @@ use sqlx::SqlitePool;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelDownloadPhase {
+    Idle,
+    Downloading,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelDownloadStateSnapshot {
-    pub phase: String,
+    pub phase: ModelDownloadPhase,
     pub downloaded_bytes: u64,
     pub total_bytes: u64,
     pub speed_bytes_per_sec: u64,
@@ -15,7 +25,7 @@ pub struct ModelDownloadStateSnapshot {
 impl Default for ModelDownloadStateSnapshot {
     fn default() -> Self {
         Self {
-            phase: "idle".to_string(),
+            phase: ModelDownloadPhase::Idle,
             downloaded_bytes: 0,
             total_bytes: 0,
             speed_bytes_per_sec: 0,

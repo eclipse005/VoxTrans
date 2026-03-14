@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 use crate::services::transcribe::{
     BuildSegmentsRequest, SegmentWithWordsDto, WordTokenDto, build_segments_from_words,
@@ -26,7 +25,6 @@ pub struct RunPostAsrPipelineResponse {
 
 pub async fn run_post_asr_pipeline<F>(
     request: RunPostAsrPipelineRequest,
-    _pool: &SqlitePool,
     mut on_phase: F,
 ) -> Result<RunPostAsrPipelineResponse, String>
 where
