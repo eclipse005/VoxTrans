@@ -11,6 +11,7 @@ pub mod output;
 pub mod preferences;
 pub mod subtitle;
 pub mod system;
+pub mod task_log;
 pub mod task_path;
 pub mod transcribe;
 pub mod transcription;

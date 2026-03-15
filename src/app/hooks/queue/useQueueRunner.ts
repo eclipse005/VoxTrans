@@ -1,7 +1,6 @@
 import { useCallback, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
-  appendTaskLog as appendTaskLogApi,
   runPostAsrPipeline,
   saveSrt,
   transcribeMedia,
@@ -50,25 +49,6 @@ export function useQueueRunner({
   pushToast,
   isTaskPresent,
 }: UseQueueRunnerArgs) {
-  const appendTaskLog = useCallback(async (
-    channel: "main",
-    item: Pick<QueueItem, "id" | "path">,
-    eventType: string,
-    payload?: Record<string, unknown>,
-  ) => {
-    try {
-      await appendTaskLogApi({
-        taskId: item.id,
-        mediaPath: item.path,
-        channel,
-        message: formatTaskLogLine(eventType, payload),
-      });
-    } catch (error) {
-      // Log write failures must not affect core workflow.
-      reportError(error, "appendTaskLog");
-    }
-  }, []);
-
   useEffect(() => {
     let disposed = false;
     let unlistenProgress: undefined | (() => void);
@@ -128,12 +108,6 @@ export function useQueueRunner({
     if (!isTaskPresent(item.id)) return;
 
     try {
-      void appendTaskLog("main", item, "transcribe.started", {
-        chunkTargetSeconds: settings.chunkTargetSeconds,
-        provider: settings.provider,
-        mediaPath: item.path,
-      });
-
       const response = await transcribeMedia({
         taskId: item.id,
         audioPath: item.path,
@@ -141,12 +115,6 @@ export function useQueueRunner({
         chunkTargetSeconds: settings.chunkTargetSeconds,
       });
       if (!isTaskPresent(item.id)) return;
-      void appendTaskLog("main", item, "transcribe.asr.completed", {
-        segmentTotal: response.segmentTotal,
-        audioDurationSec: round2(response.audioDurationSec),
-        transcribeElapsedSec: round2(response.transcribeElapsedSec),
-        executionProvider: response.executionProvider,
-      });
       const processed = await runPostAsrPipeline({
         taskId: item.id,
         audioPath: item.path,
@@ -156,6 +124,8 @@ export function useQueueRunner({
       if (!isTaskPresent(item.id)) return;
 
       await saveSrt({
+        taskId: item.id,
+        mediaPath: item.path,
         outputPath: processed.srtOutputPath,
         content: processed.srt,
       });
@@ -176,12 +146,10 @@ export function useQueueRunner({
       const errorMessage = toUserErrorMessage(err, "转录失败，请检查模型和运行时配置");
       setErrorState(dispatch, item.id, errorMessage);
       pushToast(`失败：${item.name}，${errorMessage}`, "error");
-      void appendTaskLog("main", item, "transcribe.failed", { error: errorMessage });
     }
   }, [
     dispatch,
     pushToast,
-    appendTaskLog,
     isTaskPresent,
     settings.chunkTargetSeconds,
     settings.provider,
@@ -200,16 +168,4 @@ function toSubtitleSegmentsFromBuilt(segments: BuildSegmentsResponse["segments"]
     sourceText: segment.text ?? "",
     translatedText: "",
   }));
-}
-
-function formatTaskLogLine(eventType: string, payload?: Record<string, unknown>): string {
-  if (!payload || Object.keys(payload).length === 0) {
-    return eventType;
-  }
-  return `${eventType}\n${JSON.stringify(payload, null, 2)}`;
-}
-
-function round2(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.round(value * 100) / 100;
 }

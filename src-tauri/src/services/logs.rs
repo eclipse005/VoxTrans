@@ -90,9 +90,7 @@ fn task_log_path(task_id: &str, media_path: &str, channel: &str) -> Result<PathB
         _ => return Err("channel must be main".to_string()),
     };
 
-    let task_dir = crate::services::task_path::task_output_dir(
-        task_id,
-        std::path::Path::new(media_path),
-    );
+    let task_dir =
+        crate::services::task_path::task_output_dir(task_id, std::path::Path::new(media_path));
     Ok(task_dir.join("log").join(file_name))
 }

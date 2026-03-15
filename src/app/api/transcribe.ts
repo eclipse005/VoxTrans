@@ -31,6 +31,8 @@ export type PostAsrPipelineResponse = {
 };
 
 type SaveSrtRequest = {
+  taskId?: string;
+  mediaPath?: string;
   outputPath: string;
   content: string;
 };

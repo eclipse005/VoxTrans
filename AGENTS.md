@@ -12,7 +12,7 @@ Use it as the default execution guide for changes.
 
 ## Project Overview
 
-`voxtrans` is a desktop app for media transcription (and future subtitle translation), built with:
+`voxtrans` is a desktop app for media transcription and subtitle editing, built with:
 
 - Tauri v2 desktop shell (`src-tauri/`)
 - React + TypeScript frontend (`src/`)
@@ -27,8 +27,6 @@ Current architecture:
 - `src-tauri/src/commands/`: Tauri command entrypoints
 - `src-tauri/src/services/`: desktop-side business logic
 - `src-tauri/src/services/transcription/`: post-ASR punctuation/hotword/transcription pipeline
-- `src-tauri/src/services/translation/`: summary/translate/align/qa pipeline
-- `src-tauri/src/prompt_builder.rs`: LLM prompt builders used by desktop services
 - `voxtrans-core/`: ASR/transcription core (Parakeet v2, SRT generation)
 - `model/`: local model files (not committed)
 - `runtime/`: local ONNX Runtime files (not committed)
@@ -66,7 +64,7 @@ Run commands from the repository root.
 - Preserve the current single-repo structure.
 - Prefer reusing existing components/utilities before adding new abstractions.
 - When changing Tauri command payloads, update both:
-  - Rust request/response structs in the owning service/domain module (for example `src-tauri/src/services/translation/domain.rs`)
+  - Rust request/response structs in the owning service/domain module (for example `src-tauri/src/services/transcribe.rs`)
   - Corresponding TS types at the frontend call site (for example `src/app/hooks/useQueueWorkflow.ts`, `src/app/types.ts`, or shared types in `src/features/media/types.ts`)
 
 ## Rules

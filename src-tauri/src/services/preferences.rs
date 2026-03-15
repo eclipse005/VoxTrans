@@ -39,7 +39,11 @@ pub async fn save_app_settings(
     set_setting(
         &mut tx,
         KEY_CHUNK_TARGET_SECONDS,
-        &request.settings.chunk_target_seconds.clamp(60, 300).to_string(),
+        &request
+            .settings
+            .chunk_target_seconds
+            .clamp(60, 300)
+            .to_string(),
     )
     .await?;
     set_setting(

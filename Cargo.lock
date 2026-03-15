@@ -5589,6 +5589,8 @@ version = "0.1.0"
 dependencies = [
  "hound",
  "parakeet-rs",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

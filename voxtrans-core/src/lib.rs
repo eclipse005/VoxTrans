@@ -6,14 +6,14 @@ use parakeet_rs::{
     ExecutionConfig, ExecutionProvider, ParakeetTDT, TimedToken, TimestampMode, Transcriber,
     TranscriptionResult,
 };
+use serde::Deserialize;
 
 pub mod subtitle;
 
 pub use subtitle::srt::to_srt_from_sentence_tokens as to_srt;
 
 const DEFAULT_CHUNK_TARGET_SECONDS: f64 = 300.0;
-const SILENCE_NOISE_DB: &str = "-35dB";
-const SILENCE_MIN_SECONDS: &str = "0.5";
+const TARGET_SAMPLE_RATE: u32 = 16_000;
 
 #[derive(Debug, Clone)]
 pub struct TranscribeOptions {
@@ -68,6 +68,7 @@ pub struct TranscribeOutput {
     pub text: String,
     pub tokens: Vec<TimedToken>,
     pub audio_duration_sec: f64,
+    pub vad_elapsed_sec: f64,
     pub transcribe_elapsed_sec: f64,
     pub execution_provider: &'static str,
     pub segment_summaries: Vec<SegmentSummary>,
@@ -94,7 +95,8 @@ where
     let timestamp_mode = to_timestamp_mode(options.timestamp_mode);
     let prepared_audio = prepare_audio_for_transcription(&options.audio_path)?;
     let audio_duration_sec = wav_duration_seconds(prepared_audio.path())?;
-    let segments = build_segments_from_silence(
+    let mono_samples = load_wav_mono_f32(prepared_audio.path())?;
+    let (segments, vad_elapsed_sec) = build_segments_from_vad(
         prepared_audio.path(),
         audio_duration_sec,
         options.chunk_target_seconds,
@@ -103,7 +105,7 @@ where
     let started_at = Instant::now();
     let result = transcribe_in_segments(
         &options.model_dir,
-        prepared_audio.path(),
+        &mono_samples,
         execution_provider,
         timestamp_mode,
         options.intra_threads,
@@ -134,6 +136,7 @@ where
         text: result.text,
         tokens: result.tokens,
         audio_duration_sec,
+        vad_elapsed_sec,
         transcribe_elapsed_sec: elapsed_sec,
         execution_provider,
         segment_summaries,
@@ -182,7 +185,7 @@ fn default_model_dir() -> PathBuf {
 
 fn transcribe_in_segments(
     model_dir: &Path,
-    full_audio_path: &Path,
+    full_audio_samples: &[f32],
     provider: ExecutionProvider,
     timestamp_mode: TimestampMode,
     intra_threads: usize,
@@ -204,11 +207,22 @@ fn transcribe_in_segments(
     let mut text_parts: Vec<String> = Vec::new();
 
     let total_segments = segments.len();
+    let sample_len = full_audio_samples.len();
     for segment in segments {
         on_segment_progress(segment.index + 1, total_segments);
-        let segment_file = extract_segment_to_temp(full_audio_path, segment)?;
-        let mut segment_result =
-            model.transcribe_file(segment_file.path.as_path(), Some(timestamp_mode))?;
+        let start_index =
+            ((segment.start_sec * TARGET_SAMPLE_RATE as f64).floor() as usize).min(sample_len);
+        let end_index =
+            ((segment.end_sec * TARGET_SAMPLE_RATE as f64).ceil() as usize).min(sample_len);
+        if end_index <= start_index {
+            continue;
+        }
+        let mut segment_result = model.transcribe_samples(
+            full_audio_samples[start_index..end_index].to_vec(),
+            TARGET_SAMPLE_RATE,
+            1,
+            Some(timestamp_mode),
+        )?;
 
         if !segment_result.text.trim().is_empty() {
             text_parts.push(segment_result.text.trim().to_string());
@@ -320,6 +334,47 @@ fn resolve_ffmpeg_program() -> PathBuf {
     }
 }
 
+fn fireredvad_command() -> Command {
+    let mut cmd = Command::new(resolve_fireredvad_program());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW
+        cmd.creation_flags(0x08000000);
+    }
+    cmd
+}
+
+fn resolve_fireredvad_program() -> PathBuf {
+    if let Ok(custom) = std::env::var("VOXTRANS_VAD_PATH") {
+        let custom_path = PathBuf::from(custom);
+        if custom_path.exists() {
+            return custom_path;
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            #[cfg(target_os = "windows")]
+            let bundled = exe_dir.join("bin").join("fireredvad.exe");
+            #[cfg(not(target_os = "windows"))]
+            let bundled = exe_dir.join("bin").join("fireredvad");
+            if bundled.exists() {
+                return bundled;
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        PathBuf::from("fireredvad.exe")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from("fireredvad")
+    }
+}
+
 fn prepare_audio_for_transcription(
     input_path: &PathBuf,
 ) -> Result<PreparedAudio, Box<dyn std::error::Error>> {
@@ -357,25 +412,72 @@ fn prepare_audio_for_transcription(
     }))
 }
 
-fn build_segments_from_silence(
+fn load_wav_mono_f32(audio_path: &Path) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let mut reader = hound::WavReader::open(audio_path)?;
+    let spec = reader.spec();
+
+    if spec.sample_rate != TARGET_SAMPLE_RATE || spec.channels != 1 {
+        return Err(format!(
+            "expected {}Hz mono wav, got {}Hz {}ch ({})",
+            TARGET_SAMPLE_RATE,
+            spec.sample_rate,
+            spec.channels,
+            audio_path.display()
+        )
+        .into());
+    }
+
+    let samples = match spec.sample_format {
+        hound::SampleFormat::Float => reader.samples::<f32>().collect::<Result<Vec<_>, _>>()?,
+        hound::SampleFormat::Int => {
+            let bits = spec.bits_per_sample.clamp(1, 32);
+            let max = (1_i64 << (bits - 1)) as f32;
+            reader
+                .samples::<i32>()
+                .map(|s| s.map(|v| v as f32 / max))
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    };
+    Ok(samples)
+}
+
+#[derive(Debug, Deserialize)]
+struct VadOutput {
+    dur: f64,
+    timestamps: Vec<[f64; 2]>,
+}
+
+fn build_segments_from_vad(
     audio_path: &Path,
     total_duration_sec: f64,
     chunk_target_seconds: f64,
-) -> Result<Vec<AudioSegment>, Box<dyn std::error::Error>> {
+) -> Result<(Vec<AudioSegment>, f64), Box<dyn std::error::Error>> {
+    let vad_started_at = Instant::now();
     let chunk_target_seconds = chunk_target_seconds.max(30.0);
-    if total_duration_sec <= chunk_target_seconds {
-        return Ok(vec![AudioSegment {
-            index: 0,
-            start_sec: 0.0,
-            end_sec: total_duration_sec,
-        }]);
+    let vad = detect_speech_with_fireredvad(audio_path)?;
+    let vad_elapsed_sec = vad_started_at.elapsed().as_secs_f64();
+    let effective_total_duration = if total_duration_sec > 0.0 {
+        total_duration_sec
+    } else {
+        vad.dur
+    };
+    if effective_total_duration <= chunk_target_seconds {
+        return Ok((
+            vec![AudioSegment {
+                index: 0,
+                start_sec: 0.0,
+                end_sec: effective_total_duration,
+            }],
+            vad_elapsed_sec,
+        ));
     }
 
-    let silence_midpoints = detect_silence_midpoints(audio_path)?;
+    let speech_ranges = normalize_ranges(&vad.timestamps, effective_total_duration);
+    let silence_midpoints = silence_midpoints_from_vad(&speech_ranges, effective_total_duration);
+
     let mut split_points = Vec::new();
     let mut last = 0.0_f64;
-
-    while last + chunk_target_seconds < total_duration_sec {
+    while last + chunk_target_seconds < effective_total_duration {
         let boundary = last + chunk_target_seconds;
         let candidate = silence_midpoints
             .iter()
@@ -406,89 +508,78 @@ fn build_segments_from_silence(
     segments.push(AudioSegment {
         index: segments.len(),
         start_sec: start,
-        end_sec: total_duration_sec,
+        end_sec: effective_total_duration,
     });
-    Ok(segments)
+    Ok((segments, vad_elapsed_sec))
 }
 
-fn detect_silence_midpoints(audio_path: &Path) -> Result<Vec<f64>, Box<dyn std::error::Error>> {
-    let output = ffmpeg_command()
-        .arg("-hide_banner")
-        .arg("-i")
-        .arg(audio_path)
-        .arg("-af")
-        .arg(format!(
-            "silencedetect=noise={}:d={}",
-            SILENCE_NOISE_DB, SILENCE_MIN_SECONDS
-        ))
-        .arg("-f")
-        .arg("null")
-        .arg("-")
-        .output()?;
-
-    let stderr_text = String::from_utf8_lossy(&output.stderr);
-    let mut current_start: Option<f64> = None;
-    let mut midpoints = Vec::new();
-
-    for line in stderr_text.lines() {
-        if let Some(start) = parse_value_after(line, "silence_start:") {
-            current_start = Some(start);
-            continue;
-        }
-        if let Some(end) = parse_value_after(line, "silence_end:") {
-            if let Some(start) = current_start.take() {
-                midpoints.push((start + end) / 2.0);
-            }
-        }
-    }
-
-    midpoints.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    Ok(midpoints)
-}
-
-fn parse_value_after(line: &str, marker: &str) -> Option<f64> {
-    let idx = line.find(marker)?;
-    let value_part = &line[idx + marker.len()..];
-    let token = value_part.trim().split_whitespace().next()?;
-    token.parse::<f64>().ok()
-}
-
-fn extract_segment_to_temp(
-    full_audio_path: &Path,
-    segment: &AudioSegment,
-) -> Result<TemporaryAudioFile, Box<dyn std::error::Error>> {
-    let temp_path = build_temp_wav_path(&format!("segment_{}", segment.index + 1));
-    let status = ffmpeg_command()
-        .arg("-loglevel")
-        .arg("error")
-        .arg("-y")
-        .arg("-ss")
-        .arg(format!("{:.6}", segment.start_sec))
-        .arg("-to")
-        .arg(format!("{:.6}", segment.end_sec))
-        .arg("-i")
-        .arg(full_audio_path)
-        .arg("-vn")
-        .arg("-ac")
-        .arg("1")
-        .arg("-ar")
-        .arg("16000")
-        .arg("-c:a")
-        .arg("pcm_s16le")
-        .arg(&temp_path)
-        .status()?;
-
-    if !status.success() {
+fn detect_speech_with_fireredvad(
+    audio_path: &Path,
+) -> Result<VadOutput, Box<dyn std::error::Error>> {
+    let output = fireredvad_command().arg("--wav").arg(audio_path).output()?;
+    if !output.status.success() {
         return Err(format!(
-            "ffmpeg split failed for segment {} [{:.3}, {:.3}]",
-            segment.index + 1,
-            segment.start_sec,
-            segment.end_sec
+            "fireredvad failed for {}: {}",
+            audio_path.display(),
+            String::from_utf8_lossy(&output.stderr)
         )
         .into());
     }
 
-    Ok(TemporaryAudioFile { path: temp_path })
+    let stdout = String::from_utf8(output.stdout)?;
+    let parsed: VadOutput = serde_json::from_str(stdout.trim())?;
+    Ok(parsed)
+}
+
+fn normalize_ranges(ranges: &[[f64; 2]], total_duration_sec: f64) -> Vec<(f64, f64)> {
+    if total_duration_sec <= 0.0 {
+        return Vec::new();
+    }
+
+    let mut normalized: Vec<(f64, f64)> = ranges
+        .iter()
+        .map(|pair| (pair[0].max(0.0), pair[1].min(total_duration_sec)))
+        .filter(|(start, end)| *end > *start)
+        .collect();
+    normalized.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut merged: Vec<(f64, f64)> = Vec::with_capacity(normalized.len());
+    for (start, end) in normalized {
+        if let Some(last) = merged.last_mut() {
+            if start <= last.1 {
+                last.1 = last.1.max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    merged
+}
+
+fn silence_midpoints_from_vad(speech_ranges: &[(f64, f64)], total_duration_sec: f64) -> Vec<f64> {
+    if total_duration_sec <= 0.0 {
+        return Vec::new();
+    }
+
+    if speech_ranges.is_empty() {
+        return Vec::new();
+    }
+
+    let mut midpoints = Vec::new();
+    let mut cursor = 0.0_f64;
+
+    for &(speech_start, speech_end) in speech_ranges {
+        if speech_start > cursor {
+            midpoints.push((cursor + speech_start) / 2.0);
+        }
+        cursor = cursor.max(speech_end);
+    }
+
+    if cursor < total_duration_sec {
+        midpoints.push((cursor + total_duration_sec) / 2.0);
+    }
+
+    midpoints
 }
 
 fn is_wav_16k_mono(input_path: &PathBuf) -> Result<bool, Box<dyn std::error::Error>> {

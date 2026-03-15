@@ -76,7 +76,12 @@ fn platform_fallback_output_dir() -> Option<PathBuf> {
         if let Ok(home) = std::env::var("HOME") {
             let path = PathBuf::from(home);
             if !path.as_os_str().is_empty() {
-                return Some(path.join(".local").join("share").join("voxtrans").join("output"));
+                return Some(
+                    path.join(".local")
+                        .join("share")
+                        .join("voxtrans")
+                        .join("output"),
+                );
             }
         }
     }

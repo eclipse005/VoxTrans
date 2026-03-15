@@ -60,6 +60,7 @@ export type TranscribeResponse = {
   segmentTotal: number;
   segmentDurationsSec: number[];
   audioDurationSec: number;
+  vadElapsedSec: number;
   transcribeElapsedSec: number;
   executionProvider: string;
 };

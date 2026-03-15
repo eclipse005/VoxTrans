@@ -1,4 +1,6 @@
+use crate::services::task_log::{TaskLogTarget, append_event_best_effort, event};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 #[cfg(target_os = "windows")]
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -26,6 +28,7 @@ pub struct TranscribeResponse {
     pub segment_total: usize,
     pub segment_durations_sec: Vec<f64>,
     pub audio_duration_sec: f64,
+    pub vad_elapsed_sec: f64,
     pub transcribe_elapsed_sec: f64,
     pub execution_provider: String,
 }
@@ -72,39 +75,80 @@ pub fn transcribe_blocking<F>(
 where
     F: FnMut(usize, usize),
 {
+    let log_target = TaskLogTarget::main(request.task_id.clone(), request.audio_path.clone());
+    append_transcribe_log(
+        &log_target,
+        event::TRANSCRIBE_STARTED,
+        json!({
+            "chunkTargetSeconds": request.chunk_target_seconds,
+            "provider": request.provider,
+            "mediaPath": request.audio_path,
+        }),
+    );
+
     let mut options = TranscribeOptions::default();
     let audio_path = PathBuf::from(&request.audio_path);
     options.audio_path = audio_path;
     options.provider = match request.provider.to_ascii_lowercase().as_str() {
         "cpu" => Provider::Cpu,
         "cuda" => Provider::Cuda,
-        other => return Err(format!("unsupported provider: {other}")),
+        other => {
+            let err = format!("unsupported provider: {other}");
+            append_transcribe_log(
+                &log_target,
+                event::TRANSCRIBE_FAILED,
+                json!({ "error": err }),
+            );
+            return Err(err);
+        }
     };
     options.timestamp_mode = TimestampKind::Words;
     options.chunk_target_seconds = request.chunk_target_seconds.clamp(60, 1800) as f64;
     options.model_dir = crate::services::model::resolve_model_dir();
 
-    if let Some(model_dir) = request.model_dir {
+    if let Some(model_dir) = request.model_dir.as_ref() {
         options.model_dir = PathBuf::from(model_dir);
     }
     if matches!(options.provider, Provider::Cuda) {
-        ensure_cuda_runtime_ready()?;
+        if let Err(err) = ensure_cuda_runtime_ready() {
+            append_transcribe_log(
+                &log_target,
+                event::TRANSCRIBE_FAILED,
+                json!({
+                    "phase": "initialize",
+                    "error": err,
+                }),
+            );
+            return Err(err);
+        }
     }
 
-    let output = voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
-        on_progress(current, total);
-    })
-    .map_err(|err| {
-        format!(
-            "{} (audio: {}, modelDir: {})",
-            err,
-            options.audio_path.display(),
-            options.model_dir.display()
-        )
-    })?;
+    let output =
+        voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
+            on_progress(current, total);
+        })
+        .map_err(|err| {
+            format!(
+                "{} (audio: {}, modelDir: {})",
+                err,
+                options.audio_path.display(),
+                options.model_dir.display()
+            )
+        });
+    let output = match output {
+        Ok(v) => v,
+        Err(err) => {
+            append_transcribe_log(
+                &log_target,
+                event::TRANSCRIBE_FAILED,
+                json!({ "error": err }),
+            );
+            return Err(err);
+        }
+    };
     let words = normalize_word_tokens(words_from_timed_tokens(&output.tokens));
 
-    Ok(TranscribeResponse {
+    let response = TranscribeResponse {
         words: words.iter().map(word_to_dto).collect(),
         segment_total: output.segment_summaries.len(),
         segment_durations_sec: output
@@ -113,9 +157,25 @@ where
             .map(|s| (s.duration_sec * 100.0).round() / 100.0)
             .collect(),
         audio_duration_sec: output.audio_duration_sec,
+        vad_elapsed_sec: output.vad_elapsed_sec,
         transcribe_elapsed_sec: output.transcribe_elapsed_sec,
         execution_provider: output.execution_provider.to_string(),
-    })
+    };
+
+    append_transcribe_log(
+        &log_target,
+        event::TRANSCRIBE_ASR_COMPLETED,
+        json!({
+            "segmentTotal": response.segment_total,
+            "segmentDurationsSec": response.segment_durations_sec,
+            "audioDurationSec": round2(response.audio_duration_sec),
+            "vadElapsedSec": round2(response.vad_elapsed_sec),
+            "transcribeElapsedSec": round2(response.transcribe_elapsed_sec),
+            "executionProvider": response.execution_provider,
+        }),
+    );
+
+    Ok(response)
 }
 
 pub fn build_segments_from_words(
@@ -239,4 +299,15 @@ fn dll_search_dirs() -> Vec<PathBuf> {
 #[cfg(target_os = "windows")]
 fn dll_exists_in_dirs(file_name: &str, dirs: &[PathBuf]) -> bool {
     dirs.iter().any(|dir| dir.join(file_name).is_file())
+}
+
+fn append_transcribe_log(target: &TaskLogTarget, event_type: &str, payload: serde_json::Value) {
+    append_event_best_effort(target, event_type, Some(&payload));
+}
+
+fn round2(value: f64) -> f64 {
+    if !value.is_finite() {
+        return 0.0;
+    }
+    (value * 100.0).round() / 100.0
 }
