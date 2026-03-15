@@ -162,19 +162,6 @@ where
         execution_provider: output.execution_provider.to_string(),
     };
 
-    append_transcribe_log(
-        &log_target,
-        event::TRANSCRIBE_ASR_COMPLETED,
-        json!({
-            "segmentTotal": response.segment_total,
-            "segmentDurationsSec": response.segment_durations_sec,
-            "audioDurationSec": round2(response.audio_duration_sec),
-            "vadElapsedSec": round2(response.vad_elapsed_sec),
-            "transcribeElapsedSec": round2(response.transcribe_elapsed_sec),
-            "executionProvider": response.execution_provider,
-        }),
-    );
-
     Ok(response)
 }
 
@@ -303,11 +290,4 @@ fn dll_exists_in_dirs(file_name: &str, dirs: &[PathBuf]) -> bool {
 
 fn append_transcribe_log(target: &TaskLogTarget, event_type: &str, payload: serde_json::Value) {
     append_event_best_effort(target, event_type, Some(&payload));
-}
-
-fn round2(value: f64) -> f64 {
-    if !value.is_finite() {
-        return 0.0;
-    }
-    (value * 100.0).round() / 100.0
 }

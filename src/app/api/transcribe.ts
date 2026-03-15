@@ -28,6 +28,7 @@ export type PostAsrPipelineResponse = {
   srtOutputPath: string;
   segments: BuildSegmentsResponse["segments"];
   words: TranscribeResponse["words"];
+  postAsrElapsedSec: number;
 };
 
 type SaveSrtRequest = {

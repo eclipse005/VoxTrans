@@ -23,6 +23,7 @@ pub struct RunPostAsrPipelineResponse {
     pub srt_output_path: String,
     pub segments: Vec<SegmentWithWordsDto>,
     pub words: Vec<WordTokenDto>,
+    pub post_asr_elapsed_sec: f64,
 }
 
 pub async fn run_post_asr_pipeline<F>(
@@ -34,14 +35,6 @@ where
 {
     let log_target = TaskLogTarget::main(request.task_id.clone(), request.audio_path.clone());
     let started_at = std::time::Instant::now();
-    append_event_best_effort(
-        &log_target,
-        event::TRANSCRIBE_POST_ASR_STARTED,
-        Some(&json!({
-            "wordCount": request.words.len(),
-            "subtitleMaxWordsPerSegment": request.subtitle_max_words_per_segment,
-        })),
-    );
 
     let words = request.words.clone();
     on_phase("segment");
@@ -66,21 +59,13 @@ where
         }
     };
 
-    append_event_best_effort(
-        &log_target,
-        event::TRANSCRIBE_POST_ASR_COMPLETED,
-        Some(&json!({
-            "segmentTotal": built.segments.len(),
-            "elapsedSec": round2(started_at.elapsed().as_secs_f64()),
-        })),
-    );
-
     Ok(RunPostAsrPipelineResponse {
         text: built.text,
         srt: built.srt,
         srt_output_path: built.srt_output_path,
         segments: built.segments,
         words,
+        post_asr_elapsed_sec: round2(started_at.elapsed().as_secs_f64()),
     })
 }
 

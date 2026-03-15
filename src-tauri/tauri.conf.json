@@ -28,7 +28,6 @@
     "active": true,
     "targets": "all",
     "resources": [
-      "bin/ffmpeg.exe",
       "bin/fireredvad.exe"
     ],
     "icon": [

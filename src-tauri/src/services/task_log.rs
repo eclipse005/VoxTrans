@@ -2,11 +2,7 @@ use serde_json::Value;
 
 pub mod event {
     pub const TRANSCRIBE_STARTED: &str = "transcribe.started";
-    pub const TRANSCRIBE_ASR_COMPLETED: &str = "transcribe.asr.completed";
-    pub const TRANSCRIBE_POST_ASR_STARTED: &str = "transcribe.post_asr.started";
-    pub const TRANSCRIBE_POST_ASR_COMPLETED: &str = "transcribe.post_asr.completed";
-    pub const TRANSCRIBE_SAVE_SRT_STARTED: &str = "transcribe.save_srt.started";
-    pub const TRANSCRIBE_SAVE_SRT_COMPLETED: &str = "transcribe.save_srt.completed";
+    pub const TRANSCRIBE_COMPLETED: &str = "transcribe.completed";
     pub const TRANSCRIBE_FAILED: &str = "transcribe.failed";
 }
 

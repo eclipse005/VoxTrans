@@ -7,6 +7,14 @@ use parakeet_rs::{
     TranscriptionResult,
 };
 use serde::Deserialize;
+use symphonia::core::audio::SampleBuffer;
+use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
+use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
+use symphonia::default::{get_codecs, get_probe};
 
 pub mod subtitle;
 
@@ -94,10 +102,9 @@ where
     let execution_provider = to_execution_provider(options.provider);
     let timestamp_mode = to_timestamp_mode(options.timestamp_mode);
     let prepared_audio = prepare_audio_for_transcription(&options.audio_path)?;
-    let audio_duration_sec = wav_duration_seconds(prepared_audio.path())?;
-    let mono_samples = load_wav_mono_f32(prepared_audio.path())?;
+    let audio_duration_sec = prepared_audio.duration_sec;
     let (segments, vad_elapsed_sec) = build_segments_from_vad(
-        prepared_audio.path(),
+        &prepared_audio.vad_wav.path,
         audio_duration_sec,
         options.chunk_target_seconds,
     )?;
@@ -105,7 +112,7 @@ where
     let started_at = Instant::now();
     let result = transcribe_in_segments(
         &options.model_dir,
-        &mono_samples,
+        &prepared_audio.mono_samples,
         execution_provider,
         timestamp_mode,
         options.intra_threads,
@@ -255,32 +262,10 @@ impl AudioSegment {
     }
 }
 
-fn wav_duration_seconds(audio_path: &Path) -> Result<f64, Box<dyn std::error::Error>> {
-    let reader = hound::WavReader::open(audio_path)?;
-    let spec = reader.spec();
-    let total_samples = reader.duration() as f64;
-    let channel_count = spec.channels as f64;
-    let sample_rate = spec.sample_rate as f64;
-
-    if channel_count <= 0.0 || sample_rate <= 0.0 {
-        return Err("invalid wav metadata for duration calculation".into());
-    }
-
-    Ok(total_samples / channel_count / sample_rate)
-}
-
-enum PreparedAudio {
-    Original(PathBuf),
-    Temporary(TemporaryAudioFile),
-}
-
-impl PreparedAudio {
-    fn path(&self) -> &Path {
-        match self {
-            PreparedAudio::Original(path) => path.as_path(),
-            PreparedAudio::Temporary(temp) => temp.path.as_path(),
-        }
-    }
+struct PreparedAudio {
+    mono_samples: Vec<f32>,
+    duration_sec: f64,
+    vad_wav: TemporaryAudioFile,
 }
 
 struct TemporaryAudioFile {
@@ -290,47 +275,6 @@ struct TemporaryAudioFile {
 impl Drop for TemporaryAudioFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
-    }
-}
-
-fn ffmpeg_command() -> Command {
-    let mut cmd = Command::new(resolve_ffmpeg_program());
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW
-        cmd.creation_flags(0x08000000);
-    }
-    cmd
-}
-
-fn resolve_ffmpeg_program() -> PathBuf {
-    if let Ok(custom) = std::env::var("VOXTRANS_FFMPEG_PATH") {
-        let custom_path = PathBuf::from(custom);
-        if custom_path.exists() {
-            return custom_path;
-        }
-    }
-
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            #[cfg(target_os = "windows")]
-            let bundled = exe_dir.join("bin").join("ffmpeg.exe");
-            #[cfg(not(target_os = "windows"))]
-            let bundled = exe_dir.join("bin").join("ffmpeg");
-            if bundled.exists() {
-                return bundled;
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        PathBuf::from("ffmpeg.exe")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        PathBuf::from("ffmpeg")
     }
 }
 
@@ -378,38 +322,25 @@ fn resolve_fireredvad_program() -> PathBuf {
 fn prepare_audio_for_transcription(
     input_path: &PathBuf,
 ) -> Result<PreparedAudio, Box<dyn std::error::Error>> {
-    if is_wav_16k_mono(input_path)? {
-        return Ok(PreparedAudio::Original(input_path.clone()));
+    let mono_samples = if is_wav_16k_mono(input_path)? {
+        load_wav_mono_f32(input_path)?
+    } else {
+        let decoded = decode_audio_with_symphonia(input_path)?;
+        normalize_audio_for_asr(decoded.samples, decoded.sample_rate, decoded.channels)
+    };
+    if mono_samples.is_empty() {
+        return Err(format!("no audio samples decoded from {}", input_path.display()).into());
     }
 
-    let temp_path = build_temp_wav_path("prepared");
-    let status = ffmpeg_command()
-        .arg("-loglevel")
-        .arg("error")
-        .arg("-y")
-        .arg("-i")
-        .arg(input_path)
-        .arg("-vn")
-        .arg("-ac")
-        .arg("1")
-        .arg("-ar")
-        .arg("16000")
-        .arg("-c:a")
-        .arg("pcm_s16le")
-        .arg(&temp_path)
-        .status()?;
+    let duration_sec = mono_samples.len() as f64 / TARGET_SAMPLE_RATE as f64;
+    let vad_wav_path = build_temp_wav_path("vad_input");
+    write_wav_mono_16k_i16(&vad_wav_path, &mono_samples)?;
 
-    if !status.success() {
-        return Err(format!(
-            "ffmpeg conversion failed for input: {}",
-            input_path.display()
-        )
-        .into());
-    }
-
-    Ok(PreparedAudio::Temporary(TemporaryAudioFile {
-        path: temp_path,
-    }))
+    Ok(PreparedAudio {
+        mono_samples,
+        duration_sec,
+        vad_wav: TemporaryAudioFile { path: vad_wav_path },
+    })
 }
 
 fn load_wav_mono_f32(audio_path: &Path) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
@@ -439,6 +370,152 @@ fn load_wav_mono_f32(audio_path: &Path) -> Result<Vec<f32>, Box<dyn std::error::
         }
     };
     Ok(samples)
+}
+
+struct DecodedAudio {
+    samples: Vec<f32>,
+    sample_rate: u32,
+    channels: u16,
+}
+
+fn decode_audio_with_symphonia(
+    audio_path: &Path,
+) -> Result<DecodedAudio, Box<dyn std::error::Error>> {
+    let src = fs::File::open(audio_path)?;
+    let mss = MediaSourceStream::new(Box::new(src), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = audio_path.extension().and_then(|v| v.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let probed = get_probe().format(
+        &hint,
+        mss,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    )?;
+    let mut format = probed.format;
+
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| {
+            t.codec_params.codec != CODEC_TYPE_NULL
+                && (t.codec_params.channels.is_some() || t.codec_params.sample_rate.is_some())
+        })
+        .ok_or_else(|| format!("no audio track found in {}", audio_path.display()))?;
+
+    let mut decoder = get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+    let track_id = track.id;
+    let mut sample_rate = track.codec_params.sample_rate.unwrap_or(TARGET_SAMPLE_RATE);
+    let mut channels = track
+        .codec_params
+        .channels
+        .map(|v| v.count() as u16)
+        .unwrap_or(1);
+    let mut interleaved = Vec::<f32>::new();
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(SymphoniaError::IoError(err))
+                if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(err) => return Err(err.into()),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        let decoded = match decoder.decode(&packet) {
+            Ok(decoded) => decoded,
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(SymphoniaError::IoError(err))
+                if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(err) => return Err(err.into()),
+        };
+
+        let spec = *decoded.spec();
+        sample_rate = spec.rate;
+        channels = spec.channels.count() as u16;
+
+        let mut samples = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+        samples.copy_interleaved_ref(decoded);
+        interleaved.extend_from_slice(samples.samples());
+    }
+
+    if interleaved.is_empty() {
+        return Err(format!("decoded audio is empty: {}", audio_path.display()).into());
+    }
+
+    Ok(DecodedAudio {
+        samples: interleaved,
+        sample_rate,
+        channels,
+    })
+}
+
+fn normalize_audio_for_asr(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
+    let mono = downmix_to_mono(samples, channels);
+    resample_linear(&mono, sample_rate, TARGET_SAMPLE_RATE)
+}
+
+fn downmix_to_mono(samples: Vec<f32>, channels: u16) -> Vec<f32> {
+    if channels <= 1 {
+        return samples;
+    }
+
+    let ch = channels as usize;
+    samples
+        .chunks(ch)
+        .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
+        .collect()
+}
+
+fn resample_linear(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {
+    if src_rate == dst_rate {
+        return samples.to_vec();
+    }
+    if samples.is_empty() || src_rate == 0 || dst_rate == 0 {
+        return Vec::new();
+    }
+
+    let dst_len =
+        ((samples.len() as u64 * dst_rate as u64 + src_rate as u64 - 1) / src_rate as u64) as usize;
+    let mut out = Vec::with_capacity(dst_len);
+    let scale = src_rate as f64 / dst_rate as f64;
+
+    for i in 0..dst_len {
+        let src_pos = i as f64 * scale;
+        let left = src_pos.floor() as usize;
+        let frac = (src_pos - left as f64) as f32;
+        let a = samples[left.min(samples.len() - 1)];
+        let b = samples[(left + 1).min(samples.len() - 1)];
+        out.push(a + (b - a) * frac);
+    }
+    out
+}
+
+fn write_wav_mono_16k_i16(path: &Path, samples: &[f32]) -> Result<(), Box<dyn std::error::Error>> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: TARGET_SAMPLE_RATE,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec)?;
+    for &sample in samples {
+        let s = sample.clamp(-1.0, 1.0);
+        let v = (s * i16::MAX as f32) as i16;
+        writer.write_sample(v)?;
+    }
+    writer.finalize()?;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
