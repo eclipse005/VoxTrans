@@ -104,7 +104,9 @@ where
     };
     options.timestamp_mode = TimestampKind::Words;
     options.chunk_target_seconds = request.chunk_target_seconds.clamp(60, 1800) as f64;
-    options.model_dir = crate::services::model::resolve_model_dir();
+    options.model_dir = crate::services::model::resolve_engine_model_dir(
+        crate::services::model::ModelTarget::Asr,
+    );
 
     if let Some(model_dir) = request.model_dir.as_ref() {
         options.model_dir = PathBuf::from(model_dir);

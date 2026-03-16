@@ -132,6 +132,25 @@ export function applyTranscribeProgress(
   }));
 }
 
+export function applySeparationProgress(
+  dispatch: DispatchState,
+  params: {
+    taskId: string;
+    percent: number;
+  },
+): void {
+  patchQueueItem(dispatch, params.taskId, (item) => {
+    const percent = Math.max(0, Math.min(100, Math.round(params.percent || 0)));
+    return {
+      ...item,
+      transcribeSegmentCurrent: percent,
+      transcribeSegmentTotal: 100,
+      transcribePhase: "separating",
+      transcribeProgress: Math.min(99, percent),
+    };
+  });
+}
+
 export function applyTranscribePhase(
   dispatch: DispatchState,
   params: {
@@ -144,4 +163,3 @@ export function applyTranscribePhase(
     transcribePhase: params.phase || item.transcribePhase,
   }));
 }
-

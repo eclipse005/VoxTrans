@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { BuildSegmentsResponse, TranscribeResponse, WordToken } from "../../features/media/types";
+import type {
+  BuildSegmentsResponse,
+  DemucsModel,
+  TranscribeResponse,
+  WordToken,
+} from "../../features/media/types";
 
 type AppendTaskLogRequest = {
   taskId: string;
@@ -13,6 +18,16 @@ type TranscribeRequest = {
   audioPath: string;
   provider: "cpu" | "cuda";
   chunkTargetSeconds: number;
+};
+
+type SeparateVocalsRequest = {
+  taskId: string;
+  audioPath: string;
+  model: DemucsModel;
+};
+
+type SeparateVocalsResponse = {
+  vocalsPath: string;
 };
 
 type RunPostAsrPipelineRequest = {
@@ -48,6 +63,10 @@ export async function getFileSize(path: string): Promise<number> {
 
 export async function transcribeMedia(request: TranscribeRequest): Promise<TranscribeResponse> {
   return invoke<TranscribeResponse>("transcribe", { request });
+}
+
+export async function separateVocals(request: SeparateVocalsRequest): Promise<SeparateVocalsResponse> {
+  return invoke<SeparateVocalsResponse>("separate_vocals", { request });
 }
 
 export async function runPostAsrPipeline(

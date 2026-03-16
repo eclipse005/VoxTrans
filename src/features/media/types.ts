@@ -1,14 +1,20 @@
 export type Provider = "cpu" | "cuda";
+export type ModelTarget = "asr" | "demucs";
+export type AsrModel = "parakeet-tdt-0.6b-v2";
+export type DemucsModel = "htdemucs_ft";
 
 export type SavedSettings = {
   provider: Provider;
   chunkTargetSeconds: number;
   subtitleMaxWordsPerSegment: number;
+  asrModel: AsrModel;
+  demucsModel: DemucsModel;
+  enableVocalSeparation: boolean;
 };
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
-export type TranscribePhase = "initializing" | "recognizing" | "segment";
+export type TranscribePhase = "initializing" | "separating" | "recognizing" | "segment";
 
 export type SubtitleCue = {
   id: string;
@@ -145,6 +151,8 @@ export type ModelDownloadStateSnapshot = {
 };
 
 export type ModelStatusResponse = {
+  target: ModelTarget;
+  model: string;
   modelDir: string;
   requiredFiles: string[];
   missingFiles: string[];

@@ -12,6 +12,9 @@ type UseSettingsControllerArgs = {
   draftProvider: SavedSettings["provider"];
   draftChunkInput: string;
   draftSubtitleMaxWordsInput: string;
+  draftAsrModel: SavedSettings["asrModel"];
+  draftDemucsModel: SavedSettings["demucsModel"];
+  draftEnableVocalSeparation: boolean;
   dispatch: DispatchState;
   pushToast: PushToast;
   refreshModelStatus: () => Promise<void>;
@@ -22,6 +25,9 @@ export function useSettingsController({
   draftProvider,
   draftChunkInput,
   draftSubtitleMaxWordsInput,
+  draftAsrModel,
+  draftDemucsModel,
+  draftEnableVocalSeparation,
   dispatch,
   pushToast,
   refreshModelStatus,
@@ -34,6 +40,9 @@ export function useSettingsController({
         draftProvider: settings.provider,
         draftChunkInput: String(settings.chunkTargetSeconds),
         draftSubtitleMaxWordsInput: String(settings.subtitleMaxWordsPerSegment),
+        draftAsrModel: settings.asrModel,
+        draftDemucsModel: settings.demucsModel,
+        draftEnableVocalSeparation: settings.enableVocalSeparation,
       },
     });
     dispatch({ type: "set_ui", payload: { showSettings: true } });
@@ -41,7 +50,10 @@ export function useSettingsController({
     dispatch,
     refreshModelStatus,
     settings.chunkTargetSeconds,
+    settings.demucsModel,
+    settings.enableVocalSeparation,
     settings.provider,
+    settings.asrModel,
     settings.subtitleMaxWordsPerSegment,
   ]);
 
@@ -64,6 +76,9 @@ export function useSettingsController({
       provider: draftProvider,
       chunkTargetSeconds: clamped,
       subtitleMaxWordsPerSegment: clampedSubtitleWords,
+      asrModel: draftAsrModel,
+      demucsModel: draftDemucsModel,
+      enableVocalSeparation: draftEnableVocalSeparation,
     } satisfies SavedSettings;
 
     dispatch({
@@ -75,6 +90,9 @@ export function useSettingsController({
       payload: {
         draftChunkInput: String(clamped),
         draftSubtitleMaxWordsInput: String(clampedSubtitleWords),
+        draftAsrModel,
+        draftDemucsModel,
+        draftEnableVocalSeparation,
       },
     });
 
@@ -88,7 +106,10 @@ export function useSettingsController({
   }, [
     dispatch,
     draftChunkInput,
+    draftDemucsModel,
+    draftEnableVocalSeparation,
     draftProvider,
+    draftAsrModel,
     draftSubtitleMaxWordsInput,
     pushToast,
   ]);

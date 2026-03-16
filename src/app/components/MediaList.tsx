@@ -29,6 +29,10 @@ function getTranscribeProcessingText(item: QueueItem): string {
   if (item.transcribePhase === "initializing") {
     return "转录准备中";
   }
+  if (item.transcribePhase === "separating") {
+    const percent = Math.max(0, Math.min(100, item.transcribeProgress || 0));
+    return `人声分离中 ${percent}%`;
+  }
   if (item.transcribeSegmentTotal > 1) {
     return `转录处理中 ${Math.min(item.transcribeSegmentCurrent || 0, item.transcribeSegmentTotal)}/${item.transcribeSegmentTotal}`;
   }
@@ -82,7 +86,7 @@ export default function MediaList({
                         <div className="file-meta">{formatBytes(item.sizeBytes)}</div>
                         <div className="file-task-info">
                           {transcribeProcessing ? (
-                            <span key={`${item.id}-${item.transcribePhase || ""}-${item.transcribeSegmentCurrent}-${item.transcribeSegmentTotal}`} className="task-step task-step-progress">
+                            <span className="task-step task-step-progress">
                               {transcribeProgressText}
                             </span>
                           ) : primaryStatus === "processing" && item.transcribeSegmentTotal <= 0 ? (

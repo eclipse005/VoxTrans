@@ -111,6 +111,7 @@ function normalizeQueueItem(item: QueueItem): QueueItem {
 function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] {
   switch (value) {
     case "initializing":
+    case "separating":
     case "recognizing":
     case "segment":
       return value;

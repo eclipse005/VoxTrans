@@ -30,6 +30,9 @@ function App() {
     draftProvider,
     draftChunkInput,
     draftSubtitleMaxWordsInput,
+    draftAsrModel,
+    draftDemucsModel,
+    draftEnableVocalSeparation,
     youtubeUrl,
     toast,
     subtitleTaskId,
@@ -91,15 +94,16 @@ function App() {
     [queue, activeId],
   );
   const {
-    modelDir,
-    modelReady,
-    modelDownload,
-    modelBusy,
+    asrStatus,
+    demucsStatus,
     refreshModelStatus,
     startModelDownload,
     cancelModelDownload,
     openModelDir,
-  } = useModelManager({ pushToast });
+  } = useModelManager({
+    pushToast,
+    demucsModel: draftDemucsModel,
+  });
   const {
     taskName: logTaskName,
     logContent,
@@ -122,6 +126,9 @@ function App() {
     draftProvider,
     draftChunkInput,
     draftSubtitleMaxWordsInput,
+    draftAsrModel,
+    draftDemucsModel,
+    draftEnableVocalSeparation,
     dispatch,
     pushToast,
     refreshModelStatus,
@@ -205,15 +212,19 @@ function App() {
         draftProvider={draftProvider}
         draftChunkInput={draftChunkInput}
         draftSubtitleMaxWordsInput={draftSubtitleMaxWordsInput}
-        modelDir={modelDir}
-        modelReady={modelReady}
-        modelDownload={modelDownload}
-        modelBusy={modelBusy}
+        draftAsrModel={draftAsrModel}
+        draftDemucsModel={draftDemucsModel}
+        draftEnableVocalSeparation={draftEnableVocalSeparation}
+        asrStatus={asrStatus}
+        demucsStatus={demucsStatus}
         onClose={() => dispatch({ type: "set_ui", payload: { showSettings: false } })}
         onSave={saveSettings}
         onDraftProviderChange={(value) => dispatch({ type: "set_draft", payload: { draftProvider: value } })}
         onDraftChunkInputChange={(value) => dispatch({ type: "set_draft", payload: { draftChunkInput: value } })}
         onDraftSubtitleMaxWordsInputChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleMaxWordsInput: value } })}
+        onDraftAsrModelChange={(value) => dispatch({ type: "set_draft", payload: { draftAsrModel: value } })}
+        onDraftDemucsModelChange={(value) => dispatch({ type: "set_draft", payload: { draftDemucsModel: value } })}
+        onDraftEnableVocalSeparationChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableVocalSeparation: value } })}
         onOpenModelDir={openModelDir}
         onStartModelDownload={startModelDownload}
         onCancelModelDownload={cancelModelDownload}

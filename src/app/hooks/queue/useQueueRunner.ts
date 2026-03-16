@@ -2,6 +2,7 @@ import { useCallback, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   runPostAsrPipeline,
+  separateVocals,
   saveSrt,
   transcribeMedia,
 } from "../../api/transcribe";
@@ -16,6 +17,7 @@ import type { AppAction } from "../../state/appReducer";
 import {
   applyTranscribePhase,
   applyTranscribeProgress,
+  applySeparationProgress,
   setDoneState,
   setErrorState,
   setProcessingState,
@@ -34,6 +36,11 @@ type TranscribeProgressEvent = {
 type TranscribePhaseEvent = {
   taskId: string;
   phase: TranscribePhase;
+};
+
+type SeparateProgressEvent = {
+  taskId: string;
+  percent: number;
 };
 
 type UseQueueRunnerArgs = {
@@ -79,6 +86,31 @@ export function useQueueRunner({
 
   useEffect(() => {
     let disposed = false;
+    let unlistenSeparation: undefined | (() => void);
+    listen<SeparateProgressEvent>("separate-progress", (event) => {
+      const payload = event.payload;
+      if (!payload?.taskId) return;
+      applySeparationProgress(dispatch, {
+        taskId: payload.taskId,
+        percent: payload.percent,
+      });
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
+        unlistenSeparation = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      if (unlistenSeparation) unlistenSeparation();
+    };
+  }, [dispatch]);
+
+  useEffect(() => {
+    let disposed = false;
     let unlistenPhase: undefined | (() => void);
     listen<TranscribePhaseEvent>("transcribe-phase", (event) => {
       const payload = event.payload;
@@ -108,9 +140,24 @@ export function useQueueRunner({
     if (!isTaskPresent(item.id)) return;
 
     try {
+      let transcribeAudioPath = item.path;
+      if (settings.enableVocalSeparation) {
+        applyTranscribePhase(dispatch, {
+          taskId: item.id,
+          phase: "separating",
+        });
+        const separation = await separateVocals({
+          taskId: item.id,
+          audioPath: item.path,
+          model: settings.demucsModel,
+        });
+        if (!isTaskPresent(item.id)) return;
+        transcribeAudioPath = separation.vocalsPath;
+      }
+
       const response = await transcribeMedia({
         taskId: item.id,
-        audioPath: item.path,
+        audioPath: transcribeAudioPath,
         provider: settings.provider,
         chunkTargetSeconds: settings.chunkTargetSeconds,
       });
@@ -152,6 +199,8 @@ export function useQueueRunner({
     pushToast,
     isTaskPresent,
     settings.chunkTargetSeconds,
+    settings.demucsModel,
+    settings.enableVocalSeparation,
     settings.provider,
     settings.subtitleMaxWordsPerSegment,
   ]);

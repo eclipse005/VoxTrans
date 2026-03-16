@@ -36,6 +36,7 @@ impl Default for ModelDownloadStateSnapshot {
 
 pub struct ModelDownloadRuntime {
     pub cancel_flag: Option<Arc<AtomicBool>>,
+    pub active_model: Option<String>,
     pub snapshot: ModelDownloadStateSnapshot,
 }
 
@@ -43,6 +44,7 @@ impl Default for ModelDownloadRuntime {
     fn default() -> Self {
         Self {
             cancel_flag: None,
+            active_model: None,
             snapshot: ModelDownloadStateSnapshot::default(),
         }
     }
@@ -51,5 +53,6 @@ impl Default for ModelDownloadRuntime {
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
-    pub model_download: Arc<Mutex<ModelDownloadRuntime>>,
+    pub asr_model_download: Arc<Mutex<ModelDownloadRuntime>>,
+    pub demucs_model_download: Arc<Mutex<ModelDownloadRuntime>>,
 }

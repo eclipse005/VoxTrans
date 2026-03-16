@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import { loadUserPreferences } from "../api/preferences";
-import type { Provider, UserPreferencesResponse } from "../../features/media/types";
+import type {
+  DemucsModel,
+  Provider,
+  UserPreferencesResponse,
+} from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 
 type DispatchState = (action: AppAction) => void;
@@ -22,6 +26,13 @@ export function useAppPersistence(dispatch: DispatchState) {
         const subtitleMaxWordsPerSegment = Number.isFinite(res.settings.subtitleMaxWordsPerSegment)
           ? Math.max(8, Math.min(40, Math.round(res.settings.subtitleMaxWordsPerSegment)))
           : 20;
+        const asrModel = res.settings.asrModel === "parakeet-tdt-0.6b-v2"
+          ? res.settings.asrModel
+          : "parakeet-tdt-0.6b-v2";
+        const demucsModel = res.settings.demucsModel === "htdemucs_ft"
+          ? res.settings.demucsModel as DemucsModel
+          : "htdemucs_ft";
+        const enableVocalSeparation = Boolean(res.settings.enableVocalSeparation);
 
         dispatch({
           type: "set_settings",
@@ -29,6 +40,9 @@ export function useAppPersistence(dispatch: DispatchState) {
             provider,
             chunkTargetSeconds,
             subtitleMaxWordsPerSegment,
+            asrModel,
+            demucsModel,
+            enableVocalSeparation,
           },
         });
         dispatch({
@@ -37,6 +51,9 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftProvider: provider,
             draftChunkInput: String(chunkTargetSeconds),
             draftSubtitleMaxWordsInput: String(subtitleMaxWordsPerSegment),
+            draftAsrModel: asrModel,
+            draftDemucsModel: demucsModel,
+            draftEnableVocalSeparation: enableVocalSeparation,
           },
         });
       } catch {

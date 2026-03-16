@@ -4,6 +4,9 @@ use sqlx::SqlitePool;
 const KEY_PROVIDER: &str = "settings.provider";
 const KEY_CHUNK_TARGET_SECONDS: &str = "settings.chunkTargetSeconds";
 const KEY_SUBTITLE_MAX_WORDS_PER_SEGMENT: &str = "settings.subtitleMaxWordsPerSegment";
+const KEY_ASR_MODEL: &str = "settings.asrModel";
+const KEY_DEMUCS_MODEL: &str = "settings.demucsModel";
+const KEY_ENABLE_VOCAL_SEPARATION: &str = "settings.enableVocalSeparation";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -11,6 +14,9 @@ pub struct SavedSettings {
     pub provider: String,
     pub chunk_target_seconds: u32,
     pub subtitle_max_words_per_segment: u32,
+    pub asr_model: String,
+    pub demucs_model: String,
+    pub enable_vocal_separation: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -56,6 +62,18 @@ pub async fn save_app_settings(
             .to_string(),
     )
     .await?;
+    set_setting(&mut tx, KEY_ASR_MODEL, &request.settings.asr_model).await?;
+    set_setting(&mut tx, KEY_DEMUCS_MODEL, &request.settings.demucs_model).await?;
+    set_setting(
+        &mut tx,
+        KEY_ENABLE_VOCAL_SEPARATION,
+        if request.settings.enable_vocal_separation {
+            "1"
+        } else {
+            "0"
+        },
+    )
+    .await?;
     tx.commit().await.map_err(|e| e.to_string())
 }
 
@@ -73,10 +91,24 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         .and_then(|v| v.parse::<u32>().ok())
         .map(|v| v.clamp(8, 40))
         .unwrap_or(20);
+    let asr_model = get_setting(pool, KEY_ASR_MODEL)
+        .await?
+        .unwrap_or_else(|| "parakeet-tdt-0.6b-v2".to_string());
+    let demucs_model = match get_setting(pool, KEY_DEMUCS_MODEL).await?.as_deref() {
+        Some("htdemucs_ft") => "htdemucs_ft".to_string(),
+        _ => "htdemucs_ft".to_string(),
+    };
+    let enable_vocal_separation = get_setting(pool, KEY_ENABLE_VOCAL_SEPARATION)
+        .await?
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
+        .unwrap_or(false);
     Ok(SavedSettings {
         provider,
         chunk_target_seconds,
         subtitle_max_words_per_segment,
+        asr_model,
+        demucs_model,
+        enable_vocal_separation,
     })
 }
 

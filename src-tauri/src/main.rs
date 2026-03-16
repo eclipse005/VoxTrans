@@ -16,7 +16,10 @@ fn main() {
             let pool = tauri::async_runtime::block_on(async { db::init_pool(&app_handle).await })?;
             app.manage(app_state::AppState {
                 pool,
-                model_download: Arc::new(std::sync::Mutex::new(
+                asr_model_download: Arc::new(std::sync::Mutex::new(
+                    app_state::ModelDownloadRuntime::default(),
+                )),
+                demucs_model_download: Arc::new(std::sync::Mutex::new(
                     app_state::ModelDownloadRuntime::default(),
                 )),
             });
@@ -25,6 +28,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::transcribe::transcribe,
             commands::transcribe::build_segments_from_words,
+            commands::transcribe::separate_vocals,
             commands::file::save_srt,
             commands::subtitle::load_subtitle_editor,
             commands::subtitle::save_subtitle_editor,

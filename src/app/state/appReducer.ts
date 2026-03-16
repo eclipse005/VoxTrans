@@ -15,6 +15,9 @@ export type AppState = {
   draftProvider: SavedSettings["provider"];
   draftChunkInput: string;
   draftSubtitleMaxWordsInput: string;
+  draftAsrModel: SavedSettings["asrModel"];
+  draftDemucsModel: SavedSettings["demucsModel"];
+  draftEnableVocalSeparation: boolean;
   youtubeUrl: string;
   youtubeQuality: string;
   toast: ToastState | null;
@@ -81,6 +84,9 @@ export type SettingsAction =
           | "draftProvider"
           | "draftChunkInput"
           | "draftSubtitleMaxWordsInput"
+          | "draftAsrModel"
+          | "draftDemucsModel"
+          | "draftEnableVocalSeparation"
         >
       >;
     }
@@ -92,6 +98,9 @@ export const defaultSettings: SavedSettings = {
   provider: "cpu",
   chunkTargetSeconds: 300,
   subtitleMaxWordsPerSegment: 20,
+  asrModel: "parakeet-tdt-0.6b-v2",
+  demucsModel: "htdemucs_ft",
+  enableVocalSeparation: false,
 };
 
 export const initialAppState: AppState = {
@@ -105,6 +114,9 @@ export const initialAppState: AppState = {
   draftProvider: defaultSettings.provider,
   draftChunkInput: String(defaultSettings.chunkTargetSeconds),
   draftSubtitleMaxWordsInput: String(defaultSettings.subtitleMaxWordsPerSegment),
+  draftAsrModel: defaultSettings.asrModel,
+  draftDemucsModel: defaultSettings.demucsModel,
+  draftEnableVocalSeparation: defaultSettings.enableVocalSeparation,
   youtubeUrl: "",
   youtubeQuality: "",
   toast: null,
