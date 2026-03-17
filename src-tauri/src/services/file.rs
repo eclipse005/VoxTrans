@@ -61,7 +61,7 @@ pub fn save_srt(request: SaveSrtRequest) -> Result<(), String> {
             "srtBytes": srt_bytes,
             "saveElapsedSec": round2(started_at.elapsed().as_secs_f64()),
         });
-        append_event_best_effort(target, event::TRANSCRIBE_COMPLETED, Some(&payload));
+        append_event_best_effort(target, event::TRANSCRIBE_SAVED, Some(&payload));
     }
     Ok(())
 }

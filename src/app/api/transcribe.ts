@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BuildSegmentsResponse,
   DemucsModel,
+  Provider,
   TranscribeResponse,
   WordToken,
 } from "../../features/media/types";
@@ -16,7 +17,7 @@ type AppendTaskLogRequest = {
 type TranscribeRequest = {
   taskId: string;
   audioPath: string;
-  provider: "cpu" | "cuda";
+  provider: Provider;
   chunkTargetSeconds: number;
 };
 

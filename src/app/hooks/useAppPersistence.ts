@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import { loadUserPreferences } from "../api/preferences";
+import { normalizeProvider } from "../../features/media/provider";
 import type {
   DemucsModel,
-  Provider,
   UserPreferencesResponse,
 } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
@@ -16,10 +16,7 @@ export function useAppPersistence(dispatch: DispatchState) {
       try {
         const res: UserPreferencesResponse = await loadUserPreferences();
         if (cancelled) return;
-        const provider = (res.settings.provider === "cpu"
-          || res.settings.provider === "cuda")
-          ? res.settings.provider as Provider
-          : "cpu";
+        const provider = normalizeProvider(res.settings.provider);
         const chunkTargetSeconds = Number.isFinite(res.settings.chunkTargetSeconds)
           ? Math.max(60, Math.min(300, Math.round(res.settings.chunkTargetSeconds)))
           : 300;

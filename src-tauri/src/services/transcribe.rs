@@ -1,8 +1,6 @@
 use crate::services::task_log::{TaskLogTarget, append_event_best_effort, event};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-#[cfg(target_os = "windows")]
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 use voxtrans_core::subtitle::segmenter::{
     WordToken, normalize_word_tokens, plain_text_from_segments, split_english_segments,
@@ -89,11 +87,14 @@ where
     let mut options = TranscribeOptions::default();
     let audio_path = PathBuf::from(&request.audio_path);
     options.audio_path = audio_path;
-    options.provider = match request.provider.to_ascii_lowercase().as_str() {
-        "cpu" => Provider::Cpu,
-        "cuda" => Provider::Cuda,
-        other => {
-            let err = format!("unsupported provider: {other}");
+    options.provider = match Provider::from_id(&request.provider) {
+        Some(provider) => provider,
+        None => {
+            let err = format!(
+                "unsupported provider: {} (supported: {})",
+                request.provider,
+                Provider::supported_ids().join(", ")
+            );
             append_transcribe_log(
                 &log_target,
                 event::TRANSCRIBE_FAILED,
@@ -110,19 +111,6 @@ where
 
     if let Some(model_dir) = request.model_dir.as_ref() {
         options.model_dir = PathBuf::from(model_dir);
-    }
-    if matches!(options.provider, Provider::Cuda) {
-        if let Err(err) = ensure_cuda_runtime_ready() {
-            append_transcribe_log(
-                &log_target,
-                event::TRANSCRIBE_FAILED,
-                json!({
-                    "phase": "initialize",
-                    "error": err,
-                }),
-            );
-            return Err(err);
-        }
     }
 
     let output =
@@ -163,6 +151,21 @@ where
         transcribe_elapsed_sec: output.transcribe_elapsed_sec,
         execution_provider: output.execution_provider.to_string(),
     };
+
+    append_transcribe_log(
+        &log_target,
+        event::TRANSCRIBE_COMPLETED,
+        json!({
+            "phase": "transcribe",
+            "provider": response.execution_provider,
+            "segmentTotal": response.segment_total,
+            "segmentDurationsSec": response.segment_durations_sec,
+            "audioDurationSec": round2(response.audio_duration_sec),
+            "vadElapsedSec": round2(response.vad_elapsed_sec),
+            "transcribeElapsedSec": round2(response.transcribe_elapsed_sec),
+            "rtfX": round2(calculate_rtf_x(response.audio_duration_sec, response.transcribe_elapsed_sec)),
+        }),
+    );
 
     Ok(response)
 }
@@ -229,67 +232,24 @@ fn segment_to_response(
     }
 }
 
-#[cfg(target_os = "windows")]
-fn ensure_cuda_runtime_ready() -> Result<(), String> {
-    let required = [
-        "onnxruntime_providers_shared.dll",
-        "onnxruntime_providers_cuda.dll",
-        "cudart64_12.dll",
-        "cublas64_12.dll",
-        "cublasLt64_12.dll",
-        "cudnn64_9.dll",
-    ];
-    let search_dirs = dll_search_dirs();
-    let missing: Vec<&str> = required
-        .iter()
-        .copied()
-        .filter(|name| !dll_exists_in_dirs(name, &search_dirs))
-        .collect();
-
-    if missing.is_empty() {
-        return Ok(());
-    }
-
-    let dirs_text = search_dirs
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect::<Vec<String>>()
-        .join("; ");
-    Err(format!(
-        "CUDA runtime check failed. Missing DLLs: {}. Place missing files next to VoxTrans.exe or add their folder to PATH. Searched: {}",
-        missing.join(", "),
-        dirs_text
-    ))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn ensure_cuda_runtime_ready() -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn dll_search_dirs() -> Vec<PathBuf> {
-    let mut set = BTreeSet::new();
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            set.insert(exe_dir.to_path_buf());
-        }
-    }
-    if let Ok(path_var) = std::env::var("PATH") {
-        for p in std::env::split_paths(&path_var) {
-            if !p.as_os_str().is_empty() {
-                set.insert(p);
-            }
-        }
-    }
-    set.into_iter().collect()
-}
-
-#[cfg(target_os = "windows")]
-fn dll_exists_in_dirs(file_name: &str, dirs: &[PathBuf]) -> bool {
-    dirs.iter().any(|dir| dir.join(file_name).is_file())
-}
-
 fn append_transcribe_log(target: &TaskLogTarget, event_type: &str, payload: serde_json::Value) {
     append_event_best_effort(target, event_type, Some(&payload));
+}
+
+fn round2(value: f64) -> f64 {
+    if !value.is_finite() {
+        return 0.0;
+    }
+    (value * 100.0).round() / 100.0
+}
+
+fn calculate_rtf_x(audio_duration_sec: f64, transcribe_elapsed_sec: f64) -> f64 {
+    if !audio_duration_sec.is_finite()
+        || !transcribe_elapsed_sec.is_finite()
+        || audio_duration_sec <= 0.0
+        || transcribe_elapsed_sec <= 0.0
+    {
+        return 0.0;
+    }
+    audio_duration_sec / transcribe_elapsed_sec
 }

@@ -22,6 +22,7 @@ pub use subtitle::srt::to_srt_from_sentence_tokens as to_srt;
 
 const DEFAULT_CHUNK_TARGET_SECONDS: f64 = 300.0;
 const TARGET_SAMPLE_RATE: u32 = 16_000;
+pub const DEFAULT_PROVIDER: Provider = Provider::Directml;
 
 #[derive(Debug, Clone)]
 pub struct TranscribeOptions {
@@ -43,7 +44,7 @@ impl Default for TranscribeOptions {
         Self {
             model_dir: default_model_dir(),
             audio_path: PathBuf::new(),
-            provider: Provider::Cuda,
+            provider: DEFAULT_PROVIDER,
             timestamp_mode: TimestampKind::Sentences,
             intra_threads,
             inter_threads: 1,
@@ -55,7 +56,29 @@ impl Default for TranscribeOptions {
 #[derive(Debug, Clone, Copy)]
 pub enum Provider {
     Cpu,
-    Cuda,
+    Directml,
+}
+
+impl Provider {
+    pub fn from_id(raw: &str) -> Option<Self> {
+        let normalized = raw.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "cpu" => Some(Self::Cpu),
+            "directml" => Some(Self::Directml),
+            _ => None,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Directml => "directml",
+        }
+    }
+
+    pub fn supported_ids() -> &'static [&'static str] {
+        &["cpu", "directml"]
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -126,10 +149,7 @@ where
     };
 
     let elapsed_sec = started_at.elapsed().as_secs_f64();
-    let execution_provider = match options.provider {
-        Provider::Cuda => "cuda",
-        _ => "cpu",
-    };
+    let execution_provider = options.provider.id();
 
     let segment_summaries = segments
         .iter()
@@ -153,7 +173,7 @@ where
 fn to_execution_provider(provider: Provider) -> ExecutionProvider {
     match provider {
         Provider::Cpu => ExecutionProvider::Cpu,
-        Provider::Cuda => ExecutionProvider::Cuda,
+        Provider::Directml => ExecutionProvider::DirectML,
     }
 }
 

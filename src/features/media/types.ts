@@ -1,4 +1,5 @@
-export type Provider = "cpu" | "cuda";
+export const PROVIDER_IDS = ["cpu", "directml"] as const;
+export type Provider = (typeof PROVIDER_IDS)[number];
 export type ModelTarget = "asr" | "demucs";
 export type AsrModel = "parakeet-tdt-0.6b-v2";
 export type DemucsModel = "htdemucs_ft";

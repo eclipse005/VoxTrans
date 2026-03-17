@@ -5,6 +5,7 @@ import type {
   ModelStatusResponse,
   Provider,
 } from "../../features/media/types";
+import { PROVIDER_OPTIONS } from "../../features/media/provider";
 import { CheckIcon, CpuIcon, DownloadIcon, FolderIcon, GpuIcon } from "./Icons";
 import { useDialogA11y } from "./useDialogA11y";
 
@@ -146,26 +147,19 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <div className="form-group">
                       <label>执行设备</label>
                       <div className="device-toggle-group" role="group" aria-label="执行设备">
-                        <button
-                          type="button"
-                          className={`device-toggle-btn ${draftProvider === "cpu" ? "active" : ""}`}
-                          onClick={() => onDraftProviderChange("cpu")}
-                          aria-pressed={draftProvider === "cpu"}
-                          title="CPU"
-                        >
-                          <CpuIcon />
-                          <span>CPU</span>
-                        </button>
-                        <button
-                          type="button"
-                          className={`device-toggle-btn ${draftProvider === "cuda" ? "active" : ""}`}
-                          onClick={() => onDraftProviderChange("cuda")}
-                          aria-pressed={draftProvider === "cuda"}
-                          title="GPU (CUDA)"
-                        >
-                          <GpuIcon />
-                          <span>CUDA</span>
-                        </button>
+                        {PROVIDER_OPTIONS.map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            className={`device-toggle-btn ${draftProvider === option.id ? "active" : ""}`}
+                            onClick={() => onDraftProviderChange(option.id)}
+                            aria-pressed={draftProvider === option.id}
+                            title={option.title}
+                          >
+                            {option.kind === "cpu" ? <CpuIcon /> : <GpuIcon />}
+                            <span>{option.label}</span>
+                          </button>
+                        ))}
                       </div>
                     </div>
                     <div className="form-group">

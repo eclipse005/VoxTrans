@@ -1,4 +1,5 @@
 import type { QueueItem, SavedSettings, SubtitleCue } from "../../features/media/types";
+import { normalizeProvider } from "../../features/media/provider";
 import type { SubtitleSaveState, ToastState, UploadTab } from "../types";
 import { reduceQueueState } from "./queueReducer";
 import { reduceSettingsState } from "./settingsReducer";
@@ -95,7 +96,7 @@ export type SettingsAction =
 export type AppAction = UiAction | QueueAction | SubtitleAction | SettingsAction;
 
 export const defaultSettings: SavedSettings = {
-  provider: "cpu",
+  provider: normalizeProvider(undefined),
   chunkTargetSeconds: 300,
   subtitleMaxWordsPerSegment: 20,
   asrModel: "parakeet-tdt-0.6b-v2",
