@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { clearMainTaskLogs, readMainTaskLog } from "../api/logs";
-import { openTaskOutputDir } from "../api/system";
+import { openTaskLogDir } from "../api/system";
 import type { QueueItem } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { ToastTone } from "../types";
@@ -10,7 +10,6 @@ type PushToast = (message: string, tone?: ToastTone) => void;
 
 type TaskLogContext = {
   taskId: string;
-  mediaPath: string;
   taskName: string;
 };
 
@@ -37,7 +36,6 @@ export function useTaskLogs({
     try {
       const content = await readMainTaskLog({
         taskId: logTaskContext.taskId,
-        mediaPath: logTaskContext.mediaPath,
       });
       setLogContent(content || "");
     } catch (error) {
@@ -55,7 +53,6 @@ export function useTaskLogs({
     }
     setLogTaskContext({
       taskId: activeQueueItem.id,
-      mediaPath: activeQueueItem.path,
       taskName: activeQueueItem.name,
     });
     setLogContent("");
@@ -67,7 +64,6 @@ export function useTaskLogs({
     try {
       await clearMainTaskLogs({
         taskId: logTaskContext.taskId,
-        mediaPath: logTaskContext.mediaPath,
       });
       setLogContent("");
       pushToast("日志已清空", "success");
@@ -79,9 +75,8 @@ export function useTaskLogs({
 
   const openLogDir = useCallback(async () => {
     try {
-      await openTaskOutputDir({
+      await openTaskLogDir({
         taskId: logTaskContext?.taskId ?? "",
-        mediaPath: logTaskContext?.mediaPath ?? "",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "打开日志目录失败";

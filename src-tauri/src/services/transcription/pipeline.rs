@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::services::task_log::{TaskLogTarget, append_event_best_effort, event};
+use crate::services::task_log::{TaskLogger, event};
 use crate::services::transcribe::{
     BuildSegmentsRequest, SegmentWithWordsDto, WordTokenDto, build_segments_from_words,
 };
@@ -35,7 +35,7 @@ pub async fn run_post_asr_pipeline<F>(
 where
     F: FnMut(&str),
 {
-    let log_target = TaskLogTarget::main(request.task_id.clone(), request.audio_path.clone());
+    let logger = TaskLogger::main(request.task_id.clone());
     let started_at = std::time::Instant::now();
 
     let words = from_core_words(beautify_words_for_subtitle(to_core_words(request.words.clone())));
@@ -49,8 +49,7 @@ where
     let built = match built {
         Ok(v) => v,
         Err(err) => {
-            append_event_best_effort(
-                &log_target,
+            logger.event(
                 event::TRANSCRIBE_FAILED,
                 Some(&json!({
                     "phase": "post_asr",

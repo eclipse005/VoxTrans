@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 type TaskLogRequest = {
   taskId: string;
-  mediaPath: string;
+  mediaPath?: string;
 };
 
 export async function readMainTaskLog(request: TaskLogRequest): Promise<string> {

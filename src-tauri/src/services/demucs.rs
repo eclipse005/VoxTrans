@@ -13,7 +13,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::default::{get_codecs, get_probe};
 
-use crate::services::task_log::{TaskLogTarget, append_event_best_effort};
+use crate::services::task_log::TaskLogger;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,7 +37,7 @@ where
     F: FnMut(u32),
 {
     let started_at = std::time::Instant::now();
-    let log_target = TaskLogTarget::main(request.task_id.clone(), request.audio_path.clone());
+    let logger = TaskLogger::main(request.task_id.clone());
     let demucs_model_dir = crate::services::model::resolve_engine_model_dir(
         crate::services::model::ModelTarget::Demucs,
     );
@@ -47,8 +47,7 @@ where
             "人声分离模型未就绪: {}。请先到模型中心下载后再试。",
             demucs_model_file.display()
         );
-        append_event_best_effort(
-            &log_target,
+        logger.event(
             "demucs.failed",
             Some(&json!({
                 "error": err,
@@ -66,8 +65,7 @@ where
     let demucs_input = match prepare_demucs_input(&input_path, &output_root) {
         Ok(path) => path,
         Err(err) => {
-            append_event_best_effort(
-                &log_target,
+            logger.event(
                 "demucs.failed",
                 Some(&json!({
                     "error": err,
@@ -77,8 +75,7 @@ where
             return Err(err);
         }
     };
-    append_event_best_effort(
-        &log_target,
+    logger.event(
         "demucs.started",
         Some(&json!({
             "model": request.model,
@@ -151,8 +148,7 @@ where
             "demucs 分离失败: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        append_event_best_effort(
-            &log_target,
+        logger.event(
             "demucs.failed",
             Some(&json!({
                 "error": err,
@@ -164,8 +160,7 @@ where
 
     let vocals_path = find_vocals_path(&output_root, &demucs_input)
         .ok_or_else(|| format!("未找到 vocals.wav 输出: {}", output_root.display()))?;
-    append_event_best_effort(
-        &log_target,
+    logger.event(
         "demucs.completed",
         Some(&json!({
             "vocalsPath": vocals_path.display().to_string(),

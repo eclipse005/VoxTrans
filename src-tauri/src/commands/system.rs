@@ -8,6 +8,12 @@ pub struct OpenTaskOutputDirRequest {
     pub media_path: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenTaskLogDirRequest {
+    pub task_id: String,
+}
+
 #[tauri::command]
 pub fn open_in_explorer(path: String) -> Result<(), String> {
     let target = PathBuf::from(path);
@@ -33,4 +39,15 @@ pub fn open_task_output_dir(request: OpenTaskOutputDirRequest) -> Result<(), Str
     );
     std::fs::create_dir_all(&task_dir).map_err(|err| err.to_string())?;
     crate::services::system::open_path(&task_dir)
+}
+
+#[tauri::command]
+pub fn open_task_log_dir(request: OpenTaskLogDirRequest) -> Result<(), String> {
+    if request.task_id.trim().is_empty() {
+        return open_output_dir();
+    }
+
+    let log_dir = crate::services::task_path::task_log_dir(&request.task_id);
+    std::fs::create_dir_all(&log_dir).map_err(|err| err.to_string())?;
+    crate::services::system::open_path(&log_dir)
 }

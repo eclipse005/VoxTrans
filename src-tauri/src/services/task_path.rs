@@ -42,3 +42,10 @@ pub fn task_srt_draft_path(task_id: &str, audio_path: &Path) -> PathBuf {
     let safe_stem = sanitize_filename_component(&stem);
     task_output_dir(task_id, audio_path).join(format!("{}_en.draft.srt", safe_stem))
 }
+
+pub fn task_log_dir(task_id: &str) -> PathBuf {
+    let safe_task_id = sanitize_filename_component(task_id);
+    crate::services::output::resolve_output_dir()
+        .join("logs")
+        .join(safe_task_id)
+}

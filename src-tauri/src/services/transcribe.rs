@@ -1,4 +1,4 @@
-use crate::services::task_log::{TaskLogTarget, append_event_best_effort, event};
+use crate::services::task_log::{TaskLogger, event};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -73,9 +73,9 @@ pub fn transcribe_blocking<F>(
 where
     F: FnMut(usize, usize),
 {
-    let log_target = TaskLogTarget::main(request.task_id.clone(), request.audio_path.clone());
+    let logger = TaskLogger::main(request.task_id.clone());
     append_transcribe_log(
-        &log_target,
+        &logger,
         event::TRANSCRIBE_STARTED,
         json!({
             "chunkTargetSeconds": request.chunk_target_seconds,
@@ -96,7 +96,7 @@ where
                 Provider::supported_ids().join(", ")
             );
             append_transcribe_log(
-                &log_target,
+                &logger,
                 event::TRANSCRIBE_FAILED,
                 json!({ "error": err }),
             );
@@ -129,7 +129,7 @@ where
         Ok(v) => v,
         Err(err) => {
             append_transcribe_log(
-                &log_target,
+                &logger,
                 event::TRANSCRIBE_FAILED,
                 json!({ "error": err }),
             );
@@ -153,7 +153,7 @@ where
     };
 
     append_transcribe_log(
-        &log_target,
+        &logger,
         event::TRANSCRIBE_COMPLETED,
         json!({
             "phase": "transcribe",
@@ -232,8 +232,8 @@ fn segment_to_response(
     }
 }
 
-fn append_transcribe_log(target: &TaskLogTarget, event_type: &str, payload: serde_json::Value) {
-    append_event_best_effort(target, event_type, Some(&payload));
+fn append_transcribe_log(logger: &TaskLogger, event_type: &str, payload: serde_json::Value) {
+    logger.event(event_type, Some(&payload));
 }
 
 fn round2(value: f64) -> f64 {
