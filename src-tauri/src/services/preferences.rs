@@ -48,7 +48,7 @@ pub async fn save_app_settings(
         &request
             .settings
             .chunk_target_seconds
-            .clamp(60, 300)
+            .clamp(30, 300)
             .to_string(),
     )
     .await?;
@@ -84,7 +84,7 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
     let chunk_target_seconds = get_setting(pool, KEY_CHUNK_TARGET_SECONDS)
         .await?
         .and_then(|v| v.parse::<u32>().ok())
-        .map(|v| v.clamp(60, 300))
+        .map(|v| v.clamp(30, 300))
         .unwrap_or(300);
     let subtitle_max_words_per_segment = get_setting(pool, KEY_SUBTITLE_MAX_WORDS_PER_SEGMENT)
         .await?

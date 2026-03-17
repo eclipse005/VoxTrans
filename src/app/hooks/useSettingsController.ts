@@ -63,7 +63,7 @@ export function useSettingsController({
       pushToast("分段时长必须是数字", "error");
       return;
     }
-    const clamped = Math.max(60, Math.min(300, parsed));
+    const clamped = Math.max(30, Math.min(300, parsed));
 
     const parsedSubtitleWords = Number.parseInt(draftSubtitleMaxWordsInput.trim(), 10);
     if (!Number.isFinite(parsedSubtitleWords)) {

@@ -104,7 +104,7 @@ where
         }
     };
     options.timestamp_mode = TimestampKind::Words;
-    options.chunk_target_seconds = request.chunk_target_seconds.clamp(60, 1800) as f64;
+    options.chunk_target_seconds = request.chunk_target_seconds.clamp(30, 300) as f64;
     options.model_dir = crate::services::model::resolve_engine_model_dir(
         crate::services::model::ModelTarget::Asr,
     );

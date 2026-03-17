@@ -5,6 +5,8 @@ use crate::services::task_log::{TaskLogTarget, append_event_best_effort, event};
 use crate::services::transcribe::{
     BuildSegmentsRequest, SegmentWithWordsDto, WordTokenDto, build_segments_from_words,
 };
+use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
+use voxtrans_core::subtitle::segmenter::WordToken;
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -36,7 +38,7 @@ where
     let log_target = TaskLogTarget::main(request.task_id.clone(), request.audio_path.clone());
     let started_at = std::time::Instant::now();
 
-    let words = request.words.clone();
+    let words = from_core_words(beautify_words_for_subtitle(to_core_words(request.words.clone())));
     on_phase("segment");
     let built = build_segments_from_words(BuildSegmentsRequest {
         task_id: request.task_id.clone(),
@@ -74,4 +76,26 @@ fn round2(value: f64) -> f64 {
         return 0.0;
     }
     (value * 100.0).round() / 100.0
+}
+
+fn to_core_words(words: Vec<WordTokenDto>) -> Vec<WordToken> {
+    words
+        .into_iter()
+        .map(|word| WordToken {
+            start: word.start,
+            end: word.end,
+            word: word.word,
+        })
+        .collect()
+}
+
+fn from_core_words(words: Vec<WordToken>) -> Vec<WordTokenDto> {
+    words
+        .into_iter()
+        .map(|word| WordTokenDto {
+            start: word.start,
+            end: word.end,
+            word: word.word,
+        })
+        .collect()
 }

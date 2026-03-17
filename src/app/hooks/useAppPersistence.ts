@@ -18,7 +18,7 @@ export function useAppPersistence(dispatch: DispatchState) {
         if (cancelled) return;
         const provider = normalizeProvider(res.settings.provider);
         const chunkTargetSeconds = Number.isFinite(res.settings.chunkTargetSeconds)
-          ? Math.max(60, Math.min(300, Math.round(res.settings.chunkTargetSeconds)))
+          ? Math.max(30, Math.min(300, Math.round(res.settings.chunkTargetSeconds)))
           : 300;
         const subtitleMaxWordsPerSegment = Number.isFinite(res.settings.subtitleMaxWordsPerSegment)
           ? Math.max(8, Math.min(40, Math.round(res.settings.subtitleMaxWordsPerSegment)))
