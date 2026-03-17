@@ -24,6 +24,7 @@ type SubtitleEditorModalProps = {
   onReplaceText: (findText: string, replaceText: string, scopeCueIds: string[] | null, maxReplacements?: number) => number;
   onDeleteCue: (cueId: string) => void;
   onOpenSrtDir: () => void | Promise<void>;
+  onExportSrt: () => void | Promise<void>;
   onOpenLogs: () => void | Promise<void>;
   onClose: () => void | Promise<void>;
 };
@@ -43,6 +44,7 @@ export default function SubtitleEditorModal({
   onReplaceText,
   onDeleteCue,
   onOpenSrtDir,
+  onExportSrt,
   onOpenLogs,
   onClose,
 }: SubtitleEditorModalProps) {
@@ -117,6 +119,7 @@ export default function SubtitleEditorModal({
         taskName={taskName}
         srtPath={srtPath}
         onOpenSrtDir={onOpenSrtDir}
+        onExportSrt={onExportSrt}
         onOpenLogs={onOpenLogs}
       />
 

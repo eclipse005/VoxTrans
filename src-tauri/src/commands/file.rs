@@ -4,6 +4,11 @@ pub fn save_srt(request: crate::services::file::SaveSrtRequest) -> Result<(), St
 }
 
 #[tauri::command]
+pub fn export_srt(request: crate::services::file::ExportSrtRequest) -> Result<String, String> {
+    crate::services::file::export_srt(request)
+}
+
+#[tauri::command]
 pub fn get_file_size(path: String) -> Result<u64, String> {
     crate::services::file::get_file_size(path)
 }

@@ -1,5 +1,5 @@
 import type { SubtitleSaveState } from "../../types";
-import { LogsIcon } from "../Icons";
+import { DownloadIcon, LogsIcon } from "../Icons";
 
 type SubtitleEditorHeaderProps = {
   cueCount: number;
@@ -7,6 +7,7 @@ type SubtitleEditorHeaderProps = {
   taskName: string;
   srtPath: string;
   onOpenSrtDir: () => void | Promise<void>;
+  onExportSrt: () => void | Promise<void>;
   onOpenLogs: () => void | Promise<void>;
 };
 
@@ -23,6 +24,7 @@ export default function SubtitleEditorHeader({
   taskName,
   srtPath,
   onOpenSrtDir,
+  onExportSrt,
   onOpenLogs,
 }: SubtitleEditorHeaderProps) {
   return (
@@ -56,6 +58,19 @@ export default function SubtitleEditorHeader({
         </div>
       </div>
       <div className="subtitle-header-actions">
+        <button
+          type="button"
+          className="subtitle-header-icon-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            void onExportSrt();
+          }}
+          aria-label="导出 SRT"
+          title="导出"
+        >
+          <DownloadIcon />
+          <span>导出</span>
+        </button>
         <button
           type="button"
           className="subtitle-header-icon-btn"

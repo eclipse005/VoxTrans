@@ -49,8 +49,14 @@ export type PostAsrPipelineResponse = {
 
 type SaveSrtRequest = {
   taskId?: string;
-  mediaPath?: string;
   outputPath: string;
+  content: string;
+};
+
+type ExportSrtRequest = {
+  taskId: string;
+  targetDir: string;
+  taskName?: string;
   content: string;
 };
 
@@ -78,4 +84,8 @@ export async function runPostAsrPipeline(
 
 export async function saveSrt(request: SaveSrtRequest): Promise<void> {
   await invoke("save_srt", { request });
+}
+
+export async function exportSrt(request: ExportSrtRequest): Promise<string> {
+  return invoke<string>("export_srt", { request });
 }

@@ -30,6 +30,7 @@ fn main() {
             commands::transcribe::build_segments_from_words,
             commands::transcribe::separate_vocals,
             commands::file::save_srt,
+            commands::file::export_srt,
             commands::subtitle::load_subtitle_editor,
             commands::subtitle::save_subtitle_editor,
             commands::transcription::run_post_asr_pipeline,

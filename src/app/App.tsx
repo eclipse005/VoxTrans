@@ -76,6 +76,7 @@ function App() {
     splitSelectedCues,
     replaceTextInCues,
     removeCue,
+    exportSubtitleSrt,
   } = useSubtitleWorkflow({
     queue,
     activeId,
@@ -194,6 +195,7 @@ function App() {
               onReplaceText={replaceTextInCues}
               onDeleteCue={removeCue}
               onOpenSrtDir={openSubtitleDir}
+              onExportSrt={exportSubtitleSrt}
               onOpenLogs={openLogs}
               onClose={() => {}}
             />

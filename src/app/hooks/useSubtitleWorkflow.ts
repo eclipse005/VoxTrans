@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import type { QueueItem, SubtitleCue, SubtitleLoadResponse, SubtitleSaveResponse } from "../../features/media/types";
 import { buildFallbackCue, createCueAfter, cuesToSrt, parseSrtContent } from "../../features/media/srt";
+import { exportSrt } from "../api/transcribe";
 import type { AppAction } from "../state/appReducer";
 import { reportError, toUserErrorMessage } from "../utils/errors";
 import { buildCueWarningsById } from "../utils/subtitleWarnings";
@@ -362,6 +364,36 @@ export function useSubtitleWorkflow({
     markSubtitleEdited(next);
   }, [markSubtitleEdited, subtitleCues]);
 
+  const exportSubtitleSrt = useCallback(async () => {
+    if (!subtitleTaskId) {
+      pushToast("当前没有可导出的任务", "error");
+      return;
+    }
+
+    try {
+      const picked = await open({
+        directory: true,
+        multiple: false,
+        title: "选择导出目录",
+      });
+      if (!picked || Array.isArray(picked)) return;
+
+      const content = cuesToSrt(subtitleCues);
+
+      const exportPath = await exportSrt({
+        taskId: subtitleTaskId,
+        targetDir: picked,
+        taskName: subtitleTaskName,
+        content,
+      });
+
+      pushToast(`已导出：${exportPath}`, "success");
+    } catch (error) {
+      reportError(error, "exportSubtitleSrt");
+      pushToast(toUserErrorMessage(error, "导出字幕失败"), "error");
+    }
+  }, [pushToast, subtitleCues, subtitleTaskId, subtitleTaskName]);
+
   useEffect(() => {
     const activeItem = queue.find((item) => item.id === activeId);
     if (!activeItem) {
@@ -412,6 +444,7 @@ export function useSubtitleWorkflow({
     splitSelectedCues,
     replaceTextInCues,
     removeCue,
+    exportSubtitleSrt,
   };
 }
 

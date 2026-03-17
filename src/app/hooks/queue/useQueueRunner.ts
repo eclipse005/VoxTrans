@@ -172,7 +172,6 @@ export function useQueueRunner({
 
       await saveSrt({
         taskId: item.id,
-        mediaPath: item.path,
         outputPath: processed.srtOutputPath,
         content: processed.srt,
       });
