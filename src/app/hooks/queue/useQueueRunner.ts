@@ -171,6 +171,7 @@ export function useQueueRunner({
         translateApiKey: settings.translateApiKey,
         translateBaseUrl: settings.translateBaseUrl,
         translateModel: settings.translateModel,
+        llmConcurrency: settings.llmConcurrency,
       });
       if (!isTaskPresent(item.id)) return;
 
@@ -211,6 +212,7 @@ export function useQueueRunner({
     settings.translateApiKey,
     settings.translateBaseUrl,
     settings.translateModel,
+    settings.llmConcurrency,
   ]);
 
   return {

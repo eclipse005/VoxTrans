@@ -40,6 +40,7 @@ type RunPostAsrPipelineRequest = {
   translateApiKey: string;
   translateBaseUrl: string;
   translateModel: string;
+  llmConcurrency: number;
 };
 
 export type PostAsrPipelineResponse = {

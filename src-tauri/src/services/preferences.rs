@@ -10,6 +10,7 @@ const KEY_ENABLE_VOCAL_SEPARATION: &str = "settings.enableVocalSeparation";
 const KEY_TRANSLATE_API_KEY: &str = "settings.translateApiKey";
 const KEY_TRANSLATE_BASE_URL: &str = "settings.translateBaseUrl";
 const KEY_TRANSLATE_MODEL: &str = "settings.translateModel";
+const KEY_LLM_CONCURRENCY: &str = "settings.llmConcurrency";
 const KEY_ENABLE_PUNCTUATION_OPTIMIZATION: &str = "settings.enablePunctuationOptimization";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -24,6 +25,7 @@ pub struct SavedSettings {
     pub translate_api_key: String,
     pub translate_base_url: String,
     pub translate_model: String,
+    pub llm_concurrency: u32,
     pub enable_punctuation_optimization: bool,
 }
 
@@ -102,6 +104,12 @@ pub async fn save_app_settings(
     .await?;
     set_setting(
         &mut tx,
+        KEY_LLM_CONCURRENCY,
+        &request.settings.llm_concurrency.clamp(1, 16).to_string(),
+    )
+    .await?;
+    set_setting(
+        &mut tx,
         KEY_ENABLE_PUNCTUATION_OPTIMIZATION,
         if request.settings.enable_punctuation_optimization {
             "1"
@@ -149,6 +157,11 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         .await?
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| "gpt-4.1-mini".to_string());
+    let llm_concurrency = get_setting(pool, KEY_LLM_CONCURRENCY)
+        .await?
+        .and_then(|v| v.parse::<u32>().ok())
+        .map(|v| v.clamp(1, 16))
+        .unwrap_or(4);
     let enable_punctuation_optimization = get_setting(pool, KEY_ENABLE_PUNCTUATION_OPTIMIZATION)
         .await?
         .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
@@ -163,6 +176,7 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         translate_api_key,
         translate_base_url,
         translate_model,
+        llm_concurrency,
         enable_punctuation_optimization,
     })
 }

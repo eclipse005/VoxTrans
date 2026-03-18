@@ -25,6 +25,8 @@ pub struct RunPostAsrPipelineRequest {
     pub translate_base_url: String,
     #[serde(default)]
     pub translate_model: String,
+    #[serde(default = "default_llm_concurrency")]
+    pub llm_concurrency: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,6 +63,7 @@ where
                 base_url: request.translate_base_url.clone(),
                 api_key: request.translate_api_key.clone(),
                 model: request.translate_model.clone(),
+                llm_concurrency: request.llm_concurrency,
             },
         )
         .await,
@@ -104,6 +107,10 @@ where
         words,
         post_asr_elapsed_sec: round2(started_at.elapsed().as_secs_f64()),
     })
+}
+
+fn default_llm_concurrency() -> u32 {
+    4
 }
 
 fn round2(value: f64) -> f64 {

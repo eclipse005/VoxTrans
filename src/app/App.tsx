@@ -36,6 +36,7 @@ function App() {
     draftTranslateApiKey,
     draftTranslateBaseUrl,
     draftTranslateModel,
+    draftLlmConcurrencyInput,
     draftEnablePunctuationOptimization,
     youtubeUrl,
     toast,
@@ -140,6 +141,7 @@ function App() {
     draftTranslateApiKey,
     draftTranslateBaseUrl,
     draftTranslateModel,
+    draftLlmConcurrencyInput,
     draftEnablePunctuationOptimization,
     dispatch,
     pushToast,
@@ -231,6 +233,7 @@ function App() {
         draftTranslateApiKey={draftTranslateApiKey}
         draftTranslateBaseUrl={draftTranslateBaseUrl}
         draftTranslateModel={draftTranslateModel}
+        draftLlmConcurrencyInput={draftLlmConcurrencyInput}
         draftEnablePunctuationOptimization={draftEnablePunctuationOptimization}
         asrStatus={asrStatus}
         demucsStatus={demucsStatus}
@@ -245,6 +248,7 @@ function App() {
         onDraftTranslateApiKeyChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateApiKey: value } })}
         onDraftTranslateBaseUrlChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateBaseUrl: value } })}
         onDraftTranslateModelChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateModel: value } })}
+        onDraftLlmConcurrencyInputChange={(value) => dispatch({ type: "set_draft", payload: { draftLlmConcurrencyInput: value } })}
         onDraftEnablePunctuationOptimizationChange={(value) => dispatch({ type: "set_draft", payload: { draftEnablePunctuationOptimization: value } })}
         onTestTranslateConnection={testTranslateConnection}
         onOpenModelDir={openModelDir}

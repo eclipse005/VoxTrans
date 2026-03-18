@@ -35,6 +35,10 @@ export function useAppPersistence(dispatch: DispatchState) {
           || "https://api.openai.com/v1";
         const translateModel = String(res.settings.translateModel ?? "").trim()
           || "gpt-4.1-mini";
+        const llmConcurrencyRaw = Number.parseInt(String(res.settings.llmConcurrency ?? "4"), 10);
+        const llmConcurrency = Number.isFinite(llmConcurrencyRaw)
+          ? Math.max(1, Math.min(16, llmConcurrencyRaw))
+          : 4;
         const enablePunctuationOptimization = Boolean(res.settings.enablePunctuationOptimization);
 
         dispatch({
@@ -49,6 +53,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             translateApiKey,
             translateBaseUrl,
             translateModel,
+            llmConcurrency,
             enablePunctuationOptimization,
           },
         });
@@ -64,6 +69,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftTranslateApiKey: translateApiKey,
             draftTranslateBaseUrl: translateBaseUrl,
             draftTranslateModel: translateModel,
+            draftLlmConcurrencyInput: String(llmConcurrency),
             draftEnablePunctuationOptimization: enablePunctuationOptimization,
           },
         });

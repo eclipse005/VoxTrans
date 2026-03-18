@@ -14,6 +14,7 @@ export type SavedSettings = {
   translateApiKey: string;
   translateBaseUrl: string;
   translateModel: string;
+  llmConcurrency: number;
   enablePunctuationOptimization: boolean;
 };
 

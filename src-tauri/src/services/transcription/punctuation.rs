@@ -2,7 +2,9 @@ use serde_json::json;
 use voxtrans_core::subtitle::segmenter::WordToken;
 
 use crate::services::task_log::TaskLogger;
-use crate::services::translate::adapters::llm_client::{LlmClient, LlmConfig, TokenUsage};
+use crate::services::translate::adapters::llm_client::{
+    LlmClient, LlmConfig, LlmJsonTask, TokenUsage,
+};
 use crate::services::translate::prompt::{
     PunctuationPromptInput, build_punctuation_system_prompt, build_punctuation_user_prompt,
 };
@@ -22,6 +24,7 @@ pub struct PunctuationConfig {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    pub llm_concurrency: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -118,13 +121,8 @@ pub async fn optimize_words_with_llm(
     };
 
     let validator = punctuation_response_validator();
-    let mut optimized = words.clone();
-    let mut changed_tokens = 0usize;
-    let mut total_usage = TokenUsage::default();
-    let mut llm_error_total = 0usize;
-    let mut empty_result_total = 0usize;
-    let mut applied_total = 0usize;
-
+    let concurrency = config.llm_concurrency.clamp(1, 16) as usize;
+    let mut tasks = Vec::new();
     for span_idx in suspicious_indexes.iter().copied() {
         let span = match spans.get(span_idx) {
             Some(s) => s,
@@ -138,54 +136,74 @@ pub async fn optimize_words_with_llm(
             .get(span_idx + 1)
             .map(|s| clip_context_words(&s.text, CONTEXT_MAX_WORDS))
             .unwrap_or_default();
-
         let system_prompt = build_punctuation_system_prompt();
         let user_prompt = build_punctuation_user_prompt(&PunctuationPromptInput {
             previous_text: prev,
             current_text: span.text.clone(),
             next_text: next,
         });
+        tasks.push(LlmJsonTask {
+            id: span_idx,
+            system_prompt,
+            user_prompt,
+            response_validator: Some(validator.clone()),
+        });
+    }
+    let outcomes = client
+        .call_batch(task_id, Some(media_path), tasks, concurrency)
+        .await;
 
-        let response = client
-            .call_json(
-            task_id,
-            Some(media_path),
-            &system_prompt,
-            &user_prompt,
-            Some(&validator),
-        )
-            .await;
-        let response = match response {
+    let mut optimized = words.clone();
+    let mut changed_tokens = 0usize;
+    let mut total_usage = TokenUsage::default();
+    let mut llm_error_total = 0usize;
+    let mut empty_result_total = 0usize;
+    let mut applied_total = 0usize;
+    let mut retry_total = 0u64;
+    let mut elapsed_ms_total = 0u128;
+
+    for (span_idx, outcome) in outcomes {
+        if span_idx == usize::MAX {
+            llm_error_total += 1;
+            continue;
+        }
+        let outcome = match outcome {
             Ok(v) => v,
             Err(err) => {
-                let _ = err;
                 llm_error_total += 1;
+                if err.attempts > 1 {
+                    retry_total += (err.attempts - 1) as u64;
+                }
+                elapsed_ms_total += err.elapsed_ms;
                 continue;
             }
         };
-
-        total_usage.prompt_tokens += response.usage.prompt_tokens;
-        total_usage.completion_tokens += response.usage.completion_tokens;
-        total_usage.total_tokens += response.usage.total_tokens;
-
-        let punctuated = response
+        total_usage.prompt_tokens += outcome.usage.prompt_tokens;
+        total_usage.completion_tokens += outcome.usage.completion_tokens;
+        total_usage.total_tokens += outcome.usage.total_tokens;
+        if outcome.attempts > 1 {
+            retry_total += (outcome.attempts - 1) as u64;
+        }
+        elapsed_ms_total += outcome.elapsed_ms;
+        let punctuated = match outcome
             .json
             .get("punctuatedText")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if punctuated.is_empty() {
-            empty_result_total += 1;
-            continue;
-        }
-
+            .and_then(|x| x.as_str())
+            .map(|x| x.trim().to_string())
+        {
+            Some(v) if !v.is_empty() => v,
+            _ => {
+                empty_result_total += 1;
+                continue;
+            }
+        };
+        let span = match spans.get(span_idx) {
+            Some(v) => v,
+            None => continue,
+        };
         if let Some(slice) = optimized.get_mut(span.start_idx..=span.end_idx) {
-            changed_tokens += apply_style_from_suggestion(
-                slice,
-                &punctuated,
-                span.allow_leading_case_change,
-            );
+            changed_tokens +=
+                apply_style_from_suggestion(slice, &punctuated, span.allow_leading_case_change);
             applied_total += 1;
         }
     }
@@ -199,6 +217,17 @@ pub async fn optimize_words_with_llm(
             "emptyResultTotal": empty_result_total,
             "llmErrorTotal": llm_error_total,
             "changedTokenTotal": changed_tokens,
+            "llmMetrics": {
+                "concurrency": concurrency,
+                "requestTotal": suspicious_indexes.len(),
+                "retryTotal": retry_total,
+                "elapsedMsTotal": elapsed_ms_total,
+                "avgElapsedMs": if suspicious_indexes.is_empty() {
+                    0.0
+                } else {
+                    (elapsed_ms_total as f64) / (suspicious_indexes.len() as f64)
+                }
+            },
             "usage": {
                 "promptTokens": total_usage.prompt_tokens,
                 "completionTokens": total_usage.completion_tokens,

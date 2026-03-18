@@ -2,6 +2,10 @@ use std::time::Duration;
 
 use reqwest::Client;
 use serde_json::{Value, json};
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
+use tokio::time::sleep;
 
 use crate::services::task_log::TaskLogger;
 
@@ -23,7 +27,7 @@ impl LlmConfig {
             api_key,
             model,
             timeout_sec: 60,
-            max_retries: 2,
+            max_retries: 3,
         }
     }
 }
@@ -61,6 +65,21 @@ impl JsonResponseValidator {
 }
 
 #[derive(Debug, Clone)]
+pub struct LlmJsonTask {
+    pub id: usize,
+    pub system_prompt: String,
+    pub user_prompt: String,
+    pub response_validator: Option<JsonResponseValidator>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmJsonError {
+    pub message: String,
+    pub attempts: u32,
+    pub elapsed_ms: u128,
+}
+
+#[derive(Debug, Clone)]
 pub struct LlmJsonResult {
     pub raw_text: String,
     pub json: Value,
@@ -71,6 +90,7 @@ pub struct LlmJsonResult {
     pub request_id: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct LlmClient {
     config: LlmConfig,
     http: Client,
@@ -85,14 +105,14 @@ impl LlmClient {
         Ok(Self { config, http })
     }
 
-    pub async fn call_json(
+    pub async fn call(
         &self,
         task_id: &str,
         media_path: Option<&str>,
         system_prompt: &str,
         user_prompt: &str,
         response_validator: Option<&JsonResponseValidator>,
-    ) -> Result<LlmJsonResult, String> {
+    ) -> Result<LlmJsonResult, LlmJsonError> {
         let logger = match media_path {
             Some(path) if !path.trim().is_empty() => {
                 TaskLogger::llm_with_media(task_id.to_string(), path.to_string())
@@ -122,6 +142,7 @@ impl LlmClient {
                         Ok(v) => v,
                         Err(err) => {
                             last_error = format!("json parse failed: {err}");
+                            let backoff_ms = retry_backoff_ms(attempt, max_attempts);
                             logger.event("llm.call", Some(&json!({
                                 "status": "invalid_json",
                                 "error": last_error,
@@ -130,10 +151,14 @@ impl LlmClient {
                                 },
                                 "attempt": base_payload["attempt"],
                                 "maxAttempts": base_payload["maxAttempts"],
+                                "backoffMs": backoff_ms,
                                 "model": base_payload["model"],
                                 "baseUrl": base_payload["baseUrl"],
                                 "request": base_payload["request"]
                             })));
+                            if let Some(delay) = backoff_ms {
+                                sleep(Duration::from_millis(delay)).await;
+                            }
                             continue;
                         }
                     };
@@ -141,6 +166,7 @@ impl LlmClient {
                     if let Some(validator) = response_validator {
                         if let Err(err) = validator.validate(&parsed) {
                             last_error = err;
+                            let backoff_ms = retry_backoff_ms(attempt, max_attempts);
                             logger.event("llm.call", Some(&json!({
                                 "status": "invalid_schema",
                                 "error": last_error,
@@ -149,10 +175,14 @@ impl LlmClient {
                                 },
                                 "attempt": base_payload["attempt"],
                                 "maxAttempts": base_payload["maxAttempts"],
+                                "backoffMs": backoff_ms,
                                 "model": base_payload["model"],
                                 "baseUrl": base_payload["baseUrl"],
                                 "request": base_payload["request"]
                             })));
+                            if let Some(delay) = backoff_ms {
+                                sleep(Duration::from_millis(delay)).await;
+                            }
                             continue;
                         }
                     }
@@ -188,23 +218,101 @@ impl LlmClient {
                 }
                 Err(err) => {
                     last_error = err;
+                    let backoff_ms = retry_backoff_ms(attempt, max_attempts);
                     logger.event("llm.call", Some(&json!({
                         "status": "http_error",
                         "error": last_error,
                         "attempt": base_payload["attempt"],
                         "maxAttempts": base_payload["maxAttempts"],
+                        "backoffMs": backoff_ms,
                         "model": base_payload["model"],
                         "baseUrl": base_payload["baseUrl"],
                         "request": base_payload["request"]
                     })));
+                    if let Some(delay) = backoff_ms {
+                        sleep(Duration::from_millis(delay)).await;
+                    }
                 }
             }
         }
 
-        Err(format!(
-            "llm call failed after {} attempts: {}",
-            max_attempts, last_error
-        ))
+        Err(LlmJsonError {
+            message: format!(
+                "llm call failed after {} attempts: {}",
+                max_attempts, last_error
+            ),
+            attempts: max_attempts,
+            elapsed_ms: started.elapsed().as_millis(),
+        })
+    }
+
+    pub async fn call_batch(
+        &self,
+        task_id: &str,
+        media_path: Option<&str>,
+        tasks: Vec<LlmJsonTask>,
+        concurrency: usize,
+    ) -> Vec<(usize, Result<LlmJsonResult, LlmJsonError>)> {
+        if tasks.is_empty() {
+            return Vec::new();
+        }
+
+        let concurrency = concurrency.clamp(1, 64);
+        let semaphore = Arc::new(Semaphore::new(concurrency));
+        let mut join_set: JoinSet<(usize, Result<LlmJsonResult, LlmJsonError>)> = JoinSet::new();
+        let client = self.clone();
+        let task_id = task_id.to_string();
+        let media_path = media_path.map(|s| s.to_string());
+
+        for item in tasks {
+            let semaphore = Arc::clone(&semaphore);
+            let client = client.clone();
+            let task_id = task_id.clone();
+            let media_path = media_path.clone();
+            join_set.spawn(async move {
+                let permit = semaphore.acquire_owned().await;
+                let _permit = match permit {
+                    Ok(v) => v,
+                    Err(err) => {
+                        return (
+                            item.id,
+                            Err(LlmJsonError {
+                                message: format!("semaphore acquire failed: {err}"),
+                                attempts: 0,
+                                elapsed_ms: 0,
+                            }),
+                        )
+                    }
+                };
+                let result = client
+                    .call(
+                        &task_id,
+                        media_path.as_deref(),
+                        &item.system_prompt,
+                        &item.user_prompt,
+                        item.response_validator.as_ref(),
+                    )
+                    .await;
+                (item.id, result)
+            });
+        }
+
+        let mut out: Vec<(usize, Result<LlmJsonResult, LlmJsonError>)> = Vec::new();
+        while let Some(joined) = join_set.join_next().await {
+            match joined {
+                Ok(v) => out.push(v),
+                Err(err) => out.push((
+                    usize::MAX,
+                    Err(LlmJsonError {
+                        message: format!("task join error: {err}"),
+                        attempts: 0,
+                        elapsed_ms: 0,
+                    }),
+                )),
+            }
+        }
+        out.sort_by_key(|(id, _)| *id);
+        out
     }
 
     async fn call_once(
@@ -220,7 +328,6 @@ impl LlmClient {
         let payload = json!({
             "model": self.config.model,
             "temperature": 0.2,
-            "response_format": { "type": "json_object" },
             "messages": [
                 { "role": "system", "content": system_prompt },
                 { "role": "user", "content": user_prompt }
@@ -268,6 +375,16 @@ impl LlmClient {
         let usage = parse_usage(&value, system_prompt, user_prompt, &content);
         Ok((content, usage, request_id))
     }
+}
+
+fn retry_backoff_ms(attempt: u32, max_attempts: u32) -> Option<u64> {
+    if attempt >= max_attempts {
+        return None;
+    }
+    let exp = attempt.saturating_sub(1).min(6);
+    let base_ms = 300u64;
+    let delay = base_ms.saturating_mul(1u64 << exp);
+    Some(delay.min(3_000))
 }
 
 fn parse_usage(response: &Value, system_prompt: &str, user_prompt: &str, output: &str) -> TokenUsage {

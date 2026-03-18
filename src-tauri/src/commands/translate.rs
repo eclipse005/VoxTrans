@@ -68,14 +68,15 @@ pub async fn test_translate_llm(
     let user_prompt = "返回 JSON：{\"ok\":true,\"message\":\"pong\"}";
     let validator = JsonResponseValidator::with_required_keys(&["ok", "message"]);
     let result = client
-        .call_json(
+        .call(
             "settings-llm-test",
             None,
             system_prompt,
             user_prompt,
             Some(&validator),
         )
-        .await?;
+        .await
+        .map_err(|err| err.message)?;
     let ok = result
         .json
         .get("ok")

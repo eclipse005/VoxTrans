@@ -20,6 +20,7 @@ type SettingsModalProps = {
   draftTranslateApiKey: string;
   draftTranslateBaseUrl: string;
   draftTranslateModel: string;
+  draftLlmConcurrencyInput: string;
   draftEnablePunctuationOptimization: boolean;
   asrStatus: ModelStatusResponse | null;
   demucsStatus: ModelStatusResponse | null;
@@ -34,6 +35,7 @@ type SettingsModalProps = {
   onDraftTranslateApiKeyChange: (value: string) => void;
   onDraftTranslateBaseUrlChange: (value: string) => void;
   onDraftTranslateModelChange: (value: string) => void;
+  onDraftLlmConcurrencyInputChange: (value: string) => void;
   onDraftEnablePunctuationOptimizationChange: (value: boolean) => void;
   onTestTranslateConnection: () => void | Promise<void>;
   onOpenModelDir: (target: "asr" | "demucs") => void | Promise<void>;
@@ -88,6 +90,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftTranslateApiKey,
     draftTranslateBaseUrl,
     draftTranslateModel,
+    draftLlmConcurrencyInput,
     draftEnablePunctuationOptimization,
     asrStatus,
     demucsStatus,
@@ -102,6 +105,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftTranslateApiKeyChange,
     onDraftTranslateBaseUrlChange,
     onDraftTranslateModelChange,
+    onDraftLlmConcurrencyInputChange,
     onDraftEnablePunctuationOptimizationChange,
     onTestTranslateConnection,
     onOpenModelDir,
@@ -266,6 +270,16 @@ export default function SettingsModal(props: SettingsModalProps) {
                           测试
                         </button>
                       </div>
+                    </div>
+                    <div className="form-group">
+                      <label>并发数</label>
+                      <input
+                        className="apple-input"
+                        inputMode="numeric"
+                        value={draftLlmConcurrencyInput}
+                        onChange={(e) => onDraftLlmConcurrencyInputChange(e.target.value.replace(/[^0-9]/g, ""))}
+                        placeholder="1 - 16"
+                      />
                     </div>
                   </div>
                   <label className="setting-toggle" htmlFor="enable-punctuation-optimization">

@@ -22,6 +22,7 @@ export type AppState = {
   draftTranslateApiKey: string;
   draftTranslateBaseUrl: string;
   draftTranslateModel: string;
+  draftLlmConcurrencyInput: string;
   draftEnablePunctuationOptimization: boolean;
   youtubeUrl: string;
   youtubeQuality: string;
@@ -95,6 +96,7 @@ export type SettingsAction =
           | "draftTranslateApiKey"
           | "draftTranslateBaseUrl"
           | "draftTranslateModel"
+          | "draftLlmConcurrencyInput"
           | "draftEnablePunctuationOptimization"
         >
       >;
@@ -113,6 +115,7 @@ export const defaultSettings: SavedSettings = {
   translateApiKey: "",
   translateBaseUrl: "https://api.openai.com/v1",
   translateModel: "gpt-4.1-mini",
+  llmConcurrency: 4,
   enablePunctuationOptimization: false,
 };
 
@@ -133,6 +136,7 @@ export const initialAppState: AppState = {
   draftTranslateApiKey: defaultSettings.translateApiKey,
   draftTranslateBaseUrl: defaultSettings.translateBaseUrl,
   draftTranslateModel: defaultSettings.translateModel,
+  draftLlmConcurrencyInput: String(defaultSettings.llmConcurrency),
   draftEnablePunctuationOptimization: defaultSettings.enablePunctuationOptimization,
   youtubeUrl: "",
   youtubeQuality: "",

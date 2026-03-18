@@ -25,6 +25,7 @@ type UseSettingsControllerArgs = {
   draftTranslateApiKey: string;
   draftTranslateBaseUrl: string;
   draftTranslateModel: string;
+  draftLlmConcurrencyInput: string;
   draftEnablePunctuationOptimization: boolean;
   dispatch: DispatchState;
   pushToast: PushToast;
@@ -42,6 +43,7 @@ export function useSettingsController({
   draftTranslateApiKey,
   draftTranslateBaseUrl,
   draftTranslateModel,
+  draftLlmConcurrencyInput,
   draftEnablePunctuationOptimization,
   dispatch,
   pushToast,
@@ -61,6 +63,7 @@ export function useSettingsController({
         draftTranslateApiKey: settings.translateApiKey,
         draftTranslateBaseUrl: settings.translateBaseUrl,
         draftTranslateModel: settings.translateModel,
+        draftLlmConcurrencyInput: String(settings.llmConcurrency),
         draftEnablePunctuationOptimization: settings.enablePunctuationOptimization,
       },
     });
@@ -78,6 +81,7 @@ export function useSettingsController({
     settings.translateApiKey,
     settings.translateBaseUrl,
     settings.translateModel,
+    settings.llmConcurrency,
   ]);
 
   const saveSettings = useCallback(async () => {
@@ -94,6 +98,12 @@ export function useSettingsController({
       return;
     }
     const clampedSubtitleWords = Math.max(8, Math.min(40, parsedSubtitleWords));
+    const parsedConcurrency = Number.parseInt(draftLlmConcurrencyInput.trim(), 10);
+    if (!Number.isFinite(parsedConcurrency)) {
+      pushToast("并发数必须是数字", "error");
+      return;
+    }
+    const clampedConcurrency = Math.max(1, Math.min(16, parsedConcurrency));
 
     const nextSettings = {
       provider: draftProvider,
@@ -105,6 +115,7 @@ export function useSettingsController({
       translateApiKey: draftTranslateApiKey.trim(),
       translateBaseUrl: draftTranslateBaseUrl.trim() || "https://api.openai.com/v1",
       translateModel: draftTranslateModel.trim() || "gpt-4.1-mini",
+      llmConcurrency: clampedConcurrency,
       enablePunctuationOptimization: draftEnablePunctuationOptimization,
     } satisfies SavedSettings;
 
@@ -123,6 +134,7 @@ export function useSettingsController({
         draftTranslateApiKey: nextSettings.translateApiKey,
         draftTranslateBaseUrl: nextSettings.translateBaseUrl,
         draftTranslateModel: nextSettings.translateModel,
+        draftLlmConcurrencyInput: String(nextSettings.llmConcurrency),
         draftEnablePunctuationOptimization,
       },
     });
@@ -146,6 +158,7 @@ export function useSettingsController({
     draftTranslateApiKey,
     draftTranslateBaseUrl,
     draftTranslateModel,
+    draftLlmConcurrencyInput,
     pushToast,
   ]);
 
