@@ -6,6 +6,7 @@ import type {
   UserPreferencesResponse,
 } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
+import { normalizeTerminologyGroups } from "../utils/terminology";
 
 type DispatchState = (action: AppAction) => void;
 
@@ -39,6 +40,10 @@ export function useAppPersistence(dispatch: DispatchState) {
         const llmConcurrency = Number.isFinite(llmConcurrencyRaw)
           ? Math.max(1, Math.min(16, llmConcurrencyRaw))
           : 4;
+        const terminologyGroupsRaw = Array.isArray(res.settings.terminologyGroups)
+          ? res.settings.terminologyGroups
+          : [];
+        const terminologyGroups = normalizeTerminologyGroups(terminologyGroupsRaw);
         const enablePunctuationOptimization = Boolean(res.settings.enablePunctuationOptimization);
 
         dispatch({
@@ -54,6 +59,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             translateBaseUrl,
             translateModel,
             llmConcurrency,
+            terminologyGroups,
             enablePunctuationOptimization,
           },
         });
@@ -70,6 +76,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftTranslateBaseUrl: translateBaseUrl,
             draftTranslateModel: translateModel,
             draftLlmConcurrencyInput: String(llmConcurrency),
+            draftTerminologyGroups: terminologyGroups,
             draftEnablePunctuationOptimization: enablePunctuationOptimization,
           },
         });

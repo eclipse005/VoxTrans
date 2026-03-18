@@ -400,16 +400,19 @@
 
 .settings-body,
 .terms-body {
-  overflow: auto;
   min-height: 0;
 }
 
 .settings-body {
   flex: 1;
+  overflow: auto;
 }
 
 .terms-body {
+  display: flex;
+  flex-direction: column;
   flex: 1;
+  overflow: hidden;
 }
 
 .settings-section {
@@ -421,6 +424,18 @@
   font-size: 24px;
   line-height: 1.12;
   letter-spacing: -0.015em;
+}
+
+.settings-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.settings-section-head > .apple-heading-small {
+  margin-bottom: 0;
 }
 
 .terms-header {
@@ -437,6 +452,10 @@
 
 .terms-body .settings-section {
   margin-bottom: 18px;
+}
+
+.terms-body .settings-section:last-child {
+  margin-bottom: 0;
 }
 
 .terms-count {

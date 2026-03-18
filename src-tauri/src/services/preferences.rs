@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use std::collections::HashSet;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const KEY_PROVIDER: &str = "settings.provider";
 const KEY_CHUNK_TARGET_SECONDS: &str = "settings.chunkTargetSeconds";
@@ -11,7 +13,27 @@ const KEY_TRANSLATE_API_KEY: &str = "settings.translateApiKey";
 const KEY_TRANSLATE_BASE_URL: &str = "settings.translateBaseUrl";
 const KEY_TRANSLATE_MODEL: &str = "settings.translateModel";
 const KEY_LLM_CONCURRENCY: &str = "settings.llmConcurrency";
+const KEY_TERMINOLOGY_GROUPS: &str = "settings.terminologyGroups";
 const KEY_ENABLE_PUNCTUATION_OPTIMIZATION: &str = "settings.enablePunctuationOptimization";
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminologyTerm {
+    pub id: String,
+    pub origin: String,
+    pub target: String,
+    #[serde(default)]
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminologyGroup {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub terms: Vec<TerminologyTerm>,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +48,8 @@ pub struct SavedSettings {
     pub translate_base_url: String,
     pub translate_model: String,
     pub llm_concurrency: u32,
+    #[serde(default)]
+    pub terminology_groups: Vec<TerminologyGroup>,
     pub enable_punctuation_optimization: bool,
 }
 
@@ -108,6 +132,10 @@ pub async fn save_app_settings(
         &request.settings.llm_concurrency.clamp(1, 16).to_string(),
     )
     .await?;
+    let terminology_groups = normalize_terminology_groups(request.settings.terminology_groups.clone());
+    let terminology_json = serde_json::to_string(&terminology_groups)
+        .map_err(|err| err.to_string())?;
+    set_setting(&mut tx, KEY_TERMINOLOGY_GROUPS, &terminology_json).await?;
     set_setting(
         &mut tx,
         KEY_ENABLE_PUNCTUATION_OPTIMIZATION,
@@ -162,6 +190,11 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         .and_then(|v| v.parse::<u32>().ok())
         .map(|v| v.clamp(1, 16))
         .unwrap_or(4);
+    let terminology_groups = get_setting(pool, KEY_TERMINOLOGY_GROUPS)
+        .await?
+        .and_then(|v| serde_json::from_str::<Vec<TerminologyGroup>>(&v).ok())
+        .map(normalize_terminology_groups)
+        .unwrap_or_else(|| normalize_terminology_groups(Vec::new()));
     let enable_punctuation_optimization = get_setting(pool, KEY_ENABLE_PUNCTUATION_OPTIMIZATION)
         .await?
         .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
@@ -177,8 +210,90 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         translate_base_url,
         translate_model,
         llm_concurrency,
+        terminology_groups,
         enable_punctuation_optimization,
     })
+}
+
+fn normalize_terminology_groups(groups: Vec<TerminologyGroup>) -> Vec<TerminologyGroup> {
+    let mut seen_group_ids = HashSet::new();
+    let mut normalized = Vec::new();
+
+    for (group_idx, group) in groups.into_iter().enumerate() {
+        let mut group_id = group.id.trim().to_string();
+        if group_id.is_empty() || !seen_group_ids.insert(group_id.clone()) {
+            group_id = make_entity_id("group", group_idx);
+            seen_group_ids.insert(group_id.clone());
+        }
+
+        let name = {
+            let trimmed = group.name.trim();
+            if trimmed.is_empty() {
+                "默认".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        };
+
+        let terms = normalize_terminology_terms(group.terms, group_idx);
+
+        normalized.push(TerminologyGroup {
+            id: group_id,
+            name,
+            terms,
+        });
+    }
+
+    if normalized.is_empty() {
+        return vec![default_terminology_group()];
+    }
+
+    normalized
+}
+
+fn normalize_terminology_terms(terms: Vec<TerminologyTerm>, group_idx: usize) -> Vec<TerminologyTerm> {
+    let mut normalized = Vec::new();
+    let mut seen_term_ids = HashSet::new();
+
+    for (term_idx, term) in terms.into_iter().enumerate() {
+        let origin = term.origin.trim();
+        let target = term.target.trim();
+        if origin.is_empty() || target.is_empty() {
+            continue;
+        }
+
+        let mut term_id = term.id.trim().to_string();
+        if term_id.is_empty() || !seen_term_ids.insert(term_id.clone()) {
+            let seq = group_idx.saturating_mul(10_000).saturating_add(term_idx);
+            term_id = make_entity_id("term", seq);
+            seen_term_ids.insert(term_id.clone());
+        }
+
+        normalized.push(TerminologyTerm {
+            id: term_id,
+            origin: origin.to_string(),
+            target: target.to_string(),
+            note: term.note.trim().to_string(),
+        });
+    }
+
+    normalized
+}
+
+fn default_terminology_group() -> TerminologyGroup {
+    TerminologyGroup {
+        id: make_entity_id("group", 0),
+        name: "默认".to_string(),
+        terms: Vec::new(),
+    }
+}
+
+fn make_entity_id(prefix: &str, seq: usize) -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{prefix}-{millis}-{seq}")
 }
 
 async fn get_setting(pool: &SqlitePool, key: &str) -> Result<Option<String>, String> {

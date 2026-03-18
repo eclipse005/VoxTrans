@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useReducer } from "react";
+import { useCallback, useMemo, useReducer, useState } from "react";
 import MediaList from "./components/MediaList";
 import LogsModal from "./components/LogsModal";
 import Navbar from "./components/Navbar";
 import SettingsModal from "./components/SettingsModal";
 import SubtitleEditorModal from "./components/SubtitleEditorModal";
+import TerminologyModal from "./components/TerminologyModal";
 import Toast from "./components/Toast";
 import UploadPanel from "./components/UploadPanel";
 import { openTaskOutputDir } from "./api/system";
@@ -19,6 +20,7 @@ import { appReducer, initialAppState } from "./state/appReducer";
 
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
+  const [showTerminologyModal, setShowTerminologyModal] = useState(false);
   const {
     queue,
     activeId,
@@ -37,6 +39,7 @@ function App() {
     draftTranslateBaseUrl,
     draftTranslateModel,
     draftLlmConcurrencyInput,
+    draftTerminologyGroups,
     draftEnablePunctuationOptimization,
     youtubeUrl,
     toast,
@@ -129,6 +132,7 @@ function App() {
   const {
     openSettings,
     saveSettings,
+    saveTerminologyGroups,
     testTranslateConnection,
   } = useSettingsController({
     settings,
@@ -142,6 +146,7 @@ function App() {
     draftTranslateBaseUrl,
     draftTranslateModel,
     draftLlmConcurrencyInput,
+    draftTerminologyGroups,
     draftEnablePunctuationOptimization,
     dispatch,
     pushToast,
@@ -164,6 +169,7 @@ function App() {
     <div className="apple-style app-root">
       <Navbar
         onOpenSettings={openSettings}
+        onOpenTerminology={() => setShowTerminologyModal(true)}
       />
 
       <main className="apple-container apple-section">
@@ -267,6 +273,16 @@ function App() {
         onRefresh={loadLogs}
         onClear={clearLogs}
         onOpenDir={openLogDir}
+      />
+
+      <TerminologyModal
+        visible={showTerminologyModal}
+        groups={draftTerminologyGroups}
+        onClose={() => setShowTerminologyModal(false)}
+        onChange={(value) => dispatch({ type: "set_draft", payload: { draftTerminologyGroups: value } })}
+        onSave={async (groups) => {
+          await saveTerminologyGroups(groups);
+        }}
       />
 
       <Toast toast={toast} />

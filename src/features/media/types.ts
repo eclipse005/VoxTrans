@@ -4,6 +4,19 @@ export type ModelTarget = "asr" | "demucs";
 export type AsrModel = "parakeet-tdt-0.6b-v2";
 export type DemucsModel = "htdemucs_ft";
 
+export type TerminologyTerm = {
+  id: string;
+  origin: string;
+  target: string;
+  note: string;
+};
+
+export type TerminologyGroup = {
+  id: string;
+  name: string;
+  terms: TerminologyTerm[];
+};
+
 export type SavedSettings = {
   provider: Provider;
   chunkTargetSeconds: number;
@@ -15,6 +28,7 @@ export type SavedSettings = {
   translateBaseUrl: string;
   translateModel: string;
   llmConcurrency: number;
+  terminologyGroups: TerminologyGroup[];
   enablePunctuationOptimization: boolean;
 };
 

@@ -6,6 +6,7 @@ import {
 import type { SavedSettings } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { ToastTone } from "../types";
+import { normalizeTerminologyGroups } from "../utils/terminology";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (
@@ -26,6 +27,7 @@ type UseSettingsControllerArgs = {
   draftTranslateBaseUrl: string;
   draftTranslateModel: string;
   draftLlmConcurrencyInput: string;
+  draftTerminologyGroups: SavedSettings["terminologyGroups"];
   draftEnablePunctuationOptimization: boolean;
   dispatch: DispatchState;
   pushToast: PushToast;
@@ -44,6 +46,7 @@ export function useSettingsController({
   draftTranslateBaseUrl,
   draftTranslateModel,
   draftLlmConcurrencyInput,
+  draftTerminologyGroups,
   draftEnablePunctuationOptimization,
   dispatch,
   pushToast,
@@ -64,6 +67,7 @@ export function useSettingsController({
         draftTranslateBaseUrl: settings.translateBaseUrl,
         draftTranslateModel: settings.translateModel,
         draftLlmConcurrencyInput: String(settings.llmConcurrency),
+        draftTerminologyGroups: settings.terminologyGroups,
         draftEnablePunctuationOptimization: settings.enablePunctuationOptimization,
       },
     });
@@ -82,6 +86,7 @@ export function useSettingsController({
     settings.translateBaseUrl,
     settings.translateModel,
     settings.llmConcurrency,
+    settings.terminologyGroups,
   ]);
 
   const saveSettings = useCallback(async () => {
@@ -116,6 +121,7 @@ export function useSettingsController({
       translateBaseUrl: draftTranslateBaseUrl.trim() || "https://api.openai.com/v1",
       translateModel: draftTranslateModel.trim() || "gpt-4.1-mini",
       llmConcurrency: clampedConcurrency,
+      terminologyGroups: normalizeTerminologyGroups(draftTerminologyGroups),
       enablePunctuationOptimization: draftEnablePunctuationOptimization,
     } satisfies SavedSettings;
 
@@ -135,6 +141,7 @@ export function useSettingsController({
         draftTranslateBaseUrl: nextSettings.translateBaseUrl,
         draftTranslateModel: nextSettings.translateModel,
         draftLlmConcurrencyInput: String(nextSettings.llmConcurrency),
+        draftTerminologyGroups: nextSettings.terminologyGroups,
         draftEnablePunctuationOptimization,
       },
     });
@@ -159,12 +166,29 @@ export function useSettingsController({
     draftTranslateBaseUrl,
     draftTranslateModel,
     draftLlmConcurrencyInput,
+    draftTerminologyGroups,
     pushToast,
   ]);
 
   return {
     openSettings,
     saveSettings,
+    saveTerminologyGroups: async (groups: SavedSettings["terminologyGroups"]) => {
+      const normalizedGroups = normalizeTerminologyGroups(groups);
+      const nextSettings: SavedSettings = {
+        ...settings,
+        terminologyGroups: normalizedGroups,
+      };
+      dispatch({ type: "set_settings", settings: nextSettings });
+      dispatch({ type: "set_draft", payload: { draftTerminologyGroups: normalizedGroups } });
+      try {
+        await saveAppSettingsApi(nextSettings);
+        pushToast("术语已保存", "success");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "术语保存失败";
+        pushToast(message, "error");
+      }
+    },
     testTranslateConnection: async () => {
       const apiKey = draftTranslateApiKey.trim();
       const baseUrl = draftTranslateBaseUrl.trim() || "https://api.openai.com/v1";

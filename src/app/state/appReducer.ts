@@ -4,6 +4,7 @@ import type { SubtitleSaveState, ToastState, UploadTab } from "../types";
 import { reduceQueueState } from "./queueReducer";
 import { reduceSettingsState } from "./settingsReducer";
 import { reduceSubtitleState } from "./subtitleReducer";
+import { createTerminologyGroup } from "../utils/terminology";
 
 export type AppState = {
   queue: QueueItem[];
@@ -23,6 +24,7 @@ export type AppState = {
   draftTranslateBaseUrl: string;
   draftTranslateModel: string;
   draftLlmConcurrencyInput: string;
+  draftTerminologyGroups: SavedSettings["terminologyGroups"];
   draftEnablePunctuationOptimization: boolean;
   youtubeUrl: string;
   youtubeQuality: string;
@@ -97,6 +99,7 @@ export type SettingsAction =
           | "draftTranslateBaseUrl"
           | "draftTranslateModel"
           | "draftLlmConcurrencyInput"
+          | "draftTerminologyGroups"
           | "draftEnablePunctuationOptimization"
         >
       >;
@@ -116,6 +119,7 @@ export const defaultSettings: SavedSettings = {
   translateBaseUrl: "https://api.openai.com/v1",
   translateModel: "gpt-4.1-mini",
   llmConcurrency: 4,
+  terminologyGroups: [createTerminologyGroup()],
   enablePunctuationOptimization: false,
 };
 
@@ -137,6 +141,7 @@ export const initialAppState: AppState = {
   draftTranslateBaseUrl: defaultSettings.translateBaseUrl,
   draftTranslateModel: defaultSettings.translateModel,
   draftLlmConcurrencyInput: String(defaultSettings.llmConcurrency),
+  draftTerminologyGroups: defaultSettings.terminologyGroups,
   draftEnablePunctuationOptimization: defaultSettings.enablePunctuationOptimization,
   youtubeUrl: "",
   youtubeQuality: "",

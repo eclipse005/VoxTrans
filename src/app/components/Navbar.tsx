@@ -1,10 +1,11 @@
-import { SettingsIcon } from "./Icons";
+import { BookIcon, SettingsIcon } from "./Icons";
 
 type NavbarProps = {
   onOpenSettings: () => void;
+  onOpenTerminology: () => void;
 };
 
-export default function Navbar({ onOpenSettings }: NavbarProps) {
+export default function Navbar({ onOpenSettings, onOpenTerminology }: NavbarProps) {
   return (
     <nav className="apple-navbar">
       <div className="apple-navbar-content">
@@ -13,6 +14,10 @@ export default function Navbar({ onOpenSettings }: NavbarProps) {
           <span className="app-version">v0.1.0</span>
         </h1>
         <div className="nav-buttons">
+          <button className="nav-button" onClick={onOpenTerminology}>
+            <BookIcon />
+            <span>术语</span>
+          </button>
           <button className="nav-button" onClick={onOpenSettings}>
             <SettingsIcon />
             <span>设置</span>
