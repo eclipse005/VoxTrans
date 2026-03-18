@@ -6,3 +6,21 @@ export async function saveAppSettings(settings: SavedSettings): Promise<void> {
     request: { settings },
   });
 }
+
+type TestTranslateLlmRequest = {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+};
+
+type TestTranslateLlmResponse = {
+  ok: boolean;
+  message: string;
+  model: string;
+};
+
+export async function testTranslateLlmConnection(
+  request: TestTranslateLlmRequest,
+): Promise<TestTranslateLlmResponse> {
+  return invoke<TestTranslateLlmResponse>("test_translate_llm", { request });
+}

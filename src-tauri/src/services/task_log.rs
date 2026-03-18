@@ -10,6 +10,7 @@ pub mod event {
 #[derive(Debug, Clone)]
 pub struct TaskLogTarget {
     pub task_id: String,
+    pub media_path: Option<String>,
     pub channel: String,
 }
 
@@ -17,7 +18,32 @@ impl TaskLogTarget {
     pub fn main(task_id: impl Into<String>) -> Self {
         Self {
             task_id: task_id.into(),
+            media_path: None,
             channel: "main".to_string(),
+        }
+    }
+
+    pub fn main_with_media(task_id: impl Into<String>, media_path: impl Into<String>) -> Self {
+        Self {
+            task_id: task_id.into(),
+            media_path: Some(media_path.into()),
+            channel: "main".to_string(),
+        }
+    }
+
+    pub fn llm_with_media(task_id: impl Into<String>, media_path: impl Into<String>) -> Self {
+        Self {
+            task_id: task_id.into(),
+            media_path: Some(media_path.into()),
+            channel: "llm".to_string(),
+        }
+    }
+
+    pub fn llm(task_id: impl Into<String>) -> Self {
+        Self {
+            task_id: task_id.into(),
+            media_path: None,
+            channel: "llm".to_string(),
         }
     }
 }
@@ -30,6 +56,24 @@ impl TaskLogger {
     pub fn main(task_id: impl Into<String>) -> Self {
         Self {
             target: TaskLogTarget::main(task_id),
+        }
+    }
+
+    pub fn main_with_media(task_id: impl Into<String>, media_path: impl Into<String>) -> Self {
+        Self {
+            target: TaskLogTarget::main_with_media(task_id, media_path),
+        }
+    }
+
+    pub fn llm_with_media(task_id: impl Into<String>, media_path: impl Into<String>) -> Self {
+        Self {
+            target: TaskLogTarget::llm_with_media(task_id, media_path),
+        }
+    }
+
+    pub fn llm(task_id: impl Into<String>) -> Self {
+        Self {
+            target: TaskLogTarget::llm(task_id),
         }
     }
 
@@ -51,6 +95,7 @@ pub fn append_event(
     let message = format_task_log_line(event_type, payload);
     crate::services::logs::append_task_log(crate::services::logs::AppendTaskLogRequest {
         task_id: target.task_id.clone(),
+        media_path: target.media_path.clone(),
         channel: target.channel.clone(),
         message,
     })

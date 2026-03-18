@@ -10,6 +10,7 @@ pub mod model;
 pub mod preferences;
 pub mod subtitle;
 pub mod system;
+pub mod translate;
 pub mod transcribe;
 pub mod transcription;
 pub mod workspace;

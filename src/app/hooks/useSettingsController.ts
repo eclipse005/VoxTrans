@@ -1,11 +1,18 @@
 import { useCallback } from "react";
-import { saveAppSettings as saveAppSettingsApi } from "../api/settings";
+import {
+  saveAppSettings as saveAppSettingsApi,
+  testTranslateLlmConnection,
+} from "../api/settings";
 import type { SavedSettings } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { ToastTone } from "../types";
 
 type DispatchState = (action: AppAction) => void;
-type PushToast = (message: string, tone?: ToastTone) => void;
+type PushToast = (
+  message: string,
+  tone?: ToastTone,
+  options?: { id?: number; sticky?: boolean; durationMs?: number },
+) => number;
 
 type UseSettingsControllerArgs = {
   settings: SavedSettings;
@@ -15,6 +22,10 @@ type UseSettingsControllerArgs = {
   draftAsrModel: SavedSettings["asrModel"];
   draftDemucsModel: SavedSettings["demucsModel"];
   draftEnableVocalSeparation: boolean;
+  draftTranslateApiKey: string;
+  draftTranslateBaseUrl: string;
+  draftTranslateModel: string;
+  draftEnablePunctuationOptimization: boolean;
   dispatch: DispatchState;
   pushToast: PushToast;
   refreshModelStatus: () => Promise<void>;
@@ -28,6 +39,10 @@ export function useSettingsController({
   draftAsrModel,
   draftDemucsModel,
   draftEnableVocalSeparation,
+  draftTranslateApiKey,
+  draftTranslateBaseUrl,
+  draftTranslateModel,
+  draftEnablePunctuationOptimization,
   dispatch,
   pushToast,
   refreshModelStatus,
@@ -43,6 +58,10 @@ export function useSettingsController({
         draftAsrModel: settings.asrModel,
         draftDemucsModel: settings.demucsModel,
         draftEnableVocalSeparation: settings.enableVocalSeparation,
+        draftTranslateApiKey: settings.translateApiKey,
+        draftTranslateBaseUrl: settings.translateBaseUrl,
+        draftTranslateModel: settings.translateModel,
+        draftEnablePunctuationOptimization: settings.enablePunctuationOptimization,
       },
     });
     dispatch({ type: "set_ui", payload: { showSettings: true } });
@@ -52,9 +71,13 @@ export function useSettingsController({
     settings.chunkTargetSeconds,
     settings.demucsModel,
     settings.enableVocalSeparation,
+    settings.enablePunctuationOptimization,
     settings.provider,
     settings.asrModel,
     settings.subtitleMaxWordsPerSegment,
+    settings.translateApiKey,
+    settings.translateBaseUrl,
+    settings.translateModel,
   ]);
 
   const saveSettings = useCallback(async () => {
@@ -79,6 +102,10 @@ export function useSettingsController({
       asrModel: draftAsrModel,
       demucsModel: draftDemucsModel,
       enableVocalSeparation: draftEnableVocalSeparation,
+      translateApiKey: draftTranslateApiKey.trim(),
+      translateBaseUrl: draftTranslateBaseUrl.trim() || "https://api.openai.com/v1",
+      translateModel: draftTranslateModel.trim() || "gpt-4.1-mini",
+      enablePunctuationOptimization: draftEnablePunctuationOptimization,
     } satisfies SavedSettings;
 
     dispatch({
@@ -93,6 +120,10 @@ export function useSettingsController({
         draftAsrModel,
         draftDemucsModel,
         draftEnableVocalSeparation,
+        draftTranslateApiKey: nextSettings.translateApiKey,
+        draftTranslateBaseUrl: nextSettings.translateBaseUrl,
+        draftTranslateModel: nextSettings.translateModel,
+        draftEnablePunctuationOptimization,
       },
     });
 
@@ -108,14 +139,44 @@ export function useSettingsController({
     draftChunkInput,
     draftDemucsModel,
     draftEnableVocalSeparation,
+    draftEnablePunctuationOptimization,
     draftProvider,
     draftAsrModel,
     draftSubtitleMaxWordsInput,
+    draftTranslateApiKey,
+    draftTranslateBaseUrl,
+    draftTranslateModel,
     pushToast,
   ]);
 
   return {
     openSettings,
     saveSettings,
+    testTranslateConnection: async () => {
+      const apiKey = draftTranslateApiKey.trim();
+      const baseUrl = draftTranslateBaseUrl.trim() || "https://api.openai.com/v1";
+      const configuredModel = draftTranslateModel.trim() || "gpt-4.1-mini";
+      if (!apiKey) {
+        pushToast("请先填写接口密钥", "error");
+        return;
+      }
+      const toastId = pushToast("正在测试 LLM 连通性...", "info", { sticky: true });
+      try {
+        const response = await testTranslateLlmConnection({
+          apiKey,
+          baseUrl,
+          model: configuredModel,
+        });
+        if (response.ok) {
+          const modelName = response.model?.trim() || configuredModel;
+          pushToast(`测试成功：模型 ${modelName} 可用`, "success", { id: toastId, durationMs: 2600 });
+          return;
+        }
+        pushToast(`测试失败：${response.message || "未知错误"}`, "error", { id: toastId, durationMs: 3000 });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "连通性测试失败";
+        pushToast(message, "error", { id: toastId, durationMs: 3000 });
+      }
+    },
   };
 }

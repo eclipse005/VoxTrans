@@ -33,6 +33,9 @@ function getTranscribeProcessingText(item: QueueItem): string {
     const percent = Math.max(0, Math.min(100, item.transcribeProgress || 0));
     return `人声分离中 ${percent}%`;
   }
+  if (item.transcribePhase === "punctuate") {
+    return "标点优化中";
+  }
   if (item.transcribeSegmentTotal > 1) {
     return `转录处理中 ${Math.min(item.transcribeSegmentCurrent || 0, item.transcribeSegmentTotal)}/${item.transcribeSegmentTotal}`;
   }

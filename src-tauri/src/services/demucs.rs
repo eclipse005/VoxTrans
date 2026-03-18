@@ -35,7 +35,7 @@ where
     F: FnMut(u32),
 {
     let started_at = std::time::Instant::now();
-    let logger = TaskLogger::main(request.task_id.clone());
+    let logger = TaskLogger::main_with_media(request.task_id.clone(), request.audio_path.clone());
     let demucs_model_dir = crate::services::model::resolve_engine_model_dir(
         crate::services::model::ModelTarget::Demucs,
     );

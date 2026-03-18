@@ -22,15 +22,20 @@ Current architecture:
 
 - `src/`
 - `src/app/`: UI components, reducer state, styles, app-level utilities
+- `src/app/api/`: frontend invoke/API wrappers for desktop commands
 - `src/app/hooks/`: workflow hooks for queue, subtitle, workspace, and persistence flows
+- `src/app/state/`: app/queue/settings/subtitle reducers and domain actions
 - `src/features/media/`: media task domain types and helpers
 - `src-tauri/src/commands/`: Tauri command entrypoints
+- `src-tauri/src/db/`: SQLite setup and migration wiring
 - `src-tauri/src/services/`: desktop-side business logic
 - `src-tauri/src/services/transcription/`: post-ASR punctuation/hotword/transcription pipeline
+- `src-tauri/src/services/translate/`: translation pipeline modules (LLM adapter/prompt/rules/validation)
+- `src-tauri/src/services/demucs/`: vocal separation services
 - `voxtrans-core/`: ASR/transcription core (Parakeet v2, SRT generation)
-- `model/`: local model files (not committed)
-- `runtime/`: local ONNX Runtime files (not committed)
-- `output/`: generated SRT outputs (not committed)
+- `model/`: local model files (not committed; may be absent before first setup)
+- `runtime/`: local ONNX Runtime files (not committed; may be absent before first setup)
+- `output/`: generated SRT outputs (not committed; may be absent before first export)
 
 ## Tech Stack
 

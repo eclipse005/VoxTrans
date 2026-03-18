@@ -8,6 +8,7 @@ type OpenTaskOutputDirRequest = {
 
 type OpenTaskLogDirRequest = {
   taskId: string;
+  mediaPath?: string;
 };
 
 export async function openTaskOutputDir(request: OpenTaskOutputDirRequest): Promise<void> {
@@ -20,6 +21,10 @@ export async function openTaskLogDir(request: OpenTaskLogDirRequest): Promise<vo
 
 export async function openOutputDir(): Promise<void> {
   await invoke("open_output_dir");
+}
+
+export async function openInExplorer(path: string): Promise<void> {
+  await invoke("open_in_explorer", { path });
 }
 
 export async function openModelDir(target: ModelTarget): Promise<void> {

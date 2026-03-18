@@ -500,7 +500,7 @@
   left: 6px;
   top: 6px;
   height: calc(100% - 12px);
-  width: calc((100% - 20px) / 2);
+  width: calc((100% - 12px - (var(--tab-count, 2) - 1) * 8px) / var(--tab-count, 2));
   border-radius: 8px;
   background-color: #fff;
   box-shadow: var(--apple-shadow-sm);

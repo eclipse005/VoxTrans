@@ -113,6 +113,7 @@ function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] 
     case "initializing":
     case "separating":
     case "recognizing":
+    case "punctuate":
     case "segment":
       return value;
     default:

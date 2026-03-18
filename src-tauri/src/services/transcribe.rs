@@ -73,7 +73,7 @@ pub fn transcribe_blocking<F>(
 where
     F: FnMut(usize, usize),
 {
-    let logger = TaskLogger::main(request.task_id.clone());
+    let logger = TaskLogger::main_with_media(request.task_id.clone(), request.audio_path.clone());
     append_transcribe_log(
         &logger,
         event::TRANSCRIBE_STARTED,
@@ -113,27 +113,32 @@ where
         options.model_dir = PathBuf::from(model_dir);
     }
 
-    let output =
-        voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
-            on_progress(current, total);
-        })
-        .map_err(|err| {
-            format!(
-                "{} (audio: {}, modelDir: {})",
-                err,
-                options.audio_path.display(),
-                options.model_dir.display()
-            )
-        });
+    let output = voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
+        on_progress(current, total);
+    });
     let output = match output {
         Ok(v) => v,
-        Err(err) => {
+        Err(raw_err) => {
+            let technical = format!(
+                "{} (audio: {}, modelDir: {})",
+                raw_err,
+                options.audio_path.display(),
+                options.model_dir.display()
+            );
+            let user_message = map_transcribe_error(
+                &technical,
+                &request.provider,
+                request.chunk_target_seconds,
+            );
             append_transcribe_log(
                 &logger,
                 event::TRANSCRIBE_FAILED,
-                json!({ "error": err }),
+                json!({
+                    "error": user_message,
+                    "detail": technical,
+                }),
             );
-            return Err(err);
+            return Err(user_message);
         }
     };
     let words = normalize_word_tokens(words_from_timed_tokens(&output.tokens));
@@ -252,4 +257,29 @@ fn calculate_rtf_x(audio_duration_sec: f64, transcribe_elapsed_sec: f64) -> f64 
         return 0.0;
     }
     audio_duration_sec / transcribe_elapsed_sec
+}
+
+fn map_transcribe_error(raw: &str, provider: &str, chunk_target_seconds: u32) -> String {
+    let lowered = raw.to_lowercase();
+    let directml_oom =
+        lowered.contains("887a0006")
+            || lowered.contains("dmlexecutionprovider")
+            || lowered.contains("onnx runtime error")
+                && lowered.contains("gpu")
+                && lowered.contains("invalid")
+            || lowered.contains("lstm node");
+
+    if directml_oom {
+        return format!(
+            "转录失败：显存/图形资源不足（{}）。请在设置中将“分段时长”调小后重试（当前 {} 秒，建议 60-120 秒）。",
+            if provider.eq_ignore_ascii_case("directml") {
+                "DirectML"
+            } else {
+                "GPU"
+            },
+            chunk_target_seconds.clamp(30, 300)
+        );
+    }
+
+    raw.to_string()
 }

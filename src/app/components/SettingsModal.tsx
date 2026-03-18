@@ -17,6 +17,10 @@ type SettingsModalProps = {
   draftAsrModel: AsrModel;
   draftDemucsModel: DemucsModel;
   draftEnableVocalSeparation: boolean;
+  draftTranslateApiKey: string;
+  draftTranslateBaseUrl: string;
+  draftTranslateModel: string;
+  draftEnablePunctuationOptimization: boolean;
   asrStatus: ModelStatusResponse | null;
   demucsStatus: ModelStatusResponse | null;
   onClose: () => void;
@@ -27,6 +31,11 @@ type SettingsModalProps = {
   onDraftAsrModelChange: (value: AsrModel) => void;
   onDraftDemucsModelChange: (value: DemucsModel) => void;
   onDraftEnableVocalSeparationChange: (value: boolean) => void;
+  onDraftTranslateApiKeyChange: (value: string) => void;
+  onDraftTranslateBaseUrlChange: (value: string) => void;
+  onDraftTranslateModelChange: (value: string) => void;
+  onDraftEnablePunctuationOptimizationChange: (value: boolean) => void;
+  onTestTranslateConnection: () => void | Promise<void>;
   onOpenModelDir: (target: "asr" | "demucs") => void | Promise<void>;
   onStartModelDownload: (target: "asr" | "demucs") => void | Promise<void>;
   onCancelModelDownload: (target: "asr" | "demucs") => void | Promise<void>;
@@ -76,6 +85,10 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftAsrModel,
     draftDemucsModel,
     draftEnableVocalSeparation,
+    draftTranslateApiKey,
+    draftTranslateBaseUrl,
+    draftTranslateModel,
+    draftEnablePunctuationOptimization,
     asrStatus,
     demucsStatus,
     onClose,
@@ -86,12 +99,17 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftAsrModelChange,
     onDraftDemucsModelChange,
     onDraftEnableVocalSeparationChange,
+    onDraftTranslateApiKeyChange,
+    onDraftTranslateBaseUrlChange,
+    onDraftTranslateModelChange,
+    onDraftEnablePunctuationOptimizationChange,
+    onTestTranslateConnection,
     onOpenModelDir,
     onStartModelDownload,
     onCancelModelDownload,
   } = props;
 
-  const [activeTab, setActiveTab] = useState<"general" | "models">("general");
+  const [activeTab, setActiveTab] = useState<"transcribe" | "translate" | "models">("transcribe");
   const dialogRef = useDialogA11y(visible, onClose);
   if (!visible) return null;
 
@@ -101,7 +119,7 @@ export default function SettingsModal(props: SettingsModalProps) {
   const demucsReady = isReady(demucsStatus);
   const asrPercent = progressPercent(asrStatus);
   const demucsPercent = progressPercent(demucsStatus);
-  const tabIndex = activeTab === "general" ? 0 : 1;
+  const tabIndex = activeTab === "transcribe" ? 0 : activeTab === "translate" ? 1 : 2;
 
   const asrSizeText = formatModelSizeText(asrStatus);
   const demucsSizeText = formatModelSizeText(demucsStatus);
@@ -120,25 +138,32 @@ export default function SettingsModal(props: SettingsModalProps) {
         <div className="settings-header">
           <h3 id="settings-modal-title" className="apple-heading-medium">设置</h3>
         </div>
-        <div className="settings-tabs-nav" style={{ ["--tab-index" as string]: tabIndex }}>
+        <div className="settings-tabs-nav" style={{ ["--tab-index" as string]: tabIndex, ["--tab-count" as string]: 3 }}>
           <div className="settings-tab-indicator" />
           <button
             type="button"
-            className={`settings-tab-btn ${activeTab === "general" ? "active" : ""}`}
-            onClick={() => setActiveTab("general")}
+            className={`settings-tab-btn ${activeTab === "transcribe" ? "active" : ""}`}
+            onClick={() => setActiveTab("transcribe")}
           >
-            常规
+            转录
+          </button>
+          <button
+            type="button"
+            className={`settings-tab-btn ${activeTab === "translate" ? "active" : ""}`}
+            onClick={() => setActiveTab("translate")}
+          >
+            翻译
           </button>
           <button
             type="button"
             className={`settings-tab-btn ${activeTab === "models" ? "active" : ""}`}
             onClick={() => setActiveTab("models")}
           >
-            模型中心
+            模型
           </button>
         </div>
         <div className="settings-body">
-          {activeTab === "general" ? (
+          {activeTab === "transcribe" ? (
             <div className="settings-tab-content">
               <div className="settings-section">
                 <h3 className="apple-heading-small">转录参数</h3>
@@ -193,6 +218,66 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <div className="toggle-label">
                       <span className="toggle-title">人声分离</span>
                       <span className="toggle-desc">背景吵杂时请使用，提高转录准确率</span>
+                    </div>
+                    <span className="toggle-switch" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          ) : activeTab === "translate" ? (
+            <div className="settings-tab-content">
+              <div className="settings-section">
+                <h3 className="apple-heading-small">翻译配置</h3>
+                <div className="api-config-form">
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>接口密钥</label>
+                      <input
+                        className="apple-input"
+                        type="password"
+                        value={draftTranslateApiKey}
+                        onChange={(e) => onDraftTranslateApiKeyChange(e.target.value)}
+                        placeholder="sk-..."
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>接口地址</label>
+                      <input
+                        className="apple-input"
+                        value={draftTranslateBaseUrl}
+                        onChange={(e) => onDraftTranslateBaseUrlChange(e.target.value)}
+                        placeholder="https://api.openai.com/v1"
+                      />
+                    </div>
+                    <div className="form-group llm-model-field">
+                      <label>模型名称</label>
+                      <div className="llm-model-test-row">
+                        <input
+                          className="apple-input llm-model-input"
+                          value={draftTranslateModel}
+                          onChange={(e) => onDraftTranslateModelChange(e.target.value)}
+                          placeholder="gpt-4.1-mini"
+                        />
+                        <button
+                          type="button"
+                          className="nav-button llm-test-btn"
+                          onClick={() => { void onTestTranslateConnection(); }}
+                        >
+                          测试
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <label className="setting-toggle" htmlFor="enable-punctuation-optimization">
+                    <input
+                      id="enable-punctuation-optimization"
+                      type="checkbox"
+                      checked={draftEnablePunctuationOptimization}
+                      onChange={(e) => onDraftEnablePunctuationOptimizationChange(e.target.checked)}
+                    />
+                    <div className="toggle-label">
+                      <span className="toggle-title">标点符号优化</span>
+                      <span className="toggle-desc">使用 LLM 优化大小写标点符号，有益于断句。</span>
                     </div>
                     <span className="toggle-switch" />
                   </label>

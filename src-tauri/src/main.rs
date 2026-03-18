@@ -34,6 +34,8 @@ fn main() {
             commands::subtitle::load_subtitle_editor,
             commands::subtitle::save_subtitle_editor,
             commands::transcription::run_post_asr_pipeline,
+            commands::translate::run_translate_pipeline,
+            commands::translate::test_translate_llm,
             commands::file::get_file_size,
             commands::system::open_in_explorer,
             commands::system::open_output_dir,

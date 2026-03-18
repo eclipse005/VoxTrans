@@ -53,7 +53,7 @@ pub fn normalize_word_tokens(raw_words: Vec<WordToken>) -> Vec<WordToken> {
             word: text,
         });
     }
-    out
+    merge_compound_abbreviation_tokens(out)
 }
 
 pub fn split_english_segments(
@@ -86,6 +86,47 @@ fn is_standalone_punctuation_token(token: &str) -> bool {
     token
         .chars()
         .all(|c| !c.is_alphanumeric() && !c.is_whitespace())
+}
+
+fn merge_compound_abbreviation_tokens(words: Vec<WordToken>) -> Vec<WordToken> {
+    if words.len() < 2 {
+        return words;
+    }
+
+    let mut out: Vec<WordToken> = Vec::with_capacity(words.len());
+    let mut idx = 0usize;
+    while idx < words.len() {
+        if idx + 1 < words.len() {
+            let left = words[idx].word.trim();
+            let right = words[idx + 1].word.trim();
+            if should_merge_abbreviation_pair(left, right) {
+                out.push(WordToken {
+                    start: words[idx].start,
+                    end: words[idx + 1].end,
+                    word: format!("{left}{right}"),
+                });
+                idx += 2;
+                continue;
+            }
+        }
+
+        out.push(words[idx].clone());
+        idx += 1;
+    }
+
+    out
+}
+
+fn should_merge_abbreviation_pair(left: &str, right: &str) -> bool {
+    if left.len() != 1 || !left.chars().all(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    let l = left.to_ascii_lowercase();
+    let r = right.to_ascii_lowercase();
+    matches!(
+        (l.as_str(), r.as_str()),
+        ("a", ".m.") | ("p", ".m.") | ("u", ".s.") | ("u", ".k.")
+    )
 }
 
 fn round_millis(value: f64) -> f64 {

@@ -11,11 +11,15 @@ export type SavedSettings = {
   asrModel: AsrModel;
   demucsModel: DemucsModel;
   enableVocalSeparation: boolean;
+  translateApiKey: string;
+  translateBaseUrl: string;
+  translateModel: string;
+  enablePunctuationOptimization: boolean;
 };
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
-export type TranscribePhase = "initializing" | "separating" | "recognizing" | "segment";
+export type TranscribePhase = "initializing" | "separating" | "recognizing" | "punctuate" | "segment";
 
 export type SubtitleCue = {
   id: string;

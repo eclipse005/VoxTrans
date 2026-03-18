@@ -14,6 +14,7 @@ pub mod subtitle;
 pub mod system;
 pub mod task_log;
 pub mod task_path;
+pub mod translate;
 pub mod transcribe;
 pub mod transcription;
 pub mod workspace;

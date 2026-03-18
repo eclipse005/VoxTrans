@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { clearMainTaskLogs, readMainTaskLog } from "../api/logs";
+import { clearTaskLogs, readTaskLog } from "../api/logs";
 import { openTaskLogDir } from "../api/system";
 import type { QueueItem } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
@@ -11,6 +11,7 @@ type PushToast = (message: string, tone?: ToastTone) => void;
 type TaskLogContext = {
   taskId: string;
   taskName: string;
+  mediaPath: string;
 };
 
 type UseTaskLogsArgs = {
@@ -29,13 +30,16 @@ export function useTaskLogs({
   const [logTaskContext, setLogTaskContext] = useState<TaskLogContext | null>(null);
   const [logContent, setLogContent] = useState("");
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [logChannel, setLogChannel] = useState<"main" | "llm">("main");
 
   const loadLogs = useCallback(async () => {
     if (!logTaskContext) return;
     setLoadingLogs(true);
     try {
-      const content = await readMainTaskLog({
+      const content = await readTaskLog({
         taskId: logTaskContext.taskId,
+        mediaPath: logTaskContext.mediaPath,
+        channel: logChannel,
       });
       setLogContent(content || "");
     } catch (error) {
@@ -44,7 +48,7 @@ export function useTaskLogs({
     } finally {
       setLoadingLogs(false);
     }
-  }, [logTaskContext, pushToast]);
+  }, [logTaskContext, logChannel, pushToast]);
 
   const openLogs = useCallback(() => {
     if (!activeQueueItem) {
@@ -54,7 +58,9 @@ export function useTaskLogs({
     setLogTaskContext({
       taskId: activeQueueItem.id,
       taskName: activeQueueItem.name,
+      mediaPath: activeQueueItem.path,
     });
+    setLogChannel("main");
     setLogContent("");
     dispatch({ type: "set_ui", payload: { showLogs: true } });
   }, [activeQueueItem, dispatch, pushToast]);
@@ -62,21 +68,24 @@ export function useTaskLogs({
   const clearLogs = useCallback(async () => {
     if (!logTaskContext) return;
     try {
-      await clearMainTaskLogs({
+      await clearTaskLogs({
         taskId: logTaskContext.taskId,
+        mediaPath: logTaskContext.mediaPath,
+        channel: logChannel,
       });
       setLogContent("");
-      pushToast("日志已清空", "success");
+      pushToast(`${logChannel.toUpperCase()} 日志已清空`, "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : "清空日志失败";
       pushToast(message, "error");
     }
-  }, [logTaskContext, pushToast]);
+  }, [logChannel, logTaskContext, pushToast]);
 
   const openLogDir = useCallback(async () => {
     try {
       await openTaskLogDir({
         taskId: logTaskContext?.taskId ?? "",
+        mediaPath: logTaskContext?.mediaPath ?? "",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "打开日志目录失败";
@@ -94,9 +103,11 @@ export function useTaskLogs({
   return {
     logTaskContext,
     logContent,
+    logChannel,
     loadingLogs,
     taskName,
     loadLogs,
+    setLogChannel,
     openLogs,
     clearLogs,
     openLogDir,

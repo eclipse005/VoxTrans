@@ -7,6 +7,10 @@ const KEY_SUBTITLE_MAX_WORDS_PER_SEGMENT: &str = "settings.subtitleMaxWordsPerSe
 const KEY_ASR_MODEL: &str = "settings.asrModel";
 const KEY_DEMUCS_MODEL: &str = "settings.demucsModel";
 const KEY_ENABLE_VOCAL_SEPARATION: &str = "settings.enableVocalSeparation";
+const KEY_TRANSLATE_API_KEY: &str = "settings.translateApiKey";
+const KEY_TRANSLATE_BASE_URL: &str = "settings.translateBaseUrl";
+const KEY_TRANSLATE_MODEL: &str = "settings.translateModel";
+const KEY_ENABLE_PUNCTUATION_OPTIMIZATION: &str = "settings.enablePunctuationOptimization";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,6 +21,10 @@ pub struct SavedSettings {
     pub asr_model: String,
     pub demucs_model: String,
     pub enable_vocal_separation: bool,
+    pub translate_api_key: String,
+    pub translate_base_url: String,
+    pub translate_model: String,
+    pub enable_punctuation_optimization: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -74,6 +82,34 @@ pub async fn save_app_settings(
         },
     )
     .await?;
+    set_setting(
+        &mut tx,
+        KEY_TRANSLATE_API_KEY,
+        request.settings.translate_api_key.trim(),
+    )
+    .await?;
+    set_setting(
+        &mut tx,
+        KEY_TRANSLATE_BASE_URL,
+        request.settings.translate_base_url.trim(),
+    )
+    .await?;
+    set_setting(
+        &mut tx,
+        KEY_TRANSLATE_MODEL,
+        request.settings.translate_model.trim(),
+    )
+    .await?;
+    set_setting(
+        &mut tx,
+        KEY_ENABLE_PUNCTUATION_OPTIMIZATION,
+        if request.settings.enable_punctuation_optimization {
+            "1"
+        } else {
+            "0"
+        },
+    )
+    .await?;
     tx.commit().await.map_err(|e| e.to_string())
 }
 
@@ -102,6 +138,21 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         .await?
         .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
         .unwrap_or(false);
+    let translate_api_key = get_setting(pool, KEY_TRANSLATE_API_KEY)
+        .await?
+        .unwrap_or_default();
+    let translate_base_url = get_setting(pool, KEY_TRANSLATE_BASE_URL)
+        .await?
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+    let translate_model = get_setting(pool, KEY_TRANSLATE_MODEL)
+        .await?
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "gpt-4.1-mini".to_string());
+    let enable_punctuation_optimization = get_setting(pool, KEY_ENABLE_PUNCTUATION_OPTIMIZATION)
+        .await?
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
+        .unwrap_or(false);
     Ok(SavedSettings {
         provider,
         chunk_target_seconds,
@@ -109,6 +160,10 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         asr_model,
         demucs_model,
         enable_vocal_separation,
+        translate_api_key,
+        translate_base_url,
+        translate_model,
+        enable_punctuation_optimization,
     })
 }
 

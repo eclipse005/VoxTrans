@@ -30,6 +30,12 @@ export function useAppPersistence(dispatch: DispatchState) {
           ? res.settings.demucsModel as DemucsModel
           : "htdemucs_ft";
         const enableVocalSeparation = Boolean(res.settings.enableVocalSeparation);
+        const translateApiKey = String(res.settings.translateApiKey ?? "");
+        const translateBaseUrl = String(res.settings.translateBaseUrl ?? "").trim()
+          || "https://api.openai.com/v1";
+        const translateModel = String(res.settings.translateModel ?? "").trim()
+          || "gpt-4.1-mini";
+        const enablePunctuationOptimization = Boolean(res.settings.enablePunctuationOptimization);
 
         dispatch({
           type: "set_settings",
@@ -40,6 +46,10 @@ export function useAppPersistence(dispatch: DispatchState) {
             asrModel,
             demucsModel,
             enableVocalSeparation,
+            translateApiKey,
+            translateBaseUrl,
+            translateModel,
+            enablePunctuationOptimization,
           },
         });
         dispatch({
@@ -51,6 +61,10 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftAsrModel: asrModel,
             draftDemucsModel: demucsModel,
             draftEnableVocalSeparation: enableVocalSeparation,
+            draftTranslateApiKey: translateApiKey,
+            draftTranslateBaseUrl: translateBaseUrl,
+            draftTranslateModel: translateModel,
+            draftEnablePunctuationOptimization: enablePunctuationOptimization,
           },
         });
       } catch {

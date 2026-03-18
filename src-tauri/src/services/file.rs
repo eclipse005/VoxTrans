@@ -8,6 +8,8 @@ use std::path::PathBuf;
 pub struct SaveSrtRequest {
     #[serde(default)]
     pub task_id: Option<String>,
+    #[serde(default)]
+    pub media_path: Option<String>,
     pub output_path: String,
     pub content: String,
 }
@@ -24,8 +26,13 @@ pub struct ExportSrtRequest {
 
 pub fn save_srt(request: SaveSrtRequest) -> Result<(), String> {
     let started_at = std::time::Instant::now();
-    let logger = match &request.task_id {
-        Some(task_id) if !task_id.trim().is_empty() => Some(TaskLogger::main(task_id.clone())),
+    let logger = match (&request.task_id, &request.media_path) {
+        (Some(task_id), Some(media_path))
+            if !task_id.trim().is_empty() && !media_path.trim().is_empty() =>
+        {
+            Some(TaskLogger::main_with_media(task_id.clone(), media_path.clone()))
+        }
+        (Some(task_id), _) if !task_id.trim().is_empty() => Some(TaskLogger::main(task_id.clone())),
         _ => None,
     };
     if let Some(parent) = std::path::Path::new(&request.output_path).parent() {

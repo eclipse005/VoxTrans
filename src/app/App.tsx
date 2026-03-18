@@ -33,6 +33,10 @@ function App() {
     draftAsrModel,
     draftDemucsModel,
     draftEnableVocalSeparation,
+    draftTranslateApiKey,
+    draftTranslateBaseUrl,
+    draftTranslateModel,
+    draftEnablePunctuationOptimization,
     youtubeUrl,
     toast,
     subtitleTaskId,
@@ -108,8 +112,10 @@ function App() {
   const {
     taskName: logTaskName,
     logContent,
+    logChannel,
     loadingLogs,
     loadLogs,
+    setLogChannel,
     openLogs,
     clearLogs,
     openLogDir,
@@ -122,6 +128,7 @@ function App() {
   const {
     openSettings,
     saveSettings,
+    testTranslateConnection,
   } = useSettingsController({
     settings,
     draftProvider,
@@ -130,6 +137,10 @@ function App() {
     draftAsrModel,
     draftDemucsModel,
     draftEnableVocalSeparation,
+    draftTranslateApiKey,
+    draftTranslateBaseUrl,
+    draftTranslateModel,
+    draftEnablePunctuationOptimization,
     dispatch,
     pushToast,
     refreshModelStatus,
@@ -217,6 +228,10 @@ function App() {
         draftAsrModel={draftAsrModel}
         draftDemucsModel={draftDemucsModel}
         draftEnableVocalSeparation={draftEnableVocalSeparation}
+        draftTranslateApiKey={draftTranslateApiKey}
+        draftTranslateBaseUrl={draftTranslateBaseUrl}
+        draftTranslateModel={draftTranslateModel}
+        draftEnablePunctuationOptimization={draftEnablePunctuationOptimization}
         asrStatus={asrStatus}
         demucsStatus={demucsStatus}
         onClose={() => dispatch({ type: "set_ui", payload: { showSettings: false } })}
@@ -227,6 +242,11 @@ function App() {
         onDraftAsrModelChange={(value) => dispatch({ type: "set_draft", payload: { draftAsrModel: value } })}
         onDraftDemucsModelChange={(value) => dispatch({ type: "set_draft", payload: { draftDemucsModel: value } })}
         onDraftEnableVocalSeparationChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableVocalSeparation: value } })}
+        onDraftTranslateApiKeyChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateApiKey: value } })}
+        onDraftTranslateBaseUrlChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateBaseUrl: value } })}
+        onDraftTranslateModelChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateModel: value } })}
+        onDraftEnablePunctuationOptimizationChange={(value) => dispatch({ type: "set_draft", payload: { draftEnablePunctuationOptimization: value } })}
+        onTestTranslateConnection={testTranslateConnection}
         onOpenModelDir={openModelDir}
         onStartModelDownload={startModelDownload}
         onCancelModelDownload={cancelModelDownload}
@@ -237,6 +257,8 @@ function App() {
         loading={loadingLogs}
         taskName={logTaskName}
         content={logContent}
+        channel={logChannel}
+        onChannelChange={setLogChannel}
         onClose={() => dispatch({ type: "set_ui", payload: { showLogs: false } })}
         onRefresh={loadLogs}
         onClear={clearLogs}

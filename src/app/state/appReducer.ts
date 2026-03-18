@@ -19,6 +19,10 @@ export type AppState = {
   draftAsrModel: SavedSettings["asrModel"];
   draftDemucsModel: SavedSettings["demucsModel"];
   draftEnableVocalSeparation: boolean;
+  draftTranslateApiKey: string;
+  draftTranslateBaseUrl: string;
+  draftTranslateModel: string;
+  draftEnablePunctuationOptimization: boolean;
   youtubeUrl: string;
   youtubeQuality: string;
   toast: ToastState | null;
@@ -88,6 +92,10 @@ export type SettingsAction =
           | "draftAsrModel"
           | "draftDemucsModel"
           | "draftEnableVocalSeparation"
+          | "draftTranslateApiKey"
+          | "draftTranslateBaseUrl"
+          | "draftTranslateModel"
+          | "draftEnablePunctuationOptimization"
         >
       >;
     }
@@ -102,6 +110,10 @@ export const defaultSettings: SavedSettings = {
   asrModel: "parakeet-tdt-0.6b-v2",
   demucsModel: "htdemucs_ft",
   enableVocalSeparation: false,
+  translateApiKey: "",
+  translateBaseUrl: "https://api.openai.com/v1",
+  translateModel: "gpt-4.1-mini",
+  enablePunctuationOptimization: false,
 };
 
 export const initialAppState: AppState = {
@@ -118,6 +130,10 @@ export const initialAppState: AppState = {
   draftAsrModel: defaultSettings.asrModel,
   draftDemucsModel: defaultSettings.demucsModel,
   draftEnableVocalSeparation: defaultSettings.enableVocalSeparation,
+  draftTranslateApiKey: defaultSettings.translateApiKey,
+  draftTranslateBaseUrl: defaultSettings.translateBaseUrl,
+  draftTranslateModel: defaultSettings.translateModel,
+  draftEnablePunctuationOptimization: defaultSettings.enablePunctuationOptimization,
   youtubeUrl: "",
   youtubeQuality: "",
   toast: null,

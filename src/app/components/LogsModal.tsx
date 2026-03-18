@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FolderIcon, RefreshIcon, TrashIcon } from "./Icons";
 import { useDialogA11y } from "./useDialogA11y";
 
@@ -7,6 +7,8 @@ type LogsModalProps = {
   loading: boolean;
   taskName: string;
   content: string;
+  channel: "main" | "llm";
+  onChannelChange: (channel: "main" | "llm") => void;
   onClose: () => void;
   onRefresh: () => void | Promise<void>;
   onClear: () => void | Promise<void>;
@@ -18,6 +20,8 @@ export default function LogsModal({
   loading,
   taskName,
   content,
+  channel,
+  onChannelChange,
   onClose,
   onRefresh,
   onClear,
@@ -27,6 +31,8 @@ export default function LogsModal({
   const entries = parseLogEntries(content);
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
   const [isMaximized, setIsMaximized] = useState(false);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
   if (!visible) return null;
 
   return (
@@ -62,6 +68,22 @@ export default function LogsModal({
           <div className="logs-title-block">
             <div className="logs-title-row">
               <h3 id="logs-modal-title" className="apple-heading-small">运行日志</h3>
+              <div className="logs-channel-toggle" role="tablist" aria-label="日志频道">
+                <button
+                  type="button"
+                  className={`logs-channel-btn ${channel === "main" ? "active" : ""}`}
+                  onClick={() => onChannelChange("main")}
+                >
+                  MAIN
+                </button>
+                <button
+                  type="button"
+                  className={`logs-channel-btn ${channel === "llm" ? "active" : ""}`}
+                  onClick={() => onChannelChange("llm")}
+                >
+                  LLM
+                </button>
+              </div>
               <div className="logs-actions">
                 <button
                   className="file-list-icon-btn"
@@ -96,7 +118,10 @@ export default function LogsModal({
           </div>
         </div>
 
-        <div className="logs-body">
+        <div
+          ref={bodyRef}
+          className="logs-body"
+        >
           {loading ? <div className="logs-empty">加载中...</div> : null}
           {!loading && content.trim().length === 0 ? <div className="logs-empty">暂无日志</div> : null}
           {!loading && content.trim().length > 0 ? (
@@ -130,6 +155,21 @@ export default function LogsModal({
                 );
               })}
             </div>
+          ) : null}
+          {!loading && content.trim().length > 0 ? (
+            <button
+              type="button"
+              className="logs-jump-bottom"
+              title="跳转到底部"
+              aria-label="跳转到底部"
+              onClick={() => {
+                const node = bodyRef.current;
+                if (!node) return;
+                node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
+              }}
+            >
+              ▼
+            </button>
           ) : null}
         </div>
       </div>

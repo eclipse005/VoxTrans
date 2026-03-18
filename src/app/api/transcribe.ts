@@ -36,6 +36,10 @@ type RunPostAsrPipelineRequest = {
   audioPath: string;
   words: WordToken[];
   subtitleMaxWordsPerSegment: number;
+  enablePunctuationOptimization: boolean;
+  translateApiKey: string;
+  translateBaseUrl: string;
+  translateModel: string;
 };
 
 export type PostAsrPipelineResponse = {
@@ -49,6 +53,7 @@ export type PostAsrPipelineResponse = {
 
 type SaveSrtRequest = {
   taskId?: string;
+  mediaPath?: string;
   outputPath: string;
   content: string;
 };

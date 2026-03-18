@@ -167,11 +167,16 @@ export function useQueueRunner({
         audioPath: item.path,
         words: response.words,
         subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
+        enablePunctuationOptimization: settings.enablePunctuationOptimization,
+        translateApiKey: settings.translateApiKey,
+        translateBaseUrl: settings.translateBaseUrl,
+        translateModel: settings.translateModel,
       });
       if (!isTaskPresent(item.id)) return;
 
       await saveSrt({
         taskId: item.id,
+        mediaPath: item.path,
         outputPath: processed.srtOutputPath,
         content: processed.srt,
       });
@@ -200,8 +205,12 @@ export function useQueueRunner({
     settings.chunkTargetSeconds,
     settings.demucsModel,
     settings.enableVocalSeparation,
+    settings.enablePunctuationOptimization,
     settings.provider,
     settings.subtitleMaxWordsPerSegment,
+    settings.translateApiKey,
+    settings.translateBaseUrl,
+    settings.translateModel,
   ]);
 
   return {

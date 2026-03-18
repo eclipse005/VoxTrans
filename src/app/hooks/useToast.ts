@@ -3,6 +3,11 @@ import type { AppAction } from "../state/appReducer";
 import type { ToastTone } from "../types";
 
 type DispatchState = (action: AppAction) => void;
+type PushToastOptions = {
+  id?: number;
+  sticky?: boolean;
+  durationMs?: number;
+};
 
 export function useToast(dispatch: DispatchState) {
   const toastTimerRef = useRef<number | null>(null);
@@ -15,16 +20,28 @@ export function useToast(dispatch: DispatchState) {
     };
   }, []);
 
-  const pushToast = useCallback((message: string, tone: ToastTone = "info") => {
+  const pushToast = useCallback((
+    message: string,
+    tone: ToastTone = "info",
+    options: PushToastOptions = {},
+  ) => {
     if (toastTimerRef.current) {
       window.clearTimeout(toastTimerRef.current);
     }
-    const id = Date.now();
+    const id = options.id ?? Date.now();
     dispatch({ type: "set_toast", toast: { id, message, tone } });
-    toastTimerRef.current = window.setTimeout(() => {
-      dispatch({ type: "set_toast", toast: null });
+
+    if (!options.sticky) {
+      const duration = Number.isFinite(options.durationMs) ? Math.max(600, Math.round(options.durationMs ?? 2200)) : 2200;
+      toastTimerRef.current = window.setTimeout(() => {
+        dispatch({ type: "set_toast", toast: null });
+        toastTimerRef.current = null;
+      }, duration);
+    } else {
       toastTimerRef.current = null;
-    }, 2200);
+    }
+
+    return id;
   }, [dispatch]);
 
   return { pushToast };
