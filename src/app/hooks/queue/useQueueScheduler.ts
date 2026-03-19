@@ -132,7 +132,7 @@ export function useQueueScheduler({
 
   const processSingleTranscribeTranslate = useCallback(async (item: QueueItem) => {
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
-    const mode = item.transcribeStatus === "done" ? "translate_only" : "transcribe_translate";
+    const mode = resolveTranslateMode(item);
     const ok = await enqueueForMode(item, mode);
     if (!ok) return;
     if (queueBusy) {
@@ -171,4 +171,28 @@ export function useQueueScheduler({
     clearQueue,
     removeItem,
   };
+}
+
+function resolveTranslateMode(item: QueueItem): QueueRunMode {
+  const segments = parseSubtitleSegments(item.subtitleSegmentsJson);
+  const hasSource = segments.some((segment) => segment.sourceText.trim().length > 0);
+  const hasTranslated = segments.some((segment) => segment.translatedText.trim().length > 0);
+  if (hasSource && !hasTranslated) {
+    return "translate_only";
+  }
+  return "transcribe_translate";
+}
+
+function parseSubtitleSegments(raw?: string): Array<{ sourceText: string; translatedText: string }> {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((segment) => ({
+      sourceText: typeof segment?.sourceText === "string" ? segment.sourceText : "",
+      translatedText: typeof segment?.translatedText === "string" ? segment.translatedText : "",
+    }));
+  } catch {
+    return [];
+  }
 }

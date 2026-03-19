@@ -32,3 +32,146 @@ pub fn build_punctuation_user_prompt(input: &PunctuationPromptInput) -> String {
     });
     payload.to_string()
 }
+
+#[derive(Debug, Clone)]
+pub struct TranslatePromptSegmentInput {
+    pub index: usize,
+    pub source_text: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TranslatePromptInput {
+    pub source_lang: String,
+    pub target_lang: String,
+    pub previous_context: String,
+    pub next_context: String,
+    pub topic_summary: String,
+    pub tone_strategy: String,
+    pub terminology_entries: Vec<TranslateTerminologyPromptEntry>,
+    pub segments: Vec<TranslatePromptSegmentInput>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TranslateTerminologyPromptEntry {
+    pub source: String,
+    pub target: String,
+    pub note: String,
+    pub group: String,
+}
+
+pub fn build_translate_system_prompt() -> String {
+    "You are a professional subtitle translator. Translate faithfully and naturally. Keep speaker tone and register. Do not add explanations. Output JSON only in this shape: {\"segments\":[{\"index\":0,\"translatedText\":\"...\"}]}".to_string()
+}
+
+#[derive(Debug, Clone)]
+pub struct TranslateStylePromptInput {
+    pub source_lang: String,
+    pub target_lang: String,
+    pub context_head: String,
+    pub context_middle: String,
+    pub context_tail: String,
+    pub terminology_entries: Vec<TranslateTerminologyPromptEntry>,
+}
+
+pub fn build_translate_style_system_prompt() -> String {
+    "You are a subtitle localization strategy planner. Return JSON only with concise strategy. Output shape: {\"topicSummary\":\"...\",\"toneStrategy\":\"...\"}".to_string()
+}
+
+pub fn build_translate_style_user_prompt(input: &TranslateStylePromptInput) -> String {
+    let glossary = input
+        .terminology_entries
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "source": entry.source,
+                "target": entry.target,
+                "note": entry.note,
+                "group": entry.group
+            })
+        })
+        .collect::<Vec<_>>();
+    let payload = serde_json::json!({
+        "task": "subtitle_translation_style_planning",
+        "sourceLang": input.source_lang,
+        "targetLang": input.target_lang,
+        "context": {
+            "head": input.context_head,
+            "middle": input.context_middle,
+            "tail": input.context_tail
+        },
+        "terminology": glossary,
+        "requirements": [
+            "topicSummary must be 1-2 short sentences",
+            "toneStrategy must be concrete and subtitle-friendly",
+            "respect provided terminology"
+        ],
+        "output": {
+            "json_only": true,
+            "schema": {
+                "topicSummary": "string",
+                "toneStrategy": "string"
+            }
+        }
+    });
+    payload.to_string()
+}
+
+pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
+    let segments = input
+        .segments
+        .iter()
+        .map(|segment| {
+            serde_json::json!({
+                "index": segment.index,
+                "sourceText": segment.source_text,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let payload = serde_json::json!({
+        "task": "subtitle_translate",
+        "sourceLang": input.source_lang,
+        "targetLang": input.target_lang,
+        "globalStrategy": {
+            "topicSummary": input.topic_summary,
+            "toneStrategy": input.tone_strategy
+        },
+        "context": {
+            "previous": input.previous_context,
+            "next": input.next_context,
+        },
+        "terminology": input
+            .terminology_entries
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "source": entry.source,
+                    "target": entry.target,
+                    "note": entry.note,
+                    "group": entry.group
+                })
+            })
+            .collect::<Vec<_>>(),
+        "rules": [
+            "Translate only sourceText for each segment",
+            "Do not omit any segment",
+            "Do not merge or split segments",
+            "Do not return markdown or commentary",
+            "Return JSON only"
+        ],
+        "segments": segments,
+        "output": {
+            "json_only": true,
+            "schema": {
+                "segments": [
+                    {
+                        "index": "number",
+                        "translatedText": "string"
+                    }
+                ]
+            }
+        }
+    });
+
+    payload.to_string()
+}

@@ -1,17 +1,10 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use crate::services::task_context::{TaskContext, TaskContextSeed};
 
 pub const INTENT_TRANSCRIBE: &str = "TRANSCRIBE";
 pub const INTENT_TRANSCRIBE_TRANSLATE: &str = "TRANSCRIBE_TRANSLATE";
 pub const INTENT_TRANSLATE_ONLY: &str = "TRANSLATE_ONLY";
-
-pub const STATE_CREATED: &str = "CREATED";
-pub const STATE_QUEUED: &str = "QUEUED";
-pub const STATE_RUNNING: &str = "RUNNING";
-pub const STATE_PAUSED: &str = "PAUSED";
-pub const STATE_FAILED: &str = "FAILED";
-pub const STATE_COMPLETED: &str = "COMPLETED";
-pub const STATE_CANCELLED: &str = "CANCELLED";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,7 +38,6 @@ pub struct RegisterTaskUploadRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTaskRunsRequest {
-    pub state: Option<String>,
     pub intent: Option<String>,
     pub limit: Option<u32>,
 }
@@ -54,14 +46,6 @@ pub struct ListTaskRunsRequest {
 #[serde(rename_all = "camelCase")]
 pub struct GetTaskRunRequest {
     pub task_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CancelTaskRequest {
-    pub task_id: String,
-    #[serde(default)]
-    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -73,12 +57,7 @@ pub struct TaskRunRecord {
     pub media_kind: String,
     pub size_bytes: u64,
     pub intent: String,
-    pub state: String,
-    pub current_step: String,
-    pub progress_percent: u32,
-    pub progress_note: String,
-    pub error_code: String,
-    pub error_message: String,
+    pub context_json: String,
     pub retry_count: u32,
     pub max_retries: u32,
     pub settings_policy_version: String,
@@ -140,26 +119,31 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
     validate_enqueue_request(&request)?;
     let source_lang = non_empty_or_default(&request.source_lang, "auto");
     let target_lang = non_empty_or_default(&request.target_lang, "zh-CN");
+    let normalized_intent = request.intent.trim().to_uppercase();
     let snapshot = serde_json::to_string(&request.settings_snapshot).map_err(|err| err.to_string())?;
     let now = unix_now();
+    let context_json = build_enqueue_context_json(
+        &request,
+        &normalized_intent,
+        &source_lang,
+        &target_lang,
+        now,
+    )?;
 
     sqlx::query(
         "INSERT INTO task_runs (
             id, media_path, name, media_kind, size_bytes,
-            intent, state, current_step, progress_percent, progress_note,
-            error_code, error_message, retry_count, max_retries,
+            intent, retry_count, max_retries,
             settings_policy_version, settings_snapshot_json,
             source_lang, target_lang, queued_at, started_at, finished_at, created_at, updated_at,
-            transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
-            transcribe_phase, transcribe_error
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, '', 0, '', '', '', 0, ?, 'v1', ?, ?, ?, ?, NULL, NULL, ?, ?, 'queued', 0, 0, 0, '', '')
+            sort_order, context_json
+         ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'v1', ?, ?, ?, ?, NULL, NULL, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM task_runs), ?)
          ON CONFLICT(id) DO UPDATE SET
             media_path = excluded.media_path,
             name = excluded.name,
             media_kind = excluded.media_kind,
             size_bytes = excluded.size_bytes,
             intent = excluded.intent,
-            state = excluded.state,
             max_retries = excluded.max_retries,
             settings_snapshot_json = excluded.settings_snapshot_json,
             source_lang = excluded.source_lang,
@@ -168,20 +152,14 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
             started_at = NULL,
             finished_at = NULL,
             updated_at = excluded.updated_at,
-            transcribe_status = 'queued',
-            transcribe_progress = 0,
-            transcribe_segment_current = 0,
-            transcribe_segment_total = 0,
-            transcribe_phase = '',
-            transcribe_error = ''",
+            context_json = excluded.context_json",
     )
     .bind(&request.id)
     .bind(&request.media_path)
     .bind(&request.name)
     .bind(&request.media_kind)
     .bind(request.size_bytes as i64)
-    .bind(request.intent.trim().to_uppercase())
-    .bind(STATE_QUEUED)
+    .bind(normalized_intent)
     .bind(request.max_retries as i64)
     .bind(snapshot)
     .bind(source_lang)
@@ -189,6 +167,7 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
     .bind(now)
     .bind(now)
     .bind(now)
+    .bind(context_json)
     .execute(pool)
     .await
     .map_err(|err| err.to_string())?;
@@ -207,29 +186,22 @@ pub async fn register_task_upload(
 ) -> Result<TaskRunRecord, String> {
     validate_upload_request(&request)?;
     let now = unix_now();
+    let context_json = build_upload_context_json(&request, now)?;
 
     sqlx::query(
         "INSERT INTO task_runs (
             id, media_path, name, media_kind, size_bytes,
-            intent, state, current_step, progress_percent, progress_note,
-            error_code, error_message, retry_count, max_retries,
+            intent, retry_count, max_retries,
             settings_policy_version, settings_snapshot_json,
             source_lang, target_lang, queued_at, started_at, finished_at, created_at, updated_at,
-            transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
-            transcribe_phase, transcribe_error, result_text, result_srt, subtitle_segments_json, sort_order
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, '', 0, '', '', '', 0, 0, 'v1', '{}', 'auto', 'zh-CN', ?, NULL, NULL, ?, ?, 'pending', 0, 0, 0, '', '', '', '', '[]', 0)
+            sort_order, context_json
+         ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'v1', '{}', 'auto', 'zh-CN', ?, NULL, NULL, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM task_runs), ?)
          ON CONFLICT(id) DO UPDATE SET
             media_path = excluded.media_path,
             name = excluded.name,
             media_kind = excluded.media_kind,
             size_bytes = excluded.size_bytes,
             intent = excluded.intent,
-            state = excluded.state,
-            current_step = '',
-            progress_percent = 0,
-            progress_note = '',
-            error_code = '',
-            error_message = '',
             retry_count = 0,
             max_retries = 0,
             settings_snapshot_json = '{}',
@@ -239,15 +211,7 @@ pub async fn register_task_upload(
             started_at = NULL,
             finished_at = NULL,
             updated_at = excluded.updated_at,
-            transcribe_status = 'pending',
-            transcribe_progress = 0,
-            transcribe_segment_current = 0,
-            transcribe_segment_total = 0,
-            transcribe_phase = '',
-            transcribe_error = '',
-            result_text = '',
-            result_srt = '',
-            subtitle_segments_json = '[]'",
+            context_json = excluded.context_json",
     )
     .bind(&request.id)
     .bind(&request.media_path)
@@ -255,10 +219,10 @@ pub async fn register_task_upload(
     .bind(&request.media_kind)
     .bind(request.size_bytes as i64)
     .bind(INTENT_TRANSCRIBE)
-    .bind(STATE_CREATED)
     .bind(now)
     .bind(now)
     .bind(now)
+    .bind(context_json)
     .execute(pool)
     .await
     .map_err(|err| err.to_string())?;
@@ -276,48 +240,12 @@ pub async fn register_task_upload(
 
 pub async fn list_task_runs(pool: &SqlitePool, request: ListTaskRunsRequest) -> Result<Vec<TaskRunRecord>, String> {
     let limit = request.limit.unwrap_or(200).clamp(1, 2000) as i64;
-    let rows = match (request.state, request.intent) {
-        (Some(state), Some(intent)) => {
+    let rows = match request.intent {
+        Some(intent) => {
             sqlx::query_as::<_, TaskRunRow>(
-                "SELECT id, media_path, name, media_kind, size_bytes, intent, state, current_step,
-                        progress_percent, progress_note, error_code, error_message, retry_count, max_retries,
+                "SELECT id, media_path, name, media_kind, size_bytes, intent, retry_count, max_retries,
                         settings_policy_version, settings_snapshot_json, source_lang, target_lang,
-                        queued_at, started_at, finished_at, created_at, updated_at
-                 FROM task_runs
-                 WHERE state = ? AND intent = ?
-                 ORDER BY updated_at DESC, created_at DESC
-                 LIMIT ?",
-            )
-            .bind(state.trim().to_uppercase())
-            .bind(intent.trim().to_uppercase())
-            .bind(limit)
-            .fetch_all(pool)
-            .await
-            .map_err(|err| err.to_string())?
-        }
-        (Some(state), None) => {
-            sqlx::query_as::<_, TaskRunRow>(
-                "SELECT id, media_path, name, media_kind, size_bytes, intent, state, current_step,
-                        progress_percent, progress_note, error_code, error_message, retry_count, max_retries,
-                        settings_policy_version, settings_snapshot_json, source_lang, target_lang,
-                        queued_at, started_at, finished_at, created_at, updated_at
-                 FROM task_runs
-                 WHERE state = ?
-                 ORDER BY updated_at DESC, created_at DESC
-                 LIMIT ?",
-            )
-            .bind(state.trim().to_uppercase())
-            .bind(limit)
-            .fetch_all(pool)
-            .await
-            .map_err(|err| err.to_string())?
-        }
-        (None, Some(intent)) => {
-            sqlx::query_as::<_, TaskRunRow>(
-                "SELECT id, media_path, name, media_kind, size_bytes, intent, state, current_step,
-                        progress_percent, progress_note, error_code, error_message, retry_count, max_retries,
-                        settings_policy_version, settings_snapshot_json, source_lang, target_lang,
-                        queued_at, started_at, finished_at, created_at, updated_at
+                        queued_at, started_at, finished_at, created_at, updated_at, context_json
                  FROM task_runs
                  WHERE intent = ?
                  ORDER BY updated_at DESC, created_at DESC
@@ -329,12 +257,11 @@ pub async fn list_task_runs(pool: &SqlitePool, request: ListTaskRunsRequest) -> 
             .await
             .map_err(|err| err.to_string())?
         }
-        (None, None) => {
+        None => {
             sqlx::query_as::<_, TaskRunRow>(
-                "SELECT id, media_path, name, media_kind, size_bytes, intent, state, current_step,
-                        progress_percent, progress_note, error_code, error_message, retry_count, max_retries,
+                "SELECT id, media_path, name, media_kind, size_bytes, intent, retry_count, max_retries,
                         settings_policy_version, settings_snapshot_json, source_lang, target_lang,
-                        queued_at, started_at, finished_at, created_at, updated_at
+                        queued_at, started_at, finished_at, created_at, updated_at, context_json
                  FROM task_runs
                  ORDER BY updated_at DESC, created_at DESC
                  LIMIT ?",
@@ -353,10 +280,9 @@ pub async fn get_task_run(pool: &SqlitePool, request: GetTaskRunRequest) -> Resu
         return Err("taskId is required".to_string());
     }
     let run = sqlx::query_as::<_, TaskRunRow>(
-        "SELECT id, media_path, name, media_kind, size_bytes, intent, state, current_step,
-                progress_percent, progress_note, error_code, error_message, retry_count, max_retries,
+        "SELECT id, media_path, name, media_kind, size_bytes, intent, retry_count, max_retries,
                 settings_policy_version, settings_snapshot_json, source_lang, target_lang,
-                queued_at, started_at, finished_at, created_at, updated_at
+                queued_at, started_at, finished_at, created_at, updated_at, context_json
          FROM task_runs
          WHERE id = ?",
     )
@@ -403,49 +329,6 @@ pub async fn get_task_run(pool: &SqlitePool, request: GetTaskRunRequest) -> Resu
     })
 }
 
-pub async fn cancel_task(pool: &SqlitePool, request: CancelTaskRequest) -> Result<TaskRunRecord, String> {
-    if request.task_id.trim().is_empty() {
-        return Err("taskId is required".to_string());
-    }
-    let now = unix_now();
-    let reason = request.reason.trim();
-    let message = if reason.is_empty() {
-        "cancelled by user".to_string()
-    } else {
-        reason.to_string()
-    };
-
-    sqlx::query(
-        "UPDATE task_runs
-         SET state = ?, error_code = 'CANCELLED', error_message = ?, finished_at = ?, updated_at = ?
-         WHERE id = ? AND state NOT IN (?, ?)",
-    )
-    .bind(STATE_CANCELLED)
-    .bind(message)
-    .bind(now)
-    .bind(now)
-    .bind(request.task_id.trim())
-    .bind(STATE_COMPLETED)
-    .bind(STATE_CANCELLED)
-    .execute(pool)
-    .await
-    .map_err(|err| err.to_string())?;
-
-    list_task_runs(pool, ListTaskRunsRequest {
-        state: None,
-        intent: None,
-        limit: Some(1),
-    })
-    .await?;
-
-    get_task_run(pool, GetTaskRunRequest {
-        task_id: request.task_id,
-    })
-    .await?
-    .run
-    .pipe(Ok)
-}
-
 #[derive(Debug, sqlx::FromRow)]
 struct TaskRunRow {
     id: String,
@@ -454,12 +337,6 @@ struct TaskRunRow {
     media_kind: String,
     size_bytes: i64,
     intent: String,
-    state: String,
-    current_step: String,
-    progress_percent: i64,
-    progress_note: String,
-    error_code: String,
-    error_message: String,
     retry_count: i64,
     max_retries: i64,
     settings_policy_version: String,
@@ -471,6 +348,7 @@ struct TaskRunRow {
     finished_at: Option<i64>,
     created_at: i64,
     updated_at: i64,
+    context_json: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -516,12 +394,7 @@ impl From<TaskRunRow> for TaskRunRecord {
             media_kind: row.media_kind,
             size_bytes: row.size_bytes.max(0) as u64,
             intent: row.intent,
-            state: row.state,
-            current_step: row.current_step,
-            progress_percent: row.progress_percent.clamp(0, 100) as u32,
-            progress_note: row.progress_note,
-            error_code: row.error_code,
-            error_message: row.error_message,
+            context_json: row.context_json,
             retry_count: row.retry_count.max(0) as u32,
             max_retries: row.max_retries.max(0) as u32,
             settings_policy_version: row.settings_policy_version,
@@ -622,6 +495,49 @@ fn non_empty_or_default(value: &str, fallback: &str) -> String {
     } else {
         value.trim().to_string()
     }
+}
+
+fn build_enqueue_context_json(
+    request: &EnqueueTaskRequest,
+    intent: &str,
+    source_lang: &str,
+    target_lang: &str,
+    created_at: i64,
+) -> Result<String, String> {
+    let mut context = TaskContext::new(TaskContextSeed {
+        task_id: request.id.clone(),
+        intent: intent.to_string(),
+        source_lang: source_lang.to_string(),
+        target_lang: target_lang.to_string(),
+        media_path: request.media_path.clone(),
+        media_kind: request.media_kind.clone(),
+        media_size_bytes: request.size_bytes,
+        settings_snapshot: request.settings_snapshot.clone(),
+        created_at,
+    });
+    context.runtime.status = "queued".to_string();
+    context.set_queue_projection("queued", "", 0, 0, 0, "");
+    context.to_json_string()
+}
+
+fn build_upload_context_json(
+    request: &RegisterTaskUploadRequest,
+    created_at: i64,
+) -> Result<String, String> {
+    let mut context = TaskContext::new(TaskContextSeed {
+        task_id: request.id.clone(),
+        intent: INTENT_TRANSCRIBE.to_string(),
+        source_lang: "auto".to_string(),
+        target_lang: "zh-CN".to_string(),
+        media_path: request.media_path.clone(),
+        media_kind: request.media_kind.clone(),
+        media_size_bytes: request.size_bytes,
+        settings_snapshot: serde_json::json!({}),
+        created_at,
+    });
+    context.runtime.status = "created".to_string();
+    context.set_queue_projection("pending", "", 0, 0, 0, "");
+    context.to_json_string()
 }
 
 fn unix_now() -> i64 {

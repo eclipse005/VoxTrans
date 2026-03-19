@@ -61,8 +61,13 @@ function hydrateTranslatedCues(cues: SubtitleCue[], item: QueueItem): SubtitleCu
   return cues.map((cue, index) => {
     const byIndex = segments[index];
     const byTime = segments.find((segment) => overlapMs(cue.startMs, cue.endMs, segment.startMs, segment.endMs) > 0);
+    const sourceText = (byTime?.sourceText ?? byIndex?.sourceText ?? "").trim();
     const translatedText = (byTime?.translatedText ?? byIndex?.translatedText ?? "").trim();
-    return translatedText ? { ...cue, translatedText } : { ...cue, translatedText: cue.translatedText || "" };
+    return {
+      ...cue,
+      text: sourceText || cue.text,
+      translatedText: translatedText || cue.translatedText || "",
+    };
   });
 }
 

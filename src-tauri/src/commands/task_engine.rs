@@ -2,8 +2,8 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::services::task_engine::{
-    CancelTaskRequest, EnqueueTaskRequest, GetTaskRunRequest, ListTaskRunsRequest,
-    RegisterTaskUploadRequest, TaskRunDetail, TaskRunRecord, cancel_task as cancel_task_service,
+    EnqueueTaskRequest, GetTaskRunRequest, ListTaskRunsRequest, RegisterTaskUploadRequest,
+    TaskRunDetail, TaskRunRecord,
     enqueue_task as enqueue_task_service, get_task_run as get_task_run_service,
     list_task_runs as list_task_runs_service, register_task_upload as register_task_upload_service,
 };
@@ -44,14 +44,6 @@ pub async fn get_task_run(
     request: GetTaskRunRequest,
 ) -> Result<TaskRunDetail, String> {
     get_task_run_service(&state.pool, request).await
-}
-
-#[tauri::command]
-pub async fn cancel_task_run(
-    state: State<'_, AppState>,
-    request: CancelTaskRequest,
-) -> Result<TaskRunRecord, String> {
-    cancel_task_service(&state.pool, request).await
 }
 
 #[tauri::command]

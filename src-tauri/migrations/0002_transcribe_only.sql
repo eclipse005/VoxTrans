@@ -44,10 +44,7 @@ CREATE TABLE IF NOT EXISTS tasks_new (
   last_error TEXT NOT NULL,
   output_srt_path TEXT NOT NULL,
   output_words_json TEXT NOT NULL DEFAULT '',
-  transcribe_status TEXT NOT NULL DEFAULT 'pending',
-  transcribe_error TEXT NOT NULL DEFAULT '',
-  transcript_srt TEXT NOT NULL DEFAULT '',
-  subtitle_segments_json TEXT NOT NULL DEFAULT '[]',
+  context_json TEXT NOT NULL DEFAULT '{}',
   transcribed_at INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -56,13 +53,13 @@ CREATE TABLE IF NOT EXISTS tasks_new (
 INSERT INTO tasks_new (
   id, media_path, name, media_kind, size_bytes, last_status, last_error,
   output_srt_path, output_words_json,
-  transcribe_status, transcribe_error, transcript_srt, subtitle_segments_json, transcribed_at,
+  context_json, transcribed_at,
   created_at, updated_at
 )
 SELECT
   id, media_path, name, media_kind, size_bytes, last_status, last_error,
   output_srt_path, output_words_json,
-  transcribe_status, transcribe_error, transcript_srt, subtitle_segments_json, transcribed_at,
+  '{}', transcribed_at,
   created_at, updated_at
 FROM tasks;
 
@@ -79,7 +76,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_updated_at
   ON tasks(updated_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_tasks_transcribe_status
-  ON tasks(transcribe_status, updated_at DESC);
+  ON tasks(last_status, updated_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_task_events_task_time
   ON task_events(task_id, created_at DESC);

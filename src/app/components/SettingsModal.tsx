@@ -198,7 +198,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                         inputMode="numeric"
                         value={draftChunkInput}
                         onChange={(e) => onDraftChunkInputChange(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder="30 - 300"
+                        placeholder="建议：4G=60秒，8G=180秒"
                       />
                     </div>
                     <div className="form-group">

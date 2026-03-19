@@ -64,6 +64,8 @@ function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] 
     case "recognizing":
     case "punctuate":
     case "segment":
+    case "summarize":
+    case "translate":
       return value;
     default:
       return "";
@@ -105,7 +107,7 @@ function parseSubtitleSegments(raw: string): SubtitleSegment[] {
 }
 
 function recoverTransientStates(item: QueueItem): QueueItem {
-  if (item.transcribeStatus === "queued" || item.transcribeStatus === "processing") {
+  if (item.transcribeStatus === "queued") {
     return {
       ...item,
       transcribeStatus: "pending",
@@ -114,6 +116,15 @@ function recoverTransientStates(item: QueueItem): QueueItem {
       transcribeSegmentTotal: 0,
       transcribePhase: "",
       transcribeError: "",
+    };
+  }
+
+  if (item.transcribeStatus === "processing") {
+    return {
+      ...item,
+      transcribeStatus: "error",
+      transcribePhase: "",
+      transcribeError: item.transcribeError || "任务在运行中被中断，请重新开始",
     };
   }
 

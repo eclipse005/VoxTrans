@@ -37,6 +37,12 @@ function getTranscribeProcessingText(item: QueueItem): string {
   if (item.transcribePhase === "punctuate") {
     return "标点优化中";
   }
+  if (item.transcribePhase === "summarize") {
+    return "总结中";
+  }
+  if (item.transcribePhase === "translate") {
+    return "翻译处理中";
+  }
   if (item.transcribeSegmentTotal > 1) {
     return `转录处理中 ${Math.min(item.transcribeSegmentCurrent || 0, item.transcribeSegmentTotal)}/${item.transcribeSegmentTotal}`;
   }

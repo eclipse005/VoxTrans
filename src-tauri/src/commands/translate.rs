@@ -6,7 +6,7 @@ use crate::services::translate::{
 use serde::{Deserialize, Serialize};
 
 #[tauri::command]
-pub fn run_translate_pipeline(
+pub async fn run_translate_pipeline(
     request: TranslatePipelineRequest,
 ) -> Result<crate::services::translate::types::TranslatePipelineResponse, String> {
     if request.task_id.trim().is_empty() {
@@ -25,7 +25,7 @@ pub fn run_translate_pipeline(
         return Err("tokens is required".to_string());
     }
 
-    run_translate_pipeline_service(request)
+    run_translate_pipeline_service(request).await
 }
 
 #[derive(Debug, Deserialize)]

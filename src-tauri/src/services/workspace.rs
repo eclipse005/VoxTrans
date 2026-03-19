@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use crate::services::task_context::{TaskContext, TaskContextSeed};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,10 +37,9 @@ pub struct SaveQueueStateRequest {
 pub async fn load_workspace_state(pool: &SqlitePool) -> Result<WorkspaceStateResponse, String> {
     let rows = sqlx::query_as::<_, QueueItemRow>(
         "SELECT id, media_path, name, media_kind, size_bytes,
-                transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
-                transcribe_phase, transcribe_error, result_text, result_srt, subtitle_segments_json
+                intent, source_lang, target_lang, created_at, context_json
          FROM task_runs
-         ORDER BY sort_order ASC, updated_at DESC, id ASC",
+         ORDER BY sort_order ASC, created_at ASC, id ASC",
     )
     .fetch_all(pool)
     .await
@@ -57,41 +57,29 @@ pub async fn save_queue_state(
     let now = now_unix();
 
     for (index, item) in request.queue.iter().enumerate() {
-        let state = map_transcribe_status_to_state(&item.transcribe_status);
         let intent = if item.transcribe_status == "done" {
             "TRANSCRIBE_TRANSLATE"
         } else {
             "TRANSCRIBE"
         };
+        let context_json = context_json_from_queue_item(item, intent, now)?;
         sqlx::query(
             "INSERT INTO task_runs (
                id, media_path, name, media_kind, size_bytes,
-               intent, state, current_step, progress_percent, progress_note,
-               error_code, error_message, retry_count, max_retries,
+               intent, retry_count, max_retries,
                settings_policy_version, settings_snapshot_json,
                source_lang, target_lang, queued_at, started_at, finished_at, created_at, updated_at,
-               transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
-               transcribe_phase, transcribe_error, result_text, result_srt, subtitle_segments_json, sort_order
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, '', '', ?, 0, 0, 'v1', '{}', 'auto', 'zh-CN', ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               sort_order, context_json
+             ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'v1', '{}', 'auto', 'zh-CN', ?, NULL, NULL, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                media_path = excluded.media_path,
                name = excluded.name,
                media_kind = excluded.media_kind,
                size_bytes = excluded.size_bytes,
-               state = excluded.state,
-               progress_percent = excluded.progress_percent,
-               error_message = excluded.error_message,
+               intent = excluded.intent,
                updated_at = excluded.updated_at,
-               transcribe_status = excluded.transcribe_status,
-               transcribe_progress = excluded.transcribe_progress,
-               transcribe_segment_current = excluded.transcribe_segment_current,
-               transcribe_segment_total = excluded.transcribe_segment_total,
-               transcribe_phase = excluded.transcribe_phase,
-               transcribe_error = excluded.transcribe_error,
-               result_text = excluded.result_text,
-               result_srt = excluded.result_srt,
-               subtitle_segments_json = excluded.subtitle_segments_json,
-               sort_order = excluded.sort_order",
+               sort_order = excluded.sort_order,
+               context_json = excluded.context_json",
         )
         .bind(&item.id)
         .bind(&item.path)
@@ -99,22 +87,11 @@ pub async fn save_queue_state(
         .bind(&item.media_kind)
         .bind(item.size_bytes as i64)
         .bind(intent)
-        .bind(state)
-        .bind(item.transcribe_progress as i64)
-        .bind(&item.transcribe_error)
         .bind(now)
         .bind(now)
         .bind(now)
-        .bind(&item.transcribe_status)
-        .bind(item.transcribe_progress as i64)
-        .bind(item.transcribe_segment_current as i64)
-        .bind(item.transcribe_segment_total as i64)
-        .bind(&item.transcribe_phase)
-        .bind(&item.transcribe_error)
-        .bind(&item.result_text)
-        .bind(&item.result_srt)
-        .bind(&item.subtitle_segments_json)
         .bind(index as i64)
+        .bind(context_json)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
@@ -130,46 +107,77 @@ struct QueueItemRow {
     name: String,
     media_kind: String,
     size_bytes: i64,
-    transcribe_status: String,
-    transcribe_progress: i64,
-    transcribe_segment_current: i64,
-    transcribe_segment_total: i64,
-    transcribe_phase: String,
-    transcribe_error: String,
-    result_text: String,
-    result_srt: String,
-    subtitle_segments_json: String,
+    intent: String,
+    source_lang: String,
+    target_lang: String,
+    created_at: i64,
+    context_json: String,
 }
 
 impl From<QueueItemRow> for QueueItemRecord {
     fn from(row: QueueItemRow) -> Self {
+        let context = TaskContext::parse_or_new(
+            &row.context_json,
+            TaskContextSeed {
+                task_id: row.id.clone(),
+                intent: row.intent.clone(),
+                source_lang: row.source_lang,
+                target_lang: row.target_lang,
+                media_path: row.media_path.clone(),
+                media_kind: row.media_kind.clone(),
+                media_size_bytes: row.size_bytes.max(0) as u64,
+                settings_snapshot: serde_json::json!({}),
+                created_at: row.created_at,
+            },
+        );
+        let queue = context.projections.queue;
+        let editor = context.projections.editor;
         Self {
             id: row.id,
             path: row.media_path,
             name: row.name,
             media_kind: row.media_kind,
             size_bytes: row.size_bytes.max(0) as u64,
-            transcribe_status: row.transcribe_status,
-            transcribe_progress: row.transcribe_progress.clamp(0, 100) as u32,
-            transcribe_segment_current: row.transcribe_segment_current.max(0) as u32,
-            transcribe_segment_total: row.transcribe_segment_total.max(0) as u32,
-            transcribe_phase: row.transcribe_phase,
-            transcribe_error: row.transcribe_error,
-            result_text: row.result_text,
-            result_srt: row.result_srt,
-            subtitle_segments_json: row.subtitle_segments_json,
+            transcribe_status: queue.transcribe_status,
+            transcribe_progress: queue.progress_percent.clamp(0, 100),
+            transcribe_segment_current: queue.transcribe_segment_current,
+            transcribe_segment_total: queue.transcribe_segment_total,
+            transcribe_phase: queue.phase,
+            transcribe_error: queue.transcribe_error,
+            result_text: editor.result_text,
+            result_srt: editor.result_srt,
+            subtitle_segments_json: editor.subtitle_segments_json,
         }
     }
 }
 
-fn map_transcribe_status_to_state(status: &str) -> &'static str {
-    match status {
-        "queued" => "QUEUED",
-        "processing" => "RUNNING",
-        "done" => "COMPLETED",
-        "error" => "FAILED",
-        _ => "CREATED",
-    }
+fn context_json_from_queue_item(item: &QueueItemRecord, intent: &str, created_at: i64) -> Result<String, String> {
+    let mut context = TaskContext::new(TaskContextSeed {
+        task_id: item.id.clone(),
+        intent: intent.to_string(),
+        source_lang: "auto".to_string(),
+        target_lang: "zh-CN".to_string(),
+        media_path: item.path.clone(),
+        media_kind: item.media_kind.clone(),
+        media_size_bytes: item.size_bytes,
+        settings_snapshot: serde_json::json!({}),
+        created_at,
+    });
+    context.set_queue_projection(
+        &item.transcribe_status,
+        &item.transcribe_phase,
+        item.transcribe_progress,
+        item.transcribe_segment_current,
+        item.transcribe_segment_total,
+        &item.transcribe_error,
+    );
+    context.set_editor_projection(
+        item.subtitle_segments_json.clone(),
+        item.result_text.clone(),
+        item.result_srt.clone(),
+        String::new(),
+    );
+    context.to_json_string()
 }
 
 fn now_unix() -> i64 {

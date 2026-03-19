@@ -34,7 +34,14 @@ export type SavedSettings = {
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
-export type TranscribePhase = "initializing" | "separating" | "recognizing" | "punctuate" | "segment";
+export type TranscribePhase =
+  | "initializing"
+  | "separating"
+  | "recognizing"
+  | "punctuate"
+  | "segment"
+  | "summarize"
+  | "translate";
 
 export type SubtitleCue = {
   id: string;
@@ -80,6 +87,13 @@ export type TranslateToken = {
   word: string;
 };
 
+export type TranslateTerminologyEntry = {
+  source: string;
+  target: string;
+  note: string;
+  group: string;
+};
+
 export type TranslateSegment = {
   startMs: number;
   endMs: number;
@@ -93,6 +107,11 @@ export type TranslatePipelineRequest = {
   sourceLang: string;
   targetLang: string;
   tokens: TranslateToken[];
+  translateApiKey?: string;
+  translateBaseUrl?: string;
+  translateModel?: string;
+  llmConcurrency?: number;
+  terminologyEntries?: TranslateTerminologyEntry[];
 };
 
 export type TranslatePipelineResponse = {
@@ -101,6 +120,8 @@ export type TranslatePipelineResponse = {
   bilingualSrtSourceFirst: string;
   bilingualSrtTargetFirst: string;
   segments: TranslateSegment[];
+  styleTopicSummary?: string;
+  styleToneStrategy?: string;
 };
 
 export type SegmentWithWords = {
@@ -182,10 +203,7 @@ export type TaskSummary = {
   lastError: string;
   outputSrtPath: string;
   outputWordsJson: string;
-  transcribeStatus: TranscribeStatus;
-  transcribeError: string;
-  transcriptSrt: string;
-  subtitleSegmentsJson: string;
+  contextJson: string;
   transcribedAt: number | null;
   createdAt: number;
   updatedAt: number;

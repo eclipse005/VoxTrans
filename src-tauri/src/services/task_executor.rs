@@ -1,17 +1,23 @@
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tauri::Emitter;
 use tauri::async_runtime::spawn_blocking;
 
 use crate::services::file::save_srt;
 use crate::services::preferences::load_user_preferences;
+use crate::services::task_context::{
+    STAGE_ASR, STAGE_COMPOSE, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEPARATE,
+    STAGE_SUMMARIZE, STAGE_TRANSLATE, TaskContext, TaskContextSeed,
+};
 use crate::services::task_engine::{EnqueueTaskRequest, enqueue_task};
 use crate::services::task_log::{TaskLogger, event};
 use crate::services::transcribe::{TranscribeRequest, transcribe_blocking};
 use crate::services::transcription::{RunPostAsrPipelineRequest, run_post_asr_pipeline};
-use crate::services::translate::types::{TranslatePipelineRequest, TranslateToken};
-use crate::services::translate::run_translate_pipeline;
+use crate::services::translate::types::{
+    TranslatePipelineRequest, TranslateTerminologyEntry, TranslateToken,
+};
+use crate::services::translate::run_translate_pipeline_with_phase;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,10 +106,14 @@ struct TranscribePhaseEvent {
 struct TaskRunExecRow {
     id: String,
     media_path: String,
+    media_kind: String,
+    size_bytes: i64,
     intent: String,
-    transcribe_status: String,
-    subtitle_segments_json: String,
-    result_text: String,
+    source_lang: String,
+    target_lang: String,
+    settings_snapshot_json: String,
+    created_at: i64,
+    context_json: String,
 }
 
 pub async fn execute_task_run(
@@ -131,7 +141,8 @@ pub async fn execute_task_run(
     );
 
     let task = sqlx::query_as::<_, TaskRunExecRow>(
-        "SELECT id, media_path, intent, transcribe_status, subtitle_segments_json, result_text
+        "SELECT id, media_path, media_kind, size_bytes, intent, source_lang, target_lang,
+                settings_snapshot_json, created_at, context_json
          FROM task_runs WHERE id = ?",
     )
     .bind(request.task_id.trim())
@@ -163,7 +174,25 @@ pub async fn execute_task_run(
             .map_err(|err| err.to_string())?;
     }
 
-    set_running(pool, &task.id).await?;
+    let settings_snapshot = serde_json::from_str::<serde_json::Value>(&task.settings_snapshot_json)
+        .unwrap_or_else(|_| json!({}));
+    let mut context = TaskContext::parse_or_new(
+        &task.context_json,
+        TaskContextSeed {
+            task_id: task.id.clone(),
+            intent: task.intent.clone(),
+            source_lang: task.source_lang.clone(),
+            target_lang: task.target_lang.clone(),
+            media_path: task.media_path.clone(),
+            media_kind: task.media_kind.clone(),
+            media_size_bytes: task.size_bytes.max(0) as u64,
+            settings_snapshot,
+            created_at: task.created_at,
+        },
+    );
+    context.mark_stage_running(STAGE_INIT);
+    context.set_queue_projection("processing", "initializing", 0, 0, 0, "");
+    persist_task_context(pool, &task.id, &context).await?;
 
     let intent = request
         .intent
@@ -171,17 +200,40 @@ pub async fn execute_task_run(
         .map(|v| v.trim().to_uppercase())
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| task.intent.trim().to_uppercase());
+    context.task.intent = intent.clone();
     let run_result = if intent == "TRANSLATE_ONLY" {
-        run_translate_only(pool, &task).await
+        run_translate_only(pool, &app, &task, &mut context).await
     } else if intent == "TRANSCRIBE_TRANSLATE" {
-        run_transcribe_and_maybe_translate(pool, &app, &task, true).await
+        run_transcribe_and_maybe_translate(pool, &app, &task, true, &mut context).await
     } else {
-        run_transcribe_and_maybe_translate(pool, &app, &task, false).await
+        run_transcribe_and_maybe_translate(pool, &app, &task, false, &mut context).await
     };
 
     match run_result {
         Ok(done) => {
-            set_done(pool, &task.id, &done).await?;
+            context.mark_stage_done(
+                STAGE_COMPOSE,
+                json!({
+                    "segmentTotal": done.segment_total,
+                }),
+                Value::Null,
+            );
+            context.mark_completed();
+            context.set_queue_projection(
+                "done",
+                "",
+                100,
+                done.segment_total.max(0) as u32,
+                done.segment_total.max(0) as u32,
+                "",
+            );
+            context.set_editor_projection(
+                done.subtitle_segments_json.clone(),
+                done.result_text.clone(),
+                done.result_srt.clone(),
+                String::new(),
+            );
+            persist_task_context(pool, &task.id, &context).await?;
             TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
                 event::TRANSCRIBE_COMPLETED,
                 Some(&json!({
@@ -191,7 +243,15 @@ pub async fn execute_task_run(
             Ok(())
         }
         Err(err) => {
-            set_failed(pool, &task.id, &err).await?;
+            let failed_stage = context.runtime.current_stage.clone();
+            let stage = if failed_stage.is_empty() {
+                STAGE_INIT
+            } else {
+                failed_stage.as_str()
+            };
+            context.mark_failed(stage, "TASK_FAILED", &err, true);
+            context.set_queue_projection("error", "", 0, 0, 0, &err);
+            persist_task_context(pool, &task.id, &context).await?;
             TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
                 event::TRANSCRIBE_FAILED,
                 Some(&json!({
@@ -327,10 +387,12 @@ async fn run_transcribe_and_maybe_translate(
     app: &tauri::AppHandle,
     task: &TaskRunExecRow,
     with_translate: bool,
+    context: &mut TaskContext,
 ) -> Result<DonePayload, String> {
     let mut transcribe_audio_path = task.media_path.clone();
     let settings_before_asr = load_user_preferences(pool).await?.settings;
     if settings_before_asr.enable_vocal_separation {
+        context.mark_stage_running(STAGE_SEPARATE);
         let _ = app.emit(
             "transcribe-phase",
             TranscribePhaseEvent {
@@ -359,8 +421,14 @@ async fn run_transcribe_and_maybe_translate(
         .await
         .map_err(|err| err.to_string())??;
         transcribe_audio_path = separated.vocals_path;
+        context.mark_stage_done(
+            STAGE_SEPARATE,
+            json!({ "enabled": true }),
+            Value::Null,
+        );
     }
 
+    context.mark_stage_running(STAGE_ASR);
     let app_handle = app.clone();
     let task_id = task.id.clone();
     let transcribe_req = TranscribeRequest {
@@ -384,8 +452,22 @@ async fn run_transcribe_and_maybe_translate(
     })
     .await
     .map_err(|err| err.to_string())??;
+    context.mark_stage_done(
+        STAGE_ASR,
+        json!({
+            "segmentTotal": transcribed.segment_total,
+            "audioDurationSec": transcribed.audio_duration_sec,
+            "provider": transcribed.execution_provider,
+        }),
+        json!({
+            "transcribeElapsedSec": transcribed.transcribe_elapsed_sec,
+            "vadElapsedSec": transcribed.vad_elapsed_sec,
+        }),
+    );
 
     let settings_before_post = load_user_preferences(pool).await?.settings;
+    context.mark_stage_running(STAGE_PUNCTUATE);
+    context.mark_stage_running(STAGE_SEGMENT);
     let app_handle = app.clone();
     let phase_task_id = task.id.clone();
     let processed = run_post_asr_pipeline(
@@ -395,9 +477,9 @@ async fn run_transcribe_and_maybe_translate(
             words: transcribed.words.clone(),
             subtitle_max_words_per_segment: settings_before_post.subtitle_max_words_per_segment,
             enable_punctuation_optimization: settings_before_post.enable_punctuation_optimization,
-            translate_api_key: settings_before_post.translate_api_key,
-            translate_base_url: settings_before_post.translate_base_url,
-            translate_model: settings_before_post.translate_model,
+            translate_api_key: settings_before_post.translate_api_key.clone(),
+            translate_base_url: settings_before_post.translate_base_url.clone(),
+            translate_model: settings_before_post.translate_model.clone(),
             llm_concurrency: settings_before_post.llm_concurrency,
         },
         move |phase| {
@@ -411,6 +493,23 @@ async fn run_transcribe_and_maybe_translate(
         },
     )
     .await?;
+    context.mark_stage_done(
+        STAGE_PUNCTUATE,
+        json!({
+            "wordTotal": processed.words.len(),
+        }),
+        json!({
+            "postAsrElapsedSec": processed.post_asr_elapsed_sec
+        }),
+    );
+    context.mark_stage_done(
+        STAGE_SEGMENT,
+        json!({
+            "segmentTotal": processed.segments.len(),
+            "sourceSrtPath": processed.srt_output_path,
+        }),
+        Value::Null,
+    );
 
     if !with_translate {
         save_srt(crate::services::file::SaveSrtRequest {
@@ -440,26 +539,120 @@ async fn run_transcribe_and_maybe_translate(
         });
     }
 
-    let translated = run_translate_pipeline(TranslatePipelineRequest {
+    let source_segments_json = processed
+        .segments
+        .iter()
+        .map(|segment| {
+            json!({
+                "startMs": (segment.start * 1000.0).round() as i64,
+                "endMs": (segment.end * 1000.0).round() as i64,
+                "sourceText": segment.text,
+                "translatedText": "",
+            })
+        })
+        .collect::<Vec<_>>();
+    let source_segments_json =
+        serde_json::to_string(&source_segments_json).map_err(|err| err.to_string())?;
+    context.set_queue_projection(
+        "processing",
+        "translate",
+        99,
+        transcribed.segment_total as u32,
+        transcribed.segment_total as u32,
+        "",
+    );
+    context.set_editor_projection(
+        source_segments_json.clone(),
+        processed.text.clone(),
+        processed.srt.clone(),
+        String::new(),
+    );
+    persist_task_context(pool, &task.id, context).await?;
+    context.mark_stage_running(STAGE_SUMMARIZE);
+    context.mark_stage_running(STAGE_TRANSLATE);
+    context.set_queue_projection(
+        "processing",
+        "summarize",
+        99,
+        transcribed.segment_total as u32,
+        transcribed.segment_total as u32,
+        "",
+    );
+    persist_task_context(pool, &task.id, context).await?;
+
+    let translate_phase_task_id = task.id.clone();
+    let translate_phase_app = app.clone();
+    let translated = run_translate_pipeline_with_phase(TranslatePipelineRequest {
         task_id: task.id.clone(),
         media_path: task.media_path.clone(),
-        source_lang: "en".to_string(),
-        target_lang: "zh-CN".to_string(),
-        tokens: transcribed
-            .words
+        source_lang: task.source_lang.clone(),
+        target_lang: task.target_lang.clone(),
+        tokens: processed
+            .segments
             .iter()
-            .map(|word| TranslateToken {
-                start: word.start,
-                end: word.end,
-                word: word.word.clone(),
+            .map(|segment| TranslateToken {
+                start: segment.start,
+                end: segment.end,
+                word: segment.text.clone(),
             })
             .collect(),
-    })?;
+        translate_api_key: settings_before_post.translate_api_key.clone(),
+        translate_base_url: settings_before_post.translate_base_url.clone(),
+        translate_model: settings_before_post.translate_model.clone(),
+        llm_concurrency: settings_before_post.llm_concurrency,
+        terminology_entries: map_terminology_entries(&settings_before_post.terminology_groups),
+    }, move |phase| {
+        let _ = translate_phase_app.emit(
+            "transcribe-phase",
+            TranscribePhaseEvent {
+                task_id: translate_phase_task_id.clone(),
+                phase: phase.to_string(),
+            },
+        );
+    })
+    .await?;
+    context.mark_stage_done(
+        STAGE_SUMMARIZE,
+        json!({
+            "topicSummary": translated.style_topic_summary,
+            "toneStrategy": translated.style_tone_strategy,
+        }),
+        Value::Null,
+    );
+    context.mark_stage_done(
+        STAGE_TRANSLATE,
+        json!({
+            "translatedSegmentTotal": translated.segments.len(),
+            "batchSize": 20,
+        }),
+        Value::Null,
+    );
+    context.set_queue_projection(
+        "processing",
+        "translate",
+        99,
+        transcribed.segment_total as u32,
+        transcribed.segment_total as u32,
+        "",
+    );
+    persist_task_context(pool, &task.id, context).await?;
 
     save_srt(crate::services::file::SaveSrtRequest {
         task_id: Some(task.id.clone()),
         media_path: Some(task.media_path.clone()),
         output_path: processed.srt_output_path.clone(),
+        content: translated.source_srt.clone(),
+    })?;
+
+    let target_output_path = crate::services::task_path::task_srt_output_path_for_lang(
+        &task.id,
+        std::path::Path::new(&task.media_path),
+        &task.target_lang,
+    );
+    save_srt(crate::services::file::SaveSrtRequest {
+        task_id: Some(task.id.clone()),
+        media_path: Some(task.media_path.clone()),
+        output_path: target_output_path.display().to_string(),
         content: translated.target_srt.clone(),
     })?;
 
@@ -476,41 +669,81 @@ async fn run_transcribe_and_maybe_translate(
         })
         .collect::<Vec<_>>();
 
-    let result_text = if task.result_text.trim().is_empty() {
+    let result_text = if context.projections.editor.result_text.trim().is_empty() {
         processed.text
     } else {
-        task.result_text.clone()
+        context.projections.editor.result_text.clone()
     };
 
     Ok(DonePayload {
         result_text,
-        result_srt: translated.target_srt,
+        result_srt: translated.source_srt,
         subtitle_segments_json: serde_json::to_string(&merged).map_err(|err| err.to_string())?,
         segment_total: transcribed.segment_total as i64,
     })
 }
 
-async fn run_translate_only(pool: &SqlitePool, task: &TaskRunExecRow) -> Result<DonePayload, String> {
-    let tokens = parse_tokens_from_segments(&task.subtitle_segments_json);
+async fn run_translate_only(
+    pool: &SqlitePool,
+    app: &tauri::AppHandle,
+    task: &TaskRunExecRow,
+    context: &mut TaskContext,
+) -> Result<DonePayload, String> {
+    let tokens = parse_tokens_from_segments(&context.projections.editor.subtitle_segments_json);
     if tokens.is_empty() {
         return Err("当前任务没有可翻译内容，请先执行转录".to_string());
     }
-    let translated = run_translate_pipeline(TranslatePipelineRequest {
+    let settings = load_user_preferences(pool).await?.settings;
+    context.mark_stage_running(STAGE_SUMMARIZE);
+    context.mark_stage_running(STAGE_TRANSLATE);
+    let translate_phase_task_id = task.id.clone();
+    let translate_phase_app = app.clone();
+    let translated = run_translate_pipeline_with_phase(TranslatePipelineRequest {
         task_id: task.id.clone(),
         media_path: task.media_path.clone(),
-        source_lang: "en".to_string(),
-        target_lang: "zh-CN".to_string(),
+        source_lang: task.source_lang.clone(),
+        target_lang: task.target_lang.clone(),
         tokens,
-    })?;
-    let settings = load_user_preferences(pool).await?.settings;
-    let output_path = crate::services::task_path::task_srt_output_path(
+        translate_api_key: settings.translate_api_key.clone(),
+        translate_base_url: settings.translate_base_url.clone(),
+        translate_model: settings.translate_model.clone(),
+        llm_concurrency: settings.llm_concurrency,
+        terminology_entries: map_terminology_entries(&settings.terminology_groups),
+    }, move |phase| {
+        let _ = translate_phase_app.emit(
+            "transcribe-phase",
+            TranscribePhaseEvent {
+                task_id: translate_phase_task_id.clone(),
+                phase: phase.to_string(),
+            },
+        );
+    })
+    .await?;
+    context.mark_stage_done(
+        STAGE_SUMMARIZE,
+        json!({
+            "topicSummary": translated.style_topic_summary,
+            "toneStrategy": translated.style_tone_strategy,
+        }),
+        Value::Null,
+    );
+    context.mark_stage_done(
+        STAGE_TRANSLATE,
+        json!({
+            "translatedSegmentTotal": translated.segments.len(),
+            "batchSize": 20,
+        }),
+        Value::Null,
+    );
+    let target_output_path = crate::services::task_path::task_srt_output_path_for_lang(
         &task.id,
         std::path::Path::new(&task.media_path),
+        &task.target_lang,
     );
     save_srt(crate::services::file::SaveSrtRequest {
         task_id: Some(task.id.clone()),
         media_path: Some(task.media_path.clone()),
-        output_path: output_path.display().to_string(),
+        output_path: target_output_path.display().to_string(),
         content: translated.target_srt.clone(),
     })?;
 
@@ -526,14 +759,20 @@ async fn run_translate_only(pool: &SqlitePool, task: &TaskRunExecRow) -> Result<
             })
         })
         .collect::<Vec<_>>();
+    context.set_queue_projection("processing", "translate", 99, merged.len() as u32, merged.len() as u32, "");
+    persist_task_context(pool, &task.id, context).await?;
 
     Ok(DonePayload {
-        result_text: if task.result_text.trim().is_empty() {
+        result_text: if context.projections.editor.result_text.trim().is_empty() {
             format!("translated with {}", settings.translate_model)
         } else {
-            task.result_text.clone()
+            context.projections.editor.result_text.clone()
         },
-        result_srt: translated.target_srt,
+        result_srt: if context.projections.editor.result_srt.trim().is_empty() {
+            translated.source_srt
+        } else {
+            context.projections.editor.result_srt.clone()
+        },
         subtitle_segments_json: serde_json::to_string(&merged).map_err(|err| err.to_string())?,
         segment_total: merged.len() as i64,
     })
@@ -568,14 +807,54 @@ fn parse_tokens_from_segments(raw: &str) -> Vec<TranslateToken> {
         .collect()
 }
 
-async fn set_running(pool: &SqlitePool, task_id: &str) -> Result<(), String> {
+fn map_terminology_entries(
+    groups: &[crate::services::preferences::TerminologyGroup],
+) -> Vec<TranslateTerminologyEntry> {
+    groups
+        .iter()
+        .flat_map(|group| {
+            group.terms.iter().map(|term| TranslateTerminologyEntry {
+                source: term.origin.trim().to_string(),
+                target: term.target.trim().to_string(),
+                note: term.note.trim().to_string(),
+                group: group.name.trim().to_string(),
+            })
+        })
+        .filter(|entry| !entry.source.is_empty() && !entry.target.is_empty())
+        .collect()
+}
+
+async fn persist_task_context(
+    pool: &SqlitePool,
+    task_id: &str,
+    context: &TaskContext,
+) -> Result<(), String> {
+    let context_json = context.to_json_string()?;
+    let now = unix_now();
+    let is_final = matches!(
+        context.runtime.status.as_str(),
+        "failed" | "completed" | "cancelled"
+    );
     sqlx::query(
         "UPDATE task_runs
-         SET state = 'RUNNING', transcribe_status = 'processing', transcribe_phase = 'initializing',
-             transcribe_error = '', error_code = '', error_message = '', started_at = strftime('%s','now'),
-             updated_at = strftime('%s','now')
+         SET context_json = ?,
+             started_at = CASE
+                 WHEN started_at IS NULL AND ? = 'running' THEN ?
+                 ELSE started_at
+             END,
+             finished_at = CASE
+                 WHEN ? = 1 THEN ?
+                 ELSE NULL
+             END,
+             updated_at = ?
          WHERE id = ?",
     )
+    .bind(context_json)
+    .bind(&context.runtime.status)
+    .bind(now)
+    .bind(if is_final { 1 } else { 0 })
+    .bind(now)
+    .bind(now)
     .bind(task_id)
     .execute(pool)
     .await
@@ -583,41 +862,9 @@ async fn set_running(pool: &SqlitePool, task_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-async fn set_done(pool: &SqlitePool, task_id: &str, done: &DonePayload) -> Result<(), String> {
-    sqlx::query(
-        "UPDATE task_runs
-         SET state = 'COMPLETED', transcribe_status = 'done',
-             transcribe_progress = 100, transcribe_segment_current = ?, transcribe_segment_total = ?,
-             transcribe_phase = '', transcribe_error = '',
-             result_text = ?, result_srt = ?, subtitle_segments_json = ?,
-             finished_at = strftime('%s','now'), updated_at = strftime('%s','now')
-         WHERE id = ?",
-    )
-    .bind(done.segment_total)
-    .bind(done.segment_total)
-    .bind(&done.result_text)
-    .bind(&done.result_srt)
-    .bind(&done.subtitle_segments_json)
-    .bind(task_id)
-    .execute(pool)
-    .await
-    .map_err(|err| err.to_string())?;
-    Ok(())
-}
-
-async fn set_failed(pool: &SqlitePool, task_id: &str, error: &str) -> Result<(), String> {
-    sqlx::query(
-        "UPDATE task_runs
-         SET state = 'FAILED', transcribe_status = 'error', transcribe_phase = '',
-             transcribe_error = ?, error_code = 'TASK_FAILED', error_message = ?,
-             finished_at = strftime('%s','now'), updated_at = strftime('%s','now')
-         WHERE id = ?",
-    )
-    .bind(error)
-    .bind(error)
-    .bind(task_id)
-    .execute(pool)
-    .await
-    .map_err(|err| err.to_string())?;
-    Ok(())
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }

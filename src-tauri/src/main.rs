@@ -53,7 +53,6 @@ fn main() {
             commands::task_engine::enqueue_task_run,
             commands::task_engine::list_task_runs,
             commands::task_engine::get_task_run,
-            commands::task_engine::cancel_task_run,
             commands::task_engine::execute_task_run,
             commands::task_engine::execute_task_batch,
             commands::task_engine::enqueue_and_execute_task_batch,

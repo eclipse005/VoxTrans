@@ -7,12 +7,6 @@ CREATE TABLE IF NOT EXISTS task_runs (
   media_kind TEXT NOT NULL,
   size_bytes INTEGER NOT NULL DEFAULT 0,
   intent TEXT NOT NULL,
-  state TEXT NOT NULL,
-  current_step TEXT NOT NULL DEFAULT '',
-  progress_percent INTEGER NOT NULL DEFAULT 0,
-  progress_note TEXT NOT NULL DEFAULT '',
-  error_code TEXT NOT NULL DEFAULT '',
-  error_message TEXT NOT NULL DEFAULT '',
   retry_count INTEGER NOT NULL DEFAULT 0,
   max_retries INTEGER NOT NULL DEFAULT 0,
   settings_policy_version TEXT NOT NULL DEFAULT 'v1',
@@ -23,7 +17,9 @@ CREATE TABLE IF NOT EXISTS task_runs (
   started_at INTEGER,
   finished_at INTEGER,
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-  updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  context_json TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS task_step_runs (
@@ -69,11 +65,11 @@ CREATE TABLE IF NOT EXISTS task_artifacts (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_task_artifacts_task_kind
   ON task_artifacts(task_id, kind);
 
-CREATE INDEX IF NOT EXISTS idx_task_runs_state_time
-  ON task_runs(state, updated_at DESC);
-
 CREATE INDEX IF NOT EXISTS idx_task_runs_intent_time
   ON task_runs(intent, updated_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_task_runs_media_path
   ON task_runs(media_path);
+
+CREATE INDEX IF NOT EXISTS idx_task_runs_sort_order
+  ON task_runs(sort_order ASC, updated_at DESC);

@@ -1,14 +1,17 @@
 use serde_json::json;
+use rig::pipeline::{self, TryOp};
+use rig::providers::openai;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use voxtrans_core::subtitle::segmenter::WordToken;
+use voxtrans_core::subtitle::text_rules::{
+    has_break_terminal_punctuation, should_split_after_terminal_token, strip_trailing_closers,
+};
 
 use crate::services::task_log::TaskLogger;
-use crate::services::translate::adapters::rig_node::{
-    RigNodeClient, RigNodeConfig, RigNodeJsonTask, TokenUsage,
-};
 use crate::services::translate::prompt::{
     PunctuationPromptInput, build_punctuation_system_prompt, build_punctuation_user_prompt,
 };
-use crate::services::translate::validation::punctuation_response_validator;
 
 const SENTENCE_GAP_SEC: f64 = 2.0;
 const MIN_WORDS_TO_OPTIMIZE: usize = 3;
@@ -35,6 +38,12 @@ struct SentenceSpan {
     allow_leading_case_change: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct PunctuationExtraction {
+    punctuated_text: String,
+}
+
 pub async fn optimize_words_with_rig_node(
     task_id: &str,
     media_path: &str,
@@ -42,6 +51,7 @@ pub async fn optimize_words_with_rig_node(
     config: &PunctuationConfig,
 ) -> Vec<WordToken> {
     let logger = TaskLogger::main_with_media(task_id.to_string(), media_path.to_string());
+    let llm_logger = TaskLogger::llm_with_media(task_id.to_string(), media_path.to_string());
     if !config.enabled {
         logger.event(
             "transcribe.punctuation.skip",
@@ -104,25 +114,38 @@ pub async fn optimize_words_with_rig_node(
             "suspiciousSentenceTotal": suspicious_indexes.len()
         })),
     );
+    llm_logger.event(
+        "transcribe.punctuation.llm.start",
+        Some(&json!({
+            "model": config.model,
+            "sentenceTotal": spans.len(),
+            "requestTotal": suspicious_indexes.len(),
+            "concurrency": config.llm_concurrency,
+        })),
+    );
 
-    let client = match RigNodeClient::new(RigNodeConfig::new(
-        config.base_url.clone(),
-        config.api_key.clone(),
-        config.model.clone(),
-    )) {
-        Ok(client) => client,
+    let mut builder = openai::Client::builder().api_key(config.api_key.trim());
+    if !config.base_url.trim().is_empty() {
+        builder = builder.base_url(config.base_url.trim());
+    }
+    let completions_client = match builder.build() {
+        Ok(client) => client.completions_api(),
         Err(err) => {
             logger.event(
                 "transcribe.punctuation.client_error",
-                Some(&json!({ "error": err })),
+                Some(&json!({ "error": err.to_string() })),
             );
             return words;
         }
     };
-
-    let validator = punctuation_response_validator();
+    let extractor = completions_client
+        .extractor::<PunctuationExtraction>(config.model.clone())
+        .preamble(&build_punctuation_system_prompt())
+        .retries(2)
+        .build();
+    let punctuation_pipeline = pipeline::new().extract(extractor);
     let concurrency = config.llm_concurrency.clamp(1, 16) as usize;
-    let mut tasks = Vec::new();
+    let mut prompt_tasks: Vec<(usize, String)> = Vec::new();
     for span_idx in suspicious_indexes.iter().copied() {
         let span = match spans.get(span_idx) {
             Some(s) => s,
@@ -136,75 +159,62 @@ pub async fn optimize_words_with_rig_node(
             .get(span_idx + 1)
             .map(|s| clip_context_words(&s.text, CONTEXT_MAX_WORDS))
             .unwrap_or_default();
-        let system_prompt = build_punctuation_system_prompt();
         let user_prompt = build_punctuation_user_prompt(&PunctuationPromptInput {
             previous_text: prev,
             current_text: span.text.clone(),
             next_text: next,
         });
-        tasks.push(RigNodeJsonTask {
-            id: span_idx,
-            system_prompt,
-            user_prompt,
-            response_validator: Some(validator.clone()),
-        });
+        prompt_tasks.push((span_idx, user_prompt));
     }
-    let outcomes = client
-        .call_batch(task_id, Some(media_path), tasks, concurrency)
-        .await;
+    let prompts = prompt_tasks
+        .iter()
+        .map(|(_, prompt)| prompt.clone())
+        .collect::<Vec<_>>();
+    let extraction_result = punctuation_pipeline.try_batch_call(concurrency, prompts).await;
 
     let mut optimized = words.clone();
     let mut changed_tokens = 0usize;
-    let mut total_usage = TokenUsage::default();
     let mut llm_error_total = 0usize;
     let mut empty_result_total = 0usize;
     let mut applied_total = 0usize;
-    let mut retry_total = 0u64;
-    let mut elapsed_ms_total = 0u128;
-
-    for (span_idx, outcome) in outcomes {
-        if span_idx == usize::MAX {
-            llm_error_total += 1;
-            continue;
-        }
-        let outcome = match outcome {
-            Ok(v) => v,
-            Err(err) => {
-                llm_error_total += 1;
-                if err.attempts > 1 {
-                    retry_total += (err.attempts - 1) as u64;
+    match extraction_result {
+        Ok(extractions) => {
+            for ((span_idx, _), extraction) in prompt_tasks.into_iter().zip(extractions.into_iter()) {
+                let punctuated = extraction.punctuated_text.trim().to_string();
+                if punctuated.is_empty() {
+                    empty_result_total += 1;
+                    continue;
                 }
-                elapsed_ms_total += err.elapsed_ms;
-                continue;
+                let span = match spans.get(span_idx) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                if let Some(slice) = optimized.get_mut(span.start_idx..=span.end_idx) {
+                    changed_tokens += apply_style_from_suggestion(
+                        slice,
+                        &punctuated,
+                        span.allow_leading_case_change,
+                    );
+                    applied_total += 1;
+                }
             }
-        };
-        total_usage.prompt_tokens += outcome.usage.prompt_tokens;
-        total_usage.completion_tokens += outcome.usage.completion_tokens;
-        total_usage.total_tokens += outcome.usage.total_tokens;
-        if outcome.attempts > 1 {
-            retry_total += (outcome.attempts - 1) as u64;
         }
-        elapsed_ms_total += outcome.elapsed_ms;
-        let punctuated = match outcome
-            .json
-            .get("punctuatedText")
-            .and_then(|x| x.as_str())
-            .map(|x| x.trim().to_string())
-        {
-            Some(v) if !v.is_empty() => v,
-            _ => {
-                empty_result_total += 1;
-                continue;
-            }
-        };
-        let span = match spans.get(span_idx) {
-            Some(v) => v,
-            None => continue,
-        };
-        if let Some(slice) = optimized.get_mut(span.start_idx..=span.end_idx) {
-            changed_tokens +=
-                apply_style_from_suggestion(slice, &punctuated, span.allow_leading_case_change);
-            applied_total += 1;
+        Err(err) => {
+            llm_error_total = suspicious_indexes.len();
+            logger.event(
+                "transcribe.punctuation.llm_error",
+                Some(&json!({
+                    "error": err.to_string(),
+                    "requestTotal": suspicious_indexes.len(),
+                })),
+            );
+            llm_logger.event(
+                "transcribe.punctuation.llm.error",
+                Some(&json!({
+                    "error": err.to_string(),
+                    "requestTotal": suspicious_indexes.len(),
+                })),
+            );
         }
     }
 
@@ -220,19 +230,17 @@ pub async fn optimize_words_with_rig_node(
             "llmMetrics": {
                 "concurrency": concurrency,
                 "requestTotal": suspicious_indexes.len(),
-                "retryTotal": retry_total,
-                "elapsedMsTotal": elapsed_ms_total,
-                "avgElapsedMs": if suspicious_indexes.is_empty() {
-                    0.0
-                } else {
-                    (elapsed_ms_total as f64) / (suspicious_indexes.len() as f64)
-                }
-            },
-            "usage": {
-                "promptTokens": total_usage.prompt_tokens,
-                "completionTokens": total_usage.completion_tokens,
-                "totalTokens": total_usage.total_tokens
+                "backend": "rig_extractor_pipeline"
             }
+        })),
+    );
+    llm_logger.event(
+        "transcribe.punctuation.llm.done",
+        Some(&json!({
+            "requestTotal": suspicious_indexes.len(),
+            "appliedSentenceTotal": applied_total,
+            "emptyResultTotal": empty_result_total,
+            "llmErrorTotal": llm_error_total,
         })),
     );
 
@@ -478,12 +486,7 @@ fn count_effective_words(text: &str) -> usize {
 
 fn count_sentence_punctuation(text: &str) -> usize {
     text.split_whitespace()
-        .filter(|token| {
-            let normalized = strip_trailing_closers(token.trim());
-            !normalized.is_empty()
-                && ends_with_terminal_punctuation(normalized)
-                && !is_non_break_terminal_case(normalized)
-        })
+        .filter(|token| has_break_terminal_punctuation(token.trim()))
         .count()
 }
 
@@ -500,123 +503,11 @@ fn has_any_uppercase_alpha(text: &str) -> bool {
 
 fn should_split_after_word(words: &[WordToken], idx: usize) -> bool {
     let current_word = match words.get(idx) {
-        Some(w) => w.word.trim(),
+        Some(w) => w.word.as_str(),
         None => return false,
     };
-    let normalized = strip_trailing_closers(current_word);
-    if normalized.is_empty() || !ends_with_terminal_punctuation(normalized) {
-        return false;
-    }
-    if is_non_break_terminal_case(normalized) {
-        return false;
-    }
-    if let Some(next) = words.get(idx + 1) {
-        let next_token = strip_leading_openers(next.word.trim());
-        if starts_with_lowercase(next_token) {
-            return false;
-        }
-    }
-    true
-}
-
-fn ends_with_terminal_punctuation(word: &str) -> bool {
-    word.chars()
-        .last()
-        .map(|c| matches!(c, '.' | '!' | '?' | '。' | '！' | '？' | '…'))
-        .unwrap_or(false)
-}
-
-fn strip_trailing_closers(token: &str) -> &str {
-    token.trim_end_matches(|c: char| {
-        matches!(
-            c,
-            '"' | '\'' | ')' | ']' | '}' | '”' | '’' | '》' | '」' | '』'
-        )
-    })
-}
-
-fn strip_leading_openers(token: &str) -> &str {
-    token.trim_start_matches(|c: char| {
-        matches!(
-            c,
-            '"' | '\'' | '(' | '[' | '{' | '“' | '‘' | '《' | '「' | '『'
-        )
-    })
-}
-
-fn is_non_break_terminal_case(token: &str) -> bool {
-    is_common_abbreviation(token)
-        || is_single_letter_initial(token)
-        || looks_like_decimal_number(token)
-}
-
-fn is_common_abbreviation(token: &str) -> bool {
-    let lower = token.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "mr."
-            | "mrs."
-            | "ms."
-            | "dr."
-            | "prof."
-            | "sr."
-            | "jr."
-            | "st."
-            | "no."
-            | "vs."
-            | "etc."
-            | "e.g."
-            | "i.e."
-            | "a.m."
-            | "p.m."
-            | "u.s."
-            | "u.k."
-            | "jan."
-            | "feb."
-            | "mar."
-            | "apr."
-            | "jun."
-            | "jul."
-            | "aug."
-            | "sep."
-            | "sept."
-            | "oct."
-            | "nov."
-            | "dec."
-    ) || is_single_letter_initial(&lower)
-}
-
-fn is_single_letter_initial(token: &str) -> bool {
-    let chars: Vec<char> = token.chars().collect();
-    chars.len() == 2 && chars[0].is_ascii_alphabetic() && chars[1] == '.'
-}
-
-fn looks_like_decimal_number(token: &str) -> bool {
-    let t = strip_trailing_closers(token);
-    let mut parts = t.split('.');
-    let left = match parts.next() {
-        Some(v) => v,
-        None => return false,
-    };
-    let right = match parts.next() {
-        Some(v) => v,
-        None => return false,
-    };
-    if parts.next().is_some() {
-        return false;
-    }
-    !left.is_empty()
-        && !right.is_empty()
-        && left.chars().all(|c| c.is_ascii_digit())
-        && right.chars().all(|c| c.is_ascii_digit())
-}
-
-fn starts_with_lowercase(token: &str) -> bool {
-    token
-        .chars()
-        .find(|c| c.is_alphabetic())
-        .map(|c| c.is_lowercase())
-        .unwrap_or(false)
+    let next_word = words.get(idx + 1).map(|w| w.word.as_str());
+    should_split_after_terminal_token(current_word, next_word)
 }
 
 fn clip_context_words(text: &str, max_words: usize) -> String {
