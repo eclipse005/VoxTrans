@@ -114,16 +114,6 @@ pub async fn optimize_words_with_rig_node(
             "suspiciousSentenceTotal": suspicious_indexes.len()
         })),
     );
-    llm_logger.event(
-        "transcribe.punctuation.llm.start",
-        Some(&json!({
-            "model": config.model,
-            "sentenceTotal": spans.len(),
-            "requestTotal": suspicious_indexes.len(),
-            "concurrency": config.llm_concurrency,
-        })),
-    );
-
     let mut builder = openai::Client::builder().api_key(config.api_key.trim());
     if !config.base_url.trim().is_empty() {
         builder = builder.base_url(config.base_url.trim());
@@ -138,9 +128,10 @@ pub async fn optimize_words_with_rig_node(
             return words;
         }
     };
+    let system_prompt = build_punctuation_system_prompt();
     let extractor = completions_client
         .extractor::<PunctuationExtraction>(config.model.clone())
-        .preamble(&build_punctuation_system_prompt())
+        .preamble(&system_prompt)
         .retries(2)
         .build();
     let punctuation_pipeline = pipeline::new().extract(extractor);
@@ -179,8 +170,22 @@ pub async fn optimize_words_with_rig_node(
     let mut applied_total = 0usize;
     match extraction_result {
         Ok(extractions) => {
-            for ((span_idx, _), extraction) in prompt_tasks.into_iter().zip(extractions.into_iter()) {
+            for (result_idx, extraction) in extractions.into_iter().enumerate() {
+                let Some((span_idx, user_prompt)) = prompt_tasks.get(result_idx).cloned() else {
+                    continue;
+                };
                 let punctuated = extraction.punctuated_text.trim().to_string();
+                llm_logger.event(
+                    "transcribe.punctuation.llm.call",
+                    Some(&json!({
+                        "model": config.model,
+                        "request": {
+                            "systemPrompt": &system_prompt,
+                            "userPrompt": user_prompt,
+                        },
+                        "response": extraction,
+                    })),
+                );
                 if punctuated.is_empty() {
                     empty_result_total += 1;
                     continue;
@@ -208,13 +213,19 @@ pub async fn optimize_words_with_rig_node(
                     "requestTotal": suspicious_indexes.len(),
                 })),
             );
-            llm_logger.event(
-                "transcribe.punctuation.llm.error",
-                Some(&json!({
-                    "error": err.to_string(),
-                    "requestTotal": suspicious_indexes.len(),
-                })),
-            );
+            for (_, user_prompt) in &prompt_tasks {
+                llm_logger.event(
+                    "transcribe.punctuation.llm.call",
+                    Some(&json!({
+                        "model": config.model,
+                        "request": {
+                            "systemPrompt": &system_prompt,
+                            "userPrompt": user_prompt,
+                        },
+                        "error": err.to_string(),
+                    })),
+                );
+            }
         }
     }
 
@@ -234,16 +245,6 @@ pub async fn optimize_words_with_rig_node(
             }
         })),
     );
-    llm_logger.event(
-        "transcribe.punctuation.llm.done",
-        Some(&json!({
-            "requestTotal": suspicious_indexes.len(),
-            "appliedSentenceTotal": applied_total,
-            "emptyResultTotal": empty_result_total,
-            "llmErrorTotal": llm_error_total,
-        })),
-    );
-
     optimized
 }
 

@@ -74,7 +74,6 @@ where
     G: FnMut(usize, usize),
 {
     validate_request(&request)?;
-    let llm_logger = TaskLogger::llm_with_media(request.task_id.clone(), request.media_path.clone());
 
     let segments = build_source_segments(&request.tokens);
     if segments.is_empty() {
@@ -85,33 +84,11 @@ where
     let terminology_entries = normalize_terminology_entries(&request.terminology_entries);
 
     on_phase("summarize");
-    llm_logger.event(
-        "translate.llm.summarize.start",
-        Some(&serde_json::json!({
-            "model": &request.translate_model,
-            "segmentTotal": segments.len(),
-        })),
-    );
     let style_profile =
         build_global_style_profile(&request, &segments, &terminology_entries, &completions_client).await;
-    llm_logger.event(
-        "translate.llm.summarize.done",
-        Some(&serde_json::json!({
-            "topicSummary": &style_profile.topic_summary,
-            "toneStrategy": &style_profile.tone_strategy,
-        })),
-    );
 
     on_phase("translate");
     let batches = split_batches(&segments, BATCH_SEGMENT_SIZE);
-    llm_logger.event(
-        "translate.llm.batch.start",
-        Some(&serde_json::json!({
-            "batchSize": BATCH_SEGMENT_SIZE,
-            "batchTotal": batches.len(),
-            "concurrency": request.llm_concurrency,
-        })),
-    );
     let extracted_batches = run_batch_translate_pipeline(
         &request,
         &segments,
@@ -122,12 +99,6 @@ where
         &mut on_batch_progress,
     )
     .await?;
-    llm_logger.event(
-        "translate.llm.batch.done",
-        Some(&serde_json::json!({
-            "batchTotal": extracted_batches.len(),
-        })),
-    );
 
     let mut translated_by_index: HashMap<usize, String> = HashMap::new();
     for (batch_id, extracted) in extracted_batches.into_iter().enumerate() {
@@ -193,6 +164,7 @@ async fn build_global_style_profile(
     terminology_entries: &[TranslateTerminologyPromptEntry],
     completions_client: &openai::CompletionsClient,
 ) -> StyleProfile {
+    let llm_logger = TaskLogger::llm_with_media(request.task_id.clone(), request.media_path.clone());
     let fallback = StyleProfile {
         topic_summary: "General subtitle translation.".to_string(),
         tone_strategy: "Natural, concise, and consistent subtitle tone.".to_string(),
@@ -210,16 +182,29 @@ async fn build_global_style_profile(
         context_tail: tail,
         terminology_entries: terminology_entries.to_vec(),
     });
+    let style_system_prompt = build_translate_style_system_prompt();
+    let style_prompt_for_log = style_prompt.clone();
 
     let style_extractor = completions_client
         .extractor::<StyleExtraction>(request.translate_model.clone())
-        .preamble(&build_translate_style_system_prompt())
+        .preamble(&style_system_prompt)
         .retries(2)
         .build();
 
     let style_pipeline = pipeline::new().extract(style_extractor);
     match style_pipeline.try_call(style_prompt).await {
         Ok(style) => {
+            llm_logger.event(
+                "translate.llm.summarize.call",
+                Some(&serde_json::json!({
+                    "model": &request.translate_model,
+                    "request": {
+                        "systemPrompt": &style_system_prompt,
+                        "userPrompt": &style_prompt_for_log,
+                    },
+                    "response": &style
+                })),
+            );
             let topic_summary = style.topic_summary.trim().to_string();
             let tone_strategy = style.tone_strategy.trim().to_string();
             StyleProfile {
@@ -235,7 +220,20 @@ async fn build_global_style_profile(
                 },
             }
         }
-        Err(_) => fallback,
+        Err(err) => {
+            llm_logger.event(
+                "translate.llm.summarize.call",
+                Some(&serde_json::json!({
+                    "model": &request.translate_model,
+                    "request": {
+                        "systemPrompt": &style_system_prompt,
+                        "userPrompt": &style_prompt_for_log,
+                    },
+                    "error": err.to_string(),
+                })),
+            );
+            fallback
+        }
     }
 }
 
@@ -286,6 +284,8 @@ where
     let model = request.translate_model.clone();
     let api_key = request.translate_api_key.clone();
     let base_url = request.translate_base_url.clone();
+    let task_id = request.task_id.clone();
+    let media_path = request.media_path.clone();
 
     let mut join_set: JoinSet<Result<(usize, TranslationBatchExtraction), String>> = JoinSet::new();
     let mut next_to_spawn = 0usize;
@@ -300,6 +300,8 @@ where
             model.clone(),
             api_key.clone(),
             base_url.clone(),
+            task_id.clone(),
+            media_path.clone(),
         );
         next_to_spawn += 1;
     }
@@ -322,6 +324,8 @@ where
                 model.clone(),
                 api_key.clone(),
                 base_url.clone(),
+                task_id.clone(),
+                media_path.clone(),
             );
             next_to_spawn += 1;
         }
@@ -340,8 +344,14 @@ fn spawn_translate_task(
     model: String,
     api_key: String,
     base_url: String,
+    task_id: String,
+    media_path: String,
 ) {
     join_set.spawn(async move {
+        let llm_logger = TaskLogger::llm_with_media(task_id, media_path);
+        let system_prompt = build_translate_system_prompt();
+        let prompt_for_log = prompt.clone();
+        let model_for_log = model.clone();
         let mut builder = openai::Client::builder().api_key(api_key.trim());
         if !base_url.trim().is_empty() {
             builder = builder.base_url(base_url.trim());
@@ -353,14 +363,43 @@ fn spawn_translate_task(
 
         let batch_extractor = client
             .extractor::<TranslationBatchExtraction>(model)
-            .preamble(&build_translate_system_prompt())
+            .preamble(&system_prompt)
             .retries(2)
             .build();
         let batch_pipeline = pipeline::new().extract(batch_extractor);
-        let extracted = batch_pipeline
+        let extracted = match batch_pipeline
             .try_call(prompt)
             .await
-            .map_err(|err| format!("translate pipeline failed: {err}"))?;
+        {
+            Ok(value) => value,
+            Err(err) => {
+                llm_logger.event(
+                    "translate.llm.batch.call",
+                    Some(&serde_json::json!({
+                        "batchIndex": index,
+                        "model": &model_for_log,
+                        "request": {
+                            "systemPrompt": &system_prompt,
+                            "userPrompt": &prompt_for_log,
+                        },
+                        "error": err.to_string(),
+                    })),
+                );
+                return Err(format!("translate pipeline failed: {err}"));
+            }
+        };
+        llm_logger.event(
+            "translate.llm.batch.call",
+            Some(&serde_json::json!({
+                "batchIndex": index,
+                "model": &model_for_log,
+                "request": {
+                    "systemPrompt": &system_prompt,
+                    "userPrompt": &prompt_for_log,
+                },
+                "response": &extracted,
+            })),
+        );
         Ok((index, extracted))
     });
 }
