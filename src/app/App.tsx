@@ -67,11 +67,11 @@ function App() {
     pickFiles,
     processQueue,
     processSingle,
+    processSingleTranscribeTranslate,
     clearQueue,
     removeItem,
   } = useQueueWorkflow({
     queue,
-    settings,
     dispatch,
     pushToast,
   });
@@ -193,6 +193,7 @@ function App() {
             onProcessQueue={processQueue}
             onClearQueue={clearQueue}
             onProcessSingle={processSingle}
+            onProcessSingleTranscribeTranslate={processSingleTranscribeTranslate}
             onRemoveItem={removeItem}
           />
         </section>

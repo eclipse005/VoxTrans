@@ -1,6 +1,6 @@
 import type { QueueItem, QueueStatus } from "../../features/media/types";
 import { formatBytes, statusLabel } from "../../features/media/utils";
-import { AudioFileIcon, MicIcon, PlayIcon, TrashIcon, VideoFileIcon } from "./Icons";
+import { AudioFileIcon, MicIcon, PlayIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
 
 type MediaListProps = {
   queue: QueueItem[];
@@ -11,6 +11,7 @@ type MediaListProps = {
   onProcessQueue: () => void | Promise<void>;
   onClearQueue: () => void;
   onProcessSingle: (item: QueueItem) => void | Promise<void>;
+  onProcessSingleTranscribeTranslate: (item: QueueItem) => void | Promise<void>;
   onRemoveItem: (id: string) => void;
 };
 
@@ -51,6 +52,7 @@ export default function MediaList({
   onProcessQueue,
   onClearQueue,
   onProcessSingle,
+  onProcessSingleTranscribeTranslate,
   onRemoveItem,
 }: MediaListProps) {
   return (
@@ -102,6 +104,9 @@ export default function MediaList({
                         </div>
                       </div>
                       <div className="file-actions">
+                        <button className="file-action-btn" title="转译" disabled={item.transcribeStatus === "processing"} onClick={(e) => { e.stopPropagation(); void onProcessSingleTranscribeTranslate(item); }}>
+                          <TranslateIcon />
+                        </button>
                         <button className="file-action-btn" title="转录" disabled={item.transcribeStatus === "processing"} onClick={(e) => { e.stopPropagation(); void onProcessSingle(item); }}>
                           <MicIcon />
                         </button>

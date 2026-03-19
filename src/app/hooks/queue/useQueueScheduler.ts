@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { deleteTaskSummaries } from "../../api/workspace";
 import type { QueueItem } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
+import type { QueueRunMode } from "./useQueueRunner";
 import {
   clearQueueItems,
   removeQueueItem,
@@ -15,15 +16,20 @@ type UseQueueSchedulerArgs = {
   queue: QueueItem[];
   dispatch: DispatchState;
   pushToast: PushToast;
-  runTranscribe: (item: QueueItem) => Promise<void>;
+  runBatch: (items: Array<{ item: QueueItem; mode: QueueRunMode }>) => Promise<void>;
+  setTaskMode: (taskId: string, mode: QueueRunMode) => void;
+  takeTaskMode: (taskId: string) => QueueRunMode;
 };
 
 export function useQueueScheduler({
   queue,
   dispatch,
   pushToast,
-  runTranscribe,
+  runBatch,
+  setTaskMode,
+  takeTaskMode,
 }: UseQueueSchedulerArgs) {
+  const runBatchInFlightRef = useRef(false);
   const hasProcessingTask = useMemo(
     () => queue.some((item) => item.transcribeStatus === "processing"),
     [queue],
@@ -36,10 +42,22 @@ export function useQueueScheduler({
 
   useEffect(() => {
     if (hasProcessingTask) return;
-    const next = queue.find((item) => item.transcribeStatus === "queued");
-    if (!next) return;
-    void runTranscribe(next);
-  }, [hasProcessingTask, queue, runTranscribe]);
+    if (runBatchInFlightRef.current) return;
+    const queuedItems = queue.filter((item) => item.transcribeStatus === "queued");
+    if (queuedItems.length === 0) return;
+    runBatchInFlightRef.current = true;
+    const batch = queuedItems.map((item) => ({
+      item,
+      mode: takeTaskMode(item.id),
+    }));
+    void runBatch(batch)
+      .catch(() => {
+        pushToast("批处理执行失败，请重试", "error");
+      })
+      .finally(() => {
+        runBatchInFlightRef.current = false;
+      });
+  }, [hasProcessingTask, queue, runBatch, takeTaskMode, pushToast]);
 
   const processQueue = useCallback(async () => {
     const pendingCount = queue.filter((item) => item.transcribeStatus === "pending").length;
@@ -53,19 +71,30 @@ export function useQueueScheduler({
       .map((q) => q.id);
 
     for (const id of queuedIds) {
+      setTaskMode(id, "transcribe");
       setQueuedState(dispatch, id);
     }
 
     pushToast(`开始批量处理，共 ${pendingCount} 个文件`, "info");
-  }, [dispatch, pushToast, queue]);
+  }, [dispatch, pushToast, queue, setTaskMode]);
 
   const processSingle = useCallback(async (item: QueueItem) => {
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
+    setTaskMode(item.id, "transcribe");
     setQueuedState(dispatch, item.id);
     if (queueBusy) {
       pushToast(`已加入排队：${item.name}`, "info");
     }
-  }, [dispatch, pushToast, queueBusy]);
+  }, [dispatch, pushToast, queueBusy, setTaskMode]);
+
+  const processSingleTranscribeTranslate = useCallback(async (item: QueueItem) => {
+    if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
+    setTaskMode(item.id, item.transcribeStatus === "done" ? "translate_only" : "transcribe_translate");
+    setQueuedState(dispatch, item.id);
+    if (queueBusy) {
+      pushToast(`已加入排队：${item.name}`, "info");
+    }
+  }, [dispatch, pushToast, queueBusy, setTaskMode]);
 
   const clearQueue = useCallback(async () => {
     if (queueBusy) {
@@ -94,8 +123,8 @@ export function useQueueScheduler({
     queueBusy,
     processQueue,
     processSingle,
+    processSingleTranscribeTranslate,
     clearQueue,
     removeItem,
   };
 }
-

@@ -3,6 +3,8 @@ import type {
   BuildSegmentsResponse,
   DemucsModel,
   Provider,
+  TranslatePipelineRequest,
+  TranslatePipelineResponse,
   TranscribeResponse,
   WordToken,
 } from "../../features/media/types";
@@ -94,4 +96,10 @@ export async function saveSrt(request: SaveSrtRequest): Promise<void> {
 
 export async function exportSrt(request: ExportSrtRequest): Promise<string> {
   return invoke<string>("export_srt", { request });
+}
+
+export async function runTranslatePipeline(
+  request: TranslatePipelineRequest,
+): Promise<TranslatePipelineResponse> {
+  return invoke<TranslatePipelineResponse>("run_translate_pipeline", { request });
 }

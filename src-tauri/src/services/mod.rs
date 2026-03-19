@@ -13,6 +13,8 @@ pub mod preferences;
 pub mod subtitle;
 pub mod system;
 pub mod task_log;
+pub mod task_engine;
+pub mod task_executor;
 pub mod task_path;
 pub mod translate;
 pub mod transcribe;

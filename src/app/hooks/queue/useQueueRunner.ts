@@ -1,24 +1,17 @@
 import { useCallback, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import {
-  runPostAsrPipeline,
-  separateVocals,
-  saveSrt,
-  transcribeMedia,
-} from "../../api/transcribe";
+import { executeTaskBatch, executeTaskRun, loadWorkspaceState } from "../../api/workspace";
 import type {
-  BuildSegmentsResponse,
   QueueItem,
-  SavedSettings,
-  SubtitleSegment,
   TranscribePhase,
+  WorkspaceStateResponse,
 } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
 import {
   applyTranscribePhase,
   applyTranscribeProgress,
   applySeparationProgress,
-  setDoneState,
+  patchQueueItem,
   setErrorState,
   setProcessingState,
 } from "../../state/queueDomainActions";
@@ -43,15 +36,15 @@ type SeparateProgressEvent = {
   percent: number;
 };
 
+export type QueueRunMode = "transcribe" | "transcribe_translate" | "translate_only";
+
 type UseQueueRunnerArgs = {
-  settings: SavedSettings;
   dispatch: DispatchState;
   pushToast: PushToast;
   isTaskPresent: (taskId: string) => boolean;
 };
 
 export function useQueueRunner({
-  settings,
   dispatch,
   pushToast,
   isTaskPresent,
@@ -134,97 +127,113 @@ export function useQueueRunner({
     };
   }, [dispatch]);
 
-  const runTranscribe = useCallback(async (item: QueueItem) => {
+  const runTask = useCallback(async (item: QueueItem, mode: QueueRunMode) => {
     if (!isTaskPresent(item.id)) return;
     setProcessingState(dispatch, item.id);
     if (!isTaskPresent(item.id)) return;
 
     try {
-      let transcribeAudioPath = item.path;
-      if (settings.enableVocalSeparation) {
-        applyTranscribePhase(dispatch, {
-          taskId: item.id,
-          phase: "separating",
-        });
-        const separation = await separateVocals({
-          taskId: item.id,
-          audioPath: item.path,
-          model: settings.demucsModel,
-        });
-        if (!isTaskPresent(item.id)) return;
-        transcribeAudioPath = separation.vocalsPath;
+      await executeTaskRun({
+        taskId: item.id,
+        intent: toIntent(mode),
+      });
+      if (!isTaskPresent(item.id)) return;
+
+      const workspace = await loadWorkspaceState();
+      if (!isTaskPresent(item.id)) return;
+      const synced = findQueueItem(workspace, item.id);
+      if (synced) {
+        patchQueueItem(dispatch, item.id, (prev) => ({
+          ...prev,
+          transcribeStatus: synced.transcribeStatus,
+          transcribeProgress: synced.transcribeProgress,
+          transcribeSegmentCurrent: synced.transcribeSegmentCurrent,
+          transcribeSegmentTotal: synced.transcribeSegmentTotal,
+          transcribePhase: "",
+          transcribeError: synced.transcribeError,
+          resultText: synced.resultText,
+          resultSrt: synced.resultSrt,
+          subtitleSegmentsJson: synced.subtitleSegmentsJson,
+        }));
       }
 
-      const response = await transcribeMedia({
-        taskId: item.id,
-        audioPath: transcribeAudioPath,
-        provider: settings.provider,
-        chunkTargetSeconds: settings.chunkTargetSeconds,
-      });
-      if (!isTaskPresent(item.id)) return;
-      const processed = await runPostAsrPipeline({
-        taskId: item.id,
-        audioPath: item.path,
-        words: response.words,
-        subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
-        enablePunctuationOptimization: settings.enablePunctuationOptimization,
-        translateApiKey: settings.translateApiKey,
-        translateBaseUrl: settings.translateBaseUrl,
-        translateModel: settings.translateModel,
-        llmConcurrency: settings.llmConcurrency,
-      });
-      if (!isTaskPresent(item.id)) return;
-
-      await saveSrt({
-        taskId: item.id,
-        mediaPath: item.path,
-        outputPath: processed.srtOutputPath,
-        content: processed.srt,
-      });
-      if (!isTaskPresent(item.id)) return;
-
-      const normalizedSegments = toSubtitleSegmentsFromBuilt(processed.segments);
-      setDoneState(dispatch, item.id, {
-        subtitleSegmentsJson: JSON.stringify(normalizedSegments),
-        resultText: processed.text,
-        resultSrt: processed.srt,
-        segmentTotal: response.segmentTotal,
-      });
-      if (!isTaskPresent(item.id)) return;
-      pushToast(`已完成：${item.name}，SRT 已保存到 ${processed.srtOutputPath}`, "success");
+      pushToast(mode === "transcribe" ? `已完成：${item.name}` : `已完成转译：${item.name}`, "success");
     } catch (err) {
       if (!isTaskPresent(item.id)) return;
-      reportError(err, "runTranscribe");
-      const errorMessage = toUserErrorMessage(err, "转录失败，请检查模型和运行时配置");
+      reportError(err, "runTask");
+      const fallback = mode === "transcribe" ? "转录失败，请检查模型和运行时配置" : "转译失败，请检查翻译配置";
+      const errorMessage = toUserErrorMessage(err, fallback);
       setErrorState(dispatch, item.id, errorMessage);
       pushToast(`失败：${item.name}，${errorMessage}`, "error");
     }
   }, [
     dispatch,
-    pushToast,
     isTaskPresent,
-    settings.chunkTargetSeconds,
-    settings.demucsModel,
-    settings.enableVocalSeparation,
-    settings.enablePunctuationOptimization,
-    settings.provider,
-    settings.subtitleMaxWordsPerSegment,
-    settings.translateApiKey,
-    settings.translateBaseUrl,
-    settings.translateModel,
-    settings.llmConcurrency,
+    pushToast,
   ]);
+  const runBatch = useRunBatch(dispatch, pushToast, isTaskPresent);
 
   return {
-    runTranscribe,
+    runTask,
+    runBatch,
   };
 }
 
-function toSubtitleSegmentsFromBuilt(segments: BuildSegmentsResponse["segments"]): SubtitleSegment[] {
-  return segments.map((segment) => ({
-    startMs: Math.max(0, Math.round(segment.start * 1000)),
-    endMs: Math.max(0, Math.round(segment.end * 1000)),
-    sourceText: segment.text ?? "",
-    translatedText: "",
-  }));
+type BatchTask = {
+  item: QueueItem;
+  mode: QueueRunMode;
+};
+
+function useRunBatch(
+  dispatch: DispatchState,
+  pushToast: PushToast,
+  isTaskPresent: (taskId: string) => boolean,
+) {
+  return useCallback(async (tasks: BatchTask[]) => {
+    const items = tasks.filter((task) => isTaskPresent(task.item.id));
+    if (!items.length) return;
+
+    const response = await executeTaskBatch({
+      items: items.map((task) => ({
+        taskId: task.item.id,
+        intent: toIntent(task.mode),
+      })),
+    });
+    const workspace = await loadWorkspaceState();
+    for (const item of items) {
+      if (!isTaskPresent(item.item.id)) continue;
+      const synced = findQueueItem(workspace, item.item.id);
+      if (!synced) continue;
+      patchQueueItem(dispatch, item.item.id, (prev) => ({
+        ...prev,
+        transcribeStatus: synced.transcribeStatus,
+        transcribeProgress: synced.transcribeProgress,
+        transcribeSegmentCurrent: synced.transcribeSegmentCurrent,
+        transcribeSegmentTotal: synced.transcribeSegmentTotal,
+        transcribePhase: "",
+        transcribeError: synced.transcribeError,
+        resultText: synced.resultText,
+        resultSrt: synced.resultSrt,
+        subtitleSegmentsJson: synced.subtitleSegmentsJson,
+      }));
+    }
+    if (response.failed.length > 0) {
+      const first = response.failed[0];
+      pushToast(`部分任务失败：${first.taskId}，${first.error}`, "error");
+    }
+  }, [dispatch, isTaskPresent, pushToast]);
+}
+
+function toIntent(mode: QueueRunMode): "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" | "TRANSLATE_ONLY" {
+  if (mode === "translate_only") return "TRANSLATE_ONLY";
+  if (mode === "transcribe_translate") return "TRANSCRIBE_TRANSLATE";
+  return "TRANSCRIBE";
+}
+
+function findQueueItem(
+  workspace: WorkspaceStateResponse,
+  taskId: string,
+): QueueItem | null {
+  const queue = Array.isArray(workspace.queue) ? workspace.queue : [];
+  return queue.find((item) => item.id === taskId) ?? null;
 }

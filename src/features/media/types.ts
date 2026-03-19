@@ -74,6 +74,35 @@ export type WordToken = {
   word: string;
 };
 
+export type TranslateToken = {
+  start: number;
+  end: number;
+  word: string;
+};
+
+export type TranslateSegment = {
+  startMs: number;
+  endMs: number;
+  sourceText: string;
+  translatedText: string;
+};
+
+export type TranslatePipelineRequest = {
+  taskId: string;
+  mediaPath: string;
+  sourceLang: string;
+  targetLang: string;
+  tokens: TranslateToken[];
+};
+
+export type TranslatePipelineResponse = {
+  sourceSrt: string;
+  targetSrt: string;
+  bilingualSrtSourceFirst: string;
+  bilingualSrtTargetFirst: string;
+  segments: TranslateSegment[];
+};
+
 export type SegmentWithWords = {
   start: number;
   end: number;

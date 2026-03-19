@@ -123,9 +123,11 @@ pub async fn record_task_event(
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
 
     if let Some(task) = request.task {
-        let transcribe_status = non_empty_or_default(task.transcribe_status, &task.last_status);
-        let transcribe_error = non_empty_or_default(task.transcribe_error, &task.last_error);
-        let subtitle_segments_json = non_empty_or_default(task.subtitle_segments_json, "[]");
+        let transcribe_status =
+            non_empty_or_default(task.transcribe_status.clone(), &task.last_status);
+        let transcribe_error = non_empty_or_default(task.transcribe_error.clone(), &task.last_error);
+        let subtitle_segments_json =
+            non_empty_or_default(task.subtitle_segments_json.clone(), "[]");
 
         sqlx::query(
             "INSERT INTO tasks (
@@ -150,23 +152,25 @@ pub async fn record_task_event(
                transcribed_at = excluded.transcribed_at,
                updated_at = excluded.updated_at",
         )
-        .bind(task.id)
-        .bind(task.media_path)
-        .bind(task.name)
-        .bind(task.media_kind)
+        .bind(&task.id)
+        .bind(&task.media_path)
+        .bind(&task.name)
+        .bind(&task.media_kind)
         .bind(task.size_bytes as i64)
-        .bind(task.last_status)
-        .bind(task.last_error)
-        .bind(task.output_srt_path)
-        .bind(task.output_words_json)
-        .bind(transcribe_status)
-        .bind(transcribe_error)
-        .bind(task.transcript_srt)
+        .bind(&task.last_status)
+        .bind(&task.last_error)
+        .bind(&task.output_srt_path)
+        .bind(&task.output_words_json)
+        .bind(&transcribe_status)
+        .bind(&transcribe_error)
+        .bind(&task.transcript_srt)
         .bind(subtitle_segments_json)
         .bind(task.transcribed_at)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
+
+        sync_task_run_from_snapshot(&mut tx, &task, &transcribe_status, &transcribe_error).await?;
     }
 
     let payload = request.payload.unwrap_or_else(|| serde_json::json!({}));
@@ -184,6 +188,82 @@ pub async fn record_task_event(
     .map_err(|e| e.to_string())?;
 
     tx.commit().await.map_err(|e| e.to_string())
+}
+
+async fn sync_task_run_from_snapshot(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    task: &TaskSnapshot,
+    transcribe_status: &str,
+    transcribe_error: &str,
+) -> Result<(), String> {
+    let (state, progress_percent) = map_transcribe_status_to_run_state(transcribe_status);
+    let now = now_unix();
+    let finished_at = if matches!(state.as_str(), "COMPLETED" | "FAILED") {
+        task.transcribed_at.or(Some(now))
+    } else {
+        None
+    };
+
+    sqlx::query(
+        "INSERT INTO task_runs (
+            id, media_path, name, media_kind, size_bytes,
+            intent, state, current_step, progress_percent, progress_note,
+            error_code, error_message, retry_count, max_retries,
+            settings_policy_version, settings_snapshot_json,
+            source_lang, target_lang, queued_at, started_at, finished_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, 'TRANSCRIBE', ?, '', ?, '', ?, ?, 0, 0, 'v1', '{}', 'auto', 'zh-CN', ?, NULL, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+            media_path = excluded.media_path,
+            name = excluded.name,
+            media_kind = excluded.media_kind,
+            size_bytes = excluded.size_bytes,
+            state = excluded.state,
+            progress_percent = excluded.progress_percent,
+            error_code = excluded.error_code,
+            error_message = excluded.error_message,
+            finished_at = excluded.finished_at,
+            updated_at = excluded.updated_at",
+    )
+    .bind(&task.id)
+    .bind(&task.media_path)
+    .bind(&task.name)
+    .bind(&task.media_kind)
+    .bind(task.size_bytes as i64)
+    .bind(state)
+    .bind(progress_percent as i64)
+    .bind(if transcribe_error.trim().is_empty() {
+        ""
+    } else {
+        "TRANSCRIBE_ERROR"
+    })
+    .bind(transcribe_error)
+    .bind(task.transcribed_at.unwrap_or(now))
+    .bind(finished_at)
+    .bind(now)
+    .bind(now)
+    .execute(&mut **tx)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    Ok(())
+}
+
+fn map_transcribe_status_to_run_state(status: &str) -> (String, u32) {
+    match status.trim() {
+        "pending" => ("CREATED".to_string(), 0),
+        "queued" => ("QUEUED".to_string(), 0),
+        "processing" => ("RUNNING".to_string(), 50),
+        "done" => ("COMPLETED".to_string(), 100),
+        "error" => ("FAILED".to_string(), 0),
+        _ => ("CREATED".to_string(), 0),
+    }
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 pub async fn list_task_events(
@@ -311,6 +391,12 @@ pub async fn delete_task_summaries(
     match (request.task_id, request.media_path) {
         (Some(task_id), Some(media_path)) => {
             sqlx::query("DELETE FROM tasks WHERE id = ? OR media_path = ?")
+                .bind(&task_id)
+                .bind(&media_path)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            sqlx::query("DELETE FROM task_runs WHERE id = ? OR media_path = ?")
                 .bind(task_id)
                 .bind(media_path)
                 .execute(pool)
@@ -319,6 +405,11 @@ pub async fn delete_task_summaries(
         }
         (Some(task_id), None) => {
             sqlx::query("DELETE FROM tasks WHERE id = ?")
+                .bind(&task_id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            sqlx::query("DELETE FROM task_runs WHERE id = ?")
                 .bind(task_id)
                 .execute(pool)
                 .await
@@ -326,6 +417,11 @@ pub async fn delete_task_summaries(
         }
         (None, Some(media_path)) => {
             sqlx::query("DELETE FROM tasks WHERE media_path = ?")
+                .bind(&media_path)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            sqlx::query("DELETE FROM task_runs WHERE media_path = ?")
                 .bind(media_path)
                 .execute(pool)
                 .await
@@ -333,6 +429,10 @@ pub async fn delete_task_summaries(
         }
         (None, None) => {
             sqlx::query("DELETE FROM tasks")
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            sqlx::query("DELETE FROM task_runs")
                 .execute(pool)
                 .await
                 .map_err(|e| e.to_string())?;

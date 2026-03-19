@@ -1,8 +1,7 @@
 import { useEffect, useRef } from "react";
-import { listTaskSummaries } from "../api/history";
 import { loadWorkspaceState, saveQueueState } from "../api/workspace";
 import { normalizeTranscribeStatus, transitionQueueItemStatus } from "../../features/media/stateMachine";
-import type { QueueItem, SubtitleSegment, TaskSummary } from "../../features/media/types";
+import type { QueueItem, SubtitleSegment } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 
 type DispatchState = (action: AppAction) => void;
@@ -24,18 +23,13 @@ export function useWorkspacePersistence({
     (async () => {
       try {
         const res = await loadWorkspaceState();
-        const history: TaskSummary[] = await listTaskSummaries({ limit: 500 });
         if (cancelled) return;
 
         const queueItems = Array.isArray(res.queue) ? res.queue.map(normalizeQueueItem) : [];
-        const historyItems = Array.isArray(history)
-          ? history.map(taskSummaryToQueueItem)
-          : [];
-
-        const merged = dedupeById([...queueItems, ...historyItems]);
-        if (merged.length > 0) {
-          dispatch({ type: "add_queue_items", items: merged });
-          dispatch({ type: "set_ui", payload: { activeId: merged[0]?.id || "" } });
+        const deduped = dedupeById(queueItems);
+        if (deduped.length > 0) {
+          dispatch({ type: "add_queue_items", items: deduped });
+          dispatch({ type: "set_ui", payload: { activeId: deduped[0]?.id || "" } });
         }
       } finally {
         hydratedRef.current = true;
@@ -60,28 +54,6 @@ export function useWorkspacePersistence({
       void saveQueueState({ queue });
     }, 300);
   }, [queue]);
-}
-
-function taskSummaryToQueueItem(task: TaskSummary): QueueItem {
-  const transcribeStatus = normalizeTranscribeStatus(task.transcribeStatus || task.lastStatus);
-  const segments = parseSubtitleSegments(task.subtitleSegmentsJson);
-  const resultText = segments.map((segment) => segment.sourceText.trim()).filter(Boolean).join("\n");
-  return recoverTransientStates({
-    id: task.id,
-    path: task.mediaPath,
-    name: task.name,
-    mediaKind: task.mediaKind,
-    sizeBytes: Math.max(0, task.sizeBytes || 0),
-    transcribeStatus,
-    transcribeProgress: transcribeStatus === "done" ? 100 : 0,
-    transcribeSegmentCurrent: 0,
-    transcribeSegmentTotal: 0,
-    transcribePhase: "",
-    transcribeError: task.transcribeError || task.lastError || "",
-    resultText,
-    resultSrt: task.transcriptSrt || "",
-    subtitleSegmentsJson: JSON.stringify(segments),
-  });
 }
 
 function dedupeById(items: QueueItem[]): QueueItem[] {
