@@ -1,13 +1,13 @@
 use std::collections::HashMap;
-use tokio::task::JoinSet;
 
-use rig::pipeline::{self, TryOp};
-use rig::providers::openai;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 use voxtrans_core::subtitle::text_rules::has_break_terminal_punctuation;
-use crate::services::task_log::TaskLogger;
+use crate::services::translate::adapters::rig_node::{
+    JsonResponseValidator, RigNodeClient, RigNodeConfig, RigNodeJsonTask,
+};
 
 use super::prompt::{
     TranslatePromptInput, TranslatePromptSegmentInput, TranslateStylePromptInput,
@@ -80,12 +80,12 @@ where
         return Err("tokens did not produce any non-empty subtitle segment".to_string());
     }
 
-    let completions_client = build_openai_completions_client(&request)?;
+    let rig_client = build_rig_client(&request)?;
     let terminology_entries = normalize_terminology_entries(&request.terminology_entries);
 
     on_phase("summarize");
     let style_profile =
-        build_global_style_profile(&request, &segments, &terminology_entries, &completions_client).await;
+        build_global_style_profile(&request, &segments, &terminology_entries, &rig_client).await;
 
     on_phase("translate");
     let batches = split_batches(&segments, BATCH_SEGMENT_SIZE);
@@ -95,7 +95,7 @@ where
         &batches,
         &terminology_entries,
         &style_profile,
-        &completions_client,
+        &rig_client,
         &mut on_batch_progress,
     )
     .await?;
@@ -145,26 +145,20 @@ where
     })
 }
 
-fn build_openai_completions_client(
-    request: &TranslatePipelineRequest,
-) -> Result<openai::CompletionsClient, String> {
-    let mut builder = openai::Client::builder().api_key(request.translate_api_key.trim());
-    if !request.translate_base_url.trim().is_empty() {
-        builder = builder.base_url(request.translate_base_url.trim());
-    }
-    let client = builder
-        .build()
-        .map_err(|err| format!("failed to create rig openai client: {err}"))?;
-    Ok(client.completions_api())
+fn build_rig_client(request: &TranslatePipelineRequest) -> Result<RigNodeClient, String> {
+    RigNodeClient::new(RigNodeConfig::new(
+        request.translate_base_url.clone(),
+        request.translate_api_key.clone(),
+        request.translate_model.clone(),
+    ))
 }
 
 async fn build_global_style_profile(
     request: &TranslatePipelineRequest,
     segments: &[SourceSegment],
     terminology_entries: &[TranslateTerminologyPromptEntry],
-    completions_client: &openai::CompletionsClient,
+    rig_client: &RigNodeClient,
 ) -> StyleProfile {
-    let llm_logger = TaskLogger::llm_with_media(request.task_id.clone(), request.media_path.clone());
     let fallback = StyleProfile {
         topic_summary: "General subtitle translation.".to_string(),
         tone_strategy: "Natural, concise, and consistent subtitle tone.".to_string(),
@@ -183,57 +177,37 @@ async fn build_global_style_profile(
         terminology_entries: terminology_entries.to_vec(),
     });
     let style_system_prompt = build_translate_style_system_prompt();
-    let style_prompt_for_log = style_prompt.clone();
-
-    let style_extractor = completions_client
-        .extractor::<StyleExtraction>(request.translate_model.clone())
-        .preamble(&style_system_prompt)
-        .retries(2)
-        .build();
-
-    let style_pipeline = pipeline::new().extract(style_extractor);
-    match style_pipeline.try_call(style_prompt).await {
-        Ok(style) => {
-            llm_logger.event(
-                "translate.llm.summarize.call",
-                Some(&serde_json::json!({
-                    "model": &request.translate_model,
-                    "request": {
-                        "systemPrompt": &style_system_prompt,
-                        "userPrompt": &style_prompt_for_log,
-                    },
-                    "response": &style
-                })),
-            );
-            let topic_summary = style.topic_summary.trim().to_string();
-            let tone_strategy = style.tone_strategy.trim().to_string();
-            StyleProfile {
-                topic_summary: if topic_summary.is_empty() {
-                    fallback.topic_summary
-                } else {
-                    topic_summary
-                },
-                tone_strategy: if tone_strategy.is_empty() {
-                    fallback.tone_strategy
-                } else {
-                    tone_strategy
-                },
-            }
-        }
-        Err(err) => {
-            llm_logger.event(
-                "translate.llm.summarize.call",
-                Some(&serde_json::json!({
-                    "model": &request.translate_model,
-                    "request": {
-                        "systemPrompt": &style_system_prompt,
-                        "userPrompt": &style_prompt_for_log,
-                    },
-                    "error": err.to_string(),
-                })),
-            );
-            fallback
-        }
+    let validator = JsonResponseValidator::with_required_keys(&["topicSummary", "toneStrategy"]);
+    let result = rig_client
+        .call(
+            &request.task_id,
+            Some(&request.media_path),
+            &style_system_prompt,
+            &style_prompt,
+            Some(&validator),
+        )
+        .await;
+    let parsed = match result {
+        Ok(ok) => ok.json,
+        Err(_) => return fallback,
+    };
+    let style = match serde_json::from_value::<StyleExtraction>(parsed) {
+        Ok(v) => v,
+        Err(_) => return fallback,
+    };
+    let topic_summary = style.topic_summary.trim().to_string();
+    let tone_strategy = style.tone_strategy.trim().to_string();
+    StyleProfile {
+        topic_summary: if topic_summary.is_empty() {
+            fallback.topic_summary
+        } else {
+            topic_summary
+        },
+        tone_strategy: if tone_strategy.is_empty() {
+            fallback.tone_strategy
+        } else {
+            tone_strategy
+        },
     }
 }
 
@@ -243,7 +217,7 @@ async fn run_batch_translate_pipeline<G>(
     batches: &[SegmentBatch],
     terminology_entries: &[TranslateTerminologyPromptEntry],
     style_profile: &StyleProfile,
-    _completions_client: &openai::CompletionsClient,
+    rig_client: &RigNodeClient,
     on_batch_progress: &mut G,
 ) -> Result<Vec<TranslationBatchExtraction>, String>
 where
@@ -281,54 +255,41 @@ where
     }
 
     let concurrency = request.llm_concurrency.clamp(1, 16) as usize;
-    let model = request.translate_model.clone();
-    let api_key = request.translate_api_key.clone();
-    let base_url = request.translate_base_url.clone();
-    let task_id = request.task_id.clone();
-    let media_path = request.media_path.clone();
-
-    let mut join_set: JoinSet<Result<(usize, TranslationBatchExtraction), String>> = JoinSet::new();
-    let mut next_to_spawn = 0usize;
+    let validator = JsonResponseValidator::with_required_keys(&["segments"]);
+    let tasks = prompts
+        .into_iter()
+        .enumerate()
+        .map(|(index, user_prompt)| RigNodeJsonTask {
+            id: index,
+            system_prompt: build_translate_system_prompt(),
+            user_prompt,
+            response_validator: Some(validator.clone()),
+        })
+        .collect::<Vec<_>>();
+    let results = rig_client
+        .call_batch(
+            &request.task_id,
+            Some(&request.media_path),
+            tasks,
+            concurrency,
+        )
+        .await;
     let mut done = 0usize;
     let mut out: Vec<Option<TranslationBatchExtraction>> = vec![None; total_batches];
 
-    while next_to_spawn < total_batches && join_set.len() < concurrency {
-        spawn_translate_task(
-            &mut join_set,
-            next_to_spawn,
-            prompts[next_to_spawn].clone(),
-            model.clone(),
-            api_key.clone(),
-            base_url.clone(),
-            task_id.clone(),
-            media_path.clone(),
-        );
-        next_to_spawn += 1;
-    }
-
-    while let Some(joined) = join_set.join_next().await {
-        let result = joined.map_err(|err| format!("translate task join failed: {err}"))??;
-        let (index, extracted) = result;
+    for (index, result) in results {
         if index >= total_batches {
             return Err(format!("translate task returned invalid index {index}"));
         }
+        let json = match result {
+            Ok(ok) => ok.json,
+            Err(err) => return Err(format!("translate pipeline failed: {}", err.message)),
+        };
+        let extracted = parse_translation_batch_extraction(json)
+            .map_err(|err| format!("translate batch parse failed at {}: {err}", index + 1))?;
         out[index] = Some(extracted);
         done += 1;
         on_batch_progress(done.min(total_batches), total_batches);
-
-        if next_to_spawn < total_batches {
-            spawn_translate_task(
-                &mut join_set,
-                next_to_spawn,
-                prompts[next_to_spawn].clone(),
-                model.clone(),
-                api_key.clone(),
-                base_url.clone(),
-                task_id.clone(),
-                media_path.clone(),
-            );
-            next_to_spawn += 1;
-        }
     }
 
     out.into_iter()
@@ -337,71 +298,8 @@ where
         .collect()
 }
 
-fn spawn_translate_task(
-    join_set: &mut JoinSet<Result<(usize, TranslationBatchExtraction), String>>,
-    index: usize,
-    prompt: String,
-    model: String,
-    api_key: String,
-    base_url: String,
-    task_id: String,
-    media_path: String,
-) {
-    join_set.spawn(async move {
-        let llm_logger = TaskLogger::llm_with_media(task_id, media_path);
-        let system_prompt = build_translate_system_prompt();
-        let prompt_for_log = prompt.clone();
-        let model_for_log = model.clone();
-        let mut builder = openai::Client::builder().api_key(api_key.trim());
-        if !base_url.trim().is_empty() {
-            builder = builder.base_url(base_url.trim());
-        }
-        let client = builder
-            .build()
-            .map_err(|err| format!("failed to create rig openai client: {err}"))?
-            .completions_api();
-
-        let batch_extractor = client
-            .extractor::<TranslationBatchExtraction>(model)
-            .preamble(&system_prompt)
-            .retries(2)
-            .build();
-        let batch_pipeline = pipeline::new().extract(batch_extractor);
-        let extracted = match batch_pipeline
-            .try_call(prompt)
-            .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                llm_logger.event(
-                    "translate.llm.batch.call",
-                    Some(&serde_json::json!({
-                        "batchIndex": index,
-                        "model": &model_for_log,
-                        "request": {
-                            "systemPrompt": &system_prompt,
-                            "userPrompt": &prompt_for_log,
-                        },
-                        "error": err.to_string(),
-                    })),
-                );
-                return Err(format!("translate pipeline failed: {err}"));
-            }
-        };
-        llm_logger.event(
-            "translate.llm.batch.call",
-            Some(&serde_json::json!({
-                "batchIndex": index,
-                "model": &model_for_log,
-                "request": {
-                    "systemPrompt": &system_prompt,
-                    "userPrompt": &prompt_for_log,
-                },
-                "response": &extracted,
-            })),
-        );
-        Ok((index, extracted))
-    });
+fn parse_translation_batch_extraction(value: Value) -> Result<TranslationBatchExtraction, String> {
+    serde_json::from_value(value).map_err(|err| err.to_string())
 }
 
 fn normalize_terminology_entries(

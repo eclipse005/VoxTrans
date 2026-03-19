@@ -1,6 +1,4 @@
 use serde_json::json;
-use rig::pipeline::{self, TryOp};
-use rig::providers::openai;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use voxtrans_core::subtitle::segmenter::WordToken;
@@ -9,6 +7,9 @@ use voxtrans_core::subtitle::text_rules::{
 };
 
 use crate::services::task_log::TaskLogger;
+use crate::services::translate::adapters::rig_node::{
+    JsonResponseValidator, RigNodeClient, RigNodeConfig, RigNodeJsonTask,
+};
 use crate::services::translate::prompt::{
     PunctuationPromptInput, build_punctuation_system_prompt, build_punctuation_user_prompt,
 };
@@ -51,7 +52,6 @@ pub async fn optimize_words_with_rig_node(
     config: &PunctuationConfig,
 ) -> Vec<WordToken> {
     let logger = TaskLogger::main_with_media(task_id.to_string(), media_path.to_string());
-    let llm_logger = TaskLogger::llm_with_media(task_id.to_string(), media_path.to_string());
     if !config.enabled {
         logger.event(
             "transcribe.punctuation.skip",
@@ -114,12 +114,12 @@ pub async fn optimize_words_with_rig_node(
             "suspiciousSentenceTotal": suspicious_indexes.len()
         })),
     );
-    let mut builder = openai::Client::builder().api_key(config.api_key.trim());
-    if !config.base_url.trim().is_empty() {
-        builder = builder.base_url(config.base_url.trim());
-    }
-    let completions_client = match builder.build() {
-        Ok(client) => client.completions_api(),
+    let rig_client = match RigNodeClient::new(RigNodeConfig::new(
+        config.base_url.clone(),
+        config.api_key.clone(),
+        config.model.clone(),
+    )) {
+        Ok(client) => client,
         Err(err) => {
             logger.event(
                 "transcribe.punctuation.client_error",
@@ -129,12 +129,6 @@ pub async fn optimize_words_with_rig_node(
         }
     };
     let system_prompt = build_punctuation_system_prompt();
-    let extractor = completions_client
-        .extractor::<PunctuationExtraction>(config.model.clone())
-        .preamble(&system_prompt)
-        .retries(2)
-        .build();
-    let punctuation_pipeline = pipeline::new().extract(extractor);
     let concurrency = config.llm_concurrency.clamp(1, 16) as usize;
     let mut prompt_tasks: Vec<(usize, String)> = Vec::new();
     for span_idx in suspicious_indexes.iter().copied() {
@@ -157,75 +151,61 @@ pub async fn optimize_words_with_rig_node(
         });
         prompt_tasks.push((span_idx, user_prompt));
     }
-    let prompts = prompt_tasks
+    let validator = JsonResponseValidator::with_required_keys(&["punctuatedText"]);
+    let tasks = prompt_tasks
         .iter()
-        .map(|(_, prompt)| prompt.clone())
+        .enumerate()
+        .map(|(idx, (_, user_prompt))| RigNodeJsonTask {
+            id: idx,
+            system_prompt: system_prompt.clone(),
+            user_prompt: user_prompt.clone(),
+            response_validator: Some(validator.clone()),
+        })
         .collect::<Vec<_>>();
-    let extraction_result = punctuation_pipeline.try_batch_call(concurrency, prompts).await;
+    let extraction_result = rig_client
+        .call_batch(task_id, Some(media_path), tasks, concurrency)
+        .await;
 
     let mut optimized = words.clone();
     let mut changed_tokens = 0usize;
     let mut llm_error_total = 0usize;
     let mut empty_result_total = 0usize;
     let mut applied_total = 0usize;
-    match extraction_result {
-        Ok(extractions) => {
-            for (result_idx, extraction) in extractions.into_iter().enumerate() {
-                let Some((span_idx, user_prompt)) = prompt_tasks.get(result_idx).cloned() else {
-                    continue;
-                };
-                let punctuated = extraction.punctuated_text.trim().to_string();
-                llm_logger.event(
-                    "transcribe.punctuation.llm.call",
-                    Some(&json!({
-                        "model": config.model,
-                        "request": {
-                            "systemPrompt": &system_prompt,
-                            "userPrompt": user_prompt,
-                        },
-                        "response": extraction,
-                    })),
-                );
-                if punctuated.is_empty() {
-                    empty_result_total += 1;
-                    continue;
-                }
-                let span = match spans.get(span_idx) {
-                    Some(v) => v,
-                    None => continue,
-                };
-                if let Some(slice) = optimized.get_mut(span.start_idx..=span.end_idx) {
-                    changed_tokens += apply_style_from_suggestion(
-                        slice,
-                        &punctuated,
-                        span.allow_leading_case_change,
-                    );
-                    applied_total += 1;
-                }
+    for (result_idx, result) in extraction_result {
+        let Some((span_idx, _)) = prompt_tasks.get(result_idx) else {
+            llm_error_total += 1;
+            continue;
+        };
+        let json = match result {
+            Ok(ok) => ok.json,
+            Err(_) => {
+                llm_error_total += 1;
+                continue;
             }
+        };
+        let extraction = match serde_json::from_value::<PunctuationExtraction>(json) {
+            Ok(v) => v,
+            Err(_) => {
+                llm_error_total += 1;
+                continue;
+            }
+        };
+        let punctuated = extraction.punctuated_text.trim().to_string();
+        if punctuated.is_empty() {
+            empty_result_total += 1;
+            continue;
         }
-        Err(err) => {
-            llm_error_total = suspicious_indexes.len();
-            logger.event(
-                "transcribe.punctuation.llm_error",
-                Some(&json!({
-                    "error": err.to_string(),
-                    "requestTotal": suspicious_indexes.len(),
-                })),
+        let span = match spans.get(*span_idx) {
+            Some(v) => v,
+            None => continue,
+        };
+        if let Some(slice) = optimized.get_mut(span.start_idx..=span.end_idx) {
+            changed_tokens += apply_style_from_suggestion(
+                slice,
+                &punctuated,
+                span.allow_leading_case_change,
             );
-            for (_, user_prompt) in &prompt_tasks {
-                llm_logger.event(
-                    "transcribe.punctuation.llm.call",
-                    Some(&json!({
-                        "model": config.model,
-                        "request": {
-                            "systemPrompt": &system_prompt,
-                            "userPrompt": user_prompt,
-                        },
-                        "error": err.to_string(),
-                    })),
-                );
-            }
+            applied_total += 1;
         }
     }
 
@@ -241,7 +221,7 @@ pub async fn optimize_words_with_rig_node(
             "llmMetrics": {
                 "concurrency": concurrency,
                 "requestTotal": suspicious_indexes.len(),
-                "backend": "rig_extractor_pipeline"
+                "backend": "rig_node_client"
             }
         })),
     );
