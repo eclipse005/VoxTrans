@@ -1,18 +1,19 @@
-use std::time::Duration;
-
-use reqwest::Client;
 use serde_json::{Value, json};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
+use rig::client::CompletionClient;
+use rig::completion::{AssistantContent, CompletionModel};
+use rig::providers::openai;
 
 use crate::services::task_log::TaskLogger;
 
 use super::json_repair::extract_and_repair_json;
 
 #[derive(Debug, Clone)]
-pub struct LlmConfig {
+pub struct RigNodeConfig {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
@@ -20,7 +21,7 @@ pub struct LlmConfig {
     pub max_retries: u32,
 }
 
-impl LlmConfig {
+impl RigNodeConfig {
     pub fn new(base_url: String, api_key: String, model: String) -> Self {
         Self {
             base_url,
@@ -65,7 +66,7 @@ impl JsonResponseValidator {
 }
 
 #[derive(Debug, Clone)]
-pub struct LlmJsonTask {
+pub struct RigNodeJsonTask {
     pub id: usize,
     pub system_prompt: String,
     pub user_prompt: String,
@@ -73,14 +74,14 @@ pub struct LlmJsonTask {
 }
 
 #[derive(Debug, Clone)]
-pub struct LlmJsonError {
+pub struct RigNodeJsonError {
     pub message: String,
     pub attempts: u32,
     pub elapsed_ms: u128,
 }
 
 #[derive(Debug, Clone)]
-pub struct LlmJsonResult {
+pub struct RigNodeJsonResult {
     pub raw_text: String,
     pub json: Value,
     pub usage: TokenUsage,
@@ -91,18 +92,26 @@ pub struct LlmJsonResult {
 }
 
 #[derive(Clone)]
-pub struct LlmClient {
-    config: LlmConfig,
-    http: Client,
+pub struct RigNodeClient {
+    config: RigNodeConfig,
+    completions_client: openai::CompletionsClient,
 }
 
-impl LlmClient {
-    pub fn new(config: LlmConfig) -> Result<Self, String> {
-        let http = Client::builder()
-            .timeout(Duration::from_secs(config.timeout_sec.clamp(10, 300)))
+impl RigNodeClient {
+    pub fn new(config: RigNodeConfig) -> Result<Self, String> {
+        let mut builder = openai::Client::builder().api_key(&config.api_key);
+        if !config.base_url.trim().is_empty() {
+            builder = builder.base_url(&config.base_url);
+        }
+
+        let client = builder
             .build()
-            .map_err(|err| format!("failed to create llm http client: {err}"))?;
-        Ok(Self { config, http })
+            .map_err(|err| format!("failed to create rig openai client: {err}"))?;
+
+        Ok(Self {
+            config,
+            completions_client: client.completions_api(),
+        })
     }
 
     pub async fn call(
@@ -112,13 +121,14 @@ impl LlmClient {
         system_prompt: &str,
         user_prompt: &str,
         response_validator: Option<&JsonResponseValidator>,
-    ) -> Result<LlmJsonResult, LlmJsonError> {
+    ) -> Result<RigNodeJsonResult, RigNodeJsonError> {
         let logger = match media_path {
             Some(path) if !path.trim().is_empty() => {
                 TaskLogger::llm_with_media(task_id.to_string(), path.to_string())
             }
             _ => TaskLogger::llm(task_id.to_string()),
         };
+
         let max_attempts = self.config.max_retries.saturating_add(1).max(1);
         let started = std::time::Instant::now();
         let mut last_error = String::new();
@@ -143,19 +153,22 @@ impl LlmClient {
                         Err(err) => {
                             last_error = format!("json parse failed: {err}");
                             let backoff_ms = retry_backoff_ms(attempt, max_attempts);
-                            logger.event("llm.call", Some(&json!({
-                                "status": "invalid_json",
-                                "error": last_error,
-                                "response": {
-                                    "text": raw_text
-                                },
-                                "attempt": base_payload["attempt"],
-                                "maxAttempts": base_payload["maxAttempts"],
-                                "backoffMs": backoff_ms,
-                                "model": base_payload["model"],
-                                "baseUrl": base_payload["baseUrl"],
-                                "request": base_payload["request"]
-                            })));
+                            logger.event(
+                                "llm.call",
+                                Some(&json!({
+                                    "status": "invalid_json",
+                                    "error": last_error,
+                                    "response": {
+                                        "text": raw_text
+                                    },
+                                    "attempt": base_payload["attempt"],
+                                    "maxAttempts": base_payload["maxAttempts"],
+                                    "backoffMs": backoff_ms,
+                                    "model": base_payload["model"],
+                                    "baseUrl": base_payload["baseUrl"],
+                                    "request": base_payload["request"]
+                                })),
+                            );
                             if let Some(delay) = backoff_ms {
                                 sleep(Duration::from_millis(delay)).await;
                             }
@@ -167,19 +180,22 @@ impl LlmClient {
                         if let Err(err) = validator.validate(&parsed) {
                             last_error = err;
                             let backoff_ms = retry_backoff_ms(attempt, max_attempts);
-                            logger.event("llm.call", Some(&json!({
-                                "status": "invalid_schema",
-                                "error": last_error,
-                                "response": {
-                                    "text": raw_text
-                                },
-                                "attempt": base_payload["attempt"],
-                                "maxAttempts": base_payload["maxAttempts"],
-                                "backoffMs": backoff_ms,
-                                "model": base_payload["model"],
-                                "baseUrl": base_payload["baseUrl"],
-                                "request": base_payload["request"]
-                            })));
+                            logger.event(
+                                "llm.call",
+                                Some(&json!({
+                                    "status": "invalid_schema",
+                                    "error": last_error,
+                                    "response": {
+                                        "text": raw_text
+                                    },
+                                    "attempt": base_payload["attempt"],
+                                    "maxAttempts": base_payload["maxAttempts"],
+                                    "backoffMs": backoff_ms,
+                                    "model": base_payload["model"],
+                                    "baseUrl": base_payload["baseUrl"],
+                                    "request": base_payload["request"]
+                                })),
+                            );
                             if let Some(delay) = backoff_ms {
                                 sleep(Duration::from_millis(delay)).await;
                             }
@@ -188,25 +204,28 @@ impl LlmClient {
                     }
 
                     let elapsed_ms = started.elapsed().as_millis();
-                    logger.event("llm.call", Some(&json!({
-                        "status": "ok",
-                        "attempt": base_payload["attempt"],
-                        "maxAttempts": base_payload["maxAttempts"],
-                        "model": base_payload["model"],
-                        "baseUrl": base_payload["baseUrl"],
-                        "request": base_payload["request"],
-                        "response": {
-                            "text": raw_text
-                        },
-                        "elapsedMs": elapsed_ms,
-                        "usage": {
-                            "promptTokens": usage.prompt_tokens,
-                            "completionTokens": usage.completion_tokens,
-                            "totalTokens": usage.total_tokens
-                        }
-                    })));
+                    logger.event(
+                        "llm.call",
+                        Some(&json!({
+                            "status": "ok",
+                            "attempt": base_payload["attempt"],
+                            "maxAttempts": base_payload["maxAttempts"],
+                            "model": base_payload["model"],
+                            "baseUrl": base_payload["baseUrl"],
+                            "request": base_payload["request"],
+                            "response": {
+                                "text": raw_text
+                            },
+                            "elapsedMs": elapsed_ms,
+                            "usage": {
+                                "promptTokens": usage.prompt_tokens,
+                                "completionTokens": usage.completion_tokens,
+                                "totalTokens": usage.total_tokens
+                            }
+                        })),
+                    );
 
-                    return Ok(LlmJsonResult {
+                    return Ok(RigNodeJsonResult {
                         raw_text,
                         json: parsed,
                         usage,
@@ -219,16 +238,19 @@ impl LlmClient {
                 Err(err) => {
                     last_error = err;
                     let backoff_ms = retry_backoff_ms(attempt, max_attempts);
-                    logger.event("llm.call", Some(&json!({
-                        "status": "http_error",
-                        "error": last_error,
-                        "attempt": base_payload["attempt"],
-                        "maxAttempts": base_payload["maxAttempts"],
-                        "backoffMs": backoff_ms,
-                        "model": base_payload["model"],
-                        "baseUrl": base_payload["baseUrl"],
-                        "request": base_payload["request"]
-                    })));
+                    logger.event(
+                        "llm.call",
+                        Some(&json!({
+                            "status": "http_error",
+                            "error": last_error,
+                            "attempt": base_payload["attempt"],
+                            "maxAttempts": base_payload["maxAttempts"],
+                            "backoffMs": backoff_ms,
+                            "model": base_payload["model"],
+                            "baseUrl": base_payload["baseUrl"],
+                            "request": base_payload["request"]
+                        })),
+                    );
                     if let Some(delay) = backoff_ms {
                         sleep(Duration::from_millis(delay)).await;
                     }
@@ -236,7 +258,7 @@ impl LlmClient {
             }
         }
 
-        Err(LlmJsonError {
+        Err(RigNodeJsonError {
             message: format!(
                 "llm call failed after {} attempts: {}",
                 max_attempts, last_error
@@ -250,23 +272,24 @@ impl LlmClient {
         &self,
         task_id: &str,
         media_path: Option<&str>,
-        tasks: Vec<LlmJsonTask>,
+        tasks: Vec<RigNodeJsonTask>,
         concurrency: usize,
-    ) -> Vec<(usize, Result<LlmJsonResult, LlmJsonError>)> {
+    ) -> Vec<(usize, Result<RigNodeJsonResult, RigNodeJsonError>)> {
         if tasks.is_empty() {
             return Vec::new();
         }
 
         let concurrency = concurrency.clamp(1, 64);
         let semaphore = Arc::new(Semaphore::new(concurrency));
-        let mut join_set: JoinSet<(usize, Result<LlmJsonResult, LlmJsonError>)> = JoinSet::new();
-        let client = self.clone();
+        let mut join_set: JoinSet<(usize, Result<RigNodeJsonResult, RigNodeJsonError>)> =
+            JoinSet::new();
+        let rig_node = self.clone();
         let task_id = task_id.to_string();
         let media_path = media_path.map(|s| s.to_string());
 
         for item in tasks {
             let semaphore = Arc::clone(&semaphore);
-            let client = client.clone();
+            let rig_node = rig_node.clone();
             let task_id = task_id.clone();
             let media_path = media_path.clone();
             join_set.spawn(async move {
@@ -276,15 +299,15 @@ impl LlmClient {
                     Err(err) => {
                         return (
                             item.id,
-                            Err(LlmJsonError {
+                            Err(RigNodeJsonError {
                                 message: format!("semaphore acquire failed: {err}"),
                                 attempts: 0,
                                 elapsed_ms: 0,
                             }),
-                        )
+                        );
                     }
                 };
-                let result = client
+                let result = rig_node
                     .call(
                         &task_id,
                         media_path.as_deref(),
@@ -297,13 +320,13 @@ impl LlmClient {
             });
         }
 
-        let mut out: Vec<(usize, Result<LlmJsonResult, LlmJsonError>)> = Vec::new();
+        let mut out: Vec<(usize, Result<RigNodeJsonResult, RigNodeJsonError>)> = Vec::new();
         while let Some(joined) = join_set.join_next().await {
             match joined {
                 Ok(v) => out.push(v),
                 Err(err) => out.push((
                     usize::MAX,
-                    Err(LlmJsonError {
+                    Err(RigNodeJsonError {
                         message: format!("task join error: {err}"),
                         attempts: 0,
                         elapsed_ms: 0,
@@ -320,59 +343,36 @@ impl LlmClient {
         system_prompt: &str,
         user_prompt: &str,
     ) -> Result<(String, TokenUsage, Option<String>), String> {
-        let url = format!(
-            "{}/chat/completions",
-            self.config.base_url.trim_end_matches('/')
-        );
+        let model = self
+            .completions_client
+            .completion_model(self.config.model.clone());
 
-        let payload = json!({
-            "model": self.config.model,
-            "temperature": 0.2,
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user", "content": user_prompt }
-            ]
-        });
+        let request = model
+            .completion_request(user_prompt.to_string())
+            .preamble(system_prompt.to_string())
+            .temperature(0.2)
+            .build();
 
-        let response = self
-            .http
-            .post(url)
-            .bearer_auth(&self.config.api_key)
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
+        let response = model
+            .completion(request)
             .await
-            .map_err(|err| format!("llm http request failed: {err}"))?;
+            .map_err(|err| format!("rig completion request failed: {err}"))?;
 
-        let request_id = response
-            .headers()
-            .get("x-request-id")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+        let content = extract_text_from_choice(&response.choice)
+            .ok_or_else(|| "rig response missing assistant text content".to_string())?;
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|err| format!("llm response read failed: {err}"))?;
-        if !status.is_success() {
-            return Err(format!("llm returned {}: {}", status, body));
-        }
+        let usage = TokenUsage {
+            prompt_tokens: response.usage.input_tokens,
+            completion_tokens: response.usage.output_tokens,
+            total_tokens: response.usage.total_tokens,
+        };
 
-        let value: Value = serde_json::from_str(&body)
-            .map_err(|err| format!("llm response json decode failed: {err}"))?;
+        let request_id = if response.raw_response.id.trim().is_empty() {
+            None
+        } else {
+            Some(response.raw_response.id)
+        };
 
-        let content = value
-            .get("choices")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|choice| choice.get("message"))
-            .and_then(|msg| msg.get("content"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "llm response missing choices[0].message.content".to_string())?
-            .to_string();
-
-        let usage = parse_usage(&value, system_prompt, user_prompt, &content);
         Ok((content, usage, request_id))
     }
 }
@@ -387,29 +387,22 @@ fn retry_backoff_ms(attempt: u32, max_attempts: u32) -> Option<u64> {
     Some(delay.min(3_000))
 }
 
-fn parse_usage(response: &Value, system_prompt: &str, user_prompt: &str, output: &str) -> TokenUsage {
-    let usage = response.get("usage");
-    let prompt_tokens = usage
-        .and_then(|v| v.get("prompt_tokens"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or_else(|| estimate_tokens(system_prompt) + estimate_tokens(user_prompt));
-    let completion_tokens = usage
-        .and_then(|v| v.get("completion_tokens"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or_else(|| estimate_tokens(output));
-    let total_tokens = usage
-        .and_then(|v| v.get("total_tokens"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(prompt_tokens + completion_tokens);
+fn extract_text_from_choice(choice: &rig::OneOrMany<AssistantContent>) -> Option<String> {
+    let mut out = String::new();
 
-    TokenUsage {
-        prompt_tokens,
-        completion_tokens,
-        total_tokens,
+    for content in choice.iter() {
+        if let AssistantContent::Text(text) = content {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(text.text());
+        }
     }
-}
 
-fn estimate_tokens(text: &str) -> u64 {
-    let chars = text.chars().count() as u64;
-    (chars / 4).max(1)
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }

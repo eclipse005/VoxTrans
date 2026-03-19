@@ -1,59 +1,36 @@
-import { useEffect, useRef } from "react";
-import { loadWorkspaceState, saveQueueState } from "../api/workspace";
-import { normalizeTranscribeStatus, transitionQueueItemStatus } from "../../features/media/stateMachine";
+import { useEffect } from "react";
+import { loadWorkspaceState } from "../api/workspace";
+import { normalizeTranscribeStatus } from "../../features/media/stateMachine";
 import type { QueueItem, SubtitleSegment } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 
 type DispatchState = (action: AppAction) => void;
 
 type UseWorkspacePersistenceArgs = {
-  queue: QueueItem[];
   dispatch: DispatchState;
 };
 
 export function useWorkspacePersistence({
-  queue,
   dispatch,
 }: UseWorkspacePersistenceArgs) {
-  const hydratedRef = useRef(false);
-  const queueSaveTimerRef = useRef<number | null>(null);
-
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const res = await loadWorkspaceState();
-        if (cancelled) return;
+      const res = await loadWorkspaceState();
+      if (cancelled) return;
 
-        const queueItems = Array.isArray(res.queue) ? res.queue.map(normalizeQueueItem) : [];
-        const deduped = dedupeById(queueItems);
-        if (deduped.length > 0) {
-          dispatch({ type: "add_queue_items", items: deduped });
-          dispatch({ type: "set_ui", payload: { activeId: deduped[0]?.id || "" } });
-        }
-      } finally {
-        hydratedRef.current = true;
+      const queueItems = Array.isArray(res.queue) ? res.queue.map(normalizeQueueItem) : [];
+      const deduped = dedupeById(queueItems);
+      if (deduped.length > 0) {
+        dispatch({ type: "add_queue_items", items: deduped });
+        dispatch({ type: "set_ui", payload: { activeId: deduped[0]?.id || "" } });
       }
     })();
 
     return () => {
       cancelled = true;
-      if (queueSaveTimerRef.current != null) {
-        window.clearTimeout(queueSaveTimerRef.current);
-      }
     };
   }, [dispatch]);
-
-  useEffect(() => {
-    if (!hydratedRef.current) return;
-    if (queueSaveTimerRef.current != null) {
-      window.clearTimeout(queueSaveTimerRef.current);
-    }
-
-    queueSaveTimerRef.current = window.setTimeout(() => {
-      void saveQueueState({ queue });
-    }, 300);
-  }, [queue]);
 }
 
 function dedupeById(items: QueueItem[]): QueueItem[] {
@@ -128,14 +105,16 @@ function parseSubtitleSegments(raw: string): SubtitleSegment[] {
 }
 
 function recoverTransientStates(item: QueueItem): QueueItem {
-  if (item.transcribeStatus === "processing") {
-    return transitionQueueItemStatus(item, "error", {
+  if (item.transcribeStatus === "queued" || item.transcribeStatus === "processing") {
+    return {
+      ...item,
+      transcribeStatus: "pending",
       transcribeProgress: 0,
       transcribeSegmentCurrent: 0,
       transcribeSegmentTotal: 0,
       transcribePhase: "",
-      transcribeError: item.transcribeError || "任务在上次退出时中断，请重试",
-    });
+      transcribeError: "",
+    };
   }
 
   return item;

@@ -2,8 +2,8 @@ use serde_json::json;
 use voxtrans_core::subtitle::segmenter::WordToken;
 
 use crate::services::task_log::TaskLogger;
-use crate::services::translate::adapters::llm_client::{
-    LlmClient, LlmConfig, LlmJsonTask, TokenUsage,
+use crate::services::translate::adapters::rig_node::{
+    RigNodeClient, RigNodeConfig, RigNodeJsonTask, TokenUsage,
 };
 use crate::services::translate::prompt::{
     PunctuationPromptInput, build_punctuation_system_prompt, build_punctuation_user_prompt,
@@ -35,7 +35,7 @@ struct SentenceSpan {
     allow_leading_case_change: bool,
 }
 
-pub async fn optimize_words_with_llm(
+pub async fn optimize_words_with_rig_node(
     task_id: &str,
     media_path: &str,
     words: Vec<WordToken>,
@@ -105,7 +105,7 @@ pub async fn optimize_words_with_llm(
         })),
     );
 
-    let client = match LlmClient::new(LlmConfig::new(
+    let client = match RigNodeClient::new(RigNodeConfig::new(
         config.base_url.clone(),
         config.api_key.clone(),
         config.model.clone(),
@@ -142,7 +142,7 @@ pub async fn optimize_words_with_llm(
             current_text: span.text.clone(),
             next_text: next,
         });
-        tasks.push(LlmJsonTask {
+        tasks.push(RigNodeJsonTask {
             id: span_idx,
             system_prompt,
             user_prompt,

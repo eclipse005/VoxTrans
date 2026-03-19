@@ -57,7 +57,6 @@ function App() {
 
   useAppPersistence(dispatch);
   useWorkspacePersistence({
-    queue,
     dispatch,
   });
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow, type DragDropEvent } from "@tauri-apps/api/window";
 import { getFileSize } from "../../api/transcribe";
+import { registerTaskUpload } from "../../api/workspace";
 import type { QueueItem } from "../../../features/media/types";
 import { detectMediaKind, fileName } from "../../../features/media/utils";
 import type { AppAction } from "../../state/appReducer";
@@ -48,8 +49,31 @@ export function useQueueInput({ dispatch, pushToast }: UseQueueInputArgs) {
       }),
     );
 
-    addQueueItems(dispatch, incoming);
-    pushToast(`已加入队列 ${paths.length} 个文件`, "success");
+    const persisted: QueueItem[] = [];
+    let failedCount = 0;
+    for (const item of incoming) {
+      try {
+        await registerTaskUpload({
+          id: item.id,
+          mediaPath: item.path,
+          name: item.name,
+          mediaKind: item.mediaKind,
+          sizeBytes: item.sizeBytes,
+        });
+        persisted.push(item);
+      } catch (error) {
+        failedCount += 1;
+        reportError(error, "registerTaskUpload");
+      }
+    }
+
+    if (persisted.length > 0) {
+      addQueueItems(dispatch, persisted);
+      pushToast(`已加入队列 ${persisted.length} 个文件`, "success");
+    }
+    if (failedCount > 0) {
+      pushToast(`有 ${failedCount} 个文件入队失败，请重试`, "error");
+    }
   }, [dispatch, pushToast]);
 
   useEffect(() => {

@@ -6,6 +6,8 @@ use tauri::async_runtime::spawn_blocking;
 
 use crate::services::file::save_srt;
 use crate::services::preferences::load_user_preferences;
+use crate::services::task_engine::{EnqueueTaskRequest, enqueue_task};
+use crate::services::task_log::{TaskLogger, event};
 use crate::services::transcribe::{TranscribeRequest, transcribe_blocking};
 use crate::services::transcription::{RunPostAsrPipelineRequest, run_post_asr_pipeline};
 use crate::services::translate::types::{TranslatePipelineRequest, TranslateToken};
@@ -31,6 +33,31 @@ pub struct ExecuteTaskBatchItem {
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteTaskBatchRequest {
     pub items: Vec<ExecuteTaskBatchItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnqueueAndExecuteTaskBatchItem {
+    pub id: String,
+    pub media_path: String,
+    pub name: String,
+    pub media_kind: String,
+    pub size_bytes: u64,
+    pub intent: String,
+    #[serde(default)]
+    pub source_lang: String,
+    #[serde(default)]
+    pub target_lang: String,
+    #[serde(default)]
+    pub max_retries: u32,
+    #[serde(default)]
+    pub settings_snapshot: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnqueueAndExecuteTaskBatchRequest {
+    pub items: Vec<EnqueueAndExecuteTaskBatchItem>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -85,8 +112,24 @@ pub async fn execute_task_run(
     request: ExecuteTaskRunRequest,
 ) -> Result<(), String> {
     if request.task_id.trim().is_empty() {
+        TaskLogger::main("unknown").event(
+            event::TRANSCRIBE_FAILED,
+            Some(&json!({
+                "stage": "execute_entry",
+                "error": "taskId is required"
+            })),
+        );
         return Err("taskId is required".to_string());
     }
+    let execute_logger = TaskLogger::main(request.task_id.trim().to_string());
+    execute_logger.event(
+        event::TRANSCRIBE_STARTED,
+        Some(&json!({
+            "stage": "execute_entry",
+            "intentOverride": request.intent
+        })),
+    );
+
     let task = sqlx::query_as::<_, TaskRunExecRow>(
         "SELECT id, media_path, intent, transcribe_status, subtitle_segments_json, result_text
          FROM task_runs WHERE id = ?",
@@ -95,7 +138,16 @@ pub async fn execute_task_run(
     .fetch_optional(pool)
     .await
     .map_err(|err| err.to_string())?
-    .ok_or_else(|| "task not found".to_string())?;
+    .ok_or_else(|| {
+        execute_logger.event(
+            event::TRANSCRIBE_FAILED,
+            Some(&json!({
+                "stage": "execute_entry",
+                "error": "task not found"
+            })),
+        );
+        "task not found".to_string()
+    })?;
 
     if let Some(intent_override) = request
         .intent
@@ -130,10 +182,23 @@ pub async fn execute_task_run(
     match run_result {
         Ok(done) => {
             set_done(pool, &task.id, &done).await?;
+            TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
+                event::TRANSCRIBE_COMPLETED,
+                Some(&json!({
+                    "stage": "execute_entry"
+                })),
+            );
             Ok(())
         }
         Err(err) => {
             set_failed(pool, &task.id, &err).await?;
+            TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
+                event::TRANSCRIBE_FAILED,
+                Some(&json!({
+                    "stage": "execute_entry",
+                    "error": err
+                })),
+            );
             Err(err)
         }
     }
@@ -174,6 +239,80 @@ pub async fn execute_task_batch(
         succeeded_task_ids,
         failed,
     })
+}
+
+pub async fn enqueue_and_execute_task_batch(
+    pool: &SqlitePool,
+    app: tauri::AppHandle,
+    request: EnqueueAndExecuteTaskBatchRequest,
+) -> Result<ExecuteTaskBatchResponse, String> {
+    if request.items.is_empty() {
+        return Err("items is required".to_string());
+    }
+
+    let mut enqueue_failed: Vec<ExecuteTaskBatchFailure> = Vec::new();
+    let mut executable_items: Vec<ExecuteTaskBatchItem> = Vec::new();
+
+    for item in request.items {
+        let task_id = item.id.trim().to_string();
+        if task_id.is_empty() {
+            enqueue_failed.push(ExecuteTaskBatchFailure {
+                task_id: String::new(),
+                error: "taskId is required".to_string(),
+            });
+            continue;
+        }
+
+        let intent = normalize_intent(&item.intent);
+        let enqueue_request = EnqueueTaskRequest {
+            id: task_id.clone(),
+            media_path: item.media_path,
+            name: item.name,
+            media_kind: item.media_kind,
+            size_bytes: item.size_bytes,
+            intent: intent.clone(),
+            source_lang: item.source_lang,
+            target_lang: item.target_lang,
+            max_retries: item.max_retries,
+            settings_snapshot: item.settings_snapshot,
+        };
+
+        match enqueue_task(pool, enqueue_request).await {
+            Ok(_) => executable_items.push(ExecuteTaskBatchItem {
+                task_id,
+                intent: Some(intent),
+            }),
+            Err(error) => enqueue_failed.push(ExecuteTaskBatchFailure { task_id, error }),
+        }
+    }
+
+    if executable_items.is_empty() {
+        return Ok(ExecuteTaskBatchResponse {
+            succeeded_task_ids: Vec::new(),
+            failed: enqueue_failed,
+        });
+    }
+
+    let mut response = execute_task_batch(
+        pool,
+        app,
+        ExecuteTaskBatchRequest {
+            items: executable_items,
+        },
+    )
+    .await?;
+
+    response.failed.extend(enqueue_failed);
+    Ok(response)
+}
+
+fn normalize_intent(raw: &str) -> String {
+    let intent = raw.trim().to_uppercase();
+    if intent == "TRANSLATE_ONLY" || intent == "TRANSCRIBE_TRANSLATE" {
+        intent
+    } else {
+        "TRANSCRIBE".to_string()
+    }
 }
 
 struct DonePayload {

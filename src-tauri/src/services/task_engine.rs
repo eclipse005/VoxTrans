@@ -34,6 +34,16 @@ pub struct EnqueueTaskRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RegisterTaskUploadRequest {
+    pub id: String,
+    pub media_path: String,
+    pub name: String,
+    pub media_kind: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListTaskRunsRequest {
     pub state: Option<String>,
     pub intent: Option<String>,
@@ -139,8 +149,10 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
             intent, state, current_step, progress_percent, progress_note,
             error_code, error_message, retry_count, max_retries,
             settings_policy_version, settings_snapshot_json,
-            source_lang, target_lang, queued_at, started_at, finished_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, '', 0, '', '', '', 0, ?, 'v1', ?, ?, ?, ?, NULL, NULL, ?, ?)
+            source_lang, target_lang, queued_at, started_at, finished_at, created_at, updated_at,
+            transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
+            transcribe_phase, transcribe_error
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, '', 0, '', '', '', 0, ?, 'v1', ?, ?, ?, ?, NULL, NULL, ?, ?, 'queued', 0, 0, 0, '', '')
          ON CONFLICT(id) DO UPDATE SET
             media_path = excluded.media_path,
             name = excluded.name,
@@ -155,7 +167,13 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
             queued_at = excluded.queued_at,
             started_at = NULL,
             finished_at = NULL,
-            updated_at = excluded.updated_at",
+            updated_at = excluded.updated_at,
+            transcribe_status = 'queued',
+            transcribe_progress = 0,
+            transcribe_segment_current = 0,
+            transcribe_segment_total = 0,
+            transcribe_phase = '',
+            transcribe_error = ''",
     )
     .bind(&request.id)
     .bind(&request.media_path)
@@ -178,6 +196,79 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
     get_task_run(pool, GetTaskRunRequest {
         task_id: request.id,
     })
+    .await?
+    .run
+    .pipe(Ok)
+}
+
+pub async fn register_task_upload(
+    pool: &SqlitePool,
+    request: RegisterTaskUploadRequest,
+) -> Result<TaskRunRecord, String> {
+    validate_upload_request(&request)?;
+    let now = unix_now();
+
+    sqlx::query(
+        "INSERT INTO task_runs (
+            id, media_path, name, media_kind, size_bytes,
+            intent, state, current_step, progress_percent, progress_note,
+            error_code, error_message, retry_count, max_retries,
+            settings_policy_version, settings_snapshot_json,
+            source_lang, target_lang, queued_at, started_at, finished_at, created_at, updated_at,
+            transcribe_status, transcribe_progress, transcribe_segment_current, transcribe_segment_total,
+            transcribe_phase, transcribe_error, result_text, result_srt, subtitle_segments_json, sort_order
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, '', 0, '', '', '', 0, 0, 'v1', '{}', 'auto', 'zh-CN', ?, NULL, NULL, ?, ?, 'pending', 0, 0, 0, '', '', '', '', '[]', 0)
+         ON CONFLICT(id) DO UPDATE SET
+            media_path = excluded.media_path,
+            name = excluded.name,
+            media_kind = excluded.media_kind,
+            size_bytes = excluded.size_bytes,
+            intent = excluded.intent,
+            state = excluded.state,
+            current_step = '',
+            progress_percent = 0,
+            progress_note = '',
+            error_code = '',
+            error_message = '',
+            retry_count = 0,
+            max_retries = 0,
+            settings_snapshot_json = '{}',
+            source_lang = 'auto',
+            target_lang = 'zh-CN',
+            queued_at = excluded.queued_at,
+            started_at = NULL,
+            finished_at = NULL,
+            updated_at = excluded.updated_at,
+            transcribe_status = 'pending',
+            transcribe_progress = 0,
+            transcribe_segment_current = 0,
+            transcribe_segment_total = 0,
+            transcribe_phase = '',
+            transcribe_error = '',
+            result_text = '',
+            result_srt = '',
+            subtitle_segments_json = '[]'",
+    )
+    .bind(&request.id)
+    .bind(&request.media_path)
+    .bind(&request.name)
+    .bind(&request.media_kind)
+    .bind(request.size_bytes as i64)
+    .bind(INTENT_TRANSCRIBE)
+    .bind(STATE_CREATED)
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    get_task_run(
+        pool,
+        GetTaskRunRequest {
+            task_id: request.id,
+        },
+    )
     .await?
     .run
     .pipe(Ok)
@@ -505,6 +596,22 @@ fn validate_enqueue_request(request: &EnqueueTaskRequest) -> Result<(), String> 
         INTENT_TRANSCRIBE | INTENT_TRANSCRIBE_TRANSLATE | INTENT_TRANSLATE_ONLY
     ) {
         return Err("intent is invalid".to_string());
+    }
+    Ok(())
+}
+
+fn validate_upload_request(request: &RegisterTaskUploadRequest) -> Result<(), String> {
+    if request.id.trim().is_empty() {
+        return Err("id is required".to_string());
+    }
+    if request.media_path.trim().is_empty() {
+        return Err("mediaPath is required".to_string());
+    }
+    if request.name.trim().is_empty() {
+        return Err("name is required".to_string());
+    }
+    if request.media_kind.trim().is_empty() {
+        return Err("mediaKind is required".to_string());
     }
     Ok(())
 }

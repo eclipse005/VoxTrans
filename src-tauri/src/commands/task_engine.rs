@@ -2,12 +2,15 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::services::task_engine::{
-    CancelTaskRequest, EnqueueTaskRequest, GetTaskRunRequest, ListTaskRunsRequest, TaskRunDetail,
-    TaskRunRecord, cancel_task as cancel_task_service, enqueue_task as enqueue_task_service,
-    get_task_run as get_task_run_service, list_task_runs as list_task_runs_service,
+    CancelTaskRequest, EnqueueTaskRequest, GetTaskRunRequest, ListTaskRunsRequest,
+    RegisterTaskUploadRequest, TaskRunDetail, TaskRunRecord, cancel_task as cancel_task_service,
+    enqueue_task as enqueue_task_service, get_task_run as get_task_run_service,
+    list_task_runs as list_task_runs_service, register_task_upload as register_task_upload_service,
 };
 use crate::services::task_executor::{
-    ExecuteTaskBatchRequest, ExecuteTaskBatchResponse, ExecuteTaskRunRequest,
+    EnqueueAndExecuteTaskBatchRequest, ExecuteTaskBatchRequest, ExecuteTaskBatchResponse,
+    ExecuteTaskRunRequest,
+    enqueue_and_execute_task_batch as enqueue_and_execute_task_batch_service,
     execute_task_batch as execute_task_batch_service, execute_task_run as execute_task_run_service,
 };
 
@@ -17,6 +20,14 @@ pub async fn enqueue_task_run(
     request: EnqueueTaskRequest,
 ) -> Result<TaskRunRecord, String> {
     enqueue_task_service(&state.pool, request).await
+}
+
+#[tauri::command]
+pub async fn register_task_upload(
+    state: State<'_, AppState>,
+    request: RegisterTaskUploadRequest,
+) -> Result<TaskRunRecord, String> {
+    register_task_upload_service(&state.pool, request).await
 }
 
 #[tauri::command]
@@ -59,4 +70,13 @@ pub async fn execute_task_batch(
     request: ExecuteTaskBatchRequest,
 ) -> Result<ExecuteTaskBatchResponse, String> {
     execute_task_batch_service(&state.pool, app, request).await
+}
+
+#[tauri::command]
+pub async fn enqueue_and_execute_task_batch(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    request: EnqueueAndExecuteTaskBatchRequest,
+) -> Result<ExecuteTaskBatchResponse, String> {
+    enqueue_and_execute_task_batch_service(&state.pool, app, request).await
 }

@@ -1,5 +1,5 @@
 use crate::services::translate::{
-    adapters::llm_client::{JsonResponseValidator, LlmClient, LlmConfig},
+    adapters::rig_node::{JsonResponseValidator, RigNodeClient, RigNodeConfig},
     run_translate_pipeline as run_translate_pipeline_service,
     types::TranslatePipelineRequest,
 };
@@ -58,7 +58,7 @@ pub async fn test_translate_llm(
         return Err("translateModel is required".to_string());
     }
 
-    let client = LlmClient::new(LlmConfig::new(
+    let client = RigNodeClient::new(RigNodeConfig::new(
         request.base_url.trim().to_string(),
         request.api_key.trim().to_string(),
         request.model.trim().to_string(),

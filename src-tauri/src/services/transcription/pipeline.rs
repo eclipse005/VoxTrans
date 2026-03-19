@@ -8,7 +8,7 @@ use crate::services::transcribe::{
 };
 use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
 use voxtrans_core::subtitle::segmenter::WordToken;
-use super::punctuation::{PunctuationConfig, optimize_words_with_llm};
+use super::punctuation::{PunctuationConfig, optimize_words_with_rig_node};
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -54,7 +54,7 @@ where
     let base_words = beautify_words_for_subtitle(to_core_words(request.words.clone()));
     on_phase("punctuate");
     let words = from_core_words(
-        optimize_words_with_llm(
+        optimize_words_with_rig_node(
             &request.task_id,
             &request.audio_path,
             base_words,

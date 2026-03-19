@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { deleteTaskSummaries } from "../../api/workspace";
+import { deleteTaskSummaries, enqueueTaskRun } from "../../api/workspace";
 import type { QueueItem } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
 import type { QueueRunMode } from "./useQueueRunner";
 import {
   clearQueueItems,
+  patchQueueItem,
   removeQueueItem,
   setQueuedState,
 } from "../../state/queueDomainActions";
+import { reportError, toUserErrorMessage } from "../../utils/errors";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
@@ -40,6 +42,44 @@ export function useQueueScheduler({
   );
   const queueBusy = hasProcessingTask || hasQueuedTask;
 
+  const enqueueForMode = useCallback(async (item: QueueItem, mode: QueueRunMode): Promise<boolean> => {
+    try {
+      await enqueueTaskRun({
+        id: item.id,
+        mediaPath: item.path,
+        name: item.name,
+        mediaKind: item.mediaKind,
+        sizeBytes: item.sizeBytes,
+        intent: mode === "translate_only"
+          ? "TRANSLATE_ONLY"
+          : mode === "transcribe_translate"
+            ? "TRANSCRIBE_TRANSLATE"
+            : "TRANSCRIBE",
+        sourceLang: "auto",
+        targetLang: "zh-CN",
+        maxRetries: 0,
+        settingsSnapshot: {},
+      });
+      setTaskMode(item.id, mode);
+      setQueuedState(dispatch, item.id);
+      return true;
+    } catch (error) {
+      reportError(error, "enqueueTaskRun");
+      const message = toUserErrorMessage(error, "任务入队失败");
+      patchQueueItem(dispatch, item.id, (prev) => ({
+        ...prev,
+        transcribeStatus: "error",
+        transcribeProgress: 0,
+        transcribeSegmentCurrent: 0,
+        transcribeSegmentTotal: 0,
+        transcribePhase: "",
+        transcribeError: message,
+      }));
+      pushToast(`失败：${item.name}，${message}`, "error");
+      return false;
+    }
+  }, [dispatch, pushToast, setTaskMode]);
+
   useEffect(() => {
     if (hasProcessingTask) return;
     if (runBatchInFlightRef.current) return;
@@ -60,41 +100,45 @@ export function useQueueScheduler({
   }, [hasProcessingTask, queue, runBatch, takeTaskMode, pushToast]);
 
   const processQueue = useCallback(async () => {
-    const pendingCount = queue.filter((item) => item.transcribeStatus === "pending").length;
-    if (!pendingCount) {
+    const pendingItems = queue.filter((item) => item.transcribeStatus === "pending");
+    if (!pendingItems.length) {
       pushToast("没有待处理文件", "error");
       return;
     }
 
-    const queuedIds = queue
-      .filter((q) => q.transcribeStatus === "pending")
-      .map((q) => q.id);
-
-    for (const id of queuedIds) {
-      setTaskMode(id, "transcribe");
-      setQueuedState(dispatch, id);
+    let queuedCount = 0;
+    for (const item of pendingItems) {
+      if (await enqueueForMode(item, "transcribe")) {
+        queuedCount += 1;
+      }
     }
 
-    pushToast(`开始批量处理，共 ${pendingCount} 个文件`, "info");
-  }, [dispatch, pushToast, queue, setTaskMode]);
+    if (queuedCount === 0) {
+      pushToast("没有可处理文件，入队均失败", "error");
+      return;
+    }
+
+    pushToast(`开始批量处理，共 ${queuedCount} 个文件`, "info");
+  }, [enqueueForMode, pushToast, queue]);
 
   const processSingle = useCallback(async (item: QueueItem) => {
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
-    setTaskMode(item.id, "transcribe");
-    setQueuedState(dispatch, item.id);
+    const ok = await enqueueForMode(item, "transcribe");
+    if (!ok) return;
     if (queueBusy) {
       pushToast(`已加入排队：${item.name}`, "info");
     }
-  }, [dispatch, pushToast, queueBusy, setTaskMode]);
+  }, [enqueueForMode, pushToast, queueBusy]);
 
   const processSingleTranscribeTranslate = useCallback(async (item: QueueItem) => {
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
-    setTaskMode(item.id, item.transcribeStatus === "done" ? "translate_only" : "transcribe_translate");
-    setQueuedState(dispatch, item.id);
+    const mode = item.transcribeStatus === "done" ? "translate_only" : "transcribe_translate";
+    const ok = await enqueueForMode(item, mode);
+    if (!ok) return;
     if (queueBusy) {
       pushToast(`已加入排队：${item.name}`, "info");
     }
-  }, [dispatch, pushToast, queueBusy, setTaskMode]);
+  }, [enqueueForMode, pushToast, queueBusy]);
 
   const clearQueue = useCallback(async () => {
     if (queueBusy) {

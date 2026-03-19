@@ -1,6 +1,9 @@
 import { useCallback, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { executeTaskBatch, executeTaskRun, loadWorkspaceState } from "../../api/workspace";
+import {
+  enqueueAndExecuteTaskBatch,
+  loadWorkspaceState,
+} from "../../api/workspace";
 import type {
   QueueItem,
   TranscribePhase,
@@ -13,6 +16,7 @@ import {
   applySeparationProgress,
   patchQueueItem,
   setErrorState,
+  setQueuedState,
   setProcessingState,
 } from "../../state/queueDomainActions";
 import { reportError, toUserErrorMessage } from "../../utils/errors";
@@ -129,35 +133,29 @@ export function useQueueRunner({
 
   const runTask = useCallback(async (item: QueueItem, mode: QueueRunMode) => {
     if (!isTaskPresent(item.id)) return;
+    setQueuedState(dispatch, item.id);
+    if (!isTaskPresent(item.id)) return;
     setProcessingState(dispatch, item.id);
     if (!isTaskPresent(item.id)) return;
 
     try {
-      await executeTaskRun({
-        taskId: item.id,
-        intent: toIntent(mode),
+      const response = await enqueueAndExecuteTaskBatch({
+        items: [toEnqueuePayload(item, mode)],
       });
-      if (!isTaskPresent(item.id)) return;
-
       const workspace = await loadWorkspaceState();
-      if (!isTaskPresent(item.id)) return;
-      const synced = findQueueItem(workspace, item.id);
-      if (synced) {
-        patchQueueItem(dispatch, item.id, (prev) => ({
-          ...prev,
-          transcribeStatus: synced.transcribeStatus,
-          transcribeProgress: synced.transcribeProgress,
-          transcribeSegmentCurrent: synced.transcribeSegmentCurrent,
-          transcribeSegmentTotal: synced.transcribeSegmentTotal,
-          transcribePhase: "",
-          transcribeError: synced.transcribeError,
-          resultText: synced.resultText,
-          resultSrt: synced.resultSrt,
-          subtitleSegmentsJson: synced.subtitleSegmentsJson,
-        }));
+      syncQueueItem(dispatch, isTaskPresent, workspace, item.id);
+
+      const failed = response.failed.find((entry) => entry.taskId === item.id);
+      if (failed && isTaskPresent(item.id)) {
+        setErrorState(dispatch, item.id, failed.error || "任务执行失败");
+        pushToast(`失败：${item.name}，${failed.error}`, "error");
+        return;
       }
 
-      pushToast(mode === "transcribe" ? `已完成：${item.name}` : `已完成转译：${item.name}`, "success");
+      pushToast(
+        mode === "transcribe" ? `已完成：${item.name}` : `已完成转译：${item.name}`,
+        "success",
+      );
     } catch (err) {
       if (!isTaskPresent(item.id)) return;
       reportError(err, "runTask");
@@ -192,36 +190,81 @@ function useRunBatch(
   return useCallback(async (tasks: BatchTask[]) => {
     const items = tasks.filter((task) => isTaskPresent(task.item.id));
     if (!items.length) return;
+    for (const task of items) {
+      if (!isTaskPresent(task.item.id)) continue;
+      setProcessingState(dispatch, task.item.id);
+    }
 
-    const response = await executeTaskBatch({
-      items: items.map((task) => ({
-        taskId: task.item.id,
-        intent: toIntent(task.mode),
-      })),
+    const response = await enqueueAndExecuteTaskBatch({
+      items: items.map((task) => toEnqueuePayload(task.item, task.mode)),
     });
     const workspace = await loadWorkspaceState();
     for (const item of items) {
-      if (!isTaskPresent(item.item.id)) continue;
-      const synced = findQueueItem(workspace, item.item.id);
-      if (!synced) continue;
-      patchQueueItem(dispatch, item.item.id, (prev) => ({
-        ...prev,
-        transcribeStatus: synced.transcribeStatus,
-        transcribeProgress: synced.transcribeProgress,
-        transcribeSegmentCurrent: synced.transcribeSegmentCurrent,
-        transcribeSegmentTotal: synced.transcribeSegmentTotal,
-        transcribePhase: "",
-        transcribeError: synced.transcribeError,
-        resultText: synced.resultText,
-        resultSrt: synced.resultSrt,
-        subtitleSegmentsJson: synced.subtitleSegmentsJson,
-      }));
+      syncQueueItem(dispatch, isTaskPresent, workspace, item.item.id);
     }
+
+    for (const failure of response.failed) {
+      if (!isTaskPresent(failure.taskId)) continue;
+      setErrorState(dispatch, failure.taskId, failure.error || "任务执行失败");
+    }
+
     if (response.failed.length > 0) {
       const first = response.failed[0];
       pushToast(`部分任务失败：${first.taskId}，${first.error}`, "error");
     }
   }, [dispatch, isTaskPresent, pushToast]);
+}
+
+function toEnqueuePayload(
+  item: QueueItem,
+  mode: QueueRunMode,
+): {
+  id: string;
+  mediaPath: string;
+  name: string;
+  mediaKind: "audio" | "video";
+  sizeBytes: number;
+  intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" | "TRANSLATE_ONLY";
+  sourceLang: string;
+  targetLang: string;
+  maxRetries: number;
+  settingsSnapshot: Record<string, unknown>;
+} {
+  return {
+    id: item.id,
+    mediaPath: item.path,
+    name: item.name,
+    mediaKind: item.mediaKind,
+    sizeBytes: item.sizeBytes,
+    intent: toIntent(mode),
+    sourceLang: "auto",
+    targetLang: "zh-CN",
+    maxRetries: 0,
+    settingsSnapshot: {},
+  };
+}
+
+function syncQueueItem(
+  dispatch: DispatchState,
+  isTaskPresent: (taskId: string) => boolean,
+  workspace: WorkspaceStateResponse,
+  taskId: string,
+): void {
+  if (!isTaskPresent(taskId)) return;
+  const synced = findQueueItem(workspace, taskId);
+  if (!synced) return;
+  patchQueueItem(dispatch, taskId, (prev) => ({
+    ...prev,
+    transcribeStatus: synced.transcribeStatus,
+    transcribeProgress: synced.transcribeProgress,
+    transcribeSegmentCurrent: synced.transcribeSegmentCurrent,
+    transcribeSegmentTotal: synced.transcribeSegmentTotal,
+    transcribePhase: "",
+    transcribeError: synced.transcribeError,
+    resultText: synced.resultText,
+    resultSrt: synced.resultSrt,
+    subtitleSegmentsJson: synced.subtitleSegmentsJson,
+  }));
 }
 
 function toIntent(mode: QueueRunMode): "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" | "TRANSLATE_ONLY" {

@@ -12,11 +12,12 @@ Use it as the default execution guide for changes.
 
 ## Project Overview
 
-`voxtrans` is a desktop app for media transcription and subtitle editing, built with:
+`voxtrans` is a desktop app for media transcription, translation, and subtitle editing, built with:
 
 - Tauri v2 desktop shell (`src-tauri/`)
 - React + TypeScript frontend (`src/`)
 - Rust transcription core (`voxtrans-core/`)
+- Rig (`rig-core`) as the LLM/Agent node integration layer on desktop services
 
 Current architecture:
 
@@ -29,8 +30,11 @@ Current architecture:
 - `src-tauri/src/commands/`: Tauri command entrypoints
 - `src-tauri/src/db/`: SQLite setup and migration wiring
 - `src-tauri/src/services/`: desktop-side business logic
+- `src-tauri/src/services/task_engine.rs`: task lifecycle command services (enqueue/list/cancel/register upload)
+- `src-tauri/src/services/task_executor.rs`: task execution orchestration (batch execute / enqueue-and-execute)
 - `src-tauri/src/services/transcription/`: post-ASR punctuation/hotword/transcription pipeline
-- `src-tauri/src/services/translate/`: translation pipeline modules (LLM adapter/prompt/rules/validation)
+- `src-tauri/src/services/translate/`: translation pipeline modules (Rig adapters/prompt/rules/validation)
+- `src-tauri/src/services/translate/adapters/rig_node.rs`: shared Rig node client for JSON-constrained LLM calls
 - `src-tauri/src/services/demucs/`: vocal separation services
 - `voxtrans-core/`: ASR/transcription core (Parakeet v2, SRT generation)
 - `model/`: local model files (not committed; may be absent before first setup)
@@ -46,6 +50,7 @@ Current architecture:
 - Vite `7.x`
 - ESLint `9.x`
 - `parakeet-rs` for ASR
+- `rig-core` for provider-agnostic LLM access and concurrent node calls
 
 ## Commands
 
@@ -68,15 +73,26 @@ Run commands from the repository root.
 - Prefer the simplest solution that fixes the root cause.
 - Preserve the current single-repo structure.
 - Prefer reusing existing components/utilities before adding new abstractions.
+- Task lifecycle is command-driven:
+  - Frontend sends commands only (`register_task_upload`, `enqueue_task_run`, `enqueue_and_execute_task_batch`, `cancel_task_run`)
+  - Backend (`task_runs`) is the source of truth and single writer for task lifecycle state
+  - Frontend is a projection/read model; do not re-introduce frontend-owned queue lifecycle persistence
 - When changing Tauri command payloads, update both:
   - Rust request/response structs in the owning service/domain module (for example `src-tauri/src/services/transcribe.rs`)
   - Corresponding TS types at the frontend call site (for example `src/app/hooks/useQueueWorkflow.ts`, `src/app/types.ts`, or shared types in `src/features/media/types.ts`)
+- When changing task state fields or execution semantics, update all affected projections:
+  - `task_engine` / `task_executor`
+  - `workspace` loader/projection
+  - frontend queue normalization/recovery logic
 
 ## Rules
 
 - Do not break existing command names used by frontend `invoke` unless explicitly requested.
 - Keep business logic in `voxtrans-core`; keep UI concerns in `src/app`.
 - Do not rename files, move modules, or reshape public APIs unless required by the task.
+- New LLM-facing integration should go through Rig node adapters; do not add a parallel ad-hoc LLM client stack.
+- For punctuation/translation node calls, prefer `RigNodeClient` with explicit JSON validation and bounded concurrency.
+- Do not add new dependence on `save_queue_state` for task lifecycle control; use task-engine commands.
 - Do not commit generated/runtime artifacts:
   - `dist/`, `target/`, `output/`, `src-tauri/output/`
   - local model/runtime binaries in `model/` and `runtime/`

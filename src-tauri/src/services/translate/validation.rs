@@ -1,5 +1,5 @@
 use super::types::TranslatePipelineRequest;
-use crate::services::translate::adapters::llm_client::JsonResponseValidator;
+use crate::services::translate::adapters::rig_node::JsonResponseValidator;
 
 pub fn validate_request(_request: &TranslatePipelineRequest) -> Result<(), String> {
     // TODO: Enforce schema/coverage/ordering invariants for translation pipeline inputs.
