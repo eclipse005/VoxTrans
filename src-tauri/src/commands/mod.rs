@@ -4,6 +4,7 @@
 //! - `transcribe`: ASR execution and low-level segmentation command.
 //! - `transcription`: post-ASR pipeline orchestration and phase events.
 pub mod file;
+pub mod evaluation;
 pub mod history;
 pub mod logs;
 pub mod model;

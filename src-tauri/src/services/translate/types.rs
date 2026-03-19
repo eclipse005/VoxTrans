@@ -9,8 +9,6 @@ pub struct TranslateTerminologyEntry {
     pub target: String,
     #[serde(default)]
     pub note: String,
-    #[serde(default)]
-    pub group: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

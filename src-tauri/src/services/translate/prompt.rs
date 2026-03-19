@@ -56,7 +56,6 @@ pub struct TranslateTerminologyPromptEntry {
     pub source: String,
     pub target: String,
     pub note: String,
-    pub group: String,
 }
 
 pub fn build_translate_system_prompt() -> String {

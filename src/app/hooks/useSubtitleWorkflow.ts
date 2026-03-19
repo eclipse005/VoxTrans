@@ -25,7 +25,6 @@ type UseSubtitleWorkflowArgs = {
   activeId: string;
   subtitleTaskId: string;
   subtitleTaskName: string;
-  subtitleMediaPath: string;
   subtitleSrtPath: string;
   subtitleCues: SubtitleCue[];
   subtitleDirty: boolean;
@@ -38,7 +37,6 @@ export function useSubtitleWorkflow({
   activeId,
   subtitleTaskId,
   subtitleTaskName,
-  subtitleMediaPath,
   subtitleSrtPath,
   subtitleCues,
   subtitleDirty,
@@ -79,7 +77,7 @@ export function useSubtitleWorkflow({
       }
       pushToast(message, "error");
     }
-  }, [dispatch, pushToast]);
+  }, [pushToast]);
 
   const loadSubtitleEditor = useCallback(
     async (item: QueueItem) => {

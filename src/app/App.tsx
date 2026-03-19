@@ -67,6 +67,7 @@ function App() {
     processQueue,
     processSingle,
     processSingleTranscribeTranslate,
+    evaluateItem,
     clearQueue,
     removeItem,
   } = useQueueWorkflow({
@@ -90,7 +91,6 @@ function App() {
     activeId,
     subtitleTaskId,
     subtitleTaskName,
-    subtitleMediaPath,
     subtitleSrtPath,
     subtitleCues,
     subtitleDirty,
@@ -195,6 +195,7 @@ function App() {
             onClearQueue={clearQueue}
             onProcessSingle={processSingle}
             onProcessSingleTranscribeTranslate={processSingleTranscribeTranslate}
+            onEvaluateItem={evaluateItem}
             onRemoveItem={removeItem}
           />
         </section>
@@ -205,7 +206,6 @@ function App() {
               embedded
               visible
               taskName={subtitleTaskName}
-              srtPath={subtitleSrtPath}
               cues={subtitleCues}
               cueWarningsById={subtitleCueWarnings}
               onUpdateCue={updateCue}

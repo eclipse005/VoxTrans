@@ -36,6 +36,7 @@ fn main() {
             commands::transcribe::separate_vocals,
             commands::file::save_srt,
             commands::file::export_srt,
+            commands::evaluation::evaluate_task,
             commands::subtitle::save_subtitle_editor,
             commands::transcription::run_post_asr_pipeline,
             commands::translate::run_translate_pipeline,

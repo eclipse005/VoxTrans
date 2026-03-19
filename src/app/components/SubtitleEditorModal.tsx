@@ -12,7 +12,6 @@ type SubtitleEditorModalProps = {
   visible: boolean;
   embedded?: boolean;
   taskName: string;
-  srtPath: string;
   cues: SubtitleCue[];
   cueWarningsById: Record<string, string[]>;
   onUpdateCue: (cueId: string, patch: Partial<SubtitleCue>) => void;
@@ -31,7 +30,6 @@ export default function SubtitleEditorModal({
   visible,
   embedded = false,
   taskName,
-  srtPath,
   cues,
   cueWarningsById,
   onUpdateCue,
@@ -113,7 +111,6 @@ export default function SubtitleEditorModal({
       <SubtitleEditorHeader
         cueCount={cues.length}
         taskName={taskName}
-        srtPath={srtPath}
         onOpenSrtDir={onOpenSrtDir}
         onExportSrt={onExportSrt}
         onOpenLogs={onOpenLogs}

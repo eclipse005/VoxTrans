@@ -3,7 +3,6 @@ import { DownloadIcon, LogsIcon } from "../Icons";
 type SubtitleEditorHeaderProps = {
   cueCount: number;
   taskName: string;
-  srtPath: string;
   onOpenSrtDir: () => void | Promise<void>;
   onExportSrt: () => void | Promise<void>;
   onOpenLogs: () => void | Promise<void>;
@@ -12,7 +11,6 @@ type SubtitleEditorHeaderProps = {
 export default function SubtitleEditorHeader({
   cueCount,
   taskName,
-  srtPath,
   onOpenSrtDir,
   onExportSrt,
   onOpenLogs,
@@ -24,24 +22,20 @@ export default function SubtitleEditorHeader({
           <h3 className="apple-heading-small">字幕编辑器</h3>
           <span className="subtitle-count-badge">{cueCount} 条</span>
         </div>
-        <div className="apple-body-small subtitle-editor-meta" title={`任务: ${taskName} · 输出: ${srtPath || "--"}`}>
+        <div className="apple-body-small subtitle-editor-meta">
           <div className="subtitle-meta-row">
             <span className="subtitle-meta-label">任务:</span>
-            <span className="subtitle-meta-value">{taskName || "--"}</span>
-          </div>
-          <div className="subtitle-meta-row">
-            <span className="subtitle-meta-label">输出:</span>
             <button
               type="button"
-              className="subtitle-output-link"
+              className="subtitle-task-link"
               onClick={(e) => {
                 e.stopPropagation();
                 void onOpenSrtDir();
               }}
-              aria-label={srtPath ? "打开字幕输出目录" : "打开输出目录"}
-              title={srtPath ? "打开字幕输出目录" : "打开输出目录"}
+              aria-label="打开任务目录"
+              title="打开任务目录"
             >
-              {srtPath || "--"}
+              <span title={taskName || "--"}>{taskName || "--"}</span>
             </button>
           </div>
         </div>

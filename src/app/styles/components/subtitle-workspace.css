@@ -98,11 +98,10 @@
   word-break: break-word;
 }
 
-.subtitle-output-link {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: none;
-  display: inline;
+.subtitle-task-link {
+  flex: 0 0 auto;
+  max-width: 100%;
+  display: inline-block;
   border: none;
   background: transparent;
   color: var(--apple-blue);
@@ -116,11 +115,11 @@
   word-break: break-word;
 }
 
-.subtitle-output-link:hover:not(:disabled) {
+.subtitle-task-link:hover:not(:disabled) {
   text-decoration: underline;
 }
 
-.subtitle-output-link:disabled {
+.subtitle-task-link:disabled {
   color: var(--apple-text-secondary);
   cursor: default;
 }

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 pub const STAGE_INIT: &str = "init";
 pub const STAGE_SEPARATE: &str = "separate";
@@ -286,14 +286,6 @@ impl TaskContext {
             result_srt,
             translated_srt,
         };
-    }
-
-    pub fn attach_source_srt_artifact(&mut self, path: String) {
-        self.artifacts.source_srt = json!({ "path": path });
-    }
-
-    pub fn attach_target_srt_artifact(&mut self, path: String) {
-        self.artifacts.target_srt = json!({ "path": path });
     }
 
     pub fn to_json_string(&self) -> Result<String, String> {

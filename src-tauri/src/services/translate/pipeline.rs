@@ -317,7 +317,6 @@ fn normalize_terminology_entries(
                 source,
                 target,
                 note: entry.note.trim().to_string(),
-                group: entry.group.trim().to_string(),
             })
         })
         .collect()

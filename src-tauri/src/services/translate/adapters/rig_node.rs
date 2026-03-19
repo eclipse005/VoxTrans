@@ -17,7 +17,6 @@ pub struct RigNodeConfig {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
-    pub timeout_sec: u64,
     pub max_retries: u32,
 }
 
@@ -27,7 +26,6 @@ impl RigNodeConfig {
             base_url,
             api_key,
             model,
-            timeout_sec: 60,
             max_retries: 3,
         }
     }
@@ -76,19 +74,12 @@ pub struct RigNodeJsonTask {
 #[derive(Debug, Clone)]
 pub struct RigNodeJsonError {
     pub message: String,
-    pub attempts: u32,
-    pub elapsed_ms: u128,
 }
 
 #[derive(Debug, Clone)]
 pub struct RigNodeJsonResult {
-    pub raw_text: String,
     pub json: Value,
-    pub usage: TokenUsage,
     pub model: String,
-    pub elapsed_ms: u128,
-    pub attempts: u32,
-    pub request_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -146,7 +137,7 @@ impl RigNodeClient {
             });
 
             match self.call_once(system_prompt, user_prompt).await {
-                Ok((raw_text, usage, request_id)) => {
+                Ok((raw_text, usage)) => {
                     let parsed = extract_and_repair_json(&raw_text);
                     let parsed = match parsed {
                         Ok(v) => v,
@@ -226,13 +217,8 @@ impl RigNodeClient {
                     );
 
                     return Ok(RigNodeJsonResult {
-                        raw_text,
                         json: parsed,
-                        usage,
                         model: self.config.model.clone(),
-                        elapsed_ms,
-                        attempts: attempt,
-                        request_id,
                     });
                 }
                 Err(err) => {
@@ -263,8 +249,6 @@ impl RigNodeClient {
                 "llm call failed after {} attempts: {}",
                 max_attempts, last_error
             ),
-            attempts: max_attempts,
-            elapsed_ms: started.elapsed().as_millis(),
         })
     }
 
@@ -301,8 +285,6 @@ impl RigNodeClient {
                             item.id,
                             Err(RigNodeJsonError {
                                 message: format!("semaphore acquire failed: {err}"),
-                                attempts: 0,
-                                elapsed_ms: 0,
                             }),
                         );
                     }
@@ -328,8 +310,6 @@ impl RigNodeClient {
                     usize::MAX,
                     Err(RigNodeJsonError {
                         message: format!("task join error: {err}"),
-                        attempts: 0,
-                        elapsed_ms: 0,
                     }),
                 )),
             }
@@ -342,7 +322,7 @@ impl RigNodeClient {
         &self,
         system_prompt: &str,
         user_prompt: &str,
-    ) -> Result<(String, TokenUsage, Option<String>), String> {
+    ) -> Result<(String, TokenUsage), String> {
         let model = self
             .completions_client
             .completion_model(self.config.model.clone());
@@ -367,13 +347,7 @@ impl RigNodeClient {
             total_tokens: response.usage.total_tokens,
         };
 
-        let request_id = if response.raw_response.id.trim().is_empty() {
-            None
-        } else {
-            Some(response.raw_response.id)
-        };
-
-        Ok((content, usage, request_id))
+        Ok((content, usage))
     }
 }
 

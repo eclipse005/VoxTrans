@@ -52,6 +52,20 @@ type EnqueueAndExecuteTaskBatchRequest = {
   items: EnqueueTaskRunRequest[];
 };
 
+type EvaluateTaskRequest = {
+  taskId: string;
+};
+
+export type EvaluateTaskResponse = {
+  id: number;
+  taskId: string;
+  overallScore: number;
+  summary: string;
+  metricsJson: string;
+  outputPath: string;
+  createdAt: number;
+};
+
 export async function loadWorkspaceState(): Promise<WorkspaceStateResponse> {
   return invoke<WorkspaceStateResponse>("load_workspace_state");
 }
@@ -86,4 +100,8 @@ export async function enqueueAndExecuteTaskBatch(
   request: EnqueueAndExecuteTaskBatchRequest,
 ): Promise<ExecuteTaskBatchResponse> {
   return invoke<ExecuteTaskBatchResponse>("enqueue_and_execute_task_batch", { request });
+}
+
+export async function evaluateTask(request: EvaluateTaskRequest): Promise<EvaluateTaskResponse> {
+  return invoke<EvaluateTaskResponse>("evaluate_task", { request });
 }

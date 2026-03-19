@@ -1,5 +1,4 @@
 use super::types::TranslatePipelineRequest;
-use crate::services::translate::adapters::rig_node::JsonResponseValidator;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -75,8 +74,4 @@ pub fn validate_llm_segments(
     }
 
     Ok(translated_by_index)
-}
-
-pub fn punctuation_response_validator() -> JsonResponseValidator {
-    JsonResponseValidator::with_required_keys(&["punctuatedText"])
 }

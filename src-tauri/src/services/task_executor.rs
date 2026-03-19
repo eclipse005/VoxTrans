@@ -396,108 +396,6 @@ pub async fn enqueue_and_execute_task_batch_via_worker(
     Ok(response)
 }
 
-pub async fn execute_task_batch(
-    pool: &SqlitePool,
-    app: Option<tauri::AppHandle>,
-    request: ExecuteTaskBatchRequest,
-) -> Result<ExecuteTaskBatchResponse, String> {
-    if request.items.is_empty() {
-        return Err("items is required".to_string());
-    }
-    let mut succeeded_task_ids: Vec<String> = Vec::new();
-    let mut failed: Vec<ExecuteTaskBatchFailure> = Vec::new();
-
-    for item in request.items {
-        let task_id = item.task_id.trim().to_string();
-        if task_id.is_empty() {
-            continue;
-        }
-        match execute_task_run(
-            pool,
-            app.clone(),
-            ExecuteTaskRunRequest {
-                task_id: task_id.clone(),
-                intent: item.intent.clone(),
-            },
-        )
-        .await
-        {
-            Ok(()) => succeeded_task_ids.push(task_id),
-            Err(error) => failed.push(ExecuteTaskBatchFailure { task_id, error }),
-        }
-    }
-
-    Ok(ExecuteTaskBatchResponse {
-        succeeded_task_ids,
-        failed,
-    })
-}
-
-pub async fn enqueue_and_execute_task_batch(
-    pool: &SqlitePool,
-    app: Option<tauri::AppHandle>,
-    request: EnqueueAndExecuteTaskBatchRequest,
-) -> Result<ExecuteTaskBatchResponse, String> {
-    if request.items.is_empty() {
-        return Err("items is required".to_string());
-    }
-
-    let mut enqueue_failed: Vec<ExecuteTaskBatchFailure> = Vec::new();
-    let mut executable_items: Vec<ExecuteTaskBatchItem> = Vec::new();
-
-    for item in request.items {
-        let task_id = item.id.trim().to_string();
-        if task_id.is_empty() {
-            enqueue_failed.push(ExecuteTaskBatchFailure {
-                task_id: String::new(),
-                error: "taskId is required".to_string(),
-            });
-            continue;
-        }
-
-        let intent = normalize_intent(&item.intent);
-        let enqueue_request = EnqueueTaskRequest {
-            id: task_id.clone(),
-            media_path: item.media_path,
-            name: item.name,
-            media_kind: item.media_kind,
-            size_bytes: item.size_bytes,
-            intent: intent.clone(),
-            source_lang: item.source_lang,
-            target_lang: item.target_lang,
-            max_retries: item.max_retries,
-            settings_snapshot: item.settings_snapshot,
-        };
-
-        match enqueue_task(pool, enqueue_request).await {
-            Ok(_) => executable_items.push(ExecuteTaskBatchItem {
-                task_id,
-                intent: Some(intent),
-            }),
-            Err(error) => enqueue_failed.push(ExecuteTaskBatchFailure { task_id, error }),
-        }
-    }
-
-    if executable_items.is_empty() {
-        return Ok(ExecuteTaskBatchResponse {
-            succeeded_task_ids: Vec::new(),
-            failed: enqueue_failed,
-        });
-    }
-
-    let mut response = execute_task_batch(
-        pool,
-        app,
-        ExecuteTaskBatchRequest {
-            items: executable_items,
-        },
-    )
-    .await?;
-
-    response.failed.extend(enqueue_failed);
-    Ok(response)
-}
-
 fn normalize_intent(raw: &str) -> String {
     let intent = raw.trim().to_uppercase();
     if intent == "TRANSLATE_ONLY" || intent == "TRANSCRIBE_TRANSLATE" {
@@ -987,7 +885,6 @@ fn map_terminology_entries(
                 source: term.origin.trim().to_string(),
                 target: term.target.trim().to_string(),
                 note: term.note.trim().to_string(),
-                group: group.name.trim().to_string(),
             })
         })
         .filter(|entry| !entry.source.is_empty() && !entry.target.is_empty())
