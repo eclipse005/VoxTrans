@@ -1,6 +1,7 @@
 use sqlx::SqlitePool;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
+use std::process::Child;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -50,9 +51,24 @@ impl Default for ModelDownloadRuntime {
     }
 }
 
+pub struct TaskWorkerRuntime {
+    pub running_task_id: Option<String>,
+    pub child: Option<Child>,
+}
+
+impl Default for TaskWorkerRuntime {
+    fn default() -> Self {
+        Self {
+            running_task_id: None,
+            child: None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub asr_model_download: Arc<Mutex<ModelDownloadRuntime>>,
     pub demucs_model_download: Arc<Mutex<ModelDownloadRuntime>>,
+    pub task_worker_runtime: Arc<Mutex<TaskWorkerRuntime>>,
 }

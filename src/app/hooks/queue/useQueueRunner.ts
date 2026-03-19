@@ -16,6 +16,7 @@ import {
   applySeparationProgress,
   patchQueueItem,
   setErrorState,
+  applyTranslateProgress,
   setQueuedState,
   setProcessingState,
 } from "../../state/queueDomainActions";
@@ -38,6 +39,12 @@ type TranscribePhaseEvent = {
 type SeparateProgressEvent = {
   taskId: string;
   percent: number;
+};
+
+type TranslateProgressEvent = {
+  taskId: string;
+  currentBatch: number;
+  totalBatches: number;
 };
 
 export type QueueRunMode = "transcribe" | "transcribe_translate" | "translate_only";
@@ -131,6 +138,32 @@ export function useQueueRunner({
     };
   }, [dispatch]);
 
+  useEffect(() => {
+    let disposed = false;
+    let unlistenTranslateProgress: undefined | (() => void);
+    listen<TranslateProgressEvent>("translate-progress", (event) => {
+      const payload = event.payload;
+      if (!payload?.taskId) return;
+      applyTranslateProgress(dispatch, {
+        taskId: payload.taskId,
+        currentBatch: payload.currentBatch,
+        totalBatches: payload.totalBatches,
+      });
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
+        unlistenTranslateProgress = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      if (unlistenTranslateProgress) unlistenTranslateProgress();
+    };
+  }, [dispatch]);
+
   const runTask = useCallback(async (item: QueueItem, mode: QueueRunMode) => {
     if (!isTaskPresent(item.id)) return;
     setQueuedState(dispatch, item.id);
@@ -146,11 +179,13 @@ export function useQueueRunner({
       syncQueueItem(dispatch, isTaskPresent, workspace, item.id);
 
       const failed = response.failed.find((entry) => entry.taskId === item.id);
-      if (failed && isTaskPresent(item.id)) {
+      if (failed) {
+        if (!isTaskPresent(item.id)) return;
         setErrorState(dispatch, item.id, failed.error || "任务执行失败");
         pushToast(`失败：${item.name}，${failed.error}`, "error");
         return;
       }
+      if (!isTaskPresent(item.id)) return;
 
       pushToast(
         mode === "transcribe" ? `已完成：${item.name}` : `已完成转译：${item.name}`,

@@ -1,13 +1,11 @@
-#[tauri::command]
-pub fn load_subtitle_editor(
-    request: crate::services::subtitle::SubtitleLoadRequest,
-) -> Result<crate::services::subtitle::SubtitleLoadResponse, String> {
-    crate::services::subtitle::load_subtitle_editor(request)
-}
+use tauri::State;
+
+use crate::app_state::AppState;
 
 #[tauri::command]
-pub fn save_subtitle_editor(
+pub async fn save_subtitle_editor(
+    state: State<'_, AppState>,
     request: crate::services::subtitle::SubtitleSaveRequest,
-) -> Result<crate::services::subtitle::SubtitleSaveResponse, String> {
-    crate::services::subtitle::save_subtitle_editor(request)
+) -> Result<(), String> {
+    crate::services::subtitle::save_subtitle_editor(&state.pool, request).await
 }

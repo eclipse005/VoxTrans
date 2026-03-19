@@ -154,13 +154,19 @@ export function useQueueScheduler({
     pushToast("队列已清空", "info");
   }, [dispatch, pushToast, queueBusy]);
 
-  const removeItem = useCallback((id: string) => {
+  const removeItem = useCallback(async (id: string) => {
     const item = queue.find((q) => q.id === id);
-    if (item) {
-      void deleteTaskSummaries({ taskId: item.id, mediaPath: item.path });
+    if (!item) {
+      return;
     }
-    removeQueueItem(dispatch, id);
-  }, [dispatch, queue]);
+    try {
+      await deleteTaskSummaries({ taskId: item.id, mediaPath: item.path });
+      removeQueueItem(dispatch, id);
+    } catch (error) {
+      reportError(error, "removeItem");
+      pushToast(toUserErrorMessage(error, "删除任务失败"), "error");
+    }
+  }, [dispatch, pushToast, queue]);
 
   return {
     queueCount: queue.length,

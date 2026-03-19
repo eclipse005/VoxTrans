@@ -5,6 +5,7 @@ use crate::services::history::{
     self, ClearTaskEventsRequest, DeleteTaskSummariesRequest, ListTaskEventsRequest,
     ListTaskSummariesRequest, RecordTaskEventRequest, TaskEventRecord, TaskSummary,
 };
+use crate::services::task_worker;
 
 #[tauri::command]
 pub async fn record_task_event(
@@ -43,5 +44,8 @@ pub async fn delete_task_summaries(
     state: State<'_, AppState>,
     request: DeleteTaskSummariesRequest,
 ) -> Result<(), String> {
+    if let Some(task_id) = request.task_id.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        let _ = task_worker::kill_worker_if_running(&state.task_worker_runtime, task_id);
+    }
     history::delete_task_summaries(&state.pool, request).await
 }

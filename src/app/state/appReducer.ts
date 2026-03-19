@@ -1,6 +1,6 @@
 import type { QueueItem, SavedSettings, SubtitleCue } from "../../features/media/types";
 import { normalizeProvider } from "../../features/media/provider";
-import type { SubtitleSaveState, ToastState, UploadTab } from "../types";
+import type { ToastState, UploadTab } from "../types";
 import { reduceQueueState } from "./queueReducer";
 import { reduceSettingsState } from "./settingsReducer";
 import { reduceSubtitleState } from "./subtitleReducer";
@@ -34,11 +34,9 @@ export type AppState = {
   subtitleTaskName: string;
   subtitleMediaPath: string;
   subtitleSrtPath: string;
-  subtitleDraftPath: string;
   subtitleCues: SubtitleCue[];
   subtitleCueWarnings: Record<string, string[]>;
   subtitleSelectedCueId: string;
-  subtitleSaveState: SubtitleSaveState;
   subtitleDirty: boolean;
 };
 
@@ -73,10 +71,8 @@ export type SubtitleAction = {
       | "subtitleTaskName"
       | "subtitleMediaPath"
       | "subtitleSrtPath"
-      | "subtitleDraftPath"
       | "subtitleCues"
       | "subtitleCueWarnings"
-      | "subtitleSaveState"
       | "subtitleDirty"
     >
   >;
@@ -151,11 +147,9 @@ export const initialAppState: AppState = {
   subtitleTaskName: "",
   subtitleMediaPath: "",
   subtitleSrtPath: "",
-  subtitleDraftPath: "",
   subtitleCues: [],
   subtitleCueWarnings: {},
   subtitleSelectedCueId: "",
-  subtitleSaveState: "idle",
   subtitleDirty: false,
 };
 

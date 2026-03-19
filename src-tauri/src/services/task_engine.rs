@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use crate::services::task_context::{TaskContext, TaskContextSeed};
+use crate::services::task_context::{STAGE_INIT, TaskContext, TaskContextSeed};
 
 pub const INTENT_TRANSCRIBE: &str = "TRANSCRIBE";
 pub const INTENT_TRANSCRIBE_TRANSLATE: &str = "TRANSCRIBE_TRANSLATE";
@@ -122,12 +122,20 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
     let normalized_intent = request.intent.trim().to_uppercase();
     let snapshot = serde_json::to_string(&request.settings_snapshot).map_err(|err| err.to_string())?;
     let now = unix_now();
+    let existing_context_json = sqlx::query_scalar::<_, String>(
+        "SELECT context_json FROM task_runs WHERE id = ?",
+    )
+    .bind(&request.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| err.to_string())?;
     let context_json = build_enqueue_context_json(
         &request,
         &normalized_intent,
         &source_lang,
         &target_lang,
         now,
+        existing_context_json.as_deref(),
     )?;
 
     sqlx::query(
@@ -503,8 +511,11 @@ fn build_enqueue_context_json(
     source_lang: &str,
     target_lang: &str,
     created_at: i64,
+    existing_context_json: Option<&str>,
 ) -> Result<String, String> {
-    let mut context = TaskContext::new(TaskContextSeed {
+    let mut context = TaskContext::parse_or_new(
+        existing_context_json.unwrap_or_default(),
+        TaskContextSeed {
         task_id: request.id.clone(),
         intent: intent.to_string(),
         source_lang: source_lang.to_string(),
@@ -514,7 +525,18 @@ fn build_enqueue_context_json(
         media_size_bytes: request.size_bytes,
         settings_snapshot: request.settings_snapshot.clone(),
         created_at,
-    });
+        },
+    );
+    context.task.intent = intent.to_string();
+    context.task.source_lang = source_lang.to_string();
+    context.task.target_lang = target_lang.to_string();
+    context.task.updated_at = created_at;
+    context.input.media_path = request.media_path.clone();
+    context.input.media_kind = request.media_kind.clone();
+    context.input.media_size_bytes = request.size_bytes;
+    context.input.settings_snapshot = request.settings_snapshot.clone();
+    context.runtime.current_stage = STAGE_INIT.to_string();
+    context.runtime.can_resume_from = STAGE_INIT.to_string();
     context.runtime.status = "queued".to_string();
     context.set_queue_projection("queued", "", 0, 0, 0, "");
     context.to_json_string()

@@ -4,7 +4,6 @@ import { useSubtitleBatchAnimations } from "../hooks/useSubtitleBatchAnimations"
 import { useSubtitleFindReplace } from "../hooks/useSubtitleFindReplace";
 import { useSubtitleSelection } from "../hooks/useSubtitleSelection";
 import { useSubtitleTimeValidation } from "../hooks/useSubtitleTimeValidation";
-import type { SubtitleSaveState } from "../types";
 import SubtitleCueList from "./subtitle-editor/SubtitleCueList";
 import SubtitleEditorHeader from "./subtitle-editor/SubtitleEditorHeader";
 import SubtitleEditorToolbar from "./subtitle-editor/SubtitleEditorToolbar";
@@ -16,7 +15,6 @@ type SubtitleEditorModalProps = {
   srtPath: string;
   cues: SubtitleCue[];
   cueWarningsById: Record<string, string[]>;
-  saveState: SubtitleSaveState;
   onUpdateCue: (cueId: string, patch: Partial<SubtitleCue>) => void;
   onAddCueAfter: (selectedCueId: string | null) => void;
   onMergeSelected: (selectedCueIds: string[]) => void;
@@ -36,7 +34,6 @@ export default function SubtitleEditorModal({
   srtPath,
   cues,
   cueWarningsById,
-  saveState,
   onUpdateCue,
   onAddCueAfter,
   onMergeSelected,
@@ -115,7 +112,6 @@ export default function SubtitleEditorModal({
 
       <SubtitleEditorHeader
         cueCount={cues.length}
-        saveState={saveState}
         taskName={taskName}
         srtPath={srtPath}
         onOpenSrtDir={onOpenSrtDir}

@@ -10,8 +10,9 @@ use crate::services::task_engine::{
 use crate::services::task_executor::{
     EnqueueAndExecuteTaskBatchRequest, ExecuteTaskBatchRequest, ExecuteTaskBatchResponse,
     ExecuteTaskRunRequest,
-    enqueue_and_execute_task_batch as enqueue_and_execute_task_batch_service,
-    execute_task_batch as execute_task_batch_service, execute_task_run as execute_task_run_service,
+    enqueue_and_execute_task_batch_via_worker as enqueue_and_execute_task_batch_service,
+    execute_task_batch_via_worker as execute_task_batch_service,
+    execute_task_run_via_worker as execute_task_run_service,
 };
 
 #[tauri::command]
@@ -52,7 +53,7 @@ pub async fn execute_task_run(
     state: State<'_, AppState>,
     request: ExecuteTaskRunRequest,
 ) -> Result<(), String> {
-    execute_task_run_service(&state.pool, app, request).await
+    execute_task_run_service(&state.pool, &state.task_worker_runtime, app, request).await
 }
 
 #[tauri::command]
@@ -61,7 +62,7 @@ pub async fn execute_task_batch(
     state: State<'_, AppState>,
     request: ExecuteTaskBatchRequest,
 ) -> Result<ExecuteTaskBatchResponse, String> {
-    execute_task_batch_service(&state.pool, app, request).await
+    execute_task_batch_service(&state.pool, &state.task_worker_runtime, app, request).await
 }
 
 #[tauri::command]
@@ -70,5 +71,5 @@ pub async fn enqueue_and_execute_task_batch(
     state: State<'_, AppState>,
     request: EnqueueAndExecuteTaskBatchRequest,
 ) -> Result<ExecuteTaskBatchResponse, String> {
-    enqueue_and_execute_task_batch_service(&state.pool, app, request).await
+    enqueue_and_execute_task_batch_service(&state.pool, &state.task_worker_runtime, app, request).await
 }

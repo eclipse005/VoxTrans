@@ -1,9 +1,11 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
+use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 use tauri::async_runtime::spawn_blocking;
 
+use crate::app_state::TaskWorkerRuntime;
 use crate::services::file::save_srt;
 use crate::services::preferences::load_user_preferences;
 use crate::services::task_context::{
@@ -12,12 +14,15 @@ use crate::services::task_context::{
 };
 use crate::services::task_engine::{EnqueueTaskRequest, enqueue_task};
 use crate::services::task_log::{TaskLogger, event};
+use crate::services::task_worker;
 use crate::services::transcribe::{TranscribeRequest, transcribe_blocking};
 use crate::services::transcription::{RunPostAsrPipelineRequest, run_post_asr_pipeline};
 use crate::services::translate::types::{
     TranslatePipelineRequest, TranslateTerminologyEntry, TranslateToken,
 };
 use crate::services::translate::run_translate_pipeline_with_phase;
+
+const WORKER_EVENT_PREFIX: &str = "VOXTRANS_EVENT:";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -102,6 +107,20 @@ struct TranscribePhaseEvent {
     phase: String,
 }
 
+#[derive(Debug, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TranslateProgressEvent {
+    task_id: String,
+    current_batch: usize,
+    total_batches: usize,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct WorkerEventEnvelope<'a, T: serde::Serialize> {
+    event: &'a str,
+    payload: &'a T,
+}
+
 #[derive(Debug, sqlx::FromRow)]
 struct TaskRunExecRow {
     id: String,
@@ -118,7 +137,7 @@ struct TaskRunExecRow {
 
 pub async fn execute_task_run(
     pool: &SqlitePool,
-    app: tauri::AppHandle,
+    app: Option<tauri::AppHandle>,
     request: ExecuteTaskRunRequest,
 ) -> Result<(), String> {
     if request.task_id.trim().is_empty() {
@@ -202,11 +221,11 @@ pub async fn execute_task_run(
         .unwrap_or_else(|| task.intent.trim().to_uppercase());
     context.task.intent = intent.clone();
     let run_result = if intent == "TRANSLATE_ONLY" {
-        run_translate_only(pool, &app, &task, &mut context).await
+        run_translate_only(pool, app.as_ref(), &task, &mut context).await
     } else if intent == "TRANSCRIBE_TRANSLATE" {
-        run_transcribe_and_maybe_translate(pool, &app, &task, true, &mut context).await
+        run_transcribe_and_maybe_translate(pool, app.as_ref(), &task, true, &mut context).await
     } else {
-        run_transcribe_and_maybe_translate(pool, &app, &task, false, &mut context).await
+        run_transcribe_and_maybe_translate(pool, app.as_ref(), &task, false, &mut context).await
     };
 
     match run_result {
@@ -264,9 +283,122 @@ pub async fn execute_task_run(
     }
 }
 
+pub async fn execute_task_run_via_worker(
+    pool: &SqlitePool,
+    runtime: &Arc<Mutex<TaskWorkerRuntime>>,
+    app: tauri::AppHandle,
+    request: ExecuteTaskRunRequest,
+) -> Result<(), String> {
+    let db_path = task_worker::resolve_db_path(pool).await?;
+    task_worker::spawn_worker(runtime, &db_path, &request, Some(app))?;
+    task_worker::wait_worker_finish(runtime, request.task_id.trim()).await
+}
+
+pub async fn execute_task_batch_via_worker(
+    pool: &SqlitePool,
+    runtime: &Arc<Mutex<TaskWorkerRuntime>>,
+    app: tauri::AppHandle,
+    request: ExecuteTaskBatchRequest,
+) -> Result<ExecuteTaskBatchResponse, String> {
+    if request.items.is_empty() {
+        return Err("items is required".to_string());
+    }
+    let mut succeeded_task_ids: Vec<String> = Vec::new();
+    let mut failed: Vec<ExecuteTaskBatchFailure> = Vec::new();
+    for item in request.items {
+        let task_id = item.task_id.trim().to_string();
+        if task_id.is_empty() {
+            continue;
+        }
+        match execute_task_run_via_worker(
+            pool,
+            runtime,
+            app.clone(),
+            ExecuteTaskRunRequest {
+                task_id: task_id.clone(),
+                intent: item.intent.clone(),
+            },
+        )
+        .await
+        {
+            Ok(()) => succeeded_task_ids.push(task_id),
+            Err(error) => failed.push(ExecuteTaskBatchFailure { task_id, error }),
+        }
+    }
+    Ok(ExecuteTaskBatchResponse {
+        succeeded_task_ids,
+        failed,
+    })
+}
+
+pub async fn enqueue_and_execute_task_batch_via_worker(
+    pool: &SqlitePool,
+    runtime: &Arc<Mutex<TaskWorkerRuntime>>,
+    app: tauri::AppHandle,
+    request: EnqueueAndExecuteTaskBatchRequest,
+) -> Result<ExecuteTaskBatchResponse, String> {
+    if request.items.is_empty() {
+        return Err("items is required".to_string());
+    }
+
+    let mut enqueue_failed: Vec<ExecuteTaskBatchFailure> = Vec::new();
+    let mut executable_items: Vec<ExecuteTaskBatchItem> = Vec::new();
+
+    for item in request.items {
+        let task_id = item.id.trim().to_string();
+        if task_id.is_empty() {
+            enqueue_failed.push(ExecuteTaskBatchFailure {
+                task_id: String::new(),
+                error: "taskId is required".to_string(),
+            });
+            continue;
+        }
+        let intent = normalize_intent(&item.intent);
+        let enqueue_request = EnqueueTaskRequest {
+            id: task_id.clone(),
+            media_path: item.media_path,
+            name: item.name,
+            media_kind: item.media_kind,
+            size_bytes: item.size_bytes,
+            intent: intent.clone(),
+            source_lang: item.source_lang,
+            target_lang: item.target_lang,
+            max_retries: item.max_retries,
+            settings_snapshot: item.settings_snapshot,
+        };
+
+        match enqueue_task(pool, enqueue_request).await {
+            Ok(_) => executable_items.push(ExecuteTaskBatchItem {
+                task_id,
+                intent: Some(intent),
+            }),
+            Err(error) => enqueue_failed.push(ExecuteTaskBatchFailure { task_id, error }),
+        }
+    }
+
+    if executable_items.is_empty() {
+        return Ok(ExecuteTaskBatchResponse {
+            succeeded_task_ids: Vec::new(),
+            failed: enqueue_failed,
+        });
+    }
+
+    let mut response = execute_task_batch_via_worker(
+        pool,
+        runtime,
+        app,
+        ExecuteTaskBatchRequest {
+            items: executable_items,
+        },
+    )
+    .await?;
+    response.failed.extend(enqueue_failed);
+    Ok(response)
+}
+
 pub async fn execute_task_batch(
     pool: &SqlitePool,
-    app: tauri::AppHandle,
+    app: Option<tauri::AppHandle>,
     request: ExecuteTaskBatchRequest,
 ) -> Result<ExecuteTaskBatchResponse, String> {
     if request.items.is_empty() {
@@ -303,7 +435,7 @@ pub async fn execute_task_batch(
 
 pub async fn enqueue_and_execute_task_batch(
     pool: &SqlitePool,
-    app: tauri::AppHandle,
+    app: Option<tauri::AppHandle>,
     request: EnqueueAndExecuteTaskBatchRequest,
 ) -> Result<ExecuteTaskBatchResponse, String> {
     if request.items.is_empty() {
@@ -384,7 +516,7 @@ struct DonePayload {
 
 async fn run_transcribe_and_maybe_translate(
     pool: &SqlitePool,
-    app: &tauri::AppHandle,
+    app: Option<&tauri::AppHandle>,
     task: &TaskRunExecRow,
     with_translate: bool,
     context: &mut TaskContext,
@@ -393,14 +525,15 @@ async fn run_transcribe_and_maybe_translate(
     let settings_before_asr = load_user_preferences(pool).await?.settings;
     if settings_before_asr.enable_vocal_separation {
         context.mark_stage_running(STAGE_SEPARATE);
-        let _ = app.emit(
+        emit_bridge_event(
+            app,
             "transcribe-phase",
-            TranscribePhaseEvent {
+            &TranscribePhaseEvent {
                 task_id: task.id.clone(),
                 phase: "separating".to_string(),
             },
         );
-        let app_handle = app.clone();
+        let app_handle = app.cloned();
         let req = crate::services::demucs::SeparateVocalsRequest {
             task_id: task.id.clone(),
             audio_path: task.media_path.clone(),
@@ -409,9 +542,10 @@ async fn run_transcribe_and_maybe_translate(
         let task_id = task.id.clone();
         let separated = spawn_blocking(move || {
             crate::services::demucs::separate_vocals_blocking(req, |percent| {
-                let _ = app_handle.emit(
+                emit_bridge_event(
+                    app_handle.as_ref(),
                     "separate-progress",
-                    SeparateProgressEvent {
+                    &SeparateProgressEvent {
                         task_id: task_id.clone(),
                         percent,
                     },
@@ -429,7 +563,7 @@ async fn run_transcribe_and_maybe_translate(
     }
 
     context.mark_stage_running(STAGE_ASR);
-    let app_handle = app.clone();
+    let app_handle = app.cloned();
     let task_id = task.id.clone();
     let transcribe_req = TranscribeRequest {
         task_id: task.id.clone(),
@@ -440,9 +574,10 @@ async fn run_transcribe_and_maybe_translate(
     };
     let transcribed = spawn_blocking(move || {
         transcribe_blocking(transcribe_req, |current, total| {
-            let _ = app_handle.emit(
+            emit_bridge_event(
+                app_handle.as_ref(),
                 "transcribe-progress",
-                TranscribeProgressEvent {
+                &TranscribeProgressEvent {
                     task_id: task_id.clone(),
                     current_segment: current,
                     total_segments: total,
@@ -468,7 +603,7 @@ async fn run_transcribe_and_maybe_translate(
     let settings_before_post = load_user_preferences(pool).await?.settings;
     context.mark_stage_running(STAGE_PUNCTUATE);
     context.mark_stage_running(STAGE_SEGMENT);
-    let app_handle = app.clone();
+    let app_handle = app.cloned();
     let phase_task_id = task.id.clone();
     let processed = run_post_asr_pipeline(
         RunPostAsrPipelineRequest {
@@ -483,9 +618,10 @@ async fn run_transcribe_and_maybe_translate(
             llm_concurrency: settings_before_post.llm_concurrency,
         },
         move |phase| {
-            let _ = app_handle.emit(
+            emit_bridge_event(
+                app_handle.as_ref(),
                 "transcribe-phase",
-                TranscribePhaseEvent {
+                &TranscribePhaseEvent {
                     task_id: phase_task_id.clone(),
                     phase: phase.to_string(),
                 },
@@ -581,7 +717,9 @@ async fn run_transcribe_and_maybe_translate(
     persist_task_context(pool, &task.id, context).await?;
 
     let translate_phase_task_id = task.id.clone();
-    let translate_phase_app = app.clone();
+    let translate_phase_app = app.cloned();
+    let translate_progress_task_id = task.id.clone();
+    let translate_progress_app = app.cloned();
     let translated = run_translate_pipeline_with_phase(TranslatePipelineRequest {
         task_id: task.id.clone(),
         media_path: task.media_path.clone(),
@@ -602,11 +740,22 @@ async fn run_transcribe_and_maybe_translate(
         llm_concurrency: settings_before_post.llm_concurrency,
         terminology_entries: map_terminology_entries(&settings_before_post.terminology_groups),
     }, move |phase| {
-        let _ = translate_phase_app.emit(
+        emit_bridge_event(
+            translate_phase_app.as_ref(),
             "transcribe-phase",
-            TranscribePhaseEvent {
+            &TranscribePhaseEvent {
                 task_id: translate_phase_task_id.clone(),
                 phase: phase.to_string(),
+            },
+        );
+    }, move |current_batch, total_batches| {
+        emit_bridge_event(
+            translate_progress_app.as_ref(),
+            "translate-progress",
+            &TranslateProgressEvent {
+                task_id: translate_progress_task_id.clone(),
+                current_batch,
+                total_batches,
             },
         );
     })
@@ -685,7 +834,7 @@ async fn run_transcribe_and_maybe_translate(
 
 async fn run_translate_only(
     pool: &SqlitePool,
-    app: &tauri::AppHandle,
+    app: Option<&tauri::AppHandle>,
     task: &TaskRunExecRow,
     context: &mut TaskContext,
 ) -> Result<DonePayload, String> {
@@ -697,7 +846,9 @@ async fn run_translate_only(
     context.mark_stage_running(STAGE_SUMMARIZE);
     context.mark_stage_running(STAGE_TRANSLATE);
     let translate_phase_task_id = task.id.clone();
-    let translate_phase_app = app.clone();
+    let translate_phase_app = app.cloned();
+    let translate_progress_task_id = task.id.clone();
+    let translate_progress_app = app.cloned();
     let translated = run_translate_pipeline_with_phase(TranslatePipelineRequest {
         task_id: task.id.clone(),
         media_path: task.media_path.clone(),
@@ -710,11 +861,22 @@ async fn run_translate_only(
         llm_concurrency: settings.llm_concurrency,
         terminology_entries: map_terminology_entries(&settings.terminology_groups),
     }, move |phase| {
-        let _ = translate_phase_app.emit(
+        emit_bridge_event(
+            translate_phase_app.as_ref(),
             "transcribe-phase",
-            TranscribePhaseEvent {
+            &TranscribePhaseEvent {
                 task_id: translate_phase_task_id.clone(),
                 phase: phase.to_string(),
+            },
+        );
+    }, move |current_batch, total_batches| {
+        emit_bridge_event(
+            translate_progress_app.as_ref(),
+            "translate-progress",
+            &TranslateProgressEvent {
+                task_id: translate_progress_task_id.clone(),
+                current_batch,
+                total_batches,
             },
         );
     })
@@ -867,4 +1029,18 @@ fn unix_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+fn emit_bridge_event<T: serde::Serialize>(
+    app: Option<&tauri::AppHandle>,
+    event: &str,
+    payload: &T,
+) {
+    if let Some(app_handle) = app {
+        let _ = app_handle.emit(event, payload);
+        return;
+    }
+    if let Ok(envelope) = serde_json::to_string(&WorkerEventEnvelope { event, payload }) {
+        println!("{WORKER_EVENT_PREFIX}{envelope}");
+    }
 }

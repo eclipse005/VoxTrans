@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import type { QueueItem, SubtitleCue } from "../../features/media/types";
+import { cuesToSrt } from "../../features/media/srt";
 import type { AppAction } from "../state/appReducer";
 import { reportError, toUserErrorMessage } from "../utils/errors";
 import { buildCueWarningsById } from "../utils/subtitleWarnings";
@@ -44,77 +45,51 @@ export function useSubtitleWorkflow({
   dispatch,
   pushToast,
 }: UseSubtitleWorkflowArgs) {
-  const subtitleSaveTimerRef = useRef<number | null>(null);
-  const subtitleSavedIndicatorTimerRef = useRef<number | null>(null);
   const loadedSubtitleVersionRef = useRef<string>("");
-
-  const clearSubtitleSavedIndicatorTimer = useCallback(() => {
-    if (subtitleSavedIndicatorTimerRef.current != null) {
-      window.clearTimeout(subtitleSavedIndicatorTimerRef.current);
-      subtitleSavedIndicatorTimerRef.current = null;
-    }
-  }, []);
+  const persistSeqRef = useRef(0);
+  const currentSubtitleTaskIdRef = useRef<string>(subtitleTaskId);
+  const existingTaskIdsRef = useRef<Set<string>>(new Set(queue.map((item) => item.id)));
 
   useEffect(() => {
-    return () => {
-      if (subtitleSaveTimerRef.current != null) {
-        window.clearTimeout(subtitleSaveTimerRef.current);
+    currentSubtitleTaskIdRef.current = subtitleTaskId;
+  }, [subtitleTaskId]);
+
+  useEffect(() => {
+    existingTaskIdsRef.current = new Set(queue.map((item) => item.id));
+  }, [queue]);
+
+  const persistSubtitleToTask = useCallback(async (taskId: string, cues: SubtitleCue[]) => {
+    const seq = ++persistSeqRef.current;
+    try {
+      await saveSubtitleEditor(taskId, cues);
+      if (seq !== persistSeqRef.current) return;
+      if (currentSubtitleTaskIdRef.current !== taskId) return;
+      if (!existingTaskIdsRef.current.has(taskId)) return;
+    } catch (err) {
+      reportError(err, "saveSubtitleEditor");
+      const message = toUserErrorMessage(err, "字幕保存失败");
+      if (currentSubtitleTaskIdRef.current !== taskId) {
+        return;
       }
-      if (subtitleSavedIndicatorTimerRef.current != null) {
-        window.clearTimeout(subtitleSavedIndicatorTimerRef.current);
+      if (!existingTaskIdsRef.current.has(taskId)) {
+        return;
       }
-    };
-  }, []);
-
-  const saveSubtitle = useCallback(
-    async (finalSave: boolean) => {
-      if (!subtitleMediaPath || !subtitleTaskId) return;
-
-      try {
-        clearSubtitleSavedIndicatorTimer();
-        dispatch({ type: "set_subtitle", payload: { subtitleSaveState: "saving" } });
-        const response = await saveSubtitleEditor(subtitleTaskId, subtitleMediaPath, subtitleCues, finalSave);
-
-        dispatch({
-          type: "set_subtitle",
-          payload: {
-            subtitleSaveState: "saved",
-            subtitleDirty: false,
-            subtitleSrtPath: response.srtPath,
-            subtitleCueWarnings: buildCueWarningsById(subtitleCues, response.warnings),
-          },
-        });
-
-        subtitleSavedIndicatorTimerRef.current = window.setTimeout(() => {
-          dispatch({ type: "set_subtitle", payload: { subtitleSaveState: "idle" } });
-          subtitleSavedIndicatorTimerRef.current = null;
-        }, 1200);
-
-        if (finalSave) {
-          pushToast("字幕已保存", "success");
-        }
-      } catch (err) {
-        reportError(err, "saveSubtitle");
-        dispatch({ type: "set_subtitle", payload: { subtitleSaveState: "error" } });
-        if (finalSave) {
-          pushToast(toUserErrorMessage(err, "字幕保存失败"), "error");
-        }
+      if (/task not found|taskId is required/i.test(message)) {
+        return;
       }
-    },
-    [clearSubtitleSavedIndicatorTimer, dispatch, pushToast, subtitleCues, subtitleMediaPath, subtitleTaskId],
-  );
+      pushToast(message, "error");
+    }
+  }, [dispatch, pushToast]);
 
   const loadSubtitleEditor = useCallback(
     async (item: QueueItem) => {
       try {
-        clearSubtitleSavedIndicatorTimer();
         dispatch({
           type: "set_subtitle",
           payload: {
             subtitleTaskId: item.id,
             subtitleTaskName: item.name,
             subtitleMediaPath: item.path,
-            subtitleSaveState: "idle",
           },
         });
 
@@ -124,18 +99,12 @@ export function useSubtitleWorkflow({
           type: "set_subtitle",
           payload: {
             subtitleSrtPath: response.srtPath,
-            subtitleDraftPath: response.draftPath,
             subtitleCues: hydratedCues,
             subtitleCueWarnings: buildCueWarningsById(hydratedCues, response.warnings),
             subtitleDirty: false,
-            subtitleSaveState: "idle",
           },
         });
         loadedSubtitleVersionRef.current = buildSubtitleVersion(item);
-
-        if (response.usingDraft) {
-          pushToast("已恢复自动保存草稿", "info");
-        }
       } catch (error) {
         reportError(error, "loadSubtitleEditor");
         pushToast("字幕格式有误，无法加载编辑器", "error");
@@ -145,55 +114,56 @@ export function useSubtitleWorkflow({
             subtitleTaskId: item.id,
             subtitleTaskName: item.name,
             subtitleMediaPath: item.path,
-            subtitleDraftPath: "",
             subtitleSrtPath: "",
             subtitleCues: [],
             subtitleCueWarnings: {},
             subtitleDirty: false,
-            subtitleSaveState: "error",
           },
         });
         loadedSubtitleVersionRef.current = buildSubtitleVersion(item);
       }
     },
-    [clearSubtitleSavedIndicatorTimer, dispatch, pushToast],
+    [dispatch, pushToast],
   );
 
   const markSubtitleEdited = useCallback(
     (nextCues: SubtitleCue[]) => {
-      clearSubtitleSavedIndicatorTimer();
       dispatch({
         type: "set_subtitle",
         payload: {
           subtitleCues: nextCues,
           subtitleCueWarnings: {},
           subtitleDirty: true,
-          subtitleSaveState: "idle",
         },
       });
-    },
-    [clearSubtitleSavedIndicatorTimer, dispatch],
-  );
-
-  useEffect(() => {
-    if (!subtitleMediaPath || !subtitleDirty) {
-      return;
-    }
-
-    if (subtitleSaveTimerRef.current) {
-      window.clearTimeout(subtitleSaveTimerRef.current);
-    }
-
-    subtitleSaveTimerRef.current = window.setTimeout(() => {
-      void saveSubtitle(false);
-    }, 800);
-
-    return () => {
-      if (subtitleSaveTimerRef.current) {
-        window.clearTimeout(subtitleSaveTimerRef.current);
+      if (subtitleTaskId) {
+        const taskStillExists = queue.some((item) => item.id === subtitleTaskId);
+        if (!taskStillExists) {
+          return;
+        }
+        const resultSrt = cuesToSrt(nextCues);
+        const subtitleSegmentsJson = JSON.stringify(
+          nextCues.map((cue) => ({
+            startMs: Math.max(0, Math.round(cue.startMs)),
+            endMs: Math.max(Math.round(cue.startMs), Math.round(cue.endMs)),
+            sourceText: cue.text || "",
+            translatedText: cue.translatedText || "",
+          })),
+        );
+        dispatch({
+          type: "patch_queue_item",
+          id: subtitleTaskId,
+          updater: (item) => ({
+            ...item,
+            resultSrt,
+            subtitleSegmentsJson,
+          }),
+        });
+        void persistSubtitleToTask(subtitleTaskId, nextCues);
       }
-    };
-  }, [saveSubtitle, subtitleMediaPath, subtitleCues, subtitleDirty]);
+    },
+    [dispatch, persistSubtitleToTask, queue, subtitleTaskId],
+  );
 
   const updateCue = useCallback(
     (cueId: string, patchCue: Partial<SubtitleCue>) => {
@@ -279,22 +249,15 @@ export function useSubtitleWorkflow({
   useEffect(() => {
     const activeItem = queue.find((item) => item.id === activeId);
     if (!activeItem) {
-      if (subtitleSaveTimerRef.current != null) {
-        window.clearTimeout(subtitleSaveTimerRef.current);
-        subtitleSaveTimerRef.current = null;
-      }
-      clearSubtitleSavedIndicatorTimer();
       dispatch({
         type: "set_subtitle",
         payload: {
           subtitleTaskId: "",
           subtitleTaskName: "",
           subtitleMediaPath: "",
-          subtitleDraftPath: "",
           subtitleSrtPath: "",
           subtitleCues: [],
           subtitleCueWarnings: {},
-          subtitleSaveState: "idle",
           subtitleDirty: false,
         },
       });
@@ -312,7 +275,7 @@ export function useSubtitleWorkflow({
     const currentVersion = buildSubtitleVersion(activeItem);
     if (loadedSubtitleVersionRef.current === currentVersion) return;
     void loadSubtitleEditor(activeItem);
-  }, [activeId, clearSubtitleSavedIndicatorTimer, dispatch, loadSubtitleEditor, queue, subtitleDirty, subtitleTaskId]);
+  }, [activeId, dispatch, loadSubtitleEditor, queue, subtitleDirty, subtitleTaskId]);
 
   const activeItem = queue.find((item) => item.id === activeId) ?? null;
 
@@ -321,7 +284,6 @@ export function useSubtitleWorkflow({
     subtitleTaskName,
     subtitleSrtPath,
     subtitleCues,
-    saveSubtitle,
     updateCue,
     addCueAfter,
     mergeSelectedCues,

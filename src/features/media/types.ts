@@ -155,30 +155,9 @@ export type BuildSegmentsResponse = {
   segments: SegmentWithWords[];
 };
 
-export type SubtitleLoadRequest = {
-  taskId: string;
-  mediaPath: string;
-  fallbackSrt?: string | null;
-};
-
-export type SubtitleLoadResponse = {
-  srtPath: string;
-  draftPath: string;
-  content: string;
-  usingDraft: boolean;
-  warnings: string[];
-};
-
 export type SubtitleSaveRequest = {
   taskId: string;
-  mediaPath: string;
   content: string;
-  autosave: boolean;
-};
-
-export type SubtitleSaveResponse = {
-  srtPath: string;
-  warnings: string[];
 };
 
 export type UserPreferencesResponse = {

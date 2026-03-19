@@ -14,6 +14,7 @@ pub mod subtitle;
 pub mod system;
 pub mod task_log;
 pub mod task_context;
+pub mod task_worker;
 pub mod task_engine;
 pub mod task_executor;
 pub mod task_path;

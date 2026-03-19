@@ -1,40 +1,49 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { QueueItem, SubtitleCue, SubtitleLoadResponse, SubtitleSaveResponse } from "../../../features/media/types";
+import type { QueueItem, SubtitleCue } from "../../../features/media/types";
 import { buildFallbackCue, cuesToSrt, parseSrtContent } from "../../../features/media/srt";
 import { exportSrt } from "../../api/transcribe";
 
 export async function saveSubtitleEditor(
   taskId: string,
-  mediaPath: string,
   cues: SubtitleCue[],
-  finalSave: boolean,
-): Promise<SubtitleSaveResponse> {
+): Promise<void> {
   const content = cuesToSrt(cues);
-  return invoke<SubtitleSaveResponse>("save_subtitle_editor", {
+  const subtitleSegmentsJson = JSON.stringify(
+    cues.map((cue) => ({
+      startMs: Math.max(0, Math.round(cue.startMs)),
+      endMs: Math.max(Math.round(cue.startMs), Math.round(cue.endMs)),
+      sourceText: cue.text || "",
+      translatedText: cue.translatedText || "",
+    })),
+  );
+  return invoke<void>("save_subtitle_editor", {
     request: {
       taskId,
-      mediaPath,
       content,
-      autosave: !finalSave,
+      subtitleSegmentsJson,
     },
   });
 }
 
 export async function loadSubtitleEditorData(item: QueueItem): Promise<{
-  response: SubtitleLoadResponse;
+  response: { srtPath: string; warnings: string[] };
   hydratedCues: SubtitleCue[];
 }> {
-  const response = await invoke<SubtitleLoadResponse>("load_subtitle_editor", {
-    request: {
-      taskId: item.id,
-      mediaPath: item.path,
-      fallbackSrt: item.resultSrt || null,
-    },
-  });
+  const content = (item.resultSrt || "").replace(/\r\n/g, "\n");
+  const response = {
+    srtPath: "",
+    warnings: [],
+  };
 
-  const parsedCues = parseSrtContent(response.content);
-  const effectiveCues = parsedCues.length > 0 ? parsedCues : buildFallbackCue(response.content);
+  const parsedCues = parseSrtContent(content);
+  const fallbackFromSegments = buildFallbackCueFromSegments(item);
+  const effectiveCues =
+    parsedCues.length > 0
+      ? parsedCues
+      : fallbackFromSegments.length > 0
+        ? fallbackFromSegments
+        : buildFallbackCue(content);
   const hydratedCues = hydrateTranslatedCues(effectiveCues, item);
   return { response, hydratedCues };
 }
@@ -98,4 +107,16 @@ function parseSubtitleSegments(raw?: string): Array<{ startMs: number; endMs: nu
 
 function overlapMs(aStart: number, aEnd: number, bStart: number, bEnd: number): number {
   return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
+}
+
+function buildFallbackCueFromSegments(item: QueueItem): SubtitleCue[] {
+  const segments = parseSubtitleSegments(item.subtitleSegmentsJson);
+  if (segments.length === 0) return [];
+  return segments.map((segment, index) => ({
+    id: `${item.id}-seg-${index}-${segment.startMs}-${segment.endMs}`,
+    startMs: Math.max(0, segment.startMs),
+    endMs: Math.max(segment.startMs, segment.endMs),
+    text: segment.sourceText || "",
+    translatedText: segment.translatedText || "",
+  }));
 }

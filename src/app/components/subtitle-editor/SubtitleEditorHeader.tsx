@@ -1,9 +1,7 @@
-import type { SubtitleSaveState } from "../../types";
 import { DownloadIcon, LogsIcon } from "../Icons";
 
 type SubtitleEditorHeaderProps = {
   cueCount: number;
-  saveState: SubtitleSaveState;
   taskName: string;
   srtPath: string;
   onOpenSrtDir: () => void | Promise<void>;
@@ -11,16 +9,8 @@ type SubtitleEditorHeaderProps = {
   onOpenLogs: () => void | Promise<void>;
 };
 
-function saveStateLabel(state: SubtitleSaveState): string {
-  if (state === "saving") return "自动保存中...";
-  if (state === "saved") return "已自动保存";
-  if (state === "error") return "保存失败";
-  return "等待编辑";
-}
-
 export default function SubtitleEditorHeader({
   cueCount,
-  saveState,
   taskName,
   srtPath,
   onOpenSrtDir,
@@ -33,7 +23,6 @@ export default function SubtitleEditorHeader({
         <div className="subtitle-title-row">
           <h3 className="apple-heading-small">字幕编辑器</h3>
           <span className="subtitle-count-badge">{cueCount} 条</span>
-          <span className={`subtitle-save-indicator subtitle-save-${saveState}`}>{saveStateLabel(saveState)}</span>
         </div>
         <div className="apple-body-small subtitle-editor-meta" title={`任务: ${taskName} · 输出: ${srtPath || "--"}`}>
           <div className="subtitle-meta-row">

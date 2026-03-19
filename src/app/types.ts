@@ -14,4 +14,3 @@ export type TermEntry = {
 };
 
 export type UploadTab = "local" | "youtube";
-export type SubtitleSaveState = "idle" | "saving" | "saved" | "error";

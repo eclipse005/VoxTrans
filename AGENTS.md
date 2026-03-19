@@ -10,6 +10,12 @@ Repository reality takes precedence over this document.
 This file defines how AI agents should operate in the `voxtrans` repository.
 Use it as the default execution guide for changes.
 
+## Local Mode
+
+- This repository is maintained in single-developer local mode.
+- Do not add or enforce team-collaboration process requirements in outputs.
+- Focus on direct bug-fix and feature-delivery execution: locate issue, implement fix, verify, report.
+
 ## Project Overview
 
 `voxtrans` is a desktop app for media transcription, translation, and subtitle editing, built with:
@@ -30,8 +36,9 @@ Current architecture:
 - `src-tauri/src/commands/`: Tauri command entrypoints
 - `src-tauri/src/db/`: SQLite setup and migration wiring
 - `src-tauri/src/services/`: desktop-side business logic
-- `src-tauri/src/services/task_engine.rs`: task lifecycle command services (enqueue/list/cancel/register upload)
-- `src-tauri/src/services/task_executor.rs`: task execution orchestration (batch execute / enqueue-and-execute)
+- `src-tauri/src/services/task_engine.rs`: task lifecycle query/enqueue services (register upload / enqueue / list / get)
+- `src-tauri/src/services/task_executor.rs`: task execution orchestration (single/batch enqueue+execute)
+- `src-tauri/src/services/task_worker.rs`: worker-process runtime management (spawn/wait/kill)
 - `src-tauri/src/services/transcription/`: post-ASR punctuation/hotword/transcription pipeline
 - `src-tauri/src/services/translate/`: translation pipeline modules (Rig adapters/prompt/rules/validation)
 - `src-tauri/src/services/translate/adapters/rig_node.rs`: shared Rig node client for JSON-constrained LLM calls
@@ -44,11 +51,11 @@ Current architecture:
 ## Tech Stack
 
 - Rust 2024 edition (workspace)
-- Tauri `2.x`
-- React `19.x`
-- TypeScript `5.9`
-- Vite `7.x`
-- ESLint `9.x`
+- Tauri `2.10.x`
+- React `19.2.x`
+- TypeScript `5.9.x`
+- Vite `7.3.x`
+- ESLint `9.39.x`
 - `parakeet-rs` for ASR
 - `rig-core` for provider-agnostic LLM access and concurrent node calls
 
@@ -74,7 +81,7 @@ Run commands from the repository root.
 - Preserve the current single-repo structure.
 - Prefer reusing existing components/utilities before adding new abstractions.
 - Task lifecycle is command-driven:
-  - Frontend sends commands only (`register_task_upload`, `enqueue_task_run`, `enqueue_and_execute_task_batch`, `cancel_task_run`)
+  - Frontend sends commands only (`register_task_upload`, `enqueue_task_run`, `enqueue_and_execute_task_batch`, `delete_task_summaries`)
   - Backend (`task_runs`) is the source of truth and single writer for task lifecycle state
   - Frontend is a projection/read model; do not re-introduce frontend-owned queue lifecycle persistence
 - When changing Tauri command payloads, update both:

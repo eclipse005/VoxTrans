@@ -158,8 +158,43 @@ export function applyTranscribePhase(
     phase: TranscribePhase;
   },
 ): void {
-  patchQueueItem(dispatch, params.taskId, (item) => ({
-    ...item,
-    transcribePhase: params.phase || item.transcribePhase,
-  }));
+  patchQueueItem(dispatch, params.taskId, (item) => {
+    const nextPhase = params.phase || item.transcribePhase;
+    if (nextPhase === "translate") {
+      return {
+        ...item,
+        transcribePhase: nextPhase,
+        transcribeSegmentCurrent: 0,
+        transcribeSegmentTotal: 0,
+      };
+    }
+    return {
+      ...item,
+      transcribePhase: nextPhase,
+    };
+  });
+}
+
+export function applyTranslateProgress(
+  dispatch: DispatchState,
+  params: {
+    taskId: string;
+    currentBatch: number;
+    totalBatches: number;
+  },
+): void {
+  patchQueueItem(dispatch, params.taskId, (item) => {
+    const total = Math.max(0, Math.round(params.totalBatches || 0));
+    const current = Math.max(0, Math.min(total, Math.round(params.currentBatch || 0)));
+    return {
+      ...item,
+      transcribePhase: "translate",
+      transcribeSegmentCurrent: current,
+      transcribeSegmentTotal: total,
+      transcribeProgress:
+        total > 0
+          ? Math.min(99, Math.round((current / total) * 100))
+          : item.transcribeProgress,
+    };
+  });
 }

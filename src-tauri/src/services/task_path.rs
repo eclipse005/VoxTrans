@@ -53,16 +53,6 @@ pub fn task_words_output_path(task_id: &str, audio_path: &Path) -> PathBuf {
     task_output_dir(task_id, audio_path).join(format!("{}_words.json", safe_stem))
 }
 
-pub fn task_srt_draft_path(task_id: &str, audio_path: &Path) -> PathBuf {
-    let stem = audio_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "transcript".to_string());
-    let safe_stem = sanitize_filename_component(&stem);
-    task_output_dir(task_id, audio_path).join(format!("{}_en.draft.srt", safe_stem))
-}
-
 fn normalize_lang_suffix(lang: &str) -> String {
     let lowered = lang.trim().to_lowercase();
     if lowered.is_empty() {

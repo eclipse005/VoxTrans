@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use tokio::task::JoinSet;
 
 use rig::pipeline::{self, TryOp};
 use rig::providers::openai;
@@ -63,12 +64,14 @@ struct TranslationBatchItem {
     translated_text: String,
 }
 
-pub async fn run_translate_pipeline<F>(
+pub async fn run_translate_pipeline<F, G>(
     request: TranslatePipelineRequest,
     mut on_phase: F,
+    mut on_batch_progress: G,
 ) -> Result<TranslatePipelineResponse, String>
 where
     F: FnMut(&str),
+    G: FnMut(usize, usize),
 {
     validate_request(&request)?;
     let llm_logger = TaskLogger::llm_with_media(request.task_id.clone(), request.media_path.clone());
@@ -116,6 +119,7 @@ where
         &terminology_entries,
         &style_profile,
         &completions_client,
+        &mut on_batch_progress,
     )
     .await?;
     llm_logger.event(
@@ -235,22 +239,18 @@ async fn build_global_style_profile(
     }
 }
 
-async fn run_batch_translate_pipeline(
+async fn run_batch_translate_pipeline<G>(
     request: &TranslatePipelineRequest,
     segments: &[SourceSegment],
     batches: &[SegmentBatch],
     terminology_entries: &[TranslateTerminologyPromptEntry],
     style_profile: &StyleProfile,
-    completions_client: &openai::CompletionsClient,
-) -> Result<Vec<TranslationBatchExtraction>, String> {
-    let batch_extractor = completions_client
-        .extractor::<TranslationBatchExtraction>(request.translate_model.clone())
-        .preamble(&build_translate_system_prompt())
-        .retries(2)
-        .build();
-
-    let batch_pipeline = pipeline::new().extract(batch_extractor);
-
+    _completions_client: &openai::CompletionsClient,
+    on_batch_progress: &mut G,
+) -> Result<Vec<TranslationBatchExtraction>, String>
+where
+    G: FnMut(usize, usize),
+{
     let prompts = batches
         .iter()
         .map(|batch| {
@@ -277,10 +277,92 @@ async fn run_batch_translate_pipeline(
         })
         .collect::<Vec<_>>();
 
-    batch_pipeline
-        .try_batch_call(request.llm_concurrency.clamp(1, 16) as usize, prompts)
-        .await
-        .map_err(|err| format!("translate pipeline failed: {err}"))
+    let total_batches = prompts.len();
+    if total_batches == 0 {
+        return Ok(Vec::new());
+    }
+
+    let concurrency = request.llm_concurrency.clamp(1, 16) as usize;
+    let model = request.translate_model.clone();
+    let api_key = request.translate_api_key.clone();
+    let base_url = request.translate_base_url.clone();
+
+    let mut join_set: JoinSet<Result<(usize, TranslationBatchExtraction), String>> = JoinSet::new();
+    let mut next_to_spawn = 0usize;
+    let mut done = 0usize;
+    let mut out: Vec<Option<TranslationBatchExtraction>> = vec![None; total_batches];
+
+    while next_to_spawn < total_batches && join_set.len() < concurrency {
+        spawn_translate_task(
+            &mut join_set,
+            next_to_spawn,
+            prompts[next_to_spawn].clone(),
+            model.clone(),
+            api_key.clone(),
+            base_url.clone(),
+        );
+        next_to_spawn += 1;
+    }
+
+    while let Some(joined) = join_set.join_next().await {
+        let result = joined.map_err(|err| format!("translate task join failed: {err}"))??;
+        let (index, extracted) = result;
+        if index >= total_batches {
+            return Err(format!("translate task returned invalid index {index}"));
+        }
+        out[index] = Some(extracted);
+        done += 1;
+        on_batch_progress(done.min(total_batches), total_batches);
+
+        if next_to_spawn < total_batches {
+            spawn_translate_task(
+                &mut join_set,
+                next_to_spawn,
+                prompts[next_to_spawn].clone(),
+                model.clone(),
+                api_key.clone(),
+                base_url.clone(),
+            );
+            next_to_spawn += 1;
+        }
+    }
+
+    out.into_iter()
+        .enumerate()
+        .map(|(index, item)| item.ok_or_else(|| format!("missing translated batch at index {index}")))
+        .collect()
+}
+
+fn spawn_translate_task(
+    join_set: &mut JoinSet<Result<(usize, TranslationBatchExtraction), String>>,
+    index: usize,
+    prompt: String,
+    model: String,
+    api_key: String,
+    base_url: String,
+) {
+    join_set.spawn(async move {
+        let mut builder = openai::Client::builder().api_key(api_key.trim());
+        if !base_url.trim().is_empty() {
+            builder = builder.base_url(base_url.trim());
+        }
+        let client = builder
+            .build()
+            .map_err(|err| format!("failed to create rig openai client: {err}"))?
+            .completions_api();
+
+        let batch_extractor = client
+            .extractor::<TranslationBatchExtraction>(model)
+            .preamble(&build_translate_system_prompt())
+            .retries(2)
+            .build();
+        let batch_pipeline = pipeline::new().extract(batch_extractor);
+        let extracted = batch_pipeline
+            .try_call(prompt)
+            .await
+            .map_err(|err| format!("translate pipeline failed: {err}"))?;
+        Ok((index, extracted))
+    });
 }
 
 fn normalize_terminology_entries(

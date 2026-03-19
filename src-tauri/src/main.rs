@@ -9,6 +9,8 @@ use std::sync::Arc;
 use tauri::Manager;
 
 fn main() {
+    services::task_worker::maybe_run_worker_mode_from_args();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -22,6 +24,9 @@ fn main() {
                 demucs_model_download: Arc::new(std::sync::Mutex::new(
                     app_state::ModelDownloadRuntime::default(),
                 )),
+                task_worker_runtime: Arc::new(std::sync::Mutex::new(
+                    app_state::TaskWorkerRuntime::default(),
+                )),
             });
             Ok(())
         })
@@ -31,7 +36,6 @@ fn main() {
             commands::transcribe::separate_vocals,
             commands::file::save_srt,
             commands::file::export_srt,
-            commands::subtitle::load_subtitle_editor,
             commands::subtitle::save_subtitle_editor,
             commands::transcription::run_post_asr_pipeline,
             commands::translate::run_translate_pipeline,

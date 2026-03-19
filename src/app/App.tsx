@@ -49,7 +49,6 @@ function App() {
     subtitleSrtPath,
     subtitleCues,
     subtitleCueWarnings,
-    subtitleSaveState,
     subtitleDirty,
   } = state;
 
@@ -206,7 +205,6 @@ function App() {
               srtPath={subtitleSrtPath}
               cues={subtitleCues}
               cueWarningsById={subtitleCueWarnings}
-              saveState={subtitleSaveState}
               onUpdateCue={updateCue}
               onAddCueAfter={addCueAfter}
               onMergeSelected={mergeSelectedCues}

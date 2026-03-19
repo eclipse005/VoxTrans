@@ -41,7 +41,13 @@ function getTranscribeProcessingText(item: QueueItem): string {
     return "总结中";
   }
   if (item.transcribePhase === "translate") {
-    return "翻译处理中";
+    if (item.transcribeSegmentTotal > 0) {
+      const current = Math.max(0, Math.min(item.transcribeSegmentCurrent || 0, item.transcribeSegmentTotal));
+      if (current > 0) {
+        return `翻译中 ${current}/${item.transcribeSegmentTotal}`;
+      }
+    }
+    return "翻译中";
   }
   if (item.transcribeSegmentTotal > 1) {
     return `转录处理中 ${Math.min(item.transcribeSegmentCurrent || 0, item.transcribeSegmentTotal)}/${item.transcribeSegmentTotal}`;
@@ -116,7 +122,7 @@ export default function MediaList({
                         <button className="file-action-btn" title="转录" disabled={item.transcribeStatus === "processing"} onClick={(e) => { e.stopPropagation(); void onProcessSingle(item); }}>
                           <MicIcon />
                         </button>
-                        <button className="file-action-btn delete" title="删除" disabled={item.transcribeStatus === "processing"} onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>
+                        <button className="file-action-btn delete" title="删除" onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>
                           <TrashIcon />
                         </button>
                       </div>
