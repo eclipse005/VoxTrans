@@ -6,6 +6,7 @@ import {
 } from "../../api/workspace";
 import type {
   QueueItem,
+  SavedSettings,
   TranscribePhase,
   WorkspaceStateResponse,
 } from "../../../features/media/types";
@@ -53,12 +54,14 @@ type UseQueueRunnerArgs = {
   dispatch: DispatchState;
   pushToast: PushToast;
   isTaskPresent: (taskId: string) => boolean;
+  settings: SavedSettings;
 };
 
 export function useQueueRunner({
   dispatch,
   pushToast,
   isTaskPresent,
+  settings,
 }: UseQueueRunnerArgs) {
   useEffect(() => {
     let disposed = false;
@@ -173,7 +176,7 @@ export function useQueueRunner({
 
     try {
       const response = await enqueueAndExecuteTaskBatch({
-        items: [toEnqueuePayload(item, mode)],
+        items: [toEnqueuePayload(item, mode, settings)],
       });
       const workspace = await loadWorkspaceState();
       syncQueueItem(dispatch, isTaskPresent, workspace, item.id);
@@ -203,8 +206,9 @@ export function useQueueRunner({
     dispatch,
     isTaskPresent,
     pushToast,
+    settings,
   ]);
-  const runBatch = useRunBatch(dispatch, pushToast, isTaskPresent);
+  const runBatch = useRunBatch(dispatch, pushToast, isTaskPresent, settings);
 
   return {
     runTask,
@@ -221,6 +225,7 @@ function useRunBatch(
   dispatch: DispatchState,
   pushToast: PushToast,
   isTaskPresent: (taskId: string) => boolean,
+  settings: SavedSettings,
 ) {
   return useCallback(async (tasks: BatchTask[]) => {
     const items = tasks.filter((task) => isTaskPresent(task.item.id));
@@ -231,7 +236,7 @@ function useRunBatch(
     }
 
     const response = await enqueueAndExecuteTaskBatch({
-      items: items.map((task) => toEnqueuePayload(task.item, task.mode)),
+      items: items.map((task) => toEnqueuePayload(task.item, task.mode, settings)),
     });
     const workspace = await loadWorkspaceState();
     for (const item of items) {
@@ -247,12 +252,13 @@ function useRunBatch(
       const first = response.failed[0];
       pushToast(`部分任务失败：${first.taskId}，${first.error}`, "error");
     }
-  }, [dispatch, isTaskPresent, pushToast]);
+  }, [dispatch, isTaskPresent, pushToast, settings]);
 }
 
 function toEnqueuePayload(
   item: QueueItem,
   mode: QueueRunMode,
+  settings: SavedSettings,
 ): {
   id: string;
   mediaPath: string;
@@ -275,7 +281,7 @@ function toEnqueuePayload(
     sourceLang: "auto",
     targetLang: "zh-CN",
     maxRetries: 0,
-    settingsSnapshot: {},
+    settingsSnapshot: buildSettingsSnapshot(settings),
   };
 }
 
@@ -314,4 +320,22 @@ function findQueueItem(
 ): QueueItem | null {
   const queue = Array.isArray(workspace.queue) ? workspace.queue : [];
   return queue.find((item) => item.id === taskId) ?? null;
+}
+
+function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown> {
+  return {
+    provider: settings.provider,
+    chunkTargetSeconds: settings.chunkTargetSeconds,
+    subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
+    asrModel: settings.asrModel,
+    demucsModel: settings.demucsModel,
+    enableVocalSeparation: settings.enableVocalSeparation,
+    translateApiKey: settings.translateApiKey,
+    translateBaseUrl: settings.translateBaseUrl,
+    translateModel: settings.translateModel,
+    llmConcurrency: settings.llmConcurrency,
+    terminologyGroups: settings.terminologyGroups,
+    enableTerminology: settings.enableTerminology,
+    enablePunctuationOptimization: settings.enablePunctuationOptimization,
+  };
 }

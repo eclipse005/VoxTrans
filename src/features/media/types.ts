@@ -29,6 +29,7 @@ export type SavedSettings = {
   translateModel: string;
   llmConcurrency: number;
   terminologyGroups: TerminologyGroup[];
+  enableTerminology: boolean;
   enablePunctuationOptimization: boolean;
 };
 

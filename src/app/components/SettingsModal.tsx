@@ -21,6 +21,7 @@ type SettingsModalProps = {
   draftTranslateBaseUrl: string;
   draftTranslateModel: string;
   draftLlmConcurrencyInput: string;
+  draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
   asrStatus: ModelStatusResponse | null;
   demucsStatus: ModelStatusResponse | null;
@@ -36,6 +37,7 @@ type SettingsModalProps = {
   onDraftTranslateBaseUrlChange: (value: string) => void;
   onDraftTranslateModelChange: (value: string) => void;
   onDraftLlmConcurrencyInputChange: (value: string) => void;
+  onDraftEnableTerminologyChange: (value: boolean) => void;
   onDraftEnablePunctuationOptimizationChange: (value: boolean) => void;
   onTestTranslateConnection: () => void | Promise<void>;
   onOpenModelDir: (target: "asr" | "demucs") => void | Promise<void>;
@@ -91,6 +93,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftTranslateBaseUrl,
     draftTranslateModel,
     draftLlmConcurrencyInput,
+    draftEnableTerminology,
     draftEnablePunctuationOptimization,
     asrStatus,
     demucsStatus,
@@ -106,6 +109,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftTranslateBaseUrlChange,
     onDraftTranslateModelChange,
     onDraftLlmConcurrencyInputChange,
+    onDraftEnableTerminologyChange,
     onDraftEnablePunctuationOptimizationChange,
     onTestTranslateConnection,
     onOpenModelDir,
@@ -292,6 +296,19 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <div className="toggle-label">
                       <span className="toggle-title">标点符号优化</span>
                       <span className="toggle-desc">使用 LLM 优化大小写标点符号，有益于断句。</span>
+                    </div>
+                    <span className="toggle-switch" />
+                  </label>
+                  <label className="setting-toggle" htmlFor="enable-terminology">
+                    <input
+                      id="enable-terminology"
+                      type="checkbox"
+                      checked={draftEnableTerminology}
+                      onChange={(e) => onDraftEnableTerminologyChange(e.target.checked)}
+                    />
+                    <div className="toggle-label">
+                      <span className="toggle-title">启用术语库</span>
+                      <span className="toggle-desc">关闭后翻译不注入术语，按通用语义翻译。</span>
                     </div>
                     <span className="toggle-switch" />
                   </label>

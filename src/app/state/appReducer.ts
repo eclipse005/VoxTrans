@@ -25,6 +25,7 @@ export type AppState = {
   draftTranslateModel: string;
   draftLlmConcurrencyInput: string;
   draftTerminologyGroups: SavedSettings["terminologyGroups"];
+  draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
   youtubeUrl: string;
   youtubeQuality: string;
@@ -96,6 +97,7 @@ export type SettingsAction =
           | "draftTranslateModel"
           | "draftLlmConcurrencyInput"
           | "draftTerminologyGroups"
+          | "draftEnableTerminology"
           | "draftEnablePunctuationOptimization"
         >
       >;
@@ -116,6 +118,7 @@ export const defaultSettings: SavedSettings = {
   translateModel: "gpt-4.1-mini",
   llmConcurrency: 4,
   terminologyGroups: [createTerminologyGroup()],
+  enableTerminology: true,
   enablePunctuationOptimization: false,
 };
 
@@ -138,6 +141,7 @@ export const initialAppState: AppState = {
   draftTranslateModel: defaultSettings.translateModel,
   draftLlmConcurrencyInput: String(defaultSettings.llmConcurrency),
   draftTerminologyGroups: defaultSettings.terminologyGroups,
+  draftEnableTerminology: defaultSettings.enableTerminology,
   draftEnablePunctuationOptimization: defaultSettings.enablePunctuationOptimization,
   youtubeUrl: "",
   youtubeQuality: "",

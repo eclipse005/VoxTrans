@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useQueueInput } from "./queue/useQueueInput";
 import { useQueueRunner } from "./queue/useQueueRunner";
 import { useQueueScheduler } from "./queue/useQueueScheduler";
-import type { QueueItem } from "../../features/media/types";
+import type { QueueItem, SavedSettings } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { QueueRunMode } from "./queue/useQueueRunner";
 
@@ -11,12 +11,14 @@ type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
 
 type UseQueueWorkflowArgs = {
   queue: QueueItem[];
+  settings: SavedSettings;
   dispatch: DispatchState;
   pushToast: PushToast;
 };
 
 export function useQueueWorkflow({
   queue,
+  settings,
   dispatch,
   pushToast,
 }: UseQueueWorkflowArgs) {
@@ -39,6 +41,7 @@ export function useQueueWorkflow({
     dispatch,
     pushToast,
     isTaskPresent,
+    settings,
   });
 
   const setTaskMode = useCallback((taskId: string, mode: QueueRunMode) => {
@@ -61,6 +64,7 @@ export function useQueueWorkflow({
     removeItem,
   } = useQueueScheduler({
     queue,
+    settings,
     dispatch,
     pushToast,
     runBatch,

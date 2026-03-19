@@ -14,6 +14,7 @@ const KEY_TRANSLATE_BASE_URL: &str = "settings.translateBaseUrl";
 const KEY_TRANSLATE_MODEL: &str = "settings.translateModel";
 const KEY_LLM_CONCURRENCY: &str = "settings.llmConcurrency";
 const KEY_TERMINOLOGY_GROUPS: &str = "settings.terminologyGroups";
+const KEY_ENABLE_TERMINOLOGY: &str = "settings.enableTerminology";
 const KEY_ENABLE_PUNCTUATION_OPTIMIZATION: &str = "settings.enablePunctuationOptimization";
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -50,6 +51,8 @@ pub struct SavedSettings {
     pub llm_concurrency: u32,
     #[serde(default)]
     pub terminology_groups: Vec<TerminologyGroup>,
+    #[serde(default = "default_true")]
+    pub enable_terminology: bool,
     pub enable_punctuation_optimization: bool,
 }
 
@@ -138,6 +141,16 @@ pub async fn save_app_settings(
     set_setting(&mut tx, KEY_TERMINOLOGY_GROUPS, &terminology_json).await?;
     set_setting(
         &mut tx,
+        KEY_ENABLE_TERMINOLOGY,
+        if request.settings.enable_terminology {
+            "1"
+        } else {
+            "0"
+        },
+    )
+    .await?;
+    set_setting(
+        &mut tx,
         KEY_ENABLE_PUNCTUATION_OPTIMIZATION,
         if request.settings.enable_punctuation_optimization {
             "1"
@@ -195,6 +208,10 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         .and_then(|v| serde_json::from_str::<Vec<TerminologyGroup>>(&v).ok())
         .map(normalize_terminology_groups)
         .unwrap_or_else(|| normalize_terminology_groups(Vec::new()));
+    let enable_terminology = get_setting(pool, KEY_ENABLE_TERMINOLOGY)
+        .await?
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
+        .unwrap_or(true);
     let enable_punctuation_optimization = get_setting(pool, KEY_ENABLE_PUNCTUATION_OPTIMIZATION)
         .await?
         .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
@@ -211,8 +228,13 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         translate_model,
         llm_concurrency,
         terminology_groups,
+        enable_terminology,
         enable_punctuation_optimization,
     })
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn normalize_terminology_groups(groups: Vec<TerminologyGroup>) -> Vec<TerminologyGroup> {

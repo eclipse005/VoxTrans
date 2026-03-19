@@ -28,6 +28,7 @@ type UseSettingsControllerArgs = {
   draftTranslateModel: string;
   draftLlmConcurrencyInput: string;
   draftTerminologyGroups: SavedSettings["terminologyGroups"];
+  draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
   dispatch: DispatchState;
   pushToast: PushToast;
@@ -47,6 +48,7 @@ export function useSettingsController({
   draftTranslateModel,
   draftLlmConcurrencyInput,
   draftTerminologyGroups,
+  draftEnableTerminology,
   draftEnablePunctuationOptimization,
   dispatch,
   pushToast,
@@ -68,6 +70,7 @@ export function useSettingsController({
         draftTranslateModel: settings.translateModel,
         draftLlmConcurrencyInput: String(settings.llmConcurrency),
         draftTerminologyGroups: settings.terminologyGroups,
+        draftEnableTerminology: settings.enableTerminology,
         draftEnablePunctuationOptimization: settings.enablePunctuationOptimization,
       },
     });
@@ -87,6 +90,7 @@ export function useSettingsController({
     settings.translateModel,
     settings.llmConcurrency,
     settings.terminologyGroups,
+    settings.enableTerminology,
   ]);
 
   const saveSettings = useCallback(async () => {
@@ -122,6 +126,7 @@ export function useSettingsController({
       translateModel: draftTranslateModel.trim() || "gpt-4.1-mini",
       llmConcurrency: clampedConcurrency,
       terminologyGroups: normalizeTerminologyGroups(draftTerminologyGroups),
+      enableTerminology: draftEnableTerminology,
       enablePunctuationOptimization: draftEnablePunctuationOptimization,
     } satisfies SavedSettings;
 
@@ -142,6 +147,7 @@ export function useSettingsController({
         draftTranslateModel: nextSettings.translateModel,
         draftLlmConcurrencyInput: String(nextSettings.llmConcurrency),
         draftTerminologyGroups: nextSettings.terminologyGroups,
+        draftEnableTerminology: nextSettings.enableTerminology,
         draftEnablePunctuationOptimization,
       },
     });
@@ -167,6 +173,7 @@ export function useSettingsController({
     draftTranslateModel,
     draftLlmConcurrencyInput,
     draftTerminologyGroups,
+    draftEnableTerminology,
     pushToast,
   ]);
 

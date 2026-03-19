@@ -81,14 +81,7 @@ pub fn build_translate_style_user_prompt(input: &TranslateStylePromptInput) -> S
     let glossary = input
         .terminology_entries
         .iter()
-        .map(|entry| {
-            serde_json::json!({
-                "source": entry.source,
-                "target": entry.target,
-                "note": entry.note,
-                "group": entry.group
-            })
-        })
+        .map(terminology_entry_to_json)
         .collect::<Vec<_>>();
     let payload = serde_json::json!({
         "task": "subtitle_translation_style_planning",
@@ -143,14 +136,7 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
         "terminology": input
             .terminology_entries
             .iter()
-            .map(|entry| {
-                serde_json::json!({
-                    "source": entry.source,
-                    "target": entry.target,
-                    "note": entry.note,
-                    "group": entry.group
-                })
-            })
+            .map(terminology_entry_to_json)
             .collect::<Vec<_>>(),
         "rules": [
             "Translate only sourceText for each segment",
@@ -174,4 +160,15 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
     });
 
     payload.to_string()
+}
+
+fn terminology_entry_to_json(entry: &TranslateTerminologyPromptEntry) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert("source".to_string(), serde_json::Value::String(entry.source.clone()));
+    map.insert("target".to_string(), serde_json::Value::String(entry.target.clone()));
+    let note = entry.note.trim();
+    if !note.is_empty() {
+        map.insert("note".to_string(), serde_json::Value::String(note.to_string()));
+    }
+    serde_json::Value::Object(map)
 }

@@ -738,7 +738,11 @@ async fn run_transcribe_and_maybe_translate(
         translate_base_url: settings_before_post.translate_base_url.clone(),
         translate_model: settings_before_post.translate_model.clone(),
         llm_concurrency: settings_before_post.llm_concurrency,
-        terminology_entries: map_terminology_entries(&settings_before_post.terminology_groups),
+        terminology_entries: if settings_before_post.enable_terminology {
+            map_terminology_entries(&settings_before_post.terminology_groups)
+        } else {
+            Vec::new()
+        },
     }, move |phase| {
         emit_bridge_event(
             translate_phase_app.as_ref(),
@@ -859,7 +863,11 @@ async fn run_translate_only(
         translate_base_url: settings.translate_base_url.clone(),
         translate_model: settings.translate_model.clone(),
         llm_concurrency: settings.llm_concurrency,
-        terminology_entries: map_terminology_entries(&settings.terminology_groups),
+        terminology_entries: if settings.enable_terminology {
+            map_terminology_entries(&settings.terminology_groups)
+        } else {
+            Vec::new()
+        },
     }, move |phase| {
         emit_bridge_event(
             translate_phase_app.as_ref(),

@@ -40,6 +40,7 @@ function App() {
     draftTranslateModel,
     draftLlmConcurrencyInput,
     draftTerminologyGroups,
+    draftEnableTerminology,
     draftEnablePunctuationOptimization,
     youtubeUrl,
     toast,
@@ -70,6 +71,7 @@ function App() {
     removeItem,
   } = useQueueWorkflow({
     queue,
+    settings,
     dispatch,
     pushToast,
   });
@@ -145,6 +147,7 @@ function App() {
     draftTranslateModel,
     draftLlmConcurrencyInput,
     draftTerminologyGroups,
+    draftEnableTerminology,
     draftEnablePunctuationOptimization,
     dispatch,
     pushToast,
@@ -238,6 +241,7 @@ function App() {
         draftTranslateBaseUrl={draftTranslateBaseUrl}
         draftTranslateModel={draftTranslateModel}
         draftLlmConcurrencyInput={draftLlmConcurrencyInput}
+        draftEnableTerminology={draftEnableTerminology}
         draftEnablePunctuationOptimization={draftEnablePunctuationOptimization}
         asrStatus={asrStatus}
         demucsStatus={demucsStatus}
@@ -253,6 +257,7 @@ function App() {
         onDraftTranslateBaseUrlChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateBaseUrl: value } })}
         onDraftTranslateModelChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateModel: value } })}
         onDraftLlmConcurrencyInputChange={(value) => dispatch({ type: "set_draft", payload: { draftLlmConcurrencyInput: value } })}
+        onDraftEnableTerminologyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableTerminology: value } })}
         onDraftEnablePunctuationOptimizationChange={(value) => dispatch({ type: "set_draft", payload: { draftEnablePunctuationOptimization: value } })}
         onTestTranslateConnection={testTranslateConnection}
         onOpenModelDir={openModelDir}

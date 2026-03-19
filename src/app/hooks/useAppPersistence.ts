@@ -44,6 +44,7 @@ export function useAppPersistence(dispatch: DispatchState) {
           ? res.settings.terminologyGroups
           : [];
         const terminologyGroups = normalizeTerminologyGroups(terminologyGroupsRaw);
+        const enableTerminology = Boolean(res.settings.enableTerminology ?? true);
         const enablePunctuationOptimization = Boolean(res.settings.enablePunctuationOptimization);
 
         dispatch({
@@ -60,6 +61,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             translateModel,
             llmConcurrency,
             terminologyGroups,
+            enableTerminology,
             enablePunctuationOptimization,
           },
         });
@@ -77,6 +79,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftTranslateModel: translateModel,
             draftLlmConcurrencyInput: String(llmConcurrency),
             draftTerminologyGroups: terminologyGroups,
+            draftEnableTerminology: enableTerminology,
             draftEnablePunctuationOptimization: enablePunctuationOptimization,
           },
         });

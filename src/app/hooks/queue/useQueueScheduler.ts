@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { deleteTaskSummaries, enqueueTaskRun } from "../../api/workspace";
-import type { QueueItem } from "../../../features/media/types";
+import type { QueueItem, SavedSettings } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
 import type { QueueRunMode } from "./useQueueRunner";
 import {
@@ -16,6 +16,7 @@ type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
 
 type UseQueueSchedulerArgs = {
   queue: QueueItem[];
+  settings: SavedSettings;
   dispatch: DispatchState;
   pushToast: PushToast;
   runBatch: (items: Array<{ item: QueueItem; mode: QueueRunMode }>) => Promise<void>;
@@ -25,6 +26,7 @@ type UseQueueSchedulerArgs = {
 
 export function useQueueScheduler({
   queue,
+  settings,
   dispatch,
   pushToast,
   runBatch,
@@ -58,7 +60,7 @@ export function useQueueScheduler({
         sourceLang: "auto",
         targetLang: "zh-CN",
         maxRetries: 0,
-        settingsSnapshot: {},
+        settingsSnapshot: buildSettingsSnapshot(settings),
       });
       setTaskMode(item.id, mode);
       setQueuedState(dispatch, item.id);
@@ -78,7 +80,7 @@ export function useQueueScheduler({
       pushToast(`失败：${item.name}，${message}`, "error");
       return false;
     }
-  }, [dispatch, pushToast, setTaskMode]);
+  }, [dispatch, pushToast, setTaskMode, settings]);
 
   useEffect(() => {
     if (hasProcessingTask) return;
@@ -201,4 +203,22 @@ function parseSubtitleSegments(raw?: string): Array<{ sourceText: string; transl
   } catch {
     return [];
   }
+}
+
+function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown> {
+  return {
+    provider: settings.provider,
+    chunkTargetSeconds: settings.chunkTargetSeconds,
+    subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
+    asrModel: settings.asrModel,
+    demucsModel: settings.demucsModel,
+    enableVocalSeparation: settings.enableVocalSeparation,
+    translateApiKey: settings.translateApiKey,
+    translateBaseUrl: settings.translateBaseUrl,
+    translateModel: settings.translateModel,
+    llmConcurrency: settings.llmConcurrency,
+    terminologyGroups: settings.terminologyGroups,
+    enableTerminology: settings.enableTerminology,
+    enablePunctuationOptimization: settings.enablePunctuationOptimization,
+  };
 }
