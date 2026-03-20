@@ -4,13 +4,16 @@ use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 use tauri::async_runtime::spawn_blocking;
+use voxtrans_core::subtitle::alignment::align_text_to_timestamps;
+use voxtrans_core::subtitle::segmenter::WordToken;
+use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 
 use crate::app_state::TaskWorkerRuntime;
 use crate::services::file::save_srt;
 use crate::services::preferences::load_user_preferences;
 use crate::services::task_context::{
     STAGE_ASR, STAGE_COMPOSE, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEPARATE,
-    STAGE_SUMMARIZE, STAGE_TRANSLATE, TaskContext, TaskContextSeed,
+    STAGE_SUMMARIZE, STAGE_TRANSLATE, STAGE_QA, TaskContext, TaskContextSeed,
 };
 use crate::services::task_engine::{EnqueueTaskRequest, enqueue_task};
 use crate::services::task_log::{TaskLogger, event};
@@ -23,6 +26,7 @@ use crate::services::translate::types::{
     TranslatePipelineRequest, TranslateTerminologyEntry, TranslateToken,
 };
 use crate::services::translate::run_translate_pipeline_with_phase;
+use crate::services::translate::qa_agent::{QaAgentRequest, run_qa_agent};
 
 const WORKER_EVENT_PREFIX: &str = "VOXTRANS_EVENT:";
 
@@ -410,6 +414,229 @@ struct DonePayload {
     segment_total: i64,
 }
 
+#[derive(Debug, Clone)]
+struct QaWordTiming {
+    start: f64,
+    end: f64,
+    word: String,
+}
+
+fn realign_segments_with_words(
+    segments: &mut [crate::services::translate::types::TranslateSegment],
+    word_timestamps: &[QaWordTiming],
+) -> Value {
+    if segments.is_empty() {
+        return json!({ "applied": false, "reason": "empty_segments" });
+    }
+    let words = word_timestamps
+        .iter()
+        .filter_map(|w| {
+            let word = w.word.trim().to_string();
+            if word.is_empty() {
+                return None;
+            }
+            Some(WordToken {
+                start: w.start,
+                end: w.end.max(w.start),
+                word,
+            })
+        })
+        .collect::<Vec<_>>();
+    if words.is_empty() {
+        return json!({ "applied": false, "reason": "empty_words" });
+    }
+    if words.len() < segments.len() {
+        return json!({
+            "applied": false,
+            "reason": "insufficient_words",
+            "wordTotal": words.len(),
+            "segmentTotal": segments.len()
+        });
+    }
+
+    let source_full_text = segments
+        .iter()
+        .map(|s| s.source_text.trim())
+        .filter(|v| !v.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if source_full_text.is_empty() {
+        return json!({ "applied": false, "reason": "empty_source_text" });
+    }
+
+    let aligned_words = align_text_to_timestamps(&source_full_text, &words);
+    if aligned_words.is_empty() {
+        return json!({ "applied": false, "reason": "alignment_empty" });
+    }
+    if aligned_words.len() < segments.len() {
+        return json!({
+            "applied": false,
+            "reason": "alignment_insufficient_words",
+            "alignedWordTotal": aligned_words.len(),
+            "segmentTotal": segments.len()
+        });
+    }
+
+    let mut segment_token_owners: Vec<usize> = Vec::new();
+    let mut segment_token_stream: Vec<String> = Vec::new();
+    for (seg_idx, segment) in segments.iter().enumerate() {
+        for token in segment.source_text.split_whitespace() {
+            let norm = normalize_alignment_token(token);
+            if norm.is_empty() {
+                continue;
+            }
+            segment_token_owners.push(seg_idx);
+            segment_token_stream.push(norm);
+        }
+    }
+    let aligned_word_stream = aligned_words
+        .iter()
+        .map(|w| normalize_alignment_token(&w.word))
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>();
+    if segment_token_stream.is_empty() || aligned_word_stream.is_empty() {
+        return json!({
+            "applied": false,
+            "reason": "alignment_token_stream_empty",
+            "segmentTokenTotal": segment_token_stream.len(),
+            "alignedWordTokenTotal": aligned_word_stream.len()
+        });
+    }
+
+    let matched_pairs = lcs_match_pairs(&segment_token_stream, &aligned_word_stream);
+    let mut segment_boundaries: Vec<Option<(usize, usize)>> = vec![None; segments.len()];
+    for (segment_token_idx, aligned_word_idx) in matched_pairs {
+        let seg_idx = segment_token_owners[segment_token_idx];
+        match &mut segment_boundaries[seg_idx] {
+            Some((start, end)) => {
+                if aligned_word_idx < *start {
+                    *start = aligned_word_idx;
+                }
+                if aligned_word_idx > *end {
+                    *end = aligned_word_idx;
+                }
+            }
+            None => {
+                segment_boundaries[seg_idx] = Some((aligned_word_idx, aligned_word_idx));
+            }
+        }
+    }
+
+    let total_segments = segments.len();
+    let mut cursor_word = 0usize;
+    let mut changed = 0usize;
+    let mut fallback_segments = 0usize;
+    for (idx, segment) in segments.iter_mut().enumerate() {
+        if cursor_word >= aligned_words.len() {
+            break;
+        }
+        let (mut start_idx, mut end_idx) = match segment_boundaries[idx] {
+            Some(boundary) => boundary,
+            None => {
+                fallback_segments += 1;
+                let remaining = total_segments.saturating_sub(idx).max(1);
+                let remaining_words = aligned_words.len().saturating_sub(cursor_word).max(1);
+                let allocation = if idx + 1 == total_segments {
+                    remaining_words
+                } else {
+                    (remaining_words / remaining).max(1)
+                };
+                let start = cursor_word.min(aligned_words.len().saturating_sub(1));
+                let end = (start + allocation.saturating_sub(1)).min(aligned_words.len().saturating_sub(1));
+                (start, end)
+            }
+        };
+        if start_idx < cursor_word {
+            start_idx = cursor_word;
+        }
+        if end_idx < start_idx {
+            end_idx = start_idx;
+        }
+        end_idx = end_idx.min(aligned_words.len().saturating_sub(1));
+
+        let start_word = &aligned_words[start_idx];
+        let end_word = &aligned_words[end_idx];
+        let new_start_ms = (start_word.start.max(0.0) * 1000.0).round() as u64;
+        let new_end_ms = (end_word.end.max(start_word.start) * 1000.0).round() as u64;
+        if segment.start_ms != new_start_ms || segment.end_ms != new_end_ms {
+            changed += 1;
+        }
+        segment.start_ms = new_start_ms;
+        segment.end_ms = new_end_ms.max(new_start_ms);
+        cursor_word = end_idx.saturating_add(1);
+    }
+
+    json!({
+        "applied": true,
+        "segmentTotal": total_segments,
+        "wordTotal": words.len(),
+        "alignedWordTotal": aligned_words.len(),
+        "changedSegmentTotal": changed,
+        "fallbackSegmentTotal": fallback_segments
+    })
+}
+
+fn normalize_alignment_token(token: &str) -> String {
+    token
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect::<String>()
+}
+
+fn lcs_match_pairs(left: &[String], right: &[String]) -> Vec<(usize, usize)> {
+    if left.is_empty() || right.is_empty() {
+        return Vec::new();
+    }
+    let n = left.len();
+    let m = right.len();
+    let mut dp = vec![vec![0usize; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            dp[i][j] = if left[i] == right[j] {
+                dp[i + 1][j + 1] + 1
+            } else {
+                dp[i + 1][j].max(dp[i][j + 1])
+            };
+        }
+    }
+    let mut pairs = Vec::new();
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < n && j < m {
+        if left[i] == right[j] {
+            pairs.push((i, j));
+            i += 1;
+            j += 1;
+        } else if dp[i + 1][j] >= dp[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    pairs
+}
+
+fn build_srt_from_translate_segments(
+    segments: &[crate::services::translate::types::TranslateSegment],
+    translated: bool,
+) -> String {
+    let cues = segments
+        .iter()
+        .enumerate()
+        .map(|(idx, segment)| SrtCue {
+            index: idx + 1,
+            start_ms: segment.start_ms,
+            end_ms: segment.end_ms.max(segment.start_ms),
+            text: if translated {
+                segment.translated_text.trim().to_string()
+            } else {
+                segment.source_text.trim().to_string()
+            },
+        })
+        .collect::<Vec<_>>();
+    to_srt_from_cues(&cues)
+}
+
 async fn run_transcribe_and_maybe_translate(
     pool: &SqlitePool,
     app: Option<&tauri::AppHandle>,
@@ -670,6 +897,132 @@ async fn run_transcribe_and_maybe_translate(
         );
     })
     .await?;
+    context.mark_stage_running(STAGE_QA);
+    context.set_queue_projection(
+        "processing",
+        "qa",
+        "",
+        99,
+        translated.segments.len() as u32,
+        translated.segments.len() as u32,
+        "",
+    );
+    persist_task_context(pool, &task.id, context).await?;
+    emit_bridge_event(
+        app,
+        "transcribe-phase",
+        &TranscribePhaseEvent {
+            task_id: task.id.clone(),
+            phase: "qa".to_string(),
+            phase_detail: None,
+        },
+    );
+    let qa_pass1 = run_qa_agent(
+        QaAgentRequest {
+            task_id: task.id.clone(),
+            media_path: task.media_path.clone(),
+            source_lang: task.source_lang.clone(),
+            target_lang: task.target_lang.clone(),
+            api_key: settings_before_post.translate_api_key.clone(),
+            base_url: settings_before_post.translate_base_url.clone(),
+            model: settings_before_post.translate_model.clone(),
+            target_reference_len: settings_before_post.subtitle_length_reference,
+            terminology_entries: if settings_before_post.enable_terminology {
+                map_terminology_entries(&settings_before_post.terminology_groups)
+            } else {
+                Vec::new()
+            },
+            segments: translated.segments.clone(),
+            pass: "pass1_segment".to_string(),
+            prior_report: None,
+        }
+    ).await;
+    let (pass1_segments, pass1_report, pass1_applied_total) = match qa_pass1 {
+        Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
+        Err(err) => {
+            TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
+                "qa.pass1.failed",
+                Some(&json!({
+                    "error": err,
+                    "fallback": "use_translate_result"
+                })),
+            );
+            (
+                translated.segments.clone(),
+                json!({
+                    "finalized": false,
+                    "fallback": true,
+                    "error": err
+                }),
+                0usize,
+            )
+        }
+    };
+    let qa_pass2 = run_qa_agent(
+        QaAgentRequest {
+            task_id: task.id.clone(),
+            media_path: task.media_path.clone(),
+            source_lang: task.source_lang.clone(),
+            target_lang: task.target_lang.clone(),
+            api_key: settings_before_post.translate_api_key.clone(),
+            base_url: settings_before_post.translate_base_url.clone(),
+            model: settings_before_post.translate_model.clone(),
+            target_reference_len: settings_before_post.subtitle_length_reference,
+            terminology_entries: if settings_before_post.enable_terminology {
+                map_terminology_entries(&settings_before_post.terminology_groups)
+            } else {
+                Vec::new()
+            },
+            segments: pass1_segments.clone(),
+            pass: "pass2_quality".to_string(),
+            prior_report: Some(pass1_report.clone()),
+        }
+    ).await;
+    let (mut final_segments, pass2_report, pass2_applied_total) = match qa_pass2 {
+        Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
+        Err(err) => {
+            TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
+                "qa.pass2.failed",
+                Some(&json!({
+                    "error": err,
+                    "fallback": "use_pass1_result"
+                })),
+            );
+            (
+                pass1_segments,
+                json!({
+                    "finalized": false,
+                    "fallback": true,
+                    "error": err
+                }),
+                0usize,
+            )
+        }
+    };
+    let qa_report = json!({
+        "mode": "two_pass",
+        "pass1": pass1_report,
+        "pass2": pass2_report,
+    });
+    let qa_applied_total = pass1_applied_total + pass2_applied_total;
+    let qa_align = realign_segments_with_words(
+        &mut final_segments,
+        &processed
+            .words
+            .iter()
+            .map(|w| QaWordTiming {
+                start: w.start,
+                end: w.end,
+                word: w.word.clone(),
+            })
+            .collect::<Vec<_>>(),
+    );
+    TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
+        "qa.alignment",
+        Some(&qa_align),
+    );
+    let final_source_srt = build_srt_from_translate_segments(&final_segments, false);
+    let final_target_srt = build_srt_from_translate_segments(&final_segments, true);
     context.mark_stage_done(
         STAGE_SUMMARIZE,
         json!({
@@ -681,8 +1034,16 @@ async fn run_transcribe_and_maybe_translate(
     context.mark_stage_done(
         STAGE_TRANSLATE,
         json!({
-            "translatedSegmentTotal": translated.segments.len(),
+            "translatedSegmentTotal": final_segments.len(),
             "batchSize": 20,
+        }),
+        Value::Null,
+    );
+    context.mark_stage_done(
+        STAGE_QA,
+        json!({
+            "appliedChangeTotal": qa_applied_total,
+            "report": qa_report,
         }),
         Value::Null,
     );
@@ -701,7 +1062,7 @@ async fn run_transcribe_and_maybe_translate(
         task_id: Some(task.id.clone()),
         media_path: Some(task.media_path.clone()),
         output_path: processed.srt_output_path.clone(),
-        content: translated.source_srt.clone(),
+        content: final_source_srt.clone(),
     })?;
 
     let target_output_path = crate::services::task_path::task_srt_output_path_for_lang(
@@ -713,11 +1074,10 @@ async fn run_transcribe_and_maybe_translate(
         task_id: Some(task.id.clone()),
         media_path: Some(task.media_path.clone()),
         output_path: target_output_path.display().to_string(),
-        content: translated.target_srt.clone(),
+        content: final_target_srt.clone(),
     })?;
 
-    let merged = translated
-        .segments
+    let merged = final_segments
         .iter()
         .map(|segment| {
             json!({
@@ -737,7 +1097,7 @@ async fn run_transcribe_and_maybe_translate(
 
     Ok(DonePayload {
         result_text,
-        result_srt: translated.source_srt,
+        result_srt: final_source_srt,
         subtitle_segments_json: serde_json::to_string(&merged).map_err(|err| err.to_string())?,
         segment_total: transcribed.segment_total as i64,
     })
@@ -753,6 +1113,14 @@ async fn run_translate_only(
     if tokens.is_empty() {
         return Err("当前任务没有可翻译内容，请先执行转录".to_string());
     }
+    let qa_word_timestamps = tokens
+        .iter()
+        .map(|w| QaWordTiming {
+            start: w.start,
+            end: w.end,
+            word: w.word.clone(),
+        })
+        .collect::<Vec<_>>();
     let settings = load_user_preferences(pool).await?.settings;
     context.mark_stage_running(STAGE_SUMMARIZE);
     context.mark_stage_running(STAGE_TRANSLATE);
@@ -798,6 +1166,121 @@ async fn run_translate_only(
         );
     })
     .await?;
+    context.mark_stage_running(STAGE_QA);
+    context.set_queue_projection(
+        "processing",
+        "qa",
+        "",
+        99,
+        translated.segments.len() as u32,
+        translated.segments.len() as u32,
+        "",
+    );
+    persist_task_context(pool, &task.id, context).await?;
+    emit_bridge_event(
+        app,
+        "transcribe-phase",
+        &TranscribePhaseEvent {
+            task_id: task.id.clone(),
+            phase: "qa".to_string(),
+            phase_detail: None,
+        },
+    );
+    let qa_pass1 = run_qa_agent(
+        QaAgentRequest {
+            task_id: task.id.clone(),
+            media_path: task.media_path.clone(),
+            source_lang: task.source_lang.clone(),
+            target_lang: task.target_lang.clone(),
+            api_key: settings.translate_api_key.clone(),
+            base_url: settings.translate_base_url.clone(),
+            model: settings.translate_model.clone(),
+            target_reference_len: settings.subtitle_length_reference,
+            terminology_entries: if settings.enable_terminology {
+                map_terminology_entries(&settings.terminology_groups)
+            } else {
+                Vec::new()
+            },
+            segments: translated.segments.clone(),
+            pass: "pass1_segment".to_string(),
+            prior_report: None,
+        }
+    ).await;
+    let (pass1_segments, pass1_report, pass1_applied_total) = match qa_pass1 {
+        Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
+        Err(err) => {
+            TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
+                "qa.pass1.failed",
+                Some(&json!({
+                    "error": err,
+                    "fallback": "use_translate_result"
+                })),
+            );
+            (
+                translated.segments.clone(),
+                json!({
+                    "finalized": false,
+                    "fallback": true,
+                    "error": err
+                }),
+                0usize,
+            )
+        }
+    };
+    let qa_pass2 = run_qa_agent(
+        QaAgentRequest {
+            task_id: task.id.clone(),
+            media_path: task.media_path.clone(),
+            source_lang: task.source_lang.clone(),
+            target_lang: task.target_lang.clone(),
+            api_key: settings.translate_api_key.clone(),
+            base_url: settings.translate_base_url.clone(),
+            model: settings.translate_model.clone(),
+            target_reference_len: settings.subtitle_length_reference,
+            terminology_entries: if settings.enable_terminology {
+                map_terminology_entries(&settings.terminology_groups)
+            } else {
+                Vec::new()
+            },
+            segments: pass1_segments.clone(),
+            pass: "pass2_quality".to_string(),
+            prior_report: Some(pass1_report.clone()),
+        }
+    ).await;
+    let (mut final_segments, pass2_report, pass2_applied_total) = match qa_pass2 {
+        Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
+        Err(err) => {
+            TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
+                "qa.pass2.failed",
+                Some(&json!({
+                    "error": err,
+                    "fallback": "use_pass1_result"
+                })),
+            );
+            (
+                pass1_segments,
+                json!({
+                    "finalized": false,
+                    "fallback": true,
+                    "error": err
+                }),
+                0usize,
+            )
+        }
+    };
+    let qa_report = json!({
+        "mode": "two_pass",
+        "pass1": pass1_report,
+        "pass2": pass2_report,
+    });
+    let qa_applied_total = pass1_applied_total + pass2_applied_total;
+    let qa_align = realign_segments_with_words(&mut final_segments, &qa_word_timestamps);
+    TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
+        "qa.alignment",
+        Some(&qa_align),
+    );
+    let final_source_srt = build_srt_from_translate_segments(&final_segments, false);
+    let final_target_srt = build_srt_from_translate_segments(&final_segments, true);
     context.mark_stage_done(
         STAGE_SUMMARIZE,
         json!({
@@ -809,8 +1292,16 @@ async fn run_translate_only(
     context.mark_stage_done(
         STAGE_TRANSLATE,
         json!({
-            "translatedSegmentTotal": translated.segments.len(),
+            "translatedSegmentTotal": final_segments.len(),
             "batchSize": 20,
+        }),
+        Value::Null,
+    );
+    context.mark_stage_done(
+        STAGE_QA,
+        json!({
+            "appliedChangeTotal": qa_applied_total,
+            "report": qa_report,
         }),
         Value::Null,
     );
@@ -823,11 +1314,10 @@ async fn run_translate_only(
         task_id: Some(task.id.clone()),
         media_path: Some(task.media_path.clone()),
         output_path: target_output_path.display().to_string(),
-        content: translated.target_srt.clone(),
+        content: final_target_srt.clone(),
     })?;
 
-    let merged = translated
-        .segments
+    let merged = final_segments
         .iter()
         .map(|segment| {
             json!({
@@ -848,7 +1338,7 @@ async fn run_translate_only(
             context.projections.editor.result_text.clone()
         },
         result_srt: if context.projections.editor.result_srt.trim().is_empty() {
-            translated.source_srt
+            final_source_srt
         } else {
             context.projections.editor.result_srt.clone()
         },

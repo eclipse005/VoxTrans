@@ -53,6 +53,9 @@ function getTranscribeProcessingText(item: QueueItem): string {
   if (item.transcribePhase === "translate") {
     return detail ? `翻译中 ${detail}` : "翻译中";
   }
+  if (item.transcribePhase === "qa") {
+    return detail ? `质量复核中 ${detail}` : "质量复核中";
+  }
   if (detail) return detail;
   return "处理中";
 }

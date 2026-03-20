@@ -21,6 +21,7 @@ export type SavedSettings = {
   provider: Provider;
   chunkTargetSeconds: number;
   subtitleMaxWordsPerSegment: number;
+  subtitleLengthReference: number;
   asrModel: AsrModel;
   demucsModel: DemucsModel;
   enableVocalSeparation: boolean;
@@ -45,7 +46,8 @@ export type TranscribePhase =
   | "correct"
   | "segment"
   | "summarize"
-  | "translate";
+  | "translate"
+  | "qa";
 
 export type SubtitleCue = {
   id: string;

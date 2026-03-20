@@ -14,6 +14,7 @@ type SettingsModalProps = {
   draftProvider: Provider;
   draftChunkInput: string;
   draftSubtitleMaxWordsInput: string;
+  draftSubtitleLengthReferenceInput: string;
   draftAsrModel: AsrModel;
   draftDemucsModel: DemucsModel;
   draftEnableVocalSeparation: boolean;
@@ -32,6 +33,7 @@ type SettingsModalProps = {
   onDraftProviderChange: (value: Provider) => void;
   onDraftChunkInputChange: (value: string) => void;
   onDraftSubtitleMaxWordsInputChange: (value: string) => void;
+  onDraftSubtitleLengthReferenceInputChange: (value: string) => void;
   onDraftAsrModelChange: (value: AsrModel) => void;
   onDraftDemucsModelChange: (value: DemucsModel) => void;
   onDraftEnableVocalSeparationChange: (value: boolean) => void;
@@ -90,6 +92,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftProvider,
     draftChunkInput,
     draftSubtitleMaxWordsInput,
+    draftSubtitleLengthReferenceInput,
     draftAsrModel,
     draftDemucsModel,
     draftEnableVocalSeparation,
@@ -108,6 +111,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftProviderChange,
     onDraftChunkInputChange,
     onDraftSubtitleMaxWordsInputChange,
+    onDraftSubtitleLengthReferenceInputChange,
     onDraftAsrModelChange,
     onDraftDemucsModelChange,
     onDraftEnableVocalSeparationChange,
@@ -214,7 +218,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                       />
                     </div>
                     <div className="form-group">
-                      <label>字幕长度（词）</label>
+                      <label>原文长度（词）</label>
                       <input
                         className="apple-input"
                         inputMode="numeric"
@@ -316,6 +320,16 @@ export default function SettingsModal(props: SettingsModalProps) {
                         value={draftLlmConcurrencyInput}
                         onChange={(e) => onDraftLlmConcurrencyInputChange(e.target.value.replace(/[^0-9]/g, ""))}
                         placeholder="1 - 16"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>译文长度（字）</label>
+                      <input
+                        className="apple-input"
+                        inputMode="numeric"
+                        value={draftSubtitleLengthReferenceInput}
+                        onChange={(e) => onDraftSubtitleLengthReferenceInputChange(e.target.value.replace(/[^0-9]/g, ""))}
+                        placeholder="8 - 80（软约束）"
                       />
                     </div>
                   </div>

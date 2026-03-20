@@ -128,7 +128,7 @@ export function useQueueRunner({
         phase: payload.phase,
         phaseDetail: payload.phaseDetail,
       });
-      if (payload.phase === "summarize" || payload.phase === "translate") {
+      if (payload.phase === "summarize" || payload.phase === "translate" || payload.phase === "qa") {
         void (async () => {
           try {
             const workspace = await loadWorkspaceState();
@@ -340,6 +340,7 @@ function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown>
     provider: settings.provider,
     chunkTargetSeconds: settings.chunkTargetSeconds,
     subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
+    subtitleLengthReference: settings.subtitleLengthReference,
     asrModel: settings.asrModel,
     demucsModel: settings.demucsModel,
     enableVocalSeparation: settings.enableVocalSeparation,
@@ -351,5 +352,6 @@ function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown>
     enableTerminology: settings.enableTerminology,
     enablePunctuationOptimization: settings.enablePunctuationOptimization,
     enableAsrCorrection: settings.enableAsrCorrection,
+    enableSubtitleBeautify: settings.enableSubtitleBeautify,
   };
 }

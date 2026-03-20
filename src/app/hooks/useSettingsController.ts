@@ -20,6 +20,7 @@ type UseSettingsControllerArgs = {
   draftProvider: SavedSettings["provider"];
   draftChunkInput: string;
   draftSubtitleMaxWordsInput: string;
+  draftSubtitleLengthReferenceInput: string;
   draftAsrModel: SavedSettings["asrModel"];
   draftDemucsModel: SavedSettings["demucsModel"];
   draftEnableVocalSeparation: boolean;
@@ -42,6 +43,7 @@ export function useSettingsController({
   draftProvider,
   draftChunkInput,
   draftSubtitleMaxWordsInput,
+  draftSubtitleLengthReferenceInput,
   draftAsrModel,
   draftDemucsModel,
   draftEnableVocalSeparation,
@@ -66,6 +68,7 @@ export function useSettingsController({
         draftProvider: settings.provider,
         draftChunkInput: String(settings.chunkTargetSeconds),
         draftSubtitleMaxWordsInput: String(settings.subtitleMaxWordsPerSegment),
+        draftSubtitleLengthReferenceInput: String(settings.subtitleLengthReference),
         draftAsrModel: settings.asrModel,
         draftDemucsModel: settings.demucsModel,
         draftEnableVocalSeparation: settings.enableVocalSeparation,
@@ -91,6 +94,7 @@ export function useSettingsController({
     settings.provider,
     settings.asrModel,
     settings.subtitleMaxWordsPerSegment,
+    settings.subtitleLengthReference,
     settings.translateApiKey,
     settings.translateBaseUrl,
     settings.translateModel,
@@ -111,10 +115,16 @@ export function useSettingsController({
 
     const parsedSubtitleWords = Number.parseInt(draftSubtitleMaxWordsInput.trim(), 10);
     if (!Number.isFinite(parsedSubtitleWords)) {
-      pushToast("字幕长度必须是数字", "error");
+      pushToast("原文长度必须是数字", "error");
       return;
     }
     const clampedSubtitleWords = Math.max(8, Math.min(40, parsedSubtitleWords));
+    const parsedSubtitleLengthReference = Number.parseInt(draftSubtitleLengthReferenceInput.trim(), 10);
+    if (!Number.isFinite(parsedSubtitleLengthReference)) {
+      pushToast("译文长度必须是数字", "error");
+      return;
+    }
+    const clampedSubtitleLengthReference = Math.max(8, Math.min(80, parsedSubtitleLengthReference));
     const parsedConcurrency = Number.parseInt(draftLlmConcurrencyInput.trim(), 10);
     if (!Number.isFinite(parsedConcurrency)) {
       pushToast("并发数必须是数字", "error");
@@ -126,6 +136,7 @@ export function useSettingsController({
       provider: draftProvider,
       chunkTargetSeconds: clamped,
       subtitleMaxWordsPerSegment: clampedSubtitleWords,
+      subtitleLengthReference: clampedSubtitleLengthReference,
       asrModel: draftAsrModel,
       demucsModel: draftDemucsModel,
       enableVocalSeparation: draftEnableVocalSeparation,
@@ -149,6 +160,7 @@ export function useSettingsController({
       payload: {
         draftChunkInput: String(clamped),
         draftSubtitleMaxWordsInput: String(clampedSubtitleWords),
+        draftSubtitleLengthReferenceInput: String(clampedSubtitleLengthReference),
         draftAsrModel,
         draftDemucsModel,
         draftEnableVocalSeparation,
@@ -180,6 +192,7 @@ export function useSettingsController({
     draftProvider,
     draftAsrModel,
     draftSubtitleMaxWordsInput,
+    draftSubtitleLengthReferenceInput,
     draftTranslateApiKey,
     draftTranslateBaseUrl,
     draftTranslateModel,

@@ -64,6 +64,7 @@ function App() {
     draftProvider,
     draftChunkInput,
     draftSubtitleMaxWordsInput,
+    draftSubtitleLengthReferenceInput,
     draftAsrModel,
     draftDemucsModel,
     draftEnableVocalSeparation,
@@ -173,6 +174,7 @@ function App() {
     draftProvider,
     draftChunkInput,
     draftSubtitleMaxWordsInput,
+    draftSubtitleLengthReferenceInput,
     draftAsrModel,
     draftDemucsModel,
     draftEnableVocalSeparation,
@@ -276,6 +278,7 @@ function App() {
         draftProvider={draftProvider}
         draftChunkInput={draftChunkInput}
         draftSubtitleMaxWordsInput={draftSubtitleMaxWordsInput}
+        draftSubtitleLengthReferenceInput={draftSubtitleLengthReferenceInput}
         draftAsrModel={draftAsrModel}
         draftDemucsModel={draftDemucsModel}
         draftEnableVocalSeparation={draftEnableVocalSeparation}
@@ -294,6 +297,7 @@ function App() {
         onDraftProviderChange={(value) => dispatch({ type: "set_draft", payload: { draftProvider: value } })}
         onDraftChunkInputChange={(value) => dispatch({ type: "set_draft", payload: { draftChunkInput: value } })}
         onDraftSubtitleMaxWordsInputChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleMaxWordsInput: value } })}
+        onDraftSubtitleLengthReferenceInputChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleLengthReferenceInput: value } })}
         onDraftAsrModelChange={(value) => dispatch({ type: "set_draft", payload: { draftAsrModel: value } })}
         onDraftDemucsModelChange={(value) => dispatch({ type: "set_draft", payload: { draftDemucsModel: value } })}
         onDraftEnableVocalSeparationChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableVocalSeparation: value } })}

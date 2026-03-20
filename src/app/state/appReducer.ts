@@ -17,6 +17,7 @@ export type AppState = {
   draftProvider: SavedSettings["provider"];
   draftChunkInput: string;
   draftSubtitleMaxWordsInput: string;
+  draftSubtitleLengthReferenceInput: string;
   draftAsrModel: SavedSettings["asrModel"];
   draftDemucsModel: SavedSettings["demucsModel"];
   draftEnableVocalSeparation: boolean;
@@ -91,6 +92,7 @@ export type SettingsAction =
           | "draftProvider"
           | "draftChunkInput"
           | "draftSubtitleMaxWordsInput"
+          | "draftSubtitleLengthReferenceInput"
           | "draftAsrModel"
           | "draftDemucsModel"
           | "draftEnableVocalSeparation"
@@ -114,6 +116,7 @@ export const defaultSettings: SavedSettings = {
   provider: normalizeProvider(undefined),
   chunkTargetSeconds: 300,
   subtitleMaxWordsPerSegment: 20,
+  subtitleLengthReference: 28,
   asrModel: "parakeet-tdt-0.6b-v2",
   demucsModel: "htdemucs_ft",
   enableVocalSeparation: false,
@@ -139,6 +142,7 @@ export const initialAppState: AppState = {
   draftProvider: defaultSettings.provider,
   draftChunkInput: String(defaultSettings.chunkTargetSeconds),
   draftSubtitleMaxWordsInput: String(defaultSettings.subtitleMaxWordsPerSegment),
+  draftSubtitleLengthReferenceInput: String(defaultSettings.subtitleLengthReference),
   draftAsrModel: defaultSettings.asrModel,
   draftDemucsModel: defaultSettings.demucsModel,
   draftEnableVocalSeparation: defaultSettings.enableVocalSeparation,

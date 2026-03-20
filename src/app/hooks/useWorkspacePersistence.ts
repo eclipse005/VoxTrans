@@ -68,6 +68,7 @@ function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] 
     case "segment":
     case "summarize":
     case "translate":
+    case "qa":
       return value;
     default:
       return "";

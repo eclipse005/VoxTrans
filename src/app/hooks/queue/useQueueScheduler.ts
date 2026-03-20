@@ -211,6 +211,7 @@ function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown>
     provider: settings.provider,
     chunkTargetSeconds: settings.chunkTargetSeconds,
     subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
+    subtitleLengthReference: settings.subtitleLengthReference,
     asrModel: settings.asrModel,
     demucsModel: settings.demucsModel,
     enableVocalSeparation: settings.enableVocalSeparation,
@@ -222,5 +223,6 @@ function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown>
     enableTerminology: settings.enableTerminology,
     enablePunctuationOptimization: settings.enablePunctuationOptimization,
     enableAsrCorrection: settings.enableAsrCorrection,
+    enableSubtitleBeautify: settings.enableSubtitleBeautify,
   };
 }

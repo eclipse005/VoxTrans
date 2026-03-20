@@ -24,6 +24,9 @@ export function useAppPersistence(dispatch: DispatchState) {
         const subtitleMaxWordsPerSegment = Number.isFinite(res.settings.subtitleMaxWordsPerSegment)
           ? Math.max(8, Math.min(40, Math.round(res.settings.subtitleMaxWordsPerSegment)))
           : 20;
+        const subtitleLengthReference = Number.isFinite(res.settings.subtitleLengthReference)
+          ? Math.max(8, Math.min(80, Math.round(res.settings.subtitleLengthReference)))
+          : 28;
         const asrModel = res.settings.asrModel === "parakeet-tdt-0.6b-v2"
           ? res.settings.asrModel
           : "parakeet-tdt-0.6b-v2";
@@ -55,6 +58,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             provider,
             chunkTargetSeconds,
             subtitleMaxWordsPerSegment,
+            subtitleLengthReference,
             asrModel,
             demucsModel,
             enableVocalSeparation,
@@ -75,6 +79,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftProvider: provider,
             draftChunkInput: String(chunkTargetSeconds),
             draftSubtitleMaxWordsInput: String(subtitleMaxWordsPerSegment),
+            draftSubtitleLengthReferenceInput: String(subtitleLengthReference),
             draftAsrModel: asrModel,
             draftDemucsModel: demucsModel,
             draftEnableVocalSeparation: enableVocalSeparation,

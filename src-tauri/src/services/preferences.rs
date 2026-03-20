@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const KEY_PROVIDER: &str = "settings.provider";
 const KEY_CHUNK_TARGET_SECONDS: &str = "settings.chunkTargetSeconds";
 const KEY_SUBTITLE_MAX_WORDS_PER_SEGMENT: &str = "settings.subtitleMaxWordsPerSegment";
+const KEY_SUBTITLE_LENGTH_REFERENCE: &str = "settings.subtitleLengthReference";
 const KEY_ASR_MODEL: &str = "settings.asrModel";
 const KEY_DEMUCS_MODEL: &str = "settings.demucsModel";
 const KEY_ENABLE_VOCAL_SEPARATION: &str = "settings.enableVocalSeparation";
@@ -44,6 +45,7 @@ pub struct SavedSettings {
     pub provider: String,
     pub chunk_target_seconds: u32,
     pub subtitle_max_words_per_segment: u32,
+    pub subtitle_length_reference: u32,
     pub asr_model: String,
     pub demucs_model: String,
     pub enable_vocal_separation: bool,
@@ -115,6 +117,16 @@ pub async fn save_app_settings(
         } else {
             "0"
         },
+    )
+    .await?;
+    set_setting(
+        &mut tx,
+        KEY_SUBTITLE_LENGTH_REFERENCE,
+        &request
+            .settings
+            .subtitle_length_reference
+            .clamp(8, 80)
+            .to_string(),
     )
     .await?;
     set_setting(
@@ -202,6 +214,11 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         .and_then(|v| v.parse::<u32>().ok())
         .map(|v| v.clamp(8, 40))
         .unwrap_or(20);
+    let subtitle_length_reference = get_setting(pool, KEY_SUBTITLE_LENGTH_REFERENCE)
+        .await?
+        .and_then(|v| v.parse::<u32>().ok())
+        .map(|v| v.clamp(8, 80))
+        .unwrap_or(28);
     let asr_model = get_setting(pool, KEY_ASR_MODEL)
         .await?
         .unwrap_or_else(|| "parakeet-tdt-0.6b-v2".to_string());
@@ -254,6 +271,7 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         provider,
         chunk_target_seconds,
         subtitle_max_words_per_segment,
+        subtitle_length_reference,
         asr_model,
         demucs_model,
         enable_vocal_separation,
