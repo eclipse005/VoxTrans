@@ -237,6 +237,32 @@ export default function SettingsModal(props: SettingsModalProps) {
                     </div>
                     <span className="toggle-switch" />
                   </label>
+                  <label className="setting-toggle" htmlFor="enable-punctuation-optimization">
+                    <input
+                      id="enable-punctuation-optimization"
+                      type="checkbox"
+                      checked={draftEnablePunctuationOptimization}
+                      onChange={(e) => onDraftEnablePunctuationOptimizationChange(e.target.checked)}
+                    />
+                    <div className="toggle-label">
+                      <span className="toggle-title">标点符号优化</span>
+                      <span className="toggle-desc">使用 LLM 优化大小写标点符号，有益于断句。</span>
+                    </div>
+                    <span className="toggle-switch" />
+                  </label>
+                  <label className="setting-toggle" htmlFor="enable-asr-correction">
+                    <input
+                      id="enable-asr-correction"
+                      type="checkbox"
+                      checked={draftEnableAsrCorrection}
+                      onChange={(e) => onDraftEnableAsrCorrectionChange(e.target.checked)}
+                    />
+                    <div className="toggle-label">
+                      <span className="toggle-title">识别矫正</span>
+                      <span className="toggle-desc">在标点优化后执行 LLM 识别矫正，修复错词并保留时间轴。</span>
+                    </div>
+                    <span className="toggle-switch" />
+                  </label>
                 </div>
               </div>
             </div>
@@ -293,32 +319,6 @@ export default function SettingsModal(props: SettingsModalProps) {
                       />
                     </div>
                   </div>
-                  <label className="setting-toggle" htmlFor="enable-punctuation-optimization">
-                    <input
-                      id="enable-punctuation-optimization"
-                      type="checkbox"
-                      checked={draftEnablePunctuationOptimization}
-                      onChange={(e) => onDraftEnablePunctuationOptimizationChange(e.target.checked)}
-                    />
-                    <div className="toggle-label">
-                      <span className="toggle-title">标点符号优化</span>
-                      <span className="toggle-desc">使用 LLM 优化大小写标点符号，有益于断句。</span>
-                    </div>
-                    <span className="toggle-switch" />
-                  </label>
-                  <label className="setting-toggle" htmlFor="enable-asr-correction">
-                    <input
-                      id="enable-asr-correction"
-                      type="checkbox"
-                      checked={draftEnableAsrCorrection}
-                      onChange={(e) => onDraftEnableAsrCorrectionChange(e.target.checked)}
-                    />
-                    <div className="toggle-label">
-                      <span className="toggle-title">识别矫正</span>
-                      <span className="toggle-desc">在标点优化后执行 LLM 识别矫正，修复错词并保留时间轴。</span>
-                    </div>
-                    <span className="toggle-switch" />
-                  </label>
                   <label className="setting-toggle" htmlFor="enable-terminology">
                     <input
                       id="enable-terminology"
