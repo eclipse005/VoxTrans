@@ -63,6 +63,7 @@ function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] 
     case "separating":
     case "recognizing":
     case "punctuate":
+    case "correct":
     case "segment":
     case "summarize":
     case "translate":

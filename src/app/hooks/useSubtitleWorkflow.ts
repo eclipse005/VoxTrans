@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 
 import type { QueueItem, SubtitleCue } from "../../features/media/types";
 import { cuesToSrt } from "../../features/media/srt";
+import type { ExportSrtItem } from "../api/transcribe";
 import type { AppAction } from "../state/appReducer";
 import { reportError, toUserErrorMessage } from "../utils/errors";
 import { buildCueWarningsById } from "../utils/subtitleWarnings";
@@ -14,7 +15,7 @@ import {
   splitSelectedCueList,
   updateCueList,
 } from "./subtitleWorkflow/cueOperations";
-import { exportSubtitleToDirectory, loadSubtitleEditorData, saveSubtitleEditor } from "./subtitleWorkflow/io";
+import { exportSubtitleVariantsToDirectory, loadSubtitleEditorData, saveSubtitleEditor } from "./subtitleWorkflow/io";
 import { buildSubtitleVersion } from "./subtitleWorkflow/versionSync";
 
 type DispatchState = (action: AppAction) => void;
@@ -222,9 +223,13 @@ export function useSubtitleWorkflow({
     [markSubtitleEdited, subtitleCues],
   );
 
-  const exportSubtitleSrt = useCallback(async () => {
+  const exportSubtitleSrt = useCallback(async (items: ExportSrtItem[]) => {
     if (!subtitleTaskId) {
       pushToast("当前没有可导出的任务", "error");
+      return;
+    }
+    if (items.length === 0) {
+      pushToast("请至少选择一项导出内容", "error");
       return;
     }
 
@@ -236,13 +241,22 @@ export function useSubtitleWorkflow({
       });
       if (!picked || Array.isArray(picked)) return;
 
-      const exportPath = await exportSubtitleToDirectory(subtitleTaskId, picked, subtitleTaskName, subtitleCues);
-      pushToast(`已导出：${exportPath}`, "success");
+      const paths = await exportSubtitleVariantsToDirectory(
+        subtitleTaskId,
+        picked,
+        subtitleTaskName,
+        items,
+      );
+      if (paths.length === 1) {
+        pushToast(`已导出：${paths[0]}`, "success");
+      } else {
+        pushToast(`已导出 ${paths.length} 个文件`, "success");
+      }
     } catch (error) {
       reportError(error, "exportSubtitleSrt");
       pushToast(toUserErrorMessage(error, "导出字幕失败"), "error");
     }
-  }, [pushToast, subtitleCues, subtitleTaskId, subtitleTaskName]);
+  }, [pushToast, subtitleTaskId, subtitleTaskName]);
 
   useEffect(() => {
     const activeItem = queue.find((item) => item.id === activeId);

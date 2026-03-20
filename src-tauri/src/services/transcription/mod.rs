@@ -4,5 +4,9 @@
 //! ASR inference itself stays in `services::transcribe`.
 mod pipeline;
 mod punctuation;
+mod correction;
 
-pub use pipeline::{RunPostAsrPipelineRequest, RunPostAsrPipelineResponse, run_post_asr_pipeline};
+pub use pipeline::{
+    CorrectionTerminologyEntryDto, RunPostAsrPipelineRequest, RunPostAsrPipelineResponse,
+    run_post_asr_pipeline,
+};

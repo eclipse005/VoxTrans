@@ -39,6 +39,7 @@ type RunPostAsrPipelineRequest = {
   words: WordToken[];
   subtitleMaxWordsPerSegment: number;
   enablePunctuationOptimization: boolean;
+  enableAsrCorrection: boolean;
   translateApiKey: string;
   translateBaseUrl: string;
   translateModel: string;
@@ -66,6 +67,19 @@ type ExportSrtRequest = {
   targetDir: string;
   taskName?: string;
   content: string;
+};
+
+export type ExportSrtItem =
+  | "source"
+  | "target"
+  | "bilingualSourceFirst"
+  | "bilingualTargetFirst";
+
+type ExportTaskSrtsRequest = {
+  taskId: string;
+  targetDir: string;
+  taskName?: string;
+  items: ExportSrtItem[];
 };
 
 export async function appendTaskLog(request: AppendTaskLogRequest): Promise<void> {
@@ -96,6 +110,10 @@ export async function saveSrt(request: SaveSrtRequest): Promise<void> {
 
 export async function exportSrt(request: ExportSrtRequest): Promise<string> {
   return invoke<string>("export_srt", { request });
+}
+
+export async function exportTaskSrts(request: ExportTaskSrtsRequest): Promise<string[]> {
+  return invoke<string[]>("export_task_srts", { request });
 }
 
 export async function runTranslatePipeline(

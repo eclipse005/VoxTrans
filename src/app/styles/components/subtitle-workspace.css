@@ -205,3 +205,71 @@
   background: transparent;
   box-shadow: none;
 }
+
+.modal-content-export {
+  width: min(560px, calc(100vw - 30px));
+  max-width: calc(100vw - 30px);
+  max-height: calc(100vh - 30px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.export-modal-desc {
+  color: var(--apple-text-secondary);
+  margin: 0;
+}
+
+.export-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.export-option-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--apple-border-light);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.export-option-card input[type="checkbox"] {
+  margin-top: 2px;
+}
+
+.export-option-card.is-disabled {
+  opacity: 0.5;
+}
+
+.export-option-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.export-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--apple-text-primary);
+}
+
+.export-option-file {
+  font-size: 12px;
+  color: var(--apple-text-secondary);
+}
+
+.export-modal-tip {
+  margin: 0;
+  color: #92400e;
+}
+
+.export-modal-actions {
+  margin-top: 4px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

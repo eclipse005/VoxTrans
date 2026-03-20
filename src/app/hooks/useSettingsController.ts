@@ -30,6 +30,7 @@ type UseSettingsControllerArgs = {
   draftTerminologyGroups: SavedSettings["terminologyGroups"];
   draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
+  draftEnableAsrCorrection: boolean;
   dispatch: DispatchState;
   pushToast: PushToast;
   refreshModelStatus: () => Promise<void>;
@@ -50,6 +51,7 @@ export function useSettingsController({
   draftTerminologyGroups,
   draftEnableTerminology,
   draftEnablePunctuationOptimization,
+  draftEnableAsrCorrection,
   dispatch,
   pushToast,
   refreshModelStatus,
@@ -72,6 +74,7 @@ export function useSettingsController({
         draftTerminologyGroups: settings.terminologyGroups,
         draftEnableTerminology: settings.enableTerminology,
         draftEnablePunctuationOptimization: settings.enablePunctuationOptimization,
+        draftEnableAsrCorrection: settings.enableAsrCorrection,
       },
     });
     dispatch({ type: "set_ui", payload: { showSettings: true } });
@@ -91,6 +94,7 @@ export function useSettingsController({
     settings.llmConcurrency,
     settings.terminologyGroups,
     settings.enableTerminology,
+    settings.enableAsrCorrection,
   ]);
 
   const saveSettings = useCallback(async () => {
@@ -128,6 +132,7 @@ export function useSettingsController({
       terminologyGroups: normalizeTerminologyGroups(draftTerminologyGroups),
       enableTerminology: draftEnableTerminology,
       enablePunctuationOptimization: draftEnablePunctuationOptimization,
+      enableAsrCorrection: draftEnableAsrCorrection,
     } satisfies SavedSettings;
 
     dispatch({
@@ -149,6 +154,7 @@ export function useSettingsController({
         draftTerminologyGroups: nextSettings.terminologyGroups,
         draftEnableTerminology: nextSettings.enableTerminology,
         draftEnablePunctuationOptimization,
+        draftEnableAsrCorrection,
       },
     });
 
@@ -175,6 +181,7 @@ export function useSettingsController({
     draftTerminologyGroups,
     draftEnableTerminology,
     pushToast,
+    draftEnableAsrCorrection,
   ]);
 
   return {

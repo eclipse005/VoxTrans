@@ -1,7 +1,10 @@
 use crate::services::task_log::{TaskLogger, event};
-use serde::Deserialize;
+use crate::services::task_context::{TaskContext, TaskContextSeed};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::SqlitePool;
 use std::path::PathBuf;
+use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +25,47 @@ pub struct ExportSrtRequest {
     #[serde(default)]
     pub task_name: Option<String>,
     pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportTaskSrtsRequest {
+    pub task_id: String,
+    pub target_dir: String,
+    #[serde(default)]
+    pub task_name: Option<String>,
+    pub items: Vec<ExportSrtItem>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportSrtItem {
+    Source,
+    Target,
+    BilingualSourceFirst,
+    BilingualTargetFirst,
+}
+
+#[derive(Debug, Deserialize, sqlx::FromRow)]
+struct ExportTaskRow {
+    id: String,
+    name: String,
+    media_path: String,
+    source_lang: String,
+    target_lang: String,
+    created_at: i64,
+    context_json: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubtitleSegmentExport {
+    start_ms: i64,
+    end_ms: i64,
+    #[serde(default)]
+    source_text: String,
+    #[serde(default)]
+    translated_text: String,
 }
 
 pub fn save_srt(request: SaveSrtRequest) -> Result<(), String> {
@@ -128,6 +172,123 @@ pub fn export_srt(request: ExportSrtRequest) -> Result<String, String> {
     Ok(output_path.display().to_string())
 }
 
+pub async fn export_task_srts(
+    pool: &SqlitePool,
+    request: ExportTaskSrtsRequest,
+) -> Result<Vec<String>, String> {
+    if request.task_id.trim().is_empty() {
+        return Err("taskId is required".to_string());
+    }
+    let target_dir = request.target_dir.trim();
+    if target_dir.is_empty() {
+        return Err("targetDir is required".to_string());
+    }
+    if request.items.is_empty() {
+        return Err("items is required".to_string());
+    }
+
+    let started_at = std::time::Instant::now();
+    let row = sqlx::query_as::<_, ExportTaskRow>(
+        "SELECT id, name, media_path, source_lang, target_lang, created_at, context_json
+         FROM task_runs
+         WHERE id = ?",
+    )
+    .bind(request.task_id.trim())
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| err.to_string())?
+    .ok_or_else(|| "task not found".to_string())?;
+    let logger = TaskLogger::main_with_media(row.id.clone(), row.media_path.clone());
+
+    let dir_path = PathBuf::from(target_dir);
+    if !dir_path.is_dir() {
+        return Err(format!("导出目录不存在: {}", target_dir));
+    }
+
+    let context = TaskContext::parse_or_new(
+        &row.context_json,
+        TaskContextSeed {
+            task_id: row.id.clone(),
+            intent: "TRANSCRIBE".to_string(),
+            source_lang: row.source_lang.clone(),
+            target_lang: row.target_lang.clone(),
+            media_path: row.media_path.clone(),
+            media_kind: "audio".to_string(),
+            media_size_bytes: 0,
+            settings_snapshot: serde_json::json!({}),
+            created_at: row.created_at,
+        },
+    );
+    let segments = parse_subtitle_segments(&context.projections.editor.subtitle_segments_json);
+    let source_from_editor = context.projections.editor.result_srt.trim().to_string();
+    let source_srt = if source_from_editor.is_empty() {
+        build_srt_from_segments(&segments, ExportSrtItem::Source)
+    } else {
+        source_from_editor
+    };
+    let has_source = !source_srt.trim().is_empty();
+
+    let source_suffix = normalize_lang_suffix(&row.source_lang, "en");
+    let target_suffix = normalize_lang_suffix(&row.target_lang, "zh");
+    let file_stem = request
+        .task_name
+        .as_deref()
+        .map(crate::services::task_path::sanitize_filename_component)
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            let candidate = crate::services::task_path::sanitize_filename_component(&row.name);
+            if candidate.trim().is_empty() {
+                None
+            } else {
+                Some(candidate)
+            }
+        })
+        .unwrap_or_else(|| format!("subtitle_{}", row.id));
+
+    let mut exported_paths: Vec<String> = Vec::new();
+    for item in request.items {
+        let content = match item {
+            ExportSrtItem::Source => {
+                if !has_source {
+                    return Err("原文字幕为空，无法导出".to_string());
+                }
+                source_srt.clone()
+            }
+            ExportSrtItem::Target
+            | ExportSrtItem::BilingualSourceFirst
+            | ExportSrtItem::BilingualTargetFirst => build_srt_from_segments(&segments, item),
+        };
+        if content.trim().is_empty() {
+            return Err("所选导出项为空，无法导出".to_string());
+        }
+
+        let file_name = match item {
+            ExportSrtItem::Source => format!("{}_{}.srt", file_stem, source_suffix),
+            ExportSrtItem::Target => format!("{}_{}.srt", file_stem, target_suffix),
+            ExportSrtItem::BilingualSourceFirst => {
+                format!("{}_{}_{}.srt", file_stem, source_suffix, target_suffix)
+            }
+            ExportSrtItem::BilingualTargetFirst => {
+                format!("{}_{}_{}.srt", file_stem, target_suffix, source_suffix)
+            }
+        };
+        let output_path = ensure_unique_output_path(&dir_path, &file_name);
+        std::fs::write(&output_path, content.as_bytes()).map_err(|err| err.to_string())?;
+        exported_paths.push(output_path.display().to_string());
+    }
+
+    logger.event(
+        "transcribe.exported",
+        Some(&json!({
+            "outputPathList": exported_paths,
+            "exportedTotal": exported_paths.len(),
+            "exportElapsedSec": round2(started_at.elapsed().as_secs_f64()),
+        })),
+    );
+
+    Ok(exported_paths)
+}
+
 pub fn get_file_size(path: String) -> Result<u64, String> {
     let metadata = std::fs::metadata(&path).map_err(|err| err.to_string())?;
     Ok(metadata.len())
@@ -138,4 +299,78 @@ fn round2(value: f64) -> f64 {
         return 0.0;
     }
     (value * 100.0).round() / 100.0
+}
+
+fn parse_subtitle_segments(raw: &str) -> Vec<SubtitleSegmentExport> {
+    let Ok(parsed) = serde_json::from_str::<Vec<SubtitleSegmentExport>>(raw) else {
+        return Vec::new();
+    };
+    parsed
+}
+
+fn build_srt_from_segments(segments: &[SubtitleSegmentExport], item: ExportSrtItem) -> String {
+    let cues = segments
+        .iter()
+        .enumerate()
+        .map(|(idx, segment)| {
+            let source = segment.source_text.trim();
+            let target = segment.translated_text.trim();
+            let text = match item {
+                ExportSrtItem::Source => source.to_string(),
+                ExportSrtItem::Target => target.to_string(),
+                ExportSrtItem::BilingualSourceFirst => {
+                    format!("{source}\n{target}")
+                }
+                ExportSrtItem::BilingualTargetFirst => {
+                    format!("{target}\n{source}")
+                }
+            };
+            let start_ms = segment.start_ms.max(0) as u64;
+            let end_ms = segment.end_ms.max(segment.start_ms).max(0) as u64;
+            SrtCue {
+                index: idx + 1,
+                start_ms,
+                end_ms,
+                text,
+            }
+        })
+        .collect::<Vec<_>>();
+    to_srt_from_cues(&cues)
+}
+
+fn normalize_lang_suffix(lang: &str, default_lang: &str) -> String {
+    let lowered = lang.trim().to_lowercase();
+    if lowered.is_empty() {
+        return default_lang.to_string();
+    }
+    if lowered.starts_with("zh") {
+        return "zh".to_string();
+    }
+    let prefix = lowered
+        .split(|ch: char| ch == '-' || ch == '_' || !ch.is_ascii_alphanumeric())
+        .find(|part| !part.is_empty())
+        .unwrap_or(default_lang);
+    crate::services::task_path::sanitize_filename_component(prefix)
+}
+
+fn ensure_unique_output_path(dir: &std::path::Path, file_name: &str) -> PathBuf {
+    let initial = dir.join(file_name);
+    if !initial.exists() {
+        return initial;
+    }
+    let stem = std::path::Path::new(file_name)
+        .file_stem()
+        .map(|v| v.to_string_lossy().to_string())
+        .unwrap_or_else(|| "subtitle".to_string());
+    let ext = std::path::Path::new(file_name)
+        .extension()
+        .map(|v| v.to_string_lossy().to_string())
+        .unwrap_or_else(|| "srt".to_string());
+    for seq in 2..=9_999 {
+        let candidate = dir.join(format!("{stem}_{seq}.{ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    initial
 }

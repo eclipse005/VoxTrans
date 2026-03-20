@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { QueueItem, SubtitleCue } from "../../../features/media/types";
 import { buildFallbackCue, cuesToSrt, parseSrtContent } from "../../../features/media/srt";
-import { exportSrt } from "../../api/transcribe";
+import { exportTaskSrts, type ExportSrtItem } from "../../api/transcribe";
 
 export async function saveSubtitleEditor(
   taskId: string,
@@ -48,18 +48,17 @@ export async function loadSubtitleEditorData(item: QueueItem): Promise<{
   return { response, hydratedCues };
 }
 
-export async function exportSubtitleToDirectory(
+export async function exportSubtitleVariantsToDirectory(
   taskId: string,
   targetDir: string,
   taskName: string,
-  cues: SubtitleCue[],
-): Promise<string> {
-  const content = cuesToSrt(cues);
-  return exportSrt({
+  items: ExportSrtItem[],
+): Promise<string[]> {
+  return exportTaskSrts({
     taskId,
     targetDir,
     taskName,
-    content,
+    items,
   });
 }
 

@@ -38,6 +38,9 @@ function getTranscribeProcessingText(item: QueueItem): string {
   if (item.transcribePhase === "punctuate") {
     return "标点优化中";
   }
+  if (item.transcribePhase === "correct") {
+    return "识别矫正中";
+  }
   if (item.transcribePhase === "summarize") {
     return "总结中";
   }

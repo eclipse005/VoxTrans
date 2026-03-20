@@ -16,6 +16,7 @@ const KEY_LLM_CONCURRENCY: &str = "settings.llmConcurrency";
 const KEY_TERMINOLOGY_GROUPS: &str = "settings.terminologyGroups";
 const KEY_ENABLE_TERMINOLOGY: &str = "settings.enableTerminology";
 const KEY_ENABLE_PUNCTUATION_OPTIMIZATION: &str = "settings.enablePunctuationOptimization";
+const KEY_ENABLE_ASR_CORRECTION: &str = "settings.enableAsrCorrection";
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +55,8 @@ pub struct SavedSettings {
     #[serde(default = "default_true")]
     pub enable_terminology: bool,
     pub enable_punctuation_optimization: bool,
+    #[serde(default = "default_true")]
+    pub enable_asr_correction: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -159,6 +162,16 @@ pub async fn save_app_settings(
         },
     )
     .await?;
+    set_setting(
+        &mut tx,
+        KEY_ENABLE_ASR_CORRECTION,
+        if request.settings.enable_asr_correction {
+            "1"
+        } else {
+            "0"
+        },
+    )
+    .await?;
     tx.commit().await.map_err(|e| e.to_string())
 }
 
@@ -216,6 +229,10 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         .await?
         .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
         .unwrap_or(false);
+    let enable_asr_correction = get_setting(pool, KEY_ENABLE_ASR_CORRECTION)
+        .await?
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
+        .unwrap_or(true);
     Ok(SavedSettings {
         provider,
         chunk_target_seconds,
@@ -230,6 +247,7 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         terminology_groups,
         enable_terminology,
         enable_punctuation_optimization,
+        enable_asr_correction,
     })
 }
 

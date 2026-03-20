@@ -16,7 +16,9 @@ use crate::services::task_engine::{EnqueueTaskRequest, enqueue_task};
 use crate::services::task_log::{TaskLogger, event};
 use crate::services::task_worker;
 use crate::services::transcribe::{TranscribeRequest, transcribe_blocking};
-use crate::services::transcription::{RunPostAsrPipelineRequest, run_post_asr_pipeline};
+use crate::services::transcription::{
+    CorrectionTerminologyEntryDto, RunPostAsrPipelineRequest, run_post_asr_pipeline,
+};
 use crate::services::translate::types::{
     TranslatePipelineRequest, TranslateTerminologyEntry, TranslateToken,
 };
@@ -509,7 +511,11 @@ async fn run_transcribe_and_maybe_translate(
             audio_path: task.media_path.clone(),
             words: transcribed.words.clone(),
             subtitle_max_words_per_segment: settings_before_post.subtitle_max_words_per_segment,
+            source_lang: task.source_lang.clone(),
             enable_punctuation_optimization: settings_before_post.enable_punctuation_optimization,
+            enable_asr_correction: settings_before_post.enable_asr_correction,
+            enable_terminology: settings_before_post.enable_terminology,
+            terminology_entries: map_correction_terminology_entries(&settings_before_post.terminology_groups),
             translate_api_key: settings_before_post.translate_api_key.clone(),
             translate_base_url: settings_before_post.translate_base_url.clone(),
             translate_model: settings_before_post.translate_model.clone(),
@@ -882,6 +888,22 @@ fn map_terminology_entries(
         .iter()
         .flat_map(|group| {
             group.terms.iter().map(|term| TranslateTerminologyEntry {
+                source: term.origin.trim().to_string(),
+                target: term.target.trim().to_string(),
+                note: term.note.trim().to_string(),
+            })
+        })
+        .filter(|entry| !entry.source.is_empty() && !entry.target.is_empty())
+        .collect()
+}
+
+fn map_correction_terminology_entries(
+    groups: &[crate::services::preferences::TerminologyGroup],
+) -> Vec<CorrectionTerminologyEntryDto> {
+    groups
+        .iter()
+        .flat_map(|group| {
+            group.terms.iter().map(|term| CorrectionTerminologyEntryDto {
                 source: term.origin.trim().to_string(),
                 target: term.target.trim().to_string(),
                 note: term.note.trim().to_string(),

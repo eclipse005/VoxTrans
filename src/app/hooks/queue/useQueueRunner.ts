@@ -337,5 +337,6 @@ function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown>
     terminologyGroups: settings.terminologyGroups,
     enableTerminology: settings.enableTerminology,
     enablePunctuationOptimization: settings.enablePunctuationOptimization,
+    enableAsrCorrection: settings.enableAsrCorrection,
   };
 }
