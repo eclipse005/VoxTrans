@@ -41,6 +41,7 @@ type QueueStatusPayloads = {
     | "transcribeSegmentCurrent"
     | "transcribeSegmentTotal"
     | "transcribePhase"
+    | "transcribePhaseDetail"
     | "transcribeError"
   >;
   processing: Pick<
@@ -49,6 +50,7 @@ type QueueStatusPayloads = {
     | "transcribeSegmentCurrent"
     | "transcribeSegmentTotal"
     | "transcribePhase"
+    | "transcribePhaseDetail"
     | "transcribeError"
   >;
   done: Pick<
@@ -58,6 +60,7 @@ type QueueStatusPayloads = {
     | "transcribeSegmentCurrent"
     | "transcribeSegmentTotal"
     | "transcribePhase"
+    | "transcribePhaseDetail"
     | "resultText"
     | "resultSrt"
     | "transcribeError"
@@ -68,6 +71,7 @@ type QueueStatusPayloads = {
     | "transcribeSegmentCurrent"
     | "transcribeSegmentTotal"
     | "transcribePhase"
+    | "transcribePhaseDetail"
     | "transcribeError"
   >;
 };

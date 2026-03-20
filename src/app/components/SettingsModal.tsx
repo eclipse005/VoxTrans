@@ -24,6 +24,7 @@ type SettingsModalProps = {
   draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
   draftEnableAsrCorrection: boolean;
+  draftEnableSubtitleBeautify: boolean;
   asrStatus: ModelStatusResponse | null;
   demucsStatus: ModelStatusResponse | null;
   onClose: () => void;
@@ -41,6 +42,7 @@ type SettingsModalProps = {
   onDraftEnableTerminologyChange: (value: boolean) => void;
   onDraftEnablePunctuationOptimizationChange: (value: boolean) => void;
   onDraftEnableAsrCorrectionChange: (value: boolean) => void;
+  onDraftEnableSubtitleBeautifyChange: (value: boolean) => void;
   onTestTranslateConnection: () => void | Promise<void>;
   onOpenModelDir: (target: "asr" | "demucs") => void | Promise<void>;
   onStartModelDownload: (target: "asr" | "demucs") => void | Promise<void>;
@@ -98,6 +100,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftEnableTerminology,
     draftEnablePunctuationOptimization,
     draftEnableAsrCorrection,
+    draftEnableSubtitleBeautify,
     asrStatus,
     demucsStatus,
     onClose,
@@ -115,6 +118,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftEnableTerminologyChange,
     onDraftEnablePunctuationOptimizationChange,
     onDraftEnableAsrCorrectionChange,
+    onDraftEnableSubtitleBeautifyChange,
     onTestTranslateConnection,
     onOpenModelDir,
     onStartModelDownload,
@@ -239,7 +243,6 @@ export default function SettingsModal(props: SettingsModalProps) {
           ) : activeTab === "translate" ? (
             <div className="settings-tab-content">
               <div className="settings-section">
-                <h3 className="apple-heading-small">翻译配置</h3>
                 <div className="api-config-form">
                   <div className="form-row">
                     <div className="form-group">
@@ -326,6 +329,19 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <div className="toggle-label">
                       <span className="toggle-title">启用术语库</span>
                       <span className="toggle-desc">关闭后翻译不注入术语，按通用语义翻译。</span>
+                    </div>
+                    <span className="toggle-switch" />
+                  </label>
+                  <label className="setting-toggle" htmlFor="enable-subtitle-beautify">
+                    <input
+                      id="enable-subtitle-beautify"
+                      type="checkbox"
+                      checked={draftEnableSubtitleBeautify}
+                      onChange={(e) => onDraftEnableSubtitleBeautifyChange(e.target.checked)}
+                    />
+                    <div className="toggle-label">
+                      <span className="toggle-title">美化字幕</span>
+                      <span className="toggle-desc">去首尾标点，并优化中英数字间距。</span>
                     </div>
                     <span className="toggle-switch" />
                   </label>

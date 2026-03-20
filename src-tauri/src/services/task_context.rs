@@ -114,6 +114,8 @@ pub struct ProjectionState {
 pub struct ProjectionQueueState {
     pub transcribe_status: String,
     pub phase: String,
+    #[serde(default)]
+    pub phase_detail: String,
     pub progress_percent: u32,
     pub transcribe_segment_current: u32,
     pub transcribe_segment_total: u32,
@@ -187,6 +189,7 @@ impl TaskContext {
                 queue: ProjectionQueueState {
                     transcribe_status: "queued".to_string(),
                     phase: String::new(),
+                    phase_detail: String::new(),
                     progress_percent: 0,
                     transcribe_segment_current: 0,
                     transcribe_segment_total: 0,
@@ -257,6 +260,7 @@ impl TaskContext {
         &mut self,
         status: &str,
         phase: &str,
+        phase_detail: &str,
         progress_percent: u32,
         current: u32,
         total: u32,
@@ -265,6 +269,7 @@ impl TaskContext {
         self.projections.queue = ProjectionQueueState {
             transcribe_status: status.to_string(),
             phase: phase.to_string(),
+            phase_detail: phase_detail.to_string(),
             progress_percent,
             transcribe_segment_current: current,
             transcribe_segment_total: total,

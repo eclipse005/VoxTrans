@@ -47,6 +47,7 @@ export function useAppPersistence(dispatch: DispatchState) {
         const enableTerminology = Boolean(res.settings.enableTerminology ?? true);
         const enablePunctuationOptimization = Boolean(res.settings.enablePunctuationOptimization);
         const enableAsrCorrection = Boolean(res.settings.enableAsrCorrection ?? true);
+        const enableSubtitleBeautify = Boolean(res.settings.enableSubtitleBeautify ?? true);
 
         dispatch({
           type: "set_settings",
@@ -65,6 +66,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             enableTerminology,
             enablePunctuationOptimization,
             enableAsrCorrection,
+            enableSubtitleBeautify,
           },
         });
         dispatch({
@@ -84,6 +86,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftEnableTerminology: enableTerminology,
             draftEnablePunctuationOptimization: enablePunctuationOptimization,
             draftEnableAsrCorrection: enableAsrCorrection,
+            draftEnableSubtitleBeautify: enableSubtitleBeautify,
           },
         });
       } catch {

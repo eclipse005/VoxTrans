@@ -31,6 +31,7 @@ type UseSettingsControllerArgs = {
   draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
   draftEnableAsrCorrection: boolean;
+  draftEnableSubtitleBeautify: boolean;
   dispatch: DispatchState;
   pushToast: PushToast;
   refreshModelStatus: () => Promise<void>;
@@ -52,6 +53,7 @@ export function useSettingsController({
   draftEnableTerminology,
   draftEnablePunctuationOptimization,
   draftEnableAsrCorrection,
+  draftEnableSubtitleBeautify,
   dispatch,
   pushToast,
   refreshModelStatus,
@@ -75,6 +77,7 @@ export function useSettingsController({
         draftEnableTerminology: settings.enableTerminology,
         draftEnablePunctuationOptimization: settings.enablePunctuationOptimization,
         draftEnableAsrCorrection: settings.enableAsrCorrection,
+        draftEnableSubtitleBeautify: settings.enableSubtitleBeautify,
       },
     });
     dispatch({ type: "set_ui", payload: { showSettings: true } });
@@ -95,6 +98,7 @@ export function useSettingsController({
     settings.terminologyGroups,
     settings.enableTerminology,
     settings.enableAsrCorrection,
+    settings.enableSubtitleBeautify,
   ]);
 
   const saveSettings = useCallback(async () => {
@@ -133,6 +137,7 @@ export function useSettingsController({
       enableTerminology: draftEnableTerminology,
       enablePunctuationOptimization: draftEnablePunctuationOptimization,
       enableAsrCorrection: draftEnableAsrCorrection,
+      enableSubtitleBeautify: draftEnableSubtitleBeautify,
     } satisfies SavedSettings;
 
     dispatch({
@@ -155,6 +160,7 @@ export function useSettingsController({
         draftEnableTerminology: nextSettings.enableTerminology,
         draftEnablePunctuationOptimization,
         draftEnableAsrCorrection,
+        draftEnableSubtitleBeautify,
       },
     });
 
@@ -182,6 +188,7 @@ export function useSettingsController({
     draftEnableTerminology,
     pushToast,
     draftEnableAsrCorrection,
+    draftEnableSubtitleBeautify,
   ]);
 
   return {

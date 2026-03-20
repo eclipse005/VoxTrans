@@ -255,6 +255,7 @@ fn build_context_json_from_snapshot(
     context.set_queue_projection(
         transcribe_status,
         "",
+        "",
         progress_percent,
         0,
         0,
@@ -388,7 +389,7 @@ fn build_tasks_context_json_from_snapshot(
         settings_snapshot: serde_json::json!({}),
         created_at: now_unix(),
     });
-    context.set_queue_projection(transcribe_status, "", 0, 0, 0, transcribe_error);
+    context.set_queue_projection(transcribe_status, "", "", 0, 0, 0, transcribe_error);
     context.set_editor_projection(
         task.subtitle_segments_json.clone(),
         String::new(),

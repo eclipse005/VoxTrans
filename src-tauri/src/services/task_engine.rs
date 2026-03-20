@@ -538,7 +538,7 @@ fn build_enqueue_context_json(
     context.runtime.current_stage = STAGE_INIT.to_string();
     context.runtime.can_resume_from = STAGE_INIT.to_string();
     context.runtime.status = "queued".to_string();
-    context.set_queue_projection("queued", "", 0, 0, 0, "");
+    context.set_queue_projection("queued", "", "", 0, 0, 0, "");
     context.to_json_string()
 }
 
@@ -558,7 +558,7 @@ fn build_upload_context_json(
         created_at,
     });
     context.runtime.status = "created".to_string();
-    context.set_queue_projection("pending", "", 0, 0, 0, "");
+    context.set_queue_projection("pending", "", "", 0, 0, 0, "");
     context.to_json_string()
 }
 

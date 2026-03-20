@@ -28,35 +28,33 @@ function resolvePrimaryStatus(item: QueueItem): QueueStatus {
 }
 
 function getTranscribeProcessingText(item: QueueItem): string {
+  const detail = item.transcribePhaseDetail?.trim() ?? "";
   if (item.transcribePhase === "initializing") {
-    return "转录准备中";
+    return detail ? `转录准备中 ${detail}` : "转录准备中";
   }
   if (item.transcribePhase === "separating") {
-    const percent = Math.max(0, Math.min(100, item.transcribeProgress || 0));
-    return `人声分离中 ${percent}%`;
+    return detail ? `人声分离中 ${detail}` : "人声分离中";
+  }
+  if (item.transcribePhase === "recognizing") {
+    return detail ? `转录中 ${detail}` : "转录中";
   }
   if (item.transcribePhase === "punctuate") {
-    return "标点优化中";
+    return detail ? `标点优化中 ${detail}` : "标点优化中";
   }
   if (item.transcribePhase === "correct") {
-    return "识别矫正中";
+    return detail ? `识别矫正中 ${detail}` : "识别矫正中";
+  }
+  if (item.transcribePhase === "segment") {
+    return detail ? `切分中 ${detail}` : "切分中";
   }
   if (item.transcribePhase === "summarize") {
-    return "总结中";
+    return detail ? `总结中 ${detail}` : "总结中";
   }
   if (item.transcribePhase === "translate") {
-    if (item.transcribeSegmentTotal > 0) {
-      const current = Math.max(0, Math.min(item.transcribeSegmentCurrent || 0, item.transcribeSegmentTotal));
-      if (current > 0) {
-        return `翻译中 ${current}/${item.transcribeSegmentTotal}`;
-      }
-    }
-    return "翻译中";
+    return detail ? `翻译中 ${detail}` : "翻译中";
   }
-  if (item.transcribeSegmentTotal > 1) {
-    return `转录处理中 ${Math.min(item.transcribeSegmentCurrent || 0, item.transcribeSegmentTotal)}/${item.transcribeSegmentTotal}`;
-  }
-  return "转录处理中";
+  if (detail) return detail;
+  return "处理中";
 }
 
 export default function MediaList({

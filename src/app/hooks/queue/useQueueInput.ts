@@ -41,6 +41,7 @@ export function useQueueInput({ dispatch, pushToast }: UseQueueInputArgs) {
           transcribeSegmentCurrent: 0,
           transcribeSegmentTotal: 0,
           transcribePhase: "",
+          transcribePhaseDetail: "",
           transcribeError: "",
           resultText: "",
           resultSrt: "",

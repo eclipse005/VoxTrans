@@ -107,6 +107,8 @@ struct SeparateProgressEvent {
 struct TranscribePhaseEvent {
     task_id: String,
     phase: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase_detail: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, Clone)]
@@ -153,13 +155,6 @@ pub async fn execute_task_run(
         return Err("taskId is required".to_string());
     }
     let execute_logger = TaskLogger::main(request.task_id.trim().to_string());
-    execute_logger.event(
-        event::TRANSCRIBE_STARTED,
-        Some(&json!({
-            "stage": "execute_entry",
-            "intentOverride": request.intent
-        })),
-    );
 
     let task = sqlx::query_as::<_, TaskRunExecRow>(
         "SELECT id, media_path, media_kind, size_bytes, intent, source_lang, target_lang,
@@ -212,7 +207,7 @@ pub async fn execute_task_run(
         },
     );
     context.mark_stage_running(STAGE_INIT);
-    context.set_queue_projection("processing", "initializing", 0, 0, 0, "");
+    context.set_queue_projection("processing", "initializing", "", 0, 0, 0, "");
     persist_task_context(pool, &task.id, &context).await?;
 
     let intent = request
@@ -243,6 +238,7 @@ pub async fn execute_task_run(
             context.set_queue_projection(
                 "done",
                 "",
+                "",
                 100,
                 done.segment_total.max(0) as u32,
                 done.segment_total.max(0) as u32,
@@ -271,7 +267,7 @@ pub async fn execute_task_run(
                 failed_stage.as_str()
             };
             context.mark_failed(stage, "TASK_FAILED", &err, true);
-            context.set_queue_projection("error", "", 0, 0, 0, &err);
+            context.set_queue_projection("error", "", "", 0, 0, 0, &err);
             persist_task_context(pool, &task.id, &context).await?;
             TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
                 event::TRANSCRIBE_FAILED,
@@ -431,6 +427,7 @@ async fn run_transcribe_and_maybe_translate(
             &TranscribePhaseEvent {
                 task_id: task.id.clone(),
                 phase: "separating".to_string(),
+                phase_detail: None,
             },
         );
         let app_handle = app.cloned();
@@ -528,6 +525,7 @@ async fn run_transcribe_and_maybe_translate(
                 &TranscribePhaseEvent {
                     task_id: phase_task_id.clone(),
                     phase: phase.to_string(),
+                    phase_detail: None,
                 },
             );
         },
@@ -596,6 +594,7 @@ async fn run_transcribe_and_maybe_translate(
     context.set_queue_projection(
         "processing",
         "translate",
+        "",
         99,
         transcribed.segment_total as u32,
         transcribed.segment_total as u32,
@@ -613,6 +612,7 @@ async fn run_transcribe_and_maybe_translate(
     context.set_queue_projection(
         "processing",
         "summarize",
+        "",
         99,
         transcribed.segment_total as u32,
         transcribed.segment_total as u32,
@@ -642,6 +642,7 @@ async fn run_transcribe_and_maybe_translate(
         translate_base_url: settings_before_post.translate_base_url.clone(),
         translate_model: settings_before_post.translate_model.clone(),
         llm_concurrency: settings_before_post.llm_concurrency,
+        enable_subtitle_beautify: settings_before_post.enable_subtitle_beautify,
         terminology_entries: if settings_before_post.enable_terminology {
             map_terminology_entries(&settings_before_post.terminology_groups)
         } else {
@@ -654,6 +655,7 @@ async fn run_transcribe_and_maybe_translate(
             &TranscribePhaseEvent {
                 task_id: translate_phase_task_id.clone(),
                 phase: phase.to_string(),
+                phase_detail: None,
             },
         );
     }, move |current_batch, total_batches| {
@@ -687,6 +689,7 @@ async fn run_transcribe_and_maybe_translate(
     context.set_queue_projection(
         "processing",
         "translate",
+        "",
         99,
         transcribed.segment_total as u32,
         transcribed.segment_total as u32,
@@ -767,6 +770,7 @@ async fn run_translate_only(
         translate_base_url: settings.translate_base_url.clone(),
         translate_model: settings.translate_model.clone(),
         llm_concurrency: settings.llm_concurrency,
+        enable_subtitle_beautify: settings.enable_subtitle_beautify,
         terminology_entries: if settings.enable_terminology {
             map_terminology_entries(&settings.terminology_groups)
         } else {
@@ -779,6 +783,7 @@ async fn run_translate_only(
             &TranscribePhaseEvent {
                 task_id: translate_phase_task_id.clone(),
                 phase: phase.to_string(),
+                phase_detail: None,
             },
         );
     }, move |current_batch, total_batches| {
@@ -833,7 +838,7 @@ async fn run_translate_only(
             })
         })
         .collect::<Vec<_>>();
-    context.set_queue_projection("processing", "translate", 99, merged.len() as u32, merged.len() as u32, "");
+    context.set_queue_projection("processing", "translate", "", 99, merged.len() as u32, merged.len() as u32, "");
     persist_task_context(pool, &task.id, context).await?;
 
     Ok(DonePayload {

@@ -32,6 +32,7 @@ export type SavedSettings = {
   enableTerminology: boolean;
   enablePunctuationOptimization: boolean;
   enableAsrCorrection: boolean;
+  enableSubtitleBeautify: boolean;
 };
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
@@ -72,6 +73,7 @@ export type QueueItem = {
   transcribeSegmentCurrent: number;
   transcribeSegmentTotal: number;
   transcribePhase?: TranscribePhase | "";
+  transcribePhaseDetail: string;
   transcribeError: string;
   resultText: string;
   resultSrt: string;

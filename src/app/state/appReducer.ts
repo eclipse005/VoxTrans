@@ -28,6 +28,7 @@ export type AppState = {
   draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
   draftEnableAsrCorrection: boolean;
+  draftEnableSubtitleBeautify: boolean;
   youtubeUrl: string;
   youtubeQuality: string;
   toast: ToastState | null;
@@ -101,6 +102,7 @@ export type SettingsAction =
           | "draftEnableTerminology"
           | "draftEnablePunctuationOptimization"
           | "draftEnableAsrCorrection"
+          | "draftEnableSubtitleBeautify"
         >
       >;
     }
@@ -123,6 +125,7 @@ export const defaultSettings: SavedSettings = {
   enableTerminology: true,
   enablePunctuationOptimization: false,
   enableAsrCorrection: true,
+  enableSubtitleBeautify: true,
 };
 
 export const initialAppState: AppState = {
@@ -147,6 +150,7 @@ export const initialAppState: AppState = {
   draftEnableTerminology: defaultSettings.enableTerminology,
   draftEnablePunctuationOptimization: defaultSettings.enablePunctuationOptimization,
   draftEnableAsrCorrection: defaultSettings.enableAsrCorrection,
+  draftEnableSubtitleBeautify: defaultSettings.enableSubtitleBeautify,
   youtubeUrl: "",
   youtubeQuality: "",
   toast: null,

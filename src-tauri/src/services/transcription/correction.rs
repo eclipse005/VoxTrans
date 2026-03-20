@@ -57,6 +57,15 @@ struct CorrectionPair {
     confidence: f64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppliedCorrectionItem {
+    sentence_index: usize,
+    before: String,
+    after: String,
+    confidence: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PreviousBatchItem {
@@ -149,6 +158,7 @@ pub async fn correct_words_with_rig_node(
     let mut changed_token_total = 0usize;
     let mut low_confidence_skip_total = 0usize;
     let mut replace_miss_total = 0usize;
+    let mut applied_items: Vec<AppliedCorrectionItem> = Vec::new();
 
     for (batch_idx, (start, end)) in batch_ranges.iter().copied().enumerate() {
         let batch = &sentences[start..end];
@@ -251,7 +261,13 @@ pub async fn correct_words_with_rig_node(
 
         for sentence in &mut sentences[start..end] {
             if let Some(corrections) = by_index.get(&sentence.index) {
-                let (changed_any, changed_token_in_sentence, low_confidence_skips, replace_miss) =
+                let (
+                    changed_any,
+                    changed_token_in_sentence,
+                    low_confidence_skips,
+                    replace_miss,
+                    applied_in_sentence,
+                ) =
                     apply_corrections(&mut sentence.words, corrections);
                 if changed_any {
                     changed_sentence_total += 1;
@@ -259,6 +275,14 @@ pub async fn correct_words_with_rig_node(
                 }
                 low_confidence_skip_total += low_confidence_skips;
                 replace_miss_total += replace_miss;
+                for applied in applied_in_sentence {
+                    applied_items.push(AppliedCorrectionItem {
+                        sentence_index: sentence.index,
+                        before: applied.before,
+                        after: applied.after,
+                        confidence: applied.confidence,
+                    });
+                }
             }
 
             let corrected_text = sentence_text(&sentence.words);
@@ -284,6 +308,21 @@ pub async fn correct_words_with_rig_node(
             "lowConfidenceSkipTotal": low_confidence_skip_total,
             "replaceMissTotal": replace_miss_total,
             "minConfidenceToApply": MIN_CONFIDENCE_TO_APPLY
+        })),
+    );
+    const MAX_APPLIED_LOG_ITEMS: usize = 200;
+    let log_items = applied_items
+        .iter()
+        .take(MAX_APPLIED_LOG_ITEMS)
+        .cloned()
+        .collect::<Vec<_>>();
+    logger.event(
+        "transcribe.correction.applied",
+        Some(&json!({
+            "appliedTotal": applied_items.len(),
+            "loggedTotal": log_items.len(),
+            "truncated": applied_items.len().saturating_sub(log_items.len()),
+            "items": log_items,
         })),
     );
 
@@ -362,8 +401,11 @@ fn sentence_text(words: &[WordToken]) -> String {
 }
 
 fn build_correction_system_prompt() -> String {
-    "You are an ASR correction assistant. Only correct obvious recognition mistakes. \
-Do not rewrite meaning. \
+    "You are an ASR correction assistant. Your job is to fix ASR recognition errors only. \
+Analyze sentence by sentence using the provided sentence index. \
+Do NOT do grammar polish, style rewrite, fluency optimization, or punctuation beautification. \
+Do NOT rewrite meaning. \
+Only correct misrecognized words, names, domain terms, and numbers/symbols caused by ASR. \
 Return strict JSON only: {\"items\":[{\"index\":0,\"corrections\":[{\"before\":\"...\",\"after\":\"...\",\"confidence\":0.0}]}]}. \
 Only include changed sentences in items. \
 Each corrections item must include before/after/confidence. \
@@ -410,7 +452,10 @@ fn build_correction_user_prompt(
         "previousBatchCorrected": previous_batch_corrected,
         "items": items,
         "requirements": [
-            "Only fix ASR mistakes, no semantic rewrite",
+            "Process sentence-by-sentence by index; focus on ASR recognition mistakes only",
+            "Do not change grammar/style/fluency if the original words are already correctly recognized",
+            "Only fix misrecognized tokens (names, domain terms, homophones, numbers/symbols)",
+            "No semantic rewrite",
             "Return only changed sentences in items",
             "For each changed sentence, return corrections list with before/after/confidence",
             "confidence must be in [0,1]"
@@ -436,12 +481,23 @@ fn build_correction_user_prompt(
     .to_string()
 }
 
-fn apply_corrections(words: &mut Vec<WordToken>, corrections: &[CorrectionPair]) -> (bool, usize, usize, usize) {
+#[derive(Debug, Clone)]
+struct AppliedCorrectionPair {
+    before: String,
+    after: String,
+    confidence: f64,
+}
+
+fn apply_corrections(
+    words: &mut Vec<WordToken>,
+    corrections: &[CorrectionPair],
+) -> (bool, usize, usize, usize, Vec<AppliedCorrectionPair>) {
     let mut changed_any = false;
     let mut changed_token_total = 0usize;
     let mut low_confidence_skip_total = 0usize;
     let mut replace_miss_total = 0usize;
     let mut cursor = 0usize;
+    let mut applied: Vec<AppliedCorrectionPair> = Vec::new();
 
     for pair in corrections {
         let confidence = pair.confidence.clamp(0.0, 1.0);
@@ -470,6 +526,11 @@ fn apply_corrections(words: &mut Vec<WordToken>, corrections: &[CorrectionPair])
         cursor = start + replacement_len;
         changed_any = true;
         changed_token_total += source_len.max(replacement_len);
+        applied.push(AppliedCorrectionPair {
+            before: pair.before.clone(),
+            after: pair.after.clone(),
+            confidence,
+        });
     }
 
     (
@@ -477,6 +538,7 @@ fn apply_corrections(words: &mut Vec<WordToken>, corrections: &[CorrectionPair])
         changed_token_total,
         low_confidence_skip_total,
         replace_miss_total,
+        applied,
     )
 }
 

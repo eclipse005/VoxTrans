@@ -35,6 +35,7 @@ type TranscribeProgressEvent = {
 type TranscribePhaseEvent = {
   taskId: string;
   phase: TranscribePhase;
+  phaseDetail?: string;
 };
 
 type SeparateProgressEvent = {
@@ -125,7 +126,18 @@ export function useQueueRunner({
       applyTranscribePhase(dispatch, {
         taskId: payload.taskId,
         phase: payload.phase,
+        phaseDetail: payload.phaseDetail,
       });
+      if (payload.phase === "summarize" || payload.phase === "translate") {
+        void (async () => {
+          try {
+            const workspace = await loadWorkspaceState();
+            syncQueueItem(dispatch, isTaskPresent, workspace, payload.taskId);
+          } catch {
+            // Ignore sync error during phase update; task flow continues.
+          }
+        })();
+      }
     })
       .then((fn) => {
         if (disposed) {
@@ -139,7 +151,7 @@ export function useQueueRunner({
       disposed = true;
       if (unlistenPhase) unlistenPhase();
     };
-  }, [dispatch]);
+  }, [dispatch, isTaskPresent]);
 
   useEffect(() => {
     let disposed = false;
@@ -300,7 +312,8 @@ function syncQueueItem(
     transcribeProgress: synced.transcribeProgress,
     transcribeSegmentCurrent: synced.transcribeSegmentCurrent,
     transcribeSegmentTotal: synced.transcribeSegmentTotal,
-    transcribePhase: "",
+    transcribePhase: synced.transcribePhase,
+    transcribePhaseDetail: synced.transcribePhaseDetail,
     transcribeError: synced.transcribeError,
     resultText: synced.resultText,
     resultSrt: synced.resultSrt,

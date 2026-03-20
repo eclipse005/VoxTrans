@@ -75,6 +75,7 @@ export function useQueueScheduler({
         transcribeSegmentCurrent: 0,
         transcribeSegmentTotal: 0,
         transcribePhase: "",
+        transcribePhaseDetail: "",
         transcribeError: message,
       }));
       pushToast(`失败：${item.name}，${message}`, "error");

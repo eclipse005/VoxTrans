@@ -16,6 +16,8 @@ pub struct QueueItemRecord {
     pub transcribe_segment_total: u32,
     #[serde(default)]
     pub transcribe_phase: String,
+    #[serde(default)]
+    pub transcribe_phase_detail: String,
     pub transcribe_error: String,
     pub result_text: String,
     pub result_srt: String,
@@ -143,6 +145,7 @@ impl From<QueueItemRow> for QueueItemRecord {
             transcribe_segment_current: queue.transcribe_segment_current,
             transcribe_segment_total: queue.transcribe_segment_total,
             transcribe_phase: queue.phase,
+            transcribe_phase_detail: queue.phase_detail,
             transcribe_error: queue.transcribe_error,
             result_text: editor.result_text,
             result_srt: editor.result_srt,
@@ -166,6 +169,7 @@ fn context_json_from_queue_item(item: &QueueItemRecord, intent: &str, created_at
     context.set_queue_projection(
         &item.transcribe_status,
         &item.transcribe_phase,
+        &item.transcribe_phase_detail,
         item.transcribe_progress,
         item.transcribe_segment_current,
         item.transcribe_segment_total,

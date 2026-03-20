@@ -52,6 +52,7 @@ function normalizeQueueItem(item: QueueItem): QueueItem {
     transcribeSegmentCurrent: Math.max(0, item.transcribeSegmentCurrent || 0),
     transcribeSegmentTotal: Math.max(0, item.transcribeSegmentTotal || 0),
     transcribePhase: normalizeTranscribePhase(item.transcribePhase),
+    transcribePhaseDetail: typeof item.transcribePhaseDetail === "string" ? item.transcribePhaseDetail : "",
     transcribeError: item.transcribeError || "",
     subtitleSegmentsJson: normalizeSubtitleSegmentsJson(item.subtitleSegmentsJson),
   });
@@ -116,6 +117,7 @@ function recoverTransientStates(item: QueueItem): QueueItem {
       transcribeSegmentCurrent: 0,
       transcribeSegmentTotal: 0,
       transcribePhase: "",
+      transcribePhaseDetail: "",
       transcribeError: "",
     };
   }
@@ -125,6 +127,7 @@ function recoverTransientStates(item: QueueItem): QueueItem {
       ...item,
       transcribeStatus: "error",
       transcribePhase: "",
+      transcribePhaseDetail: "",
       transcribeError: item.transcribeError || "任务在运行中被中断，请重新开始",
     };
   }

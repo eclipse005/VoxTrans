@@ -128,6 +128,11 @@ where
             translated_text,
         });
     }
+    if request.enable_subtitle_beautify {
+        for segment in &mut translated_segments {
+            segment.translated_text = beautify_translated_text(&segment.translated_text);
+        }
+    }
 
     let source_srt = build_srt(&translated_segments, false);
     let target_srt = build_srt(&translated_segments, true);
@@ -525,6 +530,116 @@ fn normalize_source_text(raw: &str) -> String {
 
 fn sec_to_ms(seconds: f64) -> u64 {
     (seconds.max(0.0) * 1000.0).round() as u64
+}
+
+fn beautify_translated_text(raw: &str) -> String {
+    let trimmed = trim_edge_punctuation(raw.trim());
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let replaced = replace_commas_with_space(trimmed);
+    optimize_cn_ascii_spacing(&replaced)
+}
+
+fn trim_edge_punctuation(raw: &str) -> &str {
+    let chars = raw.char_indices().collect::<Vec<_>>();
+    if chars.is_empty() {
+        return raw;
+    }
+
+    let mut start = 0usize;
+    let mut end_exclusive = raw.len();
+
+    while start < end_exclusive {
+        let slice = &raw[start..end_exclusive];
+        let mut iter = slice.char_indices();
+        let Some((_, ch)) = iter.next() else {
+            break;
+        };
+        let next = iter.next().map(|(_, c)| c);
+        if !is_removable_edge_punctuation(ch, next, true) {
+            break;
+        }
+        start += ch.len_utf8();
+    }
+
+    while start < end_exclusive {
+        let slice = &raw[start..end_exclusive];
+        let mut prev: Option<char> = None;
+        let mut last: Option<char> = None;
+        for c in slice.chars() {
+            prev = last;
+            last = Some(c);
+        }
+        let Some(ch) = last else {
+            break;
+        };
+        if !is_removable_edge_punctuation(ch, prev, false) {
+            break;
+        }
+        end_exclusive -= ch.len_utf8();
+    }
+
+    &raw[start..end_exclusive]
+}
+
+fn is_removable_edge_punctuation(ch: char, neighbor: Option<char>, is_leading: bool) -> bool {
+    if !matches!(ch, ',' | '，' | '.' | '。') {
+        return false;
+    }
+    match neighbor {
+        Some(next) => {
+            if is_leading {
+                is_cjk(next)
+            } else {
+                is_cjk(next)
+            }
+        }
+        None => false,
+    }
+}
+
+fn replace_commas_with_space(raw: &str) -> String {
+    raw.chars()
+        .map(|ch| if matches!(ch, ',' | '，') { ' ' } else { ch })
+        .collect::<String>()
+}
+
+fn optimize_cn_ascii_spacing(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 8);
+    let mut prev_non_space: Option<char> = None;
+
+    for ch in raw.chars() {
+        if ch.is_whitespace() {
+            if !out.ends_with(' ') {
+                out.push(' ');
+            }
+            continue;
+        }
+
+        if let Some(prev) = prev_non_space {
+            if need_space_between(prev, ch) && !out.ends_with(' ') {
+                out.push(' ');
+            }
+        }
+
+        out.push(ch);
+        prev_non_space = Some(ch);
+    }
+
+    out.trim().to_string()
+}
+
+fn need_space_between(left: char, right: char) -> bool {
+    (is_cjk(left) && is_ascii_word(right)) || (is_ascii_word(left) && is_cjk(right))
+}
+
+fn is_ascii_word(ch: char) -> bool {
+    ch.is_ascii_alphanumeric()
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(ch as u32, 0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF)
 }
 
 fn build_srt(segments: &[TranslateSegment], translated: bool) -> String {

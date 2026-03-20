@@ -283,7 +283,7 @@ export function useSubtitleWorkflow({
     }
 
     if (subtitleDirty) return;
-    if (activeItem.transcribeStatus !== "done") return;
+    if (!hasSubtitleData(activeItem)) return;
     const currentVersion = buildSubtitleVersion(activeItem);
     if (loadedSubtitleVersionRef.current === currentVersion) return;
     void loadSubtitleEditor(activeItem);
@@ -304,4 +304,20 @@ export function useSubtitleWorkflow({
     removeCue,
     exportSubtitleSrt,
   };
+}
+
+function hasSubtitleData(item: QueueItem): boolean {
+  if (item.resultSrt.trim().length > 0) return true;
+  if (!item.subtitleSegmentsJson.trim()) return false;
+  try {
+    const parsed = JSON.parse(item.subtitleSegmentsJson);
+    if (!Array.isArray(parsed)) return false;
+    return parsed.some((segment) => {
+      const sourceText = typeof segment?.sourceText === "string" ? segment.sourceText : "";
+      const translatedText = typeof segment?.translatedText === "string" ? segment.translatedText : "";
+      return sourceText.trim().length > 0 || translatedText.trim().length > 0;
+    });
+  } catch {
+    return false;
+  }
 }

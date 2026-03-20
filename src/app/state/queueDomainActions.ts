@@ -51,6 +51,7 @@ export function setQueuedState(dispatch: DispatchState, id: string): void {
     transcribeSegmentCurrent: 0,
     transcribeSegmentTotal: 0,
     transcribePhase: "",
+    transcribePhaseDetail: "",
     transcribeError: "",
   }));
 }
@@ -61,6 +62,7 @@ export function setProcessingState(dispatch: DispatchState, id: string): void {
     transcribeSegmentCurrent: 0,
     transcribeSegmentTotal: 0,
     transcribePhase: "initializing",
+    transcribePhaseDetail: "",
     transcribeError: "",
   }));
 }
@@ -89,6 +91,7 @@ export function setDoneState(
         ? payload.segmentTotal
         : item.transcribeSegmentTotal,
     transcribePhase: "",
+    transcribePhaseDetail: "",
     resultText: payload.resultText,
     resultSrt: payload.resultSrt,
     transcribeError: "",
@@ -105,6 +108,7 @@ export function setErrorState(
     transcribeSegmentCurrent: 0,
     transcribeSegmentTotal: 0,
     transcribePhase: "",
+    transcribePhaseDetail: "",
     transcribeError: errorMessage,
   }));
 }
@@ -122,6 +126,10 @@ export function applyTranscribeProgress(
     transcribeSegmentCurrent: Math.max(0, params.currentSegment || 0),
     transcribeSegmentTotal: Math.max(0, params.totalSegments || 0),
     transcribePhase: "recognizing",
+    transcribePhaseDetail:
+      params.totalSegments > 0
+        ? `${Math.max(0, params.currentSegment || 0)}/${params.totalSegments}`
+        : "",
     transcribeProgress:
       params.totalSegments > 0
         ? Math.min(
@@ -146,6 +154,7 @@ export function applySeparationProgress(
       transcribeSegmentCurrent: percent,
       transcribeSegmentTotal: 100,
       transcribePhase: "separating",
+      transcribePhaseDetail: `${percent}%`,
       transcribeProgress: Math.min(99, percent),
     };
   });
@@ -156,14 +165,18 @@ export function applyTranscribePhase(
   params: {
     taskId: string;
     phase: TranscribePhase;
+    phaseDetail?: string;
   },
 ): void {
   patchQueueItem(dispatch, params.taskId, (item) => {
     const nextPhase = params.phase || item.transcribePhase;
-    if (nextPhase === "translate") {
+    const phaseChanged = nextPhase !== item.transcribePhase;
+    const nextPhaseDetail = typeof params.phaseDetail === "string" ? params.phaseDetail : "";
+    if (phaseChanged) {
       return {
         ...item,
         transcribePhase: nextPhase,
+        transcribePhaseDetail: nextPhaseDetail,
         transcribeSegmentCurrent: 0,
         transcribeSegmentTotal: 0,
       };
@@ -171,6 +184,7 @@ export function applyTranscribePhase(
     return {
       ...item,
       transcribePhase: nextPhase,
+      transcribePhaseDetail: nextPhaseDetail,
     };
   });
 }
@@ -189,6 +203,7 @@ export function applyTranslateProgress(
     return {
       ...item,
       transcribePhase: "translate",
+      transcribePhaseDetail: total > 0 ? `${current}/${total}` : "",
       transcribeSegmentCurrent: current,
       transcribeSegmentTotal: total,
       transcribeProgress:
