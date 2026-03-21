@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef } from "react";
-import { evaluateTask } from "../api/workspace";
 import { useQueueInput } from "./queue/useQueueInput";
 import { useQueueRunner } from "./queue/useQueueRunner";
 import { useQueueScheduler } from "./queue/useQueueScheduler";
@@ -8,7 +7,6 @@ import { useYtDlpManager } from "./useYtDlpManager";
 import type { QueueItem, SavedSettings } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { QueueRunMode } from "./queue/useQueueRunner";
-import { toUserErrorMessage } from "../utils/errors";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
@@ -98,20 +96,6 @@ export function useQueueWorkflow({
     updateYtDlpBinary,
   } = useYtDlpManager({ pushToast });
 
-  const evaluateItem = useCallback(async (item: QueueItem) => {
-    if (item.transcribeStatus !== "done") {
-      pushToast("请先完成转录/转译后再评估", "info");
-      return;
-    }
-    try {
-      pushToast("评估中，正在调用 LLM...", "info");
-      await evaluateTask({ taskId: item.id });
-      pushToast("评估完成，结果已写入任务目录", "success");
-    } catch (error) {
-      pushToast(toUserErrorMessage(error, "评估失败"), "error");
-    }
-  }, [pushToast]);
-
   const processSingle = useCallback(async (item: QueueItem) => {
     const handledByYoutube = await processSingleFromYoutube(item);
     if (handledByYoutube) return;
@@ -153,7 +137,6 @@ export function useQueueWorkflow({
     processQueue,
     processSingle,
     processSingleTranscribeTranslate,
-    evaluateItem,
     clearQueue,
     removeItem,
     downloadYoutube: downloadYoutubeAndResetInput,

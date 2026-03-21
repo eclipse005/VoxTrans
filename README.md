@@ -1,73 +1,137 @@
-# React + TypeScript + Vite
+# VoxTrans
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+VoxTrans 是一款面向内容创作者、翻译者和字幕工作者的桌面字幕工具。
+它把“下载素材 -> 语音转文字 -> 翻译 -> 字幕精修 -> 导出成片可用字幕”整合到一个界面里，目标是让你少切软件、少做重复劳动，直接把时间用在内容质量上。
 
-Currently, two official plugins are available:
+当前版本：`v0.1.0`
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 语言支持（重要）
 
-## React Compiler
+- 当前仅支持英文音频/视频的转录（English ASR）
+- 当前仅支持将英文字幕翻译为中文（English -> 中文）
+- 暂不支持其他源语言转录或多语言互译
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 这款软件能帮你做什么
 
-## Expanding the ESLint configuration
+- 给英文视频/音频快速生成带时间轴的字幕
+- 把英文原文字幕翻成中文（并保留时间轴）
+- 生成单语字幕和双语字幕，直接用于发布
+- 做术语统一与语句润色
+- 在一个编辑器里完成查找替换、合并拆分、时间微调和导出
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 功能全览（逐项介绍）
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### 1. 媒体导入
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- 支持本地音视频文件拖拽上传、点击上传、多文件批量加入
+- 支持 YouTube 链接下载，下载完成后自动进入任务列表
+- YouTube 下载支持排队、重试、取消，避免任务冲突
+- 内置 `yt-dlp` 版本检测与更新入口
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+### 2. 任务队列
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+- 所有任务统一在左侧列表管理
+- 可单个处理，也可一键“全部开始”
+- 每个任务都能独立执行：
+- 仅转录
+- 转录+翻译
+- 每个任务都有清晰进度阶段提示（下载、转录、人声分离、翻译、质检等）
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### 3. 转录能力
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- 自动识别英文音频内容并生成带时间轴的字幕
+- 可选 CPU / GPU 执行
+- 支持长音频分段处理，提升稳定性
+- 可选“人声分离”，在背景音乐较强、环境噪声较多时提升可读性
+- 可选“标点优化”和“识别矫正”，让字幕更自然、减少错词
+
+### 4. 翻译能力
+
+- 可将英文字幕翻译为中文，并保持时间轴对齐
+- 支持批量并发翻译，处理长内容更高效
+- 支持术语注入，减少同一词在不同段落出现多种译法
+- 支持译文美化（标点与中英文间距优化）
+- 翻译后会进行两轮质量修订，进一步提升观感和一致性
+
+### 5. 术语库
+
+- 支持术语分组管理
+- 每条术语可设置原文、译文、备注
+- 可按项目维护专属术语规范
+- 一键开关“启用术语库”
+
+### 6. 字幕编辑器
+
+- 原文与译文同屏编辑
+- 支持逐条编辑时间轴（开始/结束时间）
+- 内置时间格式校验，避免错误时间码
+- 支持新增字幕段、删除字幕段
+- 支持多选后合并、拆分字幕段
+- 支持全文查找与替换（单条替换 / 全部替换）
+- 可显示字幕问题提示（如时长异常、重叠、空文本等）
+
+### 7. 导出能力
+
+可按需导出以下 4 种字幕格式：
+
+- 原文单语字幕
+- 译文单语字幕
+- 双语字幕（原文在上）
+- 双语字幕（译文在上）
+
+导出时会自动根据语言生成文件后缀，便于直接交付或上传平台。
+
+### 8. 日志与排查
+
+- 每个任务都有独立日志
+- 支持查看、刷新、清空、打开日志目录
+- 当任务失败时，便于快速定位问题
+
+### 9. 模型管理
+
+- 模型状态可视化（已就绪/未就绪）
+- 支持一键下载、取消下载、打开模型目录
+- 你可以清楚看到模型大小与下载进度，不用手动猜状态
+
+## 当前使用的模型
+
+### 本地模型（离线核心能力）
+
+- 语音转写模型：`parakeet-tdt-0.6b-v2`
+- 人声分离模型：`htdemucs_ft`
+
+### 在线大模型（兼容 OAI）
+
+以下环节使用你配置的 LLM：
+
+- 标点优化
+- 识别矫正
+- 字幕翻译
+- 两轮 QA 修订
+
+在设置中可按以下方式接入兼容 OAI 的 LLM：
+
+- `API Base URL`：填入服务商的 OpenAI-compatible 接口地址
+- `API Key`：填入你的密钥
+- `Model`：填入该服务可用的模型名
+- 保存后可在“标点优化 / 识别矫正 / 翻译 / QA”流程中使用
+
+## 典型使用流程
+
+1. 导入本地文件或粘贴 YouTube 链接
+2. 在任务列表选择“转录”或“转译”
+3. 进入字幕编辑器精修内容与时间轴
+4. 选择导出格式（单语/双语）
+5. 直接用于视频发布或交付客户
+
+## 适合人群
+
+- 自媒体创作者（视频字幕批量生产）
+- 跨境内容团队（英文内容转中文发布）
+- 课程/访谈后期（快速拿到可编辑字幕）
+- 翻译与本地化从业者（术语一致性要求高）
+
+## 项目状态
+
+VoxTrans 正在持续迭代中。欢迎试用、提建议、提需求。
+如果你在论坛看到这份介绍，也欢迎直接反馈你最想加的功能，我会优先排期。

@@ -102,7 +102,6 @@ function App() {
     processQueue,
     processSingle,
     processSingleTranscribeTranslate,
-    evaluateItem,
     clearQueue,
     removeItem,
     downloadYoutube,
@@ -250,7 +249,6 @@ function App() {
             onClearQueue={clearQueue}
             onProcessSingle={processSingle}
             onProcessSingleTranscribeTranslate={processSingleTranscribeTranslate}
-            onEvaluateItem={evaluateItem}
             onRemoveItem={removeItem}
           />
         </section>

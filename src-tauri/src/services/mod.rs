@@ -5,7 +5,6 @@
 //! - `transcription`: post-ASR processing pipeline (segment/srt generation phases).
 pub mod file;
 pub mod demucs;
-pub mod evaluation;
 pub mod logs;
 pub mod model;
 pub mod output;
