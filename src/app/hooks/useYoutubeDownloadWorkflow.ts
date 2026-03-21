@@ -6,7 +6,7 @@ import type { QueueRunMode } from "./queue/useQueueRunner";
 import type { YoutubeDownloadProgressResponse } from "../api/youtube";
 import { cancelYoutubeDownload, downloadYoutubeTask } from "../api/youtube";
 import { addQueueItems, patchQueueItem, removeQueueItem } from "../state/queueDomainActions";
-import { deleteTaskSummaries, registerTaskUpload } from "../api/workspace";
+import { deleteTasks, registerTaskUpload } from "../api/workspace";
 import { toUserErrorMessage } from "../utils/errors";
 
 type DispatchState = (action: AppAction) => void;
@@ -451,7 +451,7 @@ export function useYoutubeDownloadWorkflow({
     }
 
     try {
-      await deleteTaskSummaries({
+      await deleteTasks({
         taskId: id,
         mediaPath: target?.path || null,
       });

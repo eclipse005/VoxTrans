@@ -6,7 +6,6 @@
 pub mod file;
 pub mod demucs;
 pub mod evaluation;
-pub mod history;
 pub mod logs;
 pub mod model;
 pub mod output;

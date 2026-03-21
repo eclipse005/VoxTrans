@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { WorkspaceStateResponse } from "../../features/media/types";
 
-type DeleteTaskSummariesRequest = {
+type DeleteTasksRequest = {
   taskId: string | null;
   mediaPath: string | null;
 };
@@ -66,8 +66,8 @@ export async function loadWorkspaceState(): Promise<WorkspaceStateResponse> {
   return invoke<WorkspaceStateResponse>("load_workspace_state");
 }
 
-export async function deleteTaskSummaries(request: DeleteTaskSummariesRequest): Promise<void> {
-  await invoke("delete_task_summaries", { request });
+export async function deleteTasks(request: DeleteTasksRequest): Promise<void> {
+  await invoke("delete_tasks", { request });
 }
 
 export async function executeTaskRun(request: ExecuteTaskRunRequest): Promise<void> {

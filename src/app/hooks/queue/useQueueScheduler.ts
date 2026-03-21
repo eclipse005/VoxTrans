@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { deleteTaskSummaries, enqueueTaskRun } from "../../api/workspace";
+import { deleteTasks, enqueueTaskRun } from "../../api/workspace";
 import type { QueueItem, SavedSettings } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
 import type { QueueRunMode } from "./useQueueRunner";
@@ -155,9 +155,9 @@ export function useQueueScheduler({
     }
     clearQueueItems(dispatch);
     try {
-      await deleteTaskSummaries({ taskId: null, mediaPath: null });
+      await deleteTasks({ taskId: null, mediaPath: null });
     } catch {
-      // Queue is already cleared in UI; ignore history cleanup failure.
+      // Queue is already cleared in UI; ignore backend cleanup failure.
     }
     pushToast("队列已清空", "info");
   }, [dispatch, pushToast, queueBusy]);
@@ -168,7 +168,7 @@ export function useQueueScheduler({
       return;
     }
     try {
-      await deleteTaskSummaries({ taskId: item.id, mediaPath: item.path });
+      await deleteTasks({ taskId: item.id, mediaPath: item.path });
       removeQueueItem(dispatch, id);
     } catch (error) {
       reportError(error, "removeItem");

@@ -49,6 +49,13 @@ pub struct GetTaskRunRequest {
     pub task_id: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteTasksRequest {
+    pub media_path: Option<String>,
+    pub task_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskRunRecord {
@@ -354,6 +361,60 @@ pub async fn get_task_run(pool: &SqlitePool, request: GetTaskRunRequest) -> Resu
         steps,
         artifacts,
     })
+}
+
+pub async fn delete_tasks(pool: &SqlitePool, request: DeleteTasksRequest) -> Result<(), String> {
+    match (request.task_id, request.media_path) {
+        (Some(task_id), Some(media_path)) => {
+            sqlx::query("DELETE FROM tasks WHERE id = ? OR media_path = ?")
+                .bind(&task_id)
+                .bind(&media_path)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            sqlx::query("DELETE FROM task_runs WHERE id = ? OR media_path = ?")
+                .bind(task_id)
+                .bind(media_path)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        (Some(task_id), None) => {
+            sqlx::query("DELETE FROM tasks WHERE id = ?")
+                .bind(&task_id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            sqlx::query("DELETE FROM task_runs WHERE id = ?")
+                .bind(task_id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        (None, Some(media_path)) => {
+            sqlx::query("DELETE FROM tasks WHERE media_path = ?")
+                .bind(&media_path)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            sqlx::query("DELETE FROM task_runs WHERE media_path = ?")
+                .bind(media_path)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        (None, None) => {
+            sqlx::query("DELETE FROM tasks")
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            sqlx::query("DELETE FROM task_runs")
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, sqlx::FromRow)]

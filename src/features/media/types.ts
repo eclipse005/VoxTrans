@@ -180,22 +180,6 @@ export type WorkspaceStateResponse = {
   queue: QueueItem[];
 };
 
-export type TaskSummary = {
-  id: string;
-  mediaPath: string;
-  name: string;
-  mediaKind: "audio" | "video";
-  sizeBytes: number;
-  lastStatus: string;
-  lastError: string;
-  outputSrtPath: string;
-  outputWordsJson: string;
-  contextJson: string;
-  transcribedAt: number | null;
-  createdAt: number;
-  updatedAt: number;
-};
-
 export type ModelDownloadStateSnapshot = {
   phase: "idle" | "downloading" | "completed" | "failed" | "cancelled";
   downloadedBytes: number;
