@@ -1,6 +1,28 @@
+import { useEffect, useRef, useState } from "react";
 import type { QueueItem, QueueStatus } from "../../features/media/types";
 import { formatBytes, statusLabel } from "../../features/media/utils";
-import { AudioFileIcon, MicIcon, PlayIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
+import { AudioFileIcon, ChevronDownIcon, MicIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
+
+type QueueBatchMode = "transcribe" | "transcribe_translate";
+const QUEUE_BATCH_MODE_KEY = "voxtrans.queueBatchMode.v1";
+
+function loadSavedBatchMode(): QueueBatchMode {
+  try {
+    const raw = window.localStorage.getItem(QUEUE_BATCH_MODE_KEY);
+    if (raw === "transcribe_translate") return "transcribe_translate";
+  } catch {
+    // Ignore storage errors.
+  }
+  return "transcribe";
+}
+
+function saveBatchMode(mode: QueueBatchMode): void {
+  try {
+    window.localStorage.setItem(QUEUE_BATCH_MODE_KEY, mode);
+  } catch {
+    // Ignore storage errors.
+  }
+}
 
 type MediaListProps = {
   queue: QueueItem[];
@@ -9,7 +31,7 @@ type MediaListProps = {
   activeId: string;
   isProcessing: boolean;
   onSetActiveId: (id: string) => void;
-  onProcessQueue: () => void | Promise<void>;
+  onProcessQueue: (mode: QueueBatchMode) => void | Promise<void>;
   onClearQueue: () => void;
   onProcessSingle: (item: QueueItem) => void | Promise<void>;
   onProcessSingleTranscribeTranslate: (item: QueueItem) => void | Promise<void>;
@@ -77,15 +99,79 @@ export default function MediaList({
   onRemoveItem,
 }: MediaListProps) {
   const listBusy = isProcessing || !workspaceHydrated;
+  const [batchMode, setBatchMode] = useState<QueueBatchMode>(() => loadSavedBatchMode());
+  const [batchMenuOpen, setBatchMenuOpen] = useState(false);
+  const batchMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    saveBatchMode(batchMode);
+  }, [batchMode]);
+
+  useEffect(() => {
+    if (!batchMenuOpen) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (!batchMenuRef.current) return;
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!batchMenuRef.current.contains(target)) {
+        setBatchMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [batchMenuOpen]);
+
+  const modeLabel = batchMode === "transcribe" ? "转录" : "转译";
 
   return (
     <div className="apple-animate-on-scroll apple-delay-200 file-list-section animated">
       <div className="file-list-header">
         <span className="file-count">{workspaceHydrated ? `共 ${queueCount} 个媒体` : "加载任务中..."}</span>
         <div className="file-list-actions">
-          <button className="file-list-icon-btn" disabled={listBusy} onClick={onProcessQueue} title="全部开始" aria-label="全部开始">
-            <PlayIcon />
-          </button>
+          <div className="file-list-split-btn" ref={batchMenuRef}>
+            <button
+              className="file-list-icon-btn file-list-split-btn-main"
+              disabled={listBusy}
+              onClick={() => { void onProcessQueue(batchMode); }}
+              title={`全部开始（${modeLabel}）`}
+              aria-label={`全部开始（${modeLabel}）`}
+            >
+              {batchMode === "transcribe" ? <MicIcon /> : <TranslateIcon />}
+            </button>
+            <button
+              className="file-list-icon-btn file-list-split-btn-toggle"
+              disabled={listBusy}
+              onClick={() => setBatchMenuOpen((prev) => !prev)}
+              title="选择批量模式"
+              aria-label="选择批量模式"
+            >
+              <ChevronDownIcon />
+            </button>
+            {batchMenuOpen ? (
+              <div className="file-list-split-menu" role="menu">
+                <button
+                  className={`file-list-split-menu-item ${batchMode === "transcribe" ? "active" : ""}`}
+                  onClick={() => {
+                    setBatchMode("transcribe");
+                    setBatchMenuOpen(false);
+                  }}
+                  role="menuitem"
+                >
+                  全部转录
+                </button>
+                <button
+                  className={`file-list-split-menu-item ${batchMode === "transcribe_translate" ? "active" : ""}`}
+                  onClick={() => {
+                    setBatchMode("transcribe_translate");
+                    setBatchMenuOpen(false);
+                  }}
+                  role="menuitem"
+                >
+                  全部转译
+                </button>
+              </div>
+            ) : null}
+          </div>
           <button className="file-list-icon-btn file-list-icon-btn-danger" disabled={listBusy} onClick={onClearQueue} title="清空" aria-label="清空">
             <TrashIcon />
           </button>

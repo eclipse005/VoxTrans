@@ -5,6 +5,7 @@ pub const STAGE_INIT: &str = "init";
 pub const STAGE_SEPARATE: &str = "separate";
 pub const STAGE_ASR: &str = "asr";
 pub const STAGE_PUNCTUATE: &str = "punctuate";
+pub const STAGE_CORRECT: &str = "correct";
 pub const STAGE_SEGMENT: &str = "segment";
 pub const STAGE_SUMMARIZE: &str = "summarize";
 pub const STAGE_TRANSLATE: &str = "translate";
@@ -63,6 +64,7 @@ pub struct StageMap {
     pub separate: StageEnvelope,
     pub asr: StageEnvelope,
     pub punctuate: StageEnvelope,
+    pub correct: StageEnvelope,
     pub segment: StageEnvelope,
     pub summarize: StageEnvelope,
     pub translate: StageEnvelope,
@@ -145,13 +147,6 @@ pub struct TaskContextSeed {
 }
 
 impl TaskContext {
-    pub fn parse_or_new(raw: &str, seed: TaskContextSeed) -> Self {
-        if let Ok(parsed) = serde_json::from_str::<TaskContext>(raw) {
-            return parsed;
-        }
-        Self::new(seed)
-    }
-
     pub fn new(seed: TaskContextSeed) -> Self {
         let now = unix_now();
         Self {
@@ -293,8 +288,40 @@ impl TaskContext {
         };
     }
 
-    pub fn to_json_string(&self) -> Result<String, String> {
-        serde_json::to_string(self).map_err(|err| err.to_string())
+    pub fn stage_status(&self, stage: &str) -> &str {
+        self.stage_ref(stage)
+            .map(|s| s.status.as_str())
+            .unwrap_or("pending")
+    }
+
+    pub fn set_stage_snapshot(
+        &mut self,
+        stage: &str,
+        status: String,
+        started_at: Option<i64>,
+        finished_at: Option<i64>,
+        output: Value,
+        metrics: Value,
+        error_code: String,
+        error_message: String,
+    ) {
+        if let Some(s) = self.stage_mut(stage) {
+            s.status = status;
+            s.started_at = started_at;
+            s.finished_at = finished_at;
+            s.output = output;
+            s.metrics = metrics;
+            if error_code.trim().is_empty() && error_message.trim().is_empty() {
+                s.error = None;
+            } else {
+                s.error = Some(StageError {
+                    code: error_code,
+                    message: error_message,
+                    retriable: true,
+                    details: Value::Null,
+                });
+            }
+        }
     }
 
     fn stage_mut(&mut self, stage: &str) -> Option<&mut StageEnvelope> {
@@ -303,12 +330,30 @@ impl TaskContext {
             STAGE_SEPARATE => Some(&mut self.stages.separate),
             STAGE_ASR => Some(&mut self.stages.asr),
             STAGE_PUNCTUATE => Some(&mut self.stages.punctuate),
+            STAGE_CORRECT => Some(&mut self.stages.correct),
             STAGE_SEGMENT => Some(&mut self.stages.segment),
             STAGE_SUMMARIZE => Some(&mut self.stages.summarize),
             STAGE_TRANSLATE => Some(&mut self.stages.translate),
             STAGE_QA => Some(&mut self.stages.qa),
             STAGE_COMPOSE => Some(&mut self.stages.compose),
             STAGE_PERSIST => Some(&mut self.stages.persist),
+            _ => None,
+        }
+    }
+
+    fn stage_ref(&self, stage: &str) -> Option<&StageEnvelope> {
+        match stage {
+            STAGE_INIT => Some(&self.stages.init),
+            STAGE_SEPARATE => Some(&self.stages.separate),
+            STAGE_ASR => Some(&self.stages.asr),
+            STAGE_PUNCTUATE => Some(&self.stages.punctuate),
+            STAGE_CORRECT => Some(&self.stages.correct),
+            STAGE_SEGMENT => Some(&self.stages.segment),
+            STAGE_SUMMARIZE => Some(&self.stages.summarize),
+            STAGE_TRANSLATE => Some(&self.stages.translate),
+            STAGE_QA => Some(&self.stages.qa),
+            STAGE_COMPOSE => Some(&self.stages.compose),
+            STAGE_PERSIST => Some(&self.stages.persist),
             _ => None,
         }
     }
@@ -321,6 +366,7 @@ impl StageMap {
             separate: StageEnvelope::new(),
             asr: StageEnvelope::new(),
             punctuate: StageEnvelope::new(),
+            correct: StageEnvelope::new(),
             segment: StageEnvelope::new(),
             summarize: StageEnvelope::new(),
             translate: StageEnvelope::new(),

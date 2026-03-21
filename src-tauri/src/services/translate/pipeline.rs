@@ -73,30 +73,84 @@ where
     F: FnMut(&str),
     G: FnMut(usize, usize),
 {
-    validate_request(&request)?;
+    on_phase("summarize");
+    let (topic_summary, tone_strategy) = summarize_translate_style(&request).await?;
+    on_phase("translate");
+    run_translate_with_style(
+        request,
+        topic_summary,
+        tone_strategy,
+        &mut on_batch_progress,
+    )
+    .await
+}
 
+pub async fn summarize_translate_style(
+    request: &TranslatePipelineRequest,
+) -> Result<(String, String), String> {
+    validate_request(request)?;
     let segments = build_source_segments(&request.tokens);
     if segments.is_empty() {
         return Err("tokens did not produce any non-empty subtitle segment".to_string());
     }
+    let rig_client = build_rig_client(request)?;
+    let terminology_entries = normalize_terminology_entries(&request.terminology_entries);
+    let style_profile =
+        build_global_style_profile(request, &segments, &terminology_entries, &rig_client).await?;
+    Ok((style_profile.topic_summary, style_profile.tone_strategy))
+}
 
+pub async fn run_translate_with_style<G>(
+    request: TranslatePipelineRequest,
+    topic_summary: String,
+    tone_strategy: String,
+    on_batch_progress: &mut G,
+) -> Result<TranslatePipelineResponse, String>
+where
+    G: FnMut(usize, usize),
+{
+    validate_request(&request)?;
+    let segments = build_source_segments(&request.tokens);
+    if segments.is_empty() {
+        return Err("tokens did not produce any non-empty subtitle segment".to_string());
+    }
     let rig_client = build_rig_client(&request)?;
     let terminology_entries = normalize_terminology_entries(&request.terminology_entries);
-
-    on_phase("summarize");
-    let style_profile =
-        build_global_style_profile(&request, &segments, &terminology_entries, &rig_client).await;
-
-    on_phase("translate");
-    let batches = split_batches(&segments, BATCH_SEGMENT_SIZE);
-    let extracted_batches = run_batch_translate_pipeline(
+    let style_profile = StyleProfile {
+        topic_summary,
+        tone_strategy,
+    };
+    translate_from_style(
         &request,
         &segments,
-        &batches,
         &terminology_entries,
         &style_profile,
         &rig_client,
-        &mut on_batch_progress,
+        on_batch_progress,
+    )
+    .await
+}
+
+async fn translate_from_style<G>(
+    request: &TranslatePipelineRequest,
+    segments: &[SourceSegment],
+    terminology_entries: &[TranslateTerminologyPromptEntry],
+    style_profile: &StyleProfile,
+    rig_client: &RigNodeClient,
+    on_batch_progress: &mut G,
+) -> Result<TranslatePipelineResponse, String>
+where
+    G: FnMut(usize, usize),
+{
+    let batches = split_batches(segments, BATCH_SEGMENT_SIZE);
+    let extracted_batches = run_batch_translate_pipeline(
+        request,
+        segments,
+        &batches,
+        terminology_entries,
+        style_profile,
+        rig_client,
+        on_batch_progress,
     )
     .await?;
 
@@ -117,7 +171,7 @@ where
     }
 
     let mut translated_segments: Vec<TranslateSegment> = Vec::new();
-    for segment in &segments {
+    for segment in segments {
         let translated_text = translated_by_index
             .remove(&segment.index)
             .ok_or_else(|| format!("missing translation for segment {}", segment.index))?;
@@ -145,8 +199,8 @@ where
         bilingual_srt_source_first,
         bilingual_srt_target_first,
         segments: translated_segments,
-        style_topic_summary: style_profile.topic_summary,
-        style_tone_strategy: style_profile.tone_strategy,
+        style_topic_summary: style_profile.topic_summary.clone(),
+        style_tone_strategy: style_profile.tone_strategy.clone(),
     })
 }
 
@@ -163,14 +217,10 @@ async fn build_global_style_profile(
     segments: &[SourceSegment],
     terminology_entries: &[TranslateTerminologyPromptEntry],
     rig_client: &RigNodeClient,
-) -> StyleProfile {
-    let fallback = StyleProfile {
-        topic_summary: "General subtitle translation.".to_string(),
-        tone_strategy: "Natural, concise, and consistent subtitle tone.".to_string(),
-    };
+) -> Result<StyleProfile, String> {
     let (head, middle, tail) = sample_global_contexts(segments, STYLE_CONTEXT_WORDS);
     if head.is_empty() && middle.is_empty() && tail.is_empty() {
-        return fallback;
+        return Err("summarize failed: empty style context".to_string());
     }
 
     let style_prompt = build_translate_style_user_prompt(&TranslateStylePromptInput {
@@ -193,28 +243,20 @@ async fn build_global_style_profile(
             Some(&validator),
         )
         .await;
-    let parsed = match result {
-        Ok(ok) => ok.json,
-        Err(_) => return fallback,
-    };
-    let style = match serde_json::from_value::<StyleExtraction>(parsed) {
-        Ok(v) => v,
-        Err(_) => return fallback,
-    };
+    let parsed = result
+        .map_err(|err| format!("summarize failed: {}", err.message))?
+        .json;
+    let style = serde_json::from_value::<StyleExtraction>(parsed)
+        .map_err(|err| format!("summarize parse failed: {err}"))?;
     let topic_summary = style.topic_summary.trim().to_string();
     let tone_strategy = style.tone_strategy.trim().to_string();
-    StyleProfile {
-        topic_summary: if topic_summary.is_empty() {
-            fallback.topic_summary
-        } else {
-            topic_summary
-        },
-        tone_strategy: if tone_strategy.is_empty() {
-            fallback.tone_strategy
-        } else {
-            tone_strategy
-        },
+    if topic_summary.is_empty() || tone_strategy.is_empty() {
+        return Err("summarize failed: empty summary fields".to_string());
     }
+    Ok(StyleProfile {
+        topic_summary,
+        tone_strategy,
+    })
 }
 
 async fn run_batch_translate_pipeline<G>(

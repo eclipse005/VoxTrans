@@ -7,6 +7,7 @@ import { useYtDlpManager } from "./useYtDlpManager";
 import type { QueueItem, SavedSettings } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { QueueRunMode } from "./queue/useQueueRunner";
+import type { QueueBatchMode } from "./queue/useQueueScheduler";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
@@ -60,7 +61,7 @@ export function useQueueWorkflow({
   const {
     queueCount,
     queueBusy,
-    processQueue,
+    processQueue: processQueueFromScheduler,
     processSingle: processSingleFromScheduler,
     processSingleTranscribeTranslate: processSingleTranscribeTranslateFromScheduler,
     clearQueue: clearQueueFromScheduler,
@@ -101,6 +102,10 @@ export function useQueueWorkflow({
     if (handledByYoutube) return;
     await processSingleFromScheduler(item);
   }, [processSingleFromScheduler, processSingleFromYoutube]);
+
+  const processQueue = useCallback(async (mode: QueueBatchMode = "transcribe") => {
+    await processQueueFromScheduler(mode);
+  }, [processQueueFromScheduler]);
 
   const processSingleTranscribeTranslate = useCallback(async (item: QueueItem) => {
     const handledByYoutube = await processSingleTranscribeTranslateFromYoutube(item);

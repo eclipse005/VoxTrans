@@ -1,7 +1,6 @@
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use voxtrans_core::subtitle::srt::{normalize_cues, parse_srt, to_srt_from_cues};
-use crate::services::task_context::{TaskContext, TaskContextSeed};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,7 +22,7 @@ pub async fn save_subtitle_editor(
     let normalized = normalize_cues(&parsed);
     let normalized_srt = to_srt_from_cues(&normalized);
     let row = sqlx::query_as::<_, TaskRunEditorRow>(
-        "SELECT id, intent, source_lang, target_lang, media_path, media_kind, size_bytes, created_at, settings_snapshot_json, context_json
+        "SELECT subtitle_segments_json, translated_srt
          FROM task_runs WHERE id = ?",
     )
     .bind(request.task_id.trim())
@@ -32,44 +31,24 @@ pub async fn save_subtitle_editor(
     .map_err(|err| err.to_string())?
     .ok_or_else(|| "task not found".to_string())?;
 
-    let settings_snapshot = serde_json::from_str::<serde_json::Value>(&row.settings_snapshot_json)
-        .unwrap_or_else(|_| serde_json::json!({}));
-    let mut context = TaskContext::parse_or_new(
-        &row.context_json,
-        TaskContextSeed {
-            task_id: row.id.clone(),
-            intent: row.intent.clone(),
-            source_lang: row.source_lang.clone(),
-            target_lang: row.target_lang.clone(),
-            media_path: row.media_path.clone(),
-            media_kind: row.media_kind.clone(),
-            media_size_bytes: row.size_bytes.max(0) as u64,
-            settings_snapshot,
-            created_at: row.created_at,
-        },
-    );
     let merged_segments_json = request
         .subtitle_segments_json
         .as_deref()
         .and_then(normalize_subtitle_segments_json)
         .unwrap_or(build_segments_json_with_preserved_translation(
             &normalized,
-            &context.projections.editor.subtitle_segments_json,
+            &row.subtitle_segments_json,
         )?);
-    context.set_editor_projection(
-        merged_segments_json,
-        context.projections.editor.result_text.clone(),
-        normalized_srt,
-        context.projections.editor.translated_srt.clone(),
-    );
-    let context_json = context.to_json_string()?;
+
     let now = unix_now();
     sqlx::query(
         "UPDATE task_runs
-         SET context_json = ?, updated_at = ?
+         SET result_srt = ?, subtitle_segments_json = ?, translated_srt = ?, updated_at = ?
          WHERE id = ?",
     )
-    .bind(context_json)
+    .bind(normalized_srt)
+    .bind(merged_segments_json)
+    .bind(row.translated_srt)
     .bind(now)
     .bind(request.task_id.trim())
     .execute(pool)
@@ -81,16 +60,8 @@ pub async fn save_subtitle_editor(
 
 #[derive(Debug, sqlx::FromRow)]
 struct TaskRunEditorRow {
-    id: String,
-    intent: String,
-    source_lang: String,
-    target_lang: String,
-    media_path: String,
-    media_kind: String,
-    size_bytes: i64,
-    created_at: i64,
-    settings_snapshot_json: String,
-    context_json: String,
+    subtitle_segments_json: String,
+    translated_srt: String,
 }
 
 #[derive(Debug, serde::Deserialize)]

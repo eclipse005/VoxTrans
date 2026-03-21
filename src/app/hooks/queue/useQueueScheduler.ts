@@ -24,6 +24,8 @@ type UseQueueSchedulerArgs = {
   takeTaskMode: (taskId: string) => QueueRunMode;
 };
 
+export type QueueBatchMode = "transcribe" | "transcribe_translate";
+
 export function useQueueScheduler({
   queue,
   settings,
@@ -55,9 +57,7 @@ export function useQueueScheduler({
         name: item.name,
         mediaKind: item.mediaKind,
         sizeBytes: item.sizeBytes,
-        intent: mode === "translate_only"
-          ? "TRANSLATE_ONLY"
-          : mode === "transcribe_translate"
+        intent: mode === "transcribe_translate"
             ? "TRANSCRIBE_TRANSLATE"
             : "TRANSCRIBE",
         sourceLang: "auto",
@@ -105,7 +105,7 @@ export function useQueueScheduler({
       });
   }, [hasProcessingTask, isYoutubePlaceholder, queue, runBatch, takeTaskMode, pushToast]);
 
-  const processQueue = useCallback(async () => {
+  const processQueue = useCallback(async (mode: QueueBatchMode = "transcribe") => {
     const pendingItems = queue.filter((item) => item.transcribeStatus === "pending" && !isYoutubePlaceholder(item));
     if (!pendingItems.length) {
       pushToast("没有待处理文件", "error");
@@ -114,7 +114,8 @@ export function useQueueScheduler({
 
     let queuedCount = 0;
     for (const item of pendingItems) {
-      if (await enqueueForMode(item, "transcribe")) {
+      const resolvedMode = mode === "transcribe" ? "transcribe" : "transcribe_translate";
+      if (await enqueueForMode(item, resolvedMode)) {
         queuedCount += 1;
       }
     }
@@ -124,7 +125,8 @@ export function useQueueScheduler({
       return;
     }
 
-    pushToast(`开始批量处理，共 ${queuedCount} 个文件`, "info");
+    const modeLabel = mode === "transcribe" ? "转录" : "转译";
+    pushToast(`开始批量${modeLabel}，共 ${queuedCount} 个文件`, "info");
   }, [enqueueForMode, isYoutubePlaceholder, pushToast, queue]);
 
   const processSingle = useCallback(async (item: QueueItem) => {
@@ -140,8 +142,7 @@ export function useQueueScheduler({
   const processSingleTranscribeTranslate = useCallback(async (item: QueueItem) => {
     if (isYoutubePlaceholder(item)) return;
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
-    const mode = resolveTranslateMode(item);
-    const ok = await enqueueForMode(item, mode);
+    const ok = await enqueueForMode(item, "transcribe_translate");
     if (!ok) return;
     if (queueBusy) {
       pushToast(`已加入排队：${item.name}`, "info");
@@ -185,30 +186,6 @@ export function useQueueScheduler({
     clearQueue,
     removeItem,
   };
-}
-
-function resolveTranslateMode(item: QueueItem): QueueRunMode {
-  const segments = parseSubtitleSegments(item.subtitleSegmentsJson);
-  const hasSource = segments.some((segment) => segment.sourceText.trim().length > 0);
-  const hasTranslated = segments.some((segment) => segment.translatedText.trim().length > 0);
-  if (hasSource && !hasTranslated) {
-    return "translate_only";
-  }
-  return "transcribe_translate";
-}
-
-function parseSubtitleSegments(raw?: string): Array<{ sourceText: string; translatedText: string }> {
-  if (!raw?.trim()) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((segment) => ({
-      sourceText: typeof segment?.sourceText === "string" ? segment.sourceText : "",
-      translatedText: typeof segment?.translatedText === "string" ? segment.translatedText : "",
-    }));
-  } catch {
-    return [];
-  }
 }
 
 function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown> {

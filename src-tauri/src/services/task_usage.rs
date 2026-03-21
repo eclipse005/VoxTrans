@@ -25,23 +25,6 @@ pub async fn record_llm_usage(task_id: &str, phase: &str, usage: LlmTokenUsage) 
         return Ok(());
     };
     let normalized_phase = normalize_phase(phase);
-    let mut tx = pool.begin().await.map_err(|err| err.to_string())?;
-    sqlx::query(
-        "UPDATE task_runs
-         SET llm_prompt_tokens_total = llm_prompt_tokens_total + ?,
-             llm_completion_tokens_total = llm_completion_tokens_total + ?,
-             llm_total_tokens = llm_total_tokens + ?,
-             updated_at = strftime('%s','now')
-         WHERE id = ?",
-    )
-    .bind(usage.prompt_tokens as i64)
-    .bind(usage.completion_tokens as i64)
-    .bind(usage.total_tokens as i64)
-    .bind(task_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|err| err.to_string())?;
-
     sqlx::query(
         "INSERT INTO task_llm_usage_phase (
             task_id, phase, prompt_tokens, completion_tokens, total_tokens, created_at, updated_at
@@ -57,11 +40,10 @@ pub async fn record_llm_usage(task_id: &str, phase: &str, usage: LlmTokenUsage) 
     .bind(usage.prompt_tokens as i64)
     .bind(usage.completion_tokens as i64)
     .bind(usage.total_tokens as i64)
-    .execute(&mut *tx)
+    .execute(pool)
     .await
     .map_err(|err| err.to_string())?;
-
-    tx.commit().await.map_err(|err| err.to_string())
+    Ok(())
 }
 
 pub fn record_llm_usage_best_effort(task_id: &str, phase: &str, usage: LlmTokenUsage) {
@@ -79,12 +61,16 @@ pub async fn get_task_total_tokens(task_id: &str) -> Result<u64, String> {
     let Some(pool) = TASK_USAGE_POOL.get() else {
         return Ok(0);
     };
-    let total = sqlx::query_scalar::<_, i64>("SELECT llm_total_tokens FROM task_runs WHERE id = ?")
+    let total = match sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(total_tokens), 0) FROM task_llm_usage_phase WHERE task_id = ?",
+    )
         .bind(task_id)
         .fetch_optional(pool)
         .await
-        .map_err(|err| err.to_string())?
-        .unwrap_or(0);
+    {
+        Ok(v) => v.unwrap_or(0),
+        Err(_) => 0,
+    };
     Ok(total.max(0) as u64)
 }
 

@@ -114,7 +114,7 @@ export type AppAction = UiAction | QueueAction | SubtitleAction | SettingsAction
 
 export const defaultSettings: SavedSettings = {
   provider: normalizeProvider(undefined),
-  chunkTargetSeconds: 300,
+  chunkTargetSeconds: 180,
   subtitleMaxWordsPerSegment: 20,
   subtitleLengthReference: 28,
   asrModel: "parakeet-tdt-0.6b-v2",

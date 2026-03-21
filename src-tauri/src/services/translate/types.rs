@@ -19,7 +19,7 @@ pub struct TranslateToken {
     pub word: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranslateSegment {
     pub start_ms: u64,
@@ -58,7 +58,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranslatePipelineResponse {
     pub source_srt: String,

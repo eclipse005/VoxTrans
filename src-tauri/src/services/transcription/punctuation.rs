@@ -50,7 +50,7 @@ pub async fn optimize_words_with_rig_node(
     media_path: &str,
     words: Vec<WordToken>,
     config: &PunctuationConfig,
-) -> Vec<WordToken> {
+) -> Result<Vec<WordToken>, String> {
     let logger = TaskLogger::main_with_media(task_id.to_string(), media_path.to_string());
     if !config.enabled {
         logger.event(
@@ -59,34 +59,22 @@ pub async fn optimize_words_with_rig_node(
                 "reason": "disabled"
             })),
         );
-        return words;
+        return Ok(words);
     }
     if config.api_key.trim().is_empty() {
-        logger.event(
-            "transcribe.punctuation.skip",
-            Some(&json!({
-                "reason": "missing_api_key"
-            })),
-        );
-        return words;
+        let message = "punctuation failed: missing API key".to_string();
+        logger.event("transcribe.punctuation.error", Some(&json!({ "reason": "missing_api_key" })));
+        return Err(message);
     }
     if config.model.trim().is_empty() {
-        logger.event(
-            "transcribe.punctuation.skip",
-            Some(&json!({
-                "reason": "missing_model"
-            })),
-        );
-        return words;
+        let message = "punctuation failed: missing model".to_string();
+        logger.event("transcribe.punctuation.error", Some(&json!({ "reason": "missing_model" })));
+        return Err(message);
     }
     if config.base_url.trim().is_empty() {
-        logger.event(
-            "transcribe.punctuation.skip",
-            Some(&json!({
-                "reason": "missing_base_url"
-            })),
-        );
-        return words;
+        let message = "punctuation failed: missing base URL".to_string();
+        logger.event("transcribe.punctuation.error", Some(&json!({ "reason": "missing_base_url" })));
+        return Err(message);
     }
 
     let spans = build_sentence_spans(&words);
@@ -105,7 +93,7 @@ pub async fn optimize_words_with_rig_node(
                 "sentenceTotal": spans.len()
             })),
         );
-        return words;
+        return Ok(words);
     }
     logger.event(
         "transcribe.punctuation.suspicious_detected",
@@ -125,7 +113,7 @@ pub async fn optimize_words_with_rig_node(
                 "transcribe.punctuation.client_error",
                 Some(&json!({ "error": err.to_string() })),
             );
-            return words;
+            return Err(format!("punctuation failed: {}", err));
         }
     };
     let system_prompt = build_punctuation_system_prompt();
@@ -178,16 +166,14 @@ pub async fn optimize_words_with_rig_node(
         };
         let json = match result {
             Ok(ok) => ok.json,
-            Err(_) => {
-                llm_error_total += 1;
-                continue;
+            Err(err) => {
+                return Err(format!("punctuation failed: {}", err.message));
             }
         };
         let extraction = match serde_json::from_value::<PunctuationExtraction>(json) {
             Ok(v) => v,
-            Err(_) => {
-                llm_error_total += 1;
-                continue;
+            Err(err) => {
+                return Err(format!("punctuation parse failed: {err}"));
             }
         };
         let punctuated = extraction.punctuated_text.trim().to_string();
@@ -225,7 +211,7 @@ pub async fn optimize_words_with_rig_node(
             }
         })),
     );
-    optimized
+    Ok(optimized)
 }
 
 fn build_sentence_spans(words: &[WordToken]) -> Vec<SentenceSpan> {

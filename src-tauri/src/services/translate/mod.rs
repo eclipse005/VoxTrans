@@ -9,4 +9,6 @@ pub mod service;
 pub mod types;
 pub mod validation;
 
-pub use service::{run_translate_pipeline, run_translate_pipeline_with_phase};
+pub use service::{
+    run_translate_pipeline, run_translate_summarize, run_translate_with_style,
+};

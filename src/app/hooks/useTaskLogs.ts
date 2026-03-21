@@ -43,11 +43,18 @@ export function useTaskLogs({
         channel: logChannel,
       });
       setLogContent(content || "");
-      const tokens = await getTaskTotalTokens(logTaskContext.taskId);
-      setTotalTokens(Number.isFinite(tokens) ? Math.max(0, Math.floor(tokens)) : 0);
     } catch (error) {
       const message = error instanceof Error ? error.message : "加载日志失败";
       pushToast(message, "error");
+      setLoadingLogs(false);
+      return;
+    }
+
+    try {
+      const tokens = await getTaskTotalTokens(logTaskContext.taskId);
+      setTotalTokens(Number.isFinite(tokens) ? Math.max(0, Math.floor(tokens)) : 0);
+    } catch {
+      setTotalTokens(0);
     } finally {
       setLoadingLogs(false);
     }
@@ -78,7 +85,12 @@ export function useTaskLogs({
         channel: logChannel,
       });
       setLogContent("");
-      setTotalTokens(0);
+      try {
+        const tokens = await getTaskTotalTokens(logTaskContext.taskId);
+        setTotalTokens(Number.isFinite(tokens) ? Math.max(0, Math.floor(tokens)) : 0);
+      } catch {
+        // Ignore token refresh failure; keep previous visible value.
+      }
       pushToast(`${logChannel.toUpperCase()} 日志已清空`, "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : "清空日志失败";

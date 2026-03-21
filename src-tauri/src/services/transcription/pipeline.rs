@@ -76,7 +76,7 @@ where
                 llm_concurrency: request.llm_concurrency,
             },
         )
-        .await,
+        .await?,
     );
 
     let words = if request.enable_asr_correction {
@@ -98,7 +98,7 @@ where
                     },
                 },
             )
-            .await,
+            .await?,
         )
     } else {
         words

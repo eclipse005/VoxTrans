@@ -67,6 +67,62 @@
   color: #b91c1c;
 }
 
+.file-list-split-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.file-list-split-btn-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.file-list-split-btn-toggle {
+  width: 26px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+}
+
+.file-list-split-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 112px;
+  border: 1px solid var(--apple-border-light);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  z-index: 30;
+}
+
+.file-list-split-menu-item {
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--apple-text-secondary);
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: all var(--apple-transition-fast);
+}
+
+.file-list-split-menu-item:hover {
+  background: rgba(0, 113, 227, 0.08);
+  color: var(--apple-blue);
+}
+
+.file-list-split-menu-item.active {
+  background: rgba(0, 113, 227, 0.14);
+  color: var(--apple-blue);
+  font-weight: 600;
+}
+
 .file-list {
   display: flex;
   flex-direction: column;

@@ -1,11 +1,22 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::path::Path;
-use crate::services::task_context::{STAGE_INIT, TaskContext, TaskContextSeed};
 
 pub const INTENT_TRANSCRIBE: &str = "TRANSCRIBE";
 pub const INTENT_TRANSCRIBE_TRANSLATE: &str = "TRANSCRIBE_TRANSLATE";
-pub const INTENT_TRANSLATE_ONLY: &str = "TRANSLATE_ONLY";
+
+const TASK_STAGES: [&str; 10] = [
+    "init",
+    "separate",
+    "asr",
+    "punctuate",
+    "correct",
+    "segment",
+    "summarize",
+    "translate",
+    "qa",
+    "compose",
+];
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,7 +76,6 @@ pub struct TaskRunRecord {
     pub media_kind: String,
     pub size_bytes: u64,
     pub intent: String,
-    pub context_json: String,
     pub retry_count: u32,
     pub max_retries: u32,
     pub settings_policy_version: String,
@@ -77,6 +87,17 @@ pub struct TaskRunRecord {
     pub finished_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub overall_status: String,
+    pub current_stage: String,
+    pub progress_percent: u32,
+    pub phase_detail: String,
+    pub segment_current: u32,
+    pub segment_total: u32,
+    pub error_message: String,
+    pub result_text: String,
+    pub result_srt: String,
+    pub subtitle_segments_json: String,
+    pub translated_srt: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -87,15 +108,14 @@ pub struct TaskStepRunRecord {
     pub step: String,
     pub attempt: u32,
     pub status: String,
-    pub binding_mode: String,
     pub input_hash: String,
-    pub settings_snapshot_json: String,
-    pub diagnostics_json: String,
+    pub output_json: String,
+    pub metrics_json: String,
     pub error_code: String,
     pub error_message: String,
-    pub started_at: i64,
+    pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
-    pub created_at: i64,
+    pub duration_ms: i64,
     pub updated_at: i64,
 }
 
@@ -108,7 +128,6 @@ pub struct TaskArtifactRecord {
     pub path: String,
     pub checksum: String,
     pub size_bytes: u64,
-    pub mime_type: String,
     pub produced_by_step: String,
     pub metadata_json: String,
     pub created_at: i64,
@@ -127,73 +146,84 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
     validate_enqueue_request(&request)?;
     let source_lang = non_empty_or_default(&request.source_lang, "auto");
     let target_lang = non_empty_or_default(&request.target_lang, "zh-CN");
-    let normalized_intent = request.intent.trim().to_uppercase();
+    let normalized_intent = normalize_intent(&request.intent);
     let snapshot = serde_json::to_string(&request.settings_snapshot).map_err(|err| err.to_string())?;
     let now = unix_now();
-    let existing_context_json = sqlx::query_scalar::<_, String>(
-        "SELECT context_json FROM task_runs WHERE id = ?",
-    )
-    .bind(&request.id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|err| err.to_string())?;
-    let context_json = build_enqueue_context_json(
-        &request,
-        &normalized_intent,
-        &source_lang,
-        &target_lang,
-        now,
-        existing_context_json.as_deref(),
-    )?;
+    let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM task_runs WHERE id = ?")
+        .bind(&request.id)
+        .fetch_one(pool)
+        .await
+        .map_err(|err| err.to_string())?
+        > 0;
 
-    sqlx::query(
-        "INSERT INTO task_runs (
-            id, media_path, name, media_kind, size_bytes,
-            intent, retry_count, max_retries,
-            settings_policy_version, settings_snapshot_json,
-            source_lang, target_lang, queued_at, started_at, finished_at, created_at, updated_at,
-            sort_order, context_json
-         ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'v1', ?, ?, ?, ?, NULL, NULL, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM task_runs), ?)
-         ON CONFLICT(id) DO UPDATE SET
-            media_path = excluded.media_path,
-            name = excluded.name,
-            media_kind = excluded.media_kind,
-            size_bytes = excluded.size_bytes,
-            intent = excluded.intent,
-            max_retries = excluded.max_retries,
-            settings_snapshot_json = excluded.settings_snapshot_json,
-            source_lang = excluded.source_lang,
-            target_lang = excluded.target_lang,
-            queued_at = excluded.queued_at,
-            started_at = NULL,
-            finished_at = NULL,
-            updated_at = excluded.updated_at,
-            context_json = excluded.context_json",
-    )
-    .bind(&request.id)
-    .bind(&request.media_path)
-    .bind(&request.name)
-    .bind(&request.media_kind)
-    .bind(request.size_bytes as i64)
-    .bind(normalized_intent)
-    .bind(request.max_retries as i64)
-    .bind(snapshot)
-    .bind(source_lang)
-    .bind(target_lang)
-    .bind(now)
-    .bind(now)
-    .bind(now)
-    .bind(context_json)
-    .execute(pool)
-    .await
-    .map_err(|err| err.to_string())?;
+    if exists {
+        sqlx::query(
+            "UPDATE task_runs
+             SET media_path = ?,
+                 name = ?,
+                 media_kind = ?,
+                 size_bytes = ?,
+                 intent = ?,
+                 max_retries = ?,
+                 settings_snapshot_json = ?,
+                 source_lang = ?,
+                 target_lang = ?,
+                 queued_at = ?,
+                 updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(&request.media_path)
+        .bind(&request.name)
+        .bind(&request.media_kind)
+        .bind(request.size_bytes as i64)
+        .bind(&normalized_intent)
+        .bind(request.max_retries as i64)
+        .bind(snapshot)
+        .bind(source_lang)
+        .bind(target_lang)
+        .bind(now)
+        .bind(now)
+        .bind(&request.id)
+        .execute(pool)
+        .await
+        .map_err(|err| err.to_string())?;
+    } else {
+        sqlx::query(
+            "INSERT INTO task_runs (
+                id, media_path, name, media_kind, size_bytes,
+                intent, retry_count, max_retries,
+                settings_policy_version, settings_snapshot_json,
+                source_lang, target_lang, queued_at, started_at, finished_at, created_at, updated_at,
+                sort_order, overall_status, current_stage, progress_percent, phase_detail, segment_current, segment_total,
+                error_message, result_text, result_srt, subtitle_segments_json, translated_srt
+             ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'v1', ?, ?, ?, ?, NULL, NULL, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM task_runs), ?, ?, 0, '', 0, 0, '', '', '', '[]', '')",
+        )
+        .bind(&request.id)
+        .bind(&request.media_path)
+        .bind(&request.name)
+        .bind(&request.media_kind)
+        .bind(request.size_bytes as i64)
+        .bind(&normalized_intent)
+        .bind(request.max_retries as i64)
+        .bind(snapshot)
+        .bind(source_lang)
+        .bind(target_lang)
+        .bind(now)
+        .bind(now)
+        .bind(now)
+        .bind(initial_overall_status("queued"))
+        .bind(initial_stage(&normalized_intent))
+        .execute(pool)
+        .await
+        .map_err(|err| err.to_string())?;
 
-    get_task_run(pool, GetTaskRunRequest {
-        task_id: request.id,
-    })
-    .await?
-    .run
-    .pipe(Ok)
+        reset_task_stages(pool, &request.id).await?;
+    }
+
+    get_task_run(pool, GetTaskRunRequest { task_id: request.id })
+        .await?
+        .run
+        .pipe(Ok)
 }
 
 pub async fn register_task_upload(
@@ -203,7 +233,6 @@ pub async fn register_task_upload(
     validate_upload_request(&request)?;
     ensure_task_output_dir_for_upload(&request)?;
     let now = unix_now();
-    let context_json = build_upload_context_json(&request, now)?;
 
     sqlx::query(
         "INSERT INTO task_runs (
@@ -211,8 +240,9 @@ pub async fn register_task_upload(
             intent, retry_count, max_retries,
             settings_policy_version, settings_snapshot_json,
             source_lang, target_lang, queued_at, started_at, finished_at, created_at, updated_at,
-            sort_order, context_json
-         ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'v1', '{}', 'auto', 'zh-CN', ?, NULL, NULL, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM task_runs), ?)
+            sort_order, overall_status, current_stage, progress_percent, phase_detail, segment_current, segment_total,
+            error_message, result_text, result_srt, subtitle_segments_json, translated_srt
+         ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'v1', '{}', 'auto', 'zh-CN', ?, NULL, NULL, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM task_runs), 'pending', '', 0, '', 0, 0, '', '', '', '[]', '')
          ON CONFLICT(id) DO UPDATE SET
             media_path = excluded.media_path,
             name = excluded.name,
@@ -228,7 +258,17 @@ pub async fn register_task_upload(
             started_at = NULL,
             finished_at = NULL,
             updated_at = excluded.updated_at,
-            context_json = excluded.context_json",
+            overall_status = excluded.overall_status,
+            current_stage = excluded.current_stage,
+            progress_percent = excluded.progress_percent,
+            phase_detail = excluded.phase_detail,
+            segment_current = excluded.segment_current,
+            segment_total = excluded.segment_total,
+            error_message = excluded.error_message,
+            result_text = excluded.result_text,
+            result_srt = excluded.result_srt,
+            subtitle_segments_json = excluded.subtitle_segments_json,
+            translated_srt = excluded.translated_srt",
     )
     .bind(&request.id)
     .bind(&request.media_path)
@@ -239,37 +279,16 @@ pub async fn register_task_upload(
     .bind(now)
     .bind(now)
     .bind(now)
-    .bind(context_json)
     .execute(pool)
     .await
     .map_err(|err| err.to_string())?;
 
-    get_task_run(
-        pool,
-        GetTaskRunRequest {
-            task_id: request.id,
-        },
-    )
-    .await?
-    .run
-    .pipe(Ok)
-}
+    reset_task_stages(pool, &request.id).await?;
 
-fn ensure_task_output_dir_for_upload(request: &RegisterTaskUploadRequest) -> Result<(), String> {
-    let media_path = Path::new(request.media_path.as_str());
-    let target_dir = if request.media_path.starts_with("youtube://") {
-        let safe_name = crate::services::task_path::sanitize_filename_component(&request.name);
-        let safe_task_id = crate::services::task_path::sanitize_filename_component(&request.id);
-        let base_name = if safe_name.is_empty() {
-            "youtube_task".to_string()
-        } else {
-            safe_name
-        };
-        crate::services::output::resolve_output_dir().join(format!("{base_name}_{safe_task_id}"))
-    } else {
-        crate::services::task_path::task_output_dir(&request.id, media_path)
-    };
-    std::fs::create_dir_all(target_dir).map_err(|err| format!("创建任务目录失败: {err}"))
+    get_task_run(pool, GetTaskRunRequest { task_id: request.id })
+        .await?
+        .run
+        .pipe(Ok)
 }
 
 pub async fn list_task_runs(pool: &SqlitePool, request: ListTaskRunsRequest) -> Result<Vec<TaskRunRecord>, String> {
@@ -279,7 +298,9 @@ pub async fn list_task_runs(pool: &SqlitePool, request: ListTaskRunsRequest) -> 
             sqlx::query_as::<_, TaskRunRow>(
                 "SELECT id, media_path, name, media_kind, size_bytes, intent, retry_count, max_retries,
                         settings_policy_version, settings_snapshot_json, source_lang, target_lang,
-                        queued_at, started_at, finished_at, created_at, updated_at, context_json
+                        queued_at, started_at, finished_at, created_at, updated_at, overall_status,
+                        current_stage, progress_percent, phase_detail, segment_current, segment_total,
+                        error_message, result_text, result_srt, subtitle_segments_json, translated_srt
                  FROM task_runs
                  WHERE intent = ?
                  ORDER BY updated_at DESC, created_at DESC
@@ -295,7 +316,9 @@ pub async fn list_task_runs(pool: &SqlitePool, request: ListTaskRunsRequest) -> 
             sqlx::query_as::<_, TaskRunRow>(
                 "SELECT id, media_path, name, media_kind, size_bytes, intent, retry_count, max_retries,
                         settings_policy_version, settings_snapshot_json, source_lang, target_lang,
-                        queued_at, started_at, finished_at, created_at, updated_at, context_json
+                        queued_at, started_at, finished_at, created_at, updated_at, overall_status,
+                        current_stage, progress_percent, phase_detail, segment_current, segment_total,
+                        error_message, result_text, result_srt, subtitle_segments_json, translated_srt
                  FROM task_runs
                  ORDER BY updated_at DESC, created_at DESC
                  LIMIT ?",
@@ -316,7 +339,9 @@ pub async fn get_task_run(pool: &SqlitePool, request: GetTaskRunRequest) -> Resu
     let run = sqlx::query_as::<_, TaskRunRow>(
         "SELECT id, media_path, name, media_kind, size_bytes, intent, retry_count, max_retries,
                 settings_policy_version, settings_snapshot_json, source_lang, target_lang,
-                queued_at, started_at, finished_at, created_at, updated_at, context_json
+                queued_at, started_at, finished_at, created_at, updated_at, overall_status,
+                current_stage, progress_percent, phase_detail, segment_current, segment_total,
+                error_message, result_text, result_srt, subtitle_segments_json, translated_srt
          FROM task_runs
          WHERE id = ?",
     )
@@ -326,12 +351,12 @@ pub async fn get_task_run(pool: &SqlitePool, request: GetTaskRunRequest) -> Resu
     .map_err(|err| err.to_string())?
     .ok_or_else(|| "task not found".to_string())?;
 
-    let steps = sqlx::query_as::<_, TaskStepRunRow>(
-        "SELECT id, task_id, step, attempt, status, binding_mode, input_hash, settings_snapshot_json,
-                diagnostics_json, error_code, error_message, started_at, finished_at, created_at, updated_at
-         FROM task_step_runs
+    let steps = sqlx::query_as::<_, TaskStageRow>(
+        "SELECT rowid as id, task_id, stage, attempt, status, input_hash, output_json, metrics_json,
+                error_code, error_message, started_at, finished_at, duration_ms, updated_at
+         FROM task_stage_runs
          WHERE task_id = ?
-         ORDER BY created_at ASC, id ASC",
+         ORDER BY updated_at ASC",
     )
     .bind(request.task_id.trim())
     .fetch_all(pool)
@@ -342,7 +367,7 @@ pub async fn get_task_run(pool: &SqlitePool, request: GetTaskRunRequest) -> Resu
     .collect();
 
     let artifacts = sqlx::query_as::<_, TaskArtifactRow>(
-        "SELECT id, task_id, kind, path, checksum, size_bytes, mime_type, produced_by_step,
+        "SELECT id, task_id, kind, path, checksum, size_bytes, produced_by_stage,
                 metadata_json, created_at, updated_at
          FROM task_artifacts
          WHERE task_id = ?
@@ -366,12 +391,6 @@ pub async fn get_task_run(pool: &SqlitePool, request: GetTaskRunRequest) -> Resu
 pub async fn delete_tasks(pool: &SqlitePool, request: DeleteTasksRequest) -> Result<(), String> {
     match (request.task_id, request.media_path) {
         (Some(task_id), Some(media_path)) => {
-            sqlx::query("DELETE FROM tasks WHERE id = ? OR media_path = ?")
-                .bind(&task_id)
-                .bind(&media_path)
-                .execute(pool)
-                .await
-                .map_err(|e| e.to_string())?;
             sqlx::query("DELETE FROM task_runs WHERE id = ? OR media_path = ?")
                 .bind(task_id)
                 .bind(media_path)
@@ -380,11 +399,6 @@ pub async fn delete_tasks(pool: &SqlitePool, request: DeleteTasksRequest) -> Res
                 .map_err(|e| e.to_string())?;
         }
         (Some(task_id), None) => {
-            sqlx::query("DELETE FROM tasks WHERE id = ?")
-                .bind(&task_id)
-                .execute(pool)
-                .await
-                .map_err(|e| e.to_string())?;
             sqlx::query("DELETE FROM task_runs WHERE id = ?")
                 .bind(task_id)
                 .execute(pool)
@@ -392,11 +406,6 @@ pub async fn delete_tasks(pool: &SqlitePool, request: DeleteTasksRequest) -> Res
                 .map_err(|e| e.to_string())?;
         }
         (None, Some(media_path)) => {
-            sqlx::query("DELETE FROM tasks WHERE media_path = ?")
-                .bind(&media_path)
-                .execute(pool)
-                .await
-                .map_err(|e| e.to_string())?;
             sqlx::query("DELETE FROM task_runs WHERE media_path = ?")
                 .bind(media_path)
                 .execute(pool)
@@ -404,14 +413,7 @@ pub async fn delete_tasks(pool: &SqlitePool, request: DeleteTasksRequest) -> Res
                 .map_err(|e| e.to_string())?;
         }
         (None, None) => {
-            sqlx::query("DELETE FROM tasks")
-                .execute(pool)
-                .await
-                .map_err(|e| e.to_string())?;
-            sqlx::query("DELETE FROM task_runs")
-                .execute(pool)
-                .await
-                .map_err(|e| e.to_string())?;
+            sqlx::query("DELETE FROM task_runs").execute(pool).await.map_err(|e| e.to_string())?;
         }
     }
     Ok(())
@@ -436,25 +438,34 @@ struct TaskRunRow {
     finished_at: Option<i64>,
     created_at: i64,
     updated_at: i64,
-    context_json: String,
+    overall_status: String,
+    current_stage: String,
+    progress_percent: i64,
+    phase_detail: String,
+    segment_current: i64,
+    segment_total: i64,
+    error_message: String,
+    result_text: String,
+    result_srt: String,
+    subtitle_segments_json: String,
+    translated_srt: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct TaskStepRunRow {
+struct TaskStageRow {
     id: i64,
     task_id: String,
-    step: String,
+    stage: String,
     attempt: i64,
     status: String,
-    binding_mode: String,
     input_hash: String,
-    settings_snapshot_json: String,
-    diagnostics_json: String,
+    output_json: String,
+    metrics_json: String,
     error_code: String,
     error_message: String,
-    started_at: i64,
+    started_at: Option<i64>,
     finished_at: Option<i64>,
-    created_at: i64,
+    duration_ms: i64,
     updated_at: i64,
 }
 
@@ -466,8 +477,7 @@ struct TaskArtifactRow {
     path: String,
     checksum: String,
     size_bytes: i64,
-    mime_type: String,
-    produced_by_step: String,
+    produced_by_stage: String,
     metadata_json: String,
     created_at: i64,
     updated_at: i64,
@@ -482,7 +492,6 @@ impl From<TaskRunRow> for TaskRunRecord {
             media_kind: row.media_kind,
             size_bytes: row.size_bytes.max(0) as u64,
             intent: row.intent,
-            context_json: row.context_json,
             retry_count: row.retry_count.max(0) as u32,
             max_retries: row.max_retries.max(0) as u32,
             settings_policy_version: row.settings_policy_version,
@@ -494,27 +503,37 @@ impl From<TaskRunRow> for TaskRunRecord {
             finished_at: row.finished_at,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            overall_status: row.overall_status,
+            current_stage: row.current_stage,
+            progress_percent: row.progress_percent.clamp(0, 100) as u32,
+            phase_detail: row.phase_detail,
+            segment_current: row.segment_current.max(0) as u32,
+            segment_total: row.segment_total.max(0) as u32,
+            error_message: row.error_message,
+            result_text: row.result_text,
+            result_srt: row.result_srt,
+            subtitle_segments_json: row.subtitle_segments_json,
+            translated_srt: row.translated_srt,
         }
     }
 }
 
-impl From<TaskStepRunRow> for TaskStepRunRecord {
-    fn from(row: TaskStepRunRow) -> Self {
+impl From<TaskStageRow> for TaskStepRunRecord {
+    fn from(row: TaskStageRow) -> Self {
         Self {
             id: row.id,
             task_id: row.task_id,
-            step: row.step,
+            step: row.stage,
             attempt: row.attempt.max(0) as u32,
             status: row.status,
-            binding_mode: row.binding_mode,
             input_hash: row.input_hash,
-            settings_snapshot_json: row.settings_snapshot_json,
-            diagnostics_json: row.diagnostics_json,
+            output_json: row.output_json,
+            metrics_json: row.metrics_json,
             error_code: row.error_code,
             error_message: row.error_message,
             started_at: row.started_at,
             finished_at: row.finished_at,
-            created_at: row.created_at,
+            duration_ms: row.duration_ms.max(0),
             updated_at: row.updated_at,
         }
     }
@@ -529,12 +548,51 @@ impl From<TaskArtifactRow> for TaskArtifactRecord {
             path: row.path,
             checksum: row.checksum,
             size_bytes: row.size_bytes.max(0) as u64,
-            mime_type: row.mime_type,
-            produced_by_step: row.produced_by_step,
+            produced_by_step: row.produced_by_stage,
             metadata_json: row.metadata_json,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
+    }
+}
+
+async fn reset_task_stages(pool: &SqlitePool, task_id: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM task_stage_runs WHERE task_id = ?")
+        .bind(task_id)
+        .execute(pool)
+        .await
+        .map_err(|err| err.to_string())?;
+
+    for stage in TASK_STAGES {
+        sqlx::query(
+            "INSERT INTO task_stage_runs (
+                task_id, stage, status, attempt, input_hash, output_json, metrics_json,
+                error_code, error_message, started_at, finished_at, duration_ms, updated_at
+             ) VALUES (?, ?, 'pending', 0, '', '{}', '{}', '', '', NULL, NULL, 0, strftime('%s','now'))",
+        )
+        .bind(task_id)
+        .bind(stage)
+        .execute(pool)
+        .await
+        .map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+fn initial_overall_status(status: &str) -> String {
+    status.to_string()
+}
+
+fn initial_stage(intent: &str) -> String {
+    let _ = intent;
+    "init".to_string()
+}
+
+fn normalize_intent(raw: &str) -> String {
+    if raw.trim().eq_ignore_ascii_case(INTENT_TRANSCRIBE_TRANSLATE) {
+        INTENT_TRANSCRIBE_TRANSLATE.to_string()
+    } else {
+        INTENT_TRANSCRIBE.to_string()
     }
 }
 
@@ -552,10 +610,7 @@ fn validate_enqueue_request(request: &EnqueueTaskRequest) -> Result<(), String> 
         return Err("mediaKind is required".to_string());
     }
     let intent = request.intent.trim().to_uppercase();
-    if !matches!(
-        intent.as_str(),
-        INTENT_TRANSCRIBE | INTENT_TRANSCRIBE_TRANSLATE | INTENT_TRANSLATE_ONLY
-    ) {
+    if !matches!(intent.as_str(), INTENT_TRANSCRIBE | INTENT_TRANSCRIBE_TRANSLATE) {
         return Err("intent is invalid".to_string());
     }
     Ok(())
@@ -585,61 +640,21 @@ fn non_empty_or_default(value: &str, fallback: &str) -> String {
     }
 }
 
-fn build_enqueue_context_json(
-    request: &EnqueueTaskRequest,
-    intent: &str,
-    source_lang: &str,
-    target_lang: &str,
-    created_at: i64,
-    existing_context_json: Option<&str>,
-) -> Result<String, String> {
-    let mut context = TaskContext::parse_or_new(
-        existing_context_json.unwrap_or_default(),
-        TaskContextSeed {
-        task_id: request.id.clone(),
-        intent: intent.to_string(),
-        source_lang: source_lang.to_string(),
-        target_lang: target_lang.to_string(),
-        media_path: request.media_path.clone(),
-        media_kind: request.media_kind.clone(),
-        media_size_bytes: request.size_bytes,
-        settings_snapshot: request.settings_snapshot.clone(),
-        created_at,
-        },
-    );
-    context.task.intent = intent.to_string();
-    context.task.source_lang = source_lang.to_string();
-    context.task.target_lang = target_lang.to_string();
-    context.task.updated_at = created_at;
-    context.input.media_path = request.media_path.clone();
-    context.input.media_kind = request.media_kind.clone();
-    context.input.media_size_bytes = request.size_bytes;
-    context.input.settings_snapshot = request.settings_snapshot.clone();
-    context.runtime.current_stage = STAGE_INIT.to_string();
-    context.runtime.can_resume_from = STAGE_INIT.to_string();
-    context.runtime.status = "queued".to_string();
-    context.set_queue_projection("queued", "", "", 0, 0, 0, "");
-    context.to_json_string()
-}
-
-fn build_upload_context_json(
-    request: &RegisterTaskUploadRequest,
-    created_at: i64,
-) -> Result<String, String> {
-    let mut context = TaskContext::new(TaskContextSeed {
-        task_id: request.id.clone(),
-        intent: INTENT_TRANSCRIBE.to_string(),
-        source_lang: "auto".to_string(),
-        target_lang: "zh-CN".to_string(),
-        media_path: request.media_path.clone(),
-        media_kind: request.media_kind.clone(),
-        media_size_bytes: request.size_bytes,
-        settings_snapshot: serde_json::json!({}),
-        created_at,
-    });
-    context.runtime.status = "created".to_string();
-    context.set_queue_projection("pending", "", "", 0, 0, 0, "");
-    context.to_json_string()
+fn ensure_task_output_dir_for_upload(request: &RegisterTaskUploadRequest) -> Result<(), String> {
+    let media_path = Path::new(request.media_path.as_str());
+    let target_dir = if request.media_path.starts_with("youtube://") {
+        let safe_name = crate::services::task_path::sanitize_filename_component(&request.name);
+        let safe_task_id = crate::services::task_path::sanitize_filename_component(&request.id);
+        let base_name = if safe_name.is_empty() {
+            "youtube_task".to_string()
+        } else {
+            safe_name
+        };
+        crate::services::output::resolve_output_dir().join(format!("{base_name}_{safe_task_id}"))
+    } else {
+        crate::services::task_path::task_output_dir(&request.id, media_path)
+    };
+    std::fs::create_dir_all(target_dir).map_err(|err| format!("创建任务目录失败: {err}"))
 }
 
 fn unix_now() -> i64 {

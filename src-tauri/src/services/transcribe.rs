@@ -39,7 +39,7 @@ pub struct WordTokenDto {
     pub word: String,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SegmentWithWordsDto {
     pub start: f64,

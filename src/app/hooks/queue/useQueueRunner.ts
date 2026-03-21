@@ -49,7 +49,7 @@ type TranslateProgressEvent = {
   totalBatches: number;
 };
 
-export type QueueRunMode = "transcribe" | "transcribe_translate" | "translate_only";
+export type QueueRunMode = "transcribe" | "transcribe_translate";
 
 type UseQueueRunnerArgs = {
   dispatch: DispatchState;
@@ -128,7 +128,7 @@ export function useQueueRunner({
         phase: payload.phase,
         phaseDetail: payload.phaseDetail,
       });
-      if (payload.phase === "summarize" || payload.phase === "translate" || payload.phase === "qa") {
+      if (payload.phase === "qa") {
         void (async () => {
           try {
             const workspace = await loadWorkspaceState();
@@ -277,7 +277,7 @@ function toEnqueuePayload(
   name: string;
   mediaKind: "audio" | "video";
   sizeBytes: number;
-  intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" | "TRANSLATE_ONLY";
+  intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE";
   sourceLang: string;
   targetLang: string;
   maxRetries: number;
@@ -321,8 +321,7 @@ function syncQueueItem(
   }));
 }
 
-function toIntent(mode: QueueRunMode): "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" | "TRANSLATE_ONLY" {
-  if (mode === "translate_only") return "TRANSLATE_ONLY";
+function toIntent(mode: QueueRunMode): "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" {
   if (mode === "transcribe_translate") return "TRANSCRIBE_TRANSLATE";
   return "TRANSCRIBE";
 }

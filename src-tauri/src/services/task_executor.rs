@@ -4,6 +4,7 @@ use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 use tauri::async_runtime::spawn_blocking;
+use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
 use voxtrans_core::subtitle::alignment::align_text_to_timestamps;
 use voxtrans_core::subtitle::segmenter::WordToken;
 use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
@@ -12,20 +13,25 @@ use crate::app_state::TaskWorkerRuntime;
 use crate::services::file::save_srt;
 use crate::services::preferences::load_user_preferences;
 use crate::services::task_context::{
-    STAGE_ASR, STAGE_COMPOSE, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEPARATE,
+    STAGE_ASR, STAGE_COMPOSE, STAGE_CORRECT, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEPARATE,
     STAGE_SUMMARIZE, STAGE_TRANSLATE, STAGE_QA, TaskContext, TaskContextSeed,
 };
 use crate::services::task_engine::{EnqueueTaskRequest, enqueue_task};
 use crate::services::task_log::{TaskLogger, event};
 use crate::services::task_worker;
-use crate::services::transcribe::{TranscribeRequest, transcribe_blocking};
+use crate::services::transcribe::{
+    BuildSegmentsRequest, SegmentWithWordsDto, TranscribeRequest, TranscribeResponse, WordTokenDto,
+    build_segments_from_words,
+    transcribe_blocking,
+};
 use crate::services::transcription::{
-    CorrectionTerminologyEntryDto, RunPostAsrPipelineRequest, run_post_asr_pipeline,
+    CorrectionConfig, CorrectionTerminologyEntry, PunctuationConfig, correct_words_with_rig_node,
+    optimize_words_with_rig_node,
 };
 use crate::services::translate::types::{
     TranslatePipelineRequest, TranslateTerminologyEntry, TranslateToken,
 };
-use crate::services::translate::run_translate_pipeline_with_phase;
+use crate::services::translate::{run_translate_summarize, run_translate_with_style};
 use crate::services::translate::qa_agent::{QaAgentRequest, run_qa_agent};
 
 const WORKER_EVENT_PREFIX: &str = "VOXTRANS_EVENT:";
@@ -140,7 +146,17 @@ struct TaskRunExecRow {
     target_lang: String,
     settings_snapshot_json: String,
     created_at: i64,
-    context_json: String,
+    overall_status: String,
+    current_stage: String,
+    progress_percent: i64,
+    phase_detail: String,
+    segment_current: i64,
+    segment_total: i64,
+    error_message: String,
+    result_text: String,
+    result_srt: String,
+    subtitle_segments_json: String,
+    translated_srt: String,
 }
 
 pub async fn execute_task_run(
@@ -162,7 +178,9 @@ pub async fn execute_task_run(
 
     let task = sqlx::query_as::<_, TaskRunExecRow>(
         "SELECT id, media_path, media_kind, size_bytes, intent, source_lang, target_lang,
-                settings_snapshot_json, created_at, context_json
+                settings_snapshot_json, created_at, overall_status, current_stage, progress_percent,
+                phase_detail, segment_current, segment_total, error_message, result_text, result_srt,
+                subtitle_segments_json, translated_srt
          FROM task_runs WHERE id = ?",
     )
     .bind(request.task_id.trim())
@@ -196,20 +214,7 @@ pub async fn execute_task_run(
 
     let settings_snapshot = serde_json::from_str::<serde_json::Value>(&task.settings_snapshot_json)
         .unwrap_or_else(|_| json!({}));
-    let mut context = TaskContext::parse_or_new(
-        &task.context_json,
-        TaskContextSeed {
-            task_id: task.id.clone(),
-            intent: task.intent.clone(),
-            source_lang: task.source_lang.clone(),
-            target_lang: task.target_lang.clone(),
-            media_path: task.media_path.clone(),
-            media_kind: task.media_kind.clone(),
-            media_size_bytes: task.size_bytes.max(0) as u64,
-            settings_snapshot,
-            created_at: task.created_at,
-        },
-    );
+    let mut context = hydrate_task_context(pool, &task, settings_snapshot).await?;
     context.mark_stage_running(STAGE_INIT);
     context.set_queue_projection("processing", "initializing", "", 0, 0, 0, "");
     persist_task_context(pool, &task.id, &context).await?;
@@ -220,13 +225,36 @@ pub async fn execute_task_run(
         .map(|v| v.trim().to_uppercase())
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| task.intent.trim().to_uppercase());
+    let intent = normalize_intent(&intent);
     context.task.intent = intent.clone();
-    let run_result = if intent == "TRANSLATE_ONLY" {
-        run_translate_only(pool, app.as_ref(), &task, &mut context).await
-    } else if intent == "TRANSCRIBE_TRANSLATE" {
-        run_transcribe_and_maybe_translate(pool, app.as_ref(), &task, true, &mut context).await
+    let with_translate = intent == "TRANSCRIBE_TRANSLATE";
+    let run_result = if with_translate
+        && stage_is_done(context.stage_status(STAGE_QA))
+        && has_translated_segments_available(&context.projections.editor.subtitle_segments_json)
+    {
+        Ok(done_payload_from_context(&context))
+    } else if !with_translate
+        && stage_is_done(context.stage_status(STAGE_SEGMENT))
+        && has_source_segments_available(&context.projections.editor.subtitle_segments_json)
+    {
+        Ok(done_payload_from_context(&context))
+    } else if with_translate
+        && has_source_segments_available(&context.projections.editor.subtitle_segments_json)
+        && !has_translated_segments_available(&context.projections.editor.subtitle_segments_json)
+    {
+        run_translate_from_existing_segments(pool, app.as_ref(), &task, &mut context).await
+    } else if let Some(asr_snapshot) = load_asr_resume_snapshot(&context) {
+        run_transcribe_and_maybe_translate(
+            pool,
+            app.as_ref(),
+            &task,
+            with_translate,
+            &mut context,
+            Some(asr_snapshot),
+        )
+        .await
     } else {
-        run_transcribe_and_maybe_translate(pool, app.as_ref(), &task, false, &mut context).await
+        run_transcribe_and_maybe_translate(pool, app.as_ref(), &task, with_translate, &mut context, None).await
     };
 
     match run_result {
@@ -408,8 +436,8 @@ pub async fn enqueue_and_execute_task_batch_via_worker(
 
 fn normalize_intent(raw: &str) -> String {
     let intent = raw.trim().to_uppercase();
-    if intent == "TRANSLATE_ONLY" || intent == "TRANSCRIBE_TRANSLATE" {
-        intent
+    if intent == "TRANSCRIBE_TRANSLATE" {
+        "TRANSCRIBE_TRANSLATE".to_string()
     } else {
         "TRANSCRIBE".to_string()
     }
@@ -420,6 +448,50 @@ struct DonePayload {
     result_srt: String,
     subtitle_segments_json: String,
     segment_total: i64,
+}
+
+#[derive(Debug, Clone)]
+struct AsrResumeSnapshot {
+    words: Vec<WordTokenDto>,
+    segment_total: usize,
+    audio_duration_sec: f64,
+    vad_elapsed_sec: f64,
+    transcribe_elapsed_sec: f64,
+    execution_provider: String,
+}
+
+#[derive(Debug, Clone)]
+struct SegmentResumeSnapshot {
+    text: String,
+    srt: String,
+    srt_output_path: String,
+    segments: Vec<SegmentWithWordsDto>,
+}
+
+#[derive(Debug, Clone)]
+struct SummarizeSnapshot {
+    topic_summary: String,
+    tone_strategy: String,
+}
+
+#[derive(Debug, Clone)]
+struct TranslateSnapshot {
+    source_srt: String,
+    target_srt: String,
+    bilingual_srt_source_first: String,
+    bilingual_srt_target_first: String,
+    segments: Vec<crate::services::translate::types::TranslateSegment>,
+}
+
+#[derive(Debug, Clone)]
+struct QaSnapshot {
+    segments: Vec<crate::services::translate::types::TranslateSegment>,
+    report: Value,
+    applied_change_total: usize,
+    source_srt: String,
+    target_srt: String,
+    src_trans_srt: String,
+    trans_src_srt: String,
 }
 
 #[derive(Debug, Clone)]
@@ -720,144 +792,244 @@ async fn run_transcribe_and_maybe_translate(
     task: &TaskRunExecRow,
     with_translate: bool,
     context: &mut TaskContext,
+    asr_resume: Option<AsrResumeSnapshot>,
 ) -> Result<DonePayload, String> {
-    let mut transcribe_audio_path = task.media_path.clone();
+    let resumed_from_asr = asr_resume.is_some();
     let settings_before_asr = load_user_preferences(pool).await?.settings;
-    if !settings_before_asr.enable_vocal_separation {
-        transcribe_audio_path = crate::services::demucs::prepare_audio_for_asr(
-            &task.id,
-            &task.media_path,
-        )?;
-    }
-    if settings_before_asr.enable_vocal_separation {
-        context.mark_stage_running(STAGE_SEPARATE);
-        emit_bridge_event(
-            app,
-            "transcribe-phase",
-            &TranscribePhaseEvent {
-                task_id: task.id.clone(),
-                phase: "separating".to_string(),
-                phase_detail: None,
-            },
-        );
-        let app_handle = app.cloned();
-        let req = crate::services::demucs::SeparateVocalsRequest {
-            task_id: task.id.clone(),
-            audio_path: task.media_path.clone(),
-            model: settings_before_asr.demucs_model.clone(),
-        };
-        let task_id = task.id.clone();
-        let separated = spawn_blocking(move || {
-            crate::services::demucs::separate_vocals_blocking(req, |percent| {
-                emit_bridge_event(
-                    app_handle.as_ref(),
-                    "separate-progress",
-                    &SeparateProgressEvent {
-                        task_id: task_id.clone(),
-                        percent,
-                    },
-                );
-            })
-        })
-        .await
-        .map_err(|err| err.to_string())??;
-        transcribe_audio_path = separated.vocals_path;
-        context.mark_stage_done(
-            STAGE_SEPARATE,
-            json!({ "enabled": true }),
-            Value::Null,
-        );
-    }
-
-    context.mark_stage_running(STAGE_ASR);
-    let app_handle = app.cloned();
-    let task_id = task.id.clone();
-    let transcribe_req = TranscribeRequest {
-        task_id: task.id.clone(),
-        audio_path: transcribe_audio_path,
-        provider: settings_before_asr.provider,
-        chunk_target_seconds: settings_before_asr.chunk_target_seconds,
-        model_dir: None,
-    };
-    let transcribed = spawn_blocking(move || {
-        transcribe_blocking(transcribe_req, |current, total| {
-            emit_bridge_event(
-                app_handle.as_ref(),
-                "transcribe-progress",
-                &TranscribeProgressEvent {
-                    task_id: task_id.clone(),
-                    current_segment: current,
-                    total_segments: total,
-                },
-            );
-        })
-    })
-    .await
-    .map_err(|err| err.to_string())??;
-    context.mark_stage_done(
+    let transcribed = run_stage(
+        pool,
+        &task.id,
+        context,
         STAGE_ASR,
-        json!({
-            "segmentTotal": transcribed.segment_total,
-            "audioDurationSec": transcribed.audio_duration_sec,
-            "provider": transcribed.execution_provider,
-        }),
-        json!({
-            "transcribeElapsedSec": transcribed.transcribe_elapsed_sec,
-            "vadElapsedSec": transcribed.vad_elapsed_sec,
-        }),
-    );
-
-    let settings_before_post = load_user_preferences(pool).await?.settings;
-    context.mark_stage_running(STAGE_PUNCTUATE);
-    context.mark_stage_running(STAGE_SEGMENT);
-    let app_handle = app.cloned();
-    let phase_task_id = task.id.clone();
-    let processed = run_post_asr_pipeline(
-        RunPostAsrPipelineRequest {
-            task_id: task.id.clone(),
-            audio_path: task.media_path.clone(),
-            words: transcribed.words.clone(),
-            subtitle_max_words_per_segment: settings_before_post.subtitle_max_words_per_segment,
-            source_lang: task.source_lang.clone(),
-            enable_punctuation_optimization: settings_before_post.enable_punctuation_optimization,
-            enable_asr_correction: settings_before_post.enable_asr_correction,
-            enable_terminology: settings_before_post.enable_terminology,
-            terminology_entries: map_correction_terminology_entries(&settings_before_post.terminology_groups),
-            translate_api_key: settings_before_post.translate_api_key.clone(),
-            translate_base_url: settings_before_post.translate_base_url.clone(),
-            translate_model: settings_before_post.translate_model.clone(),
-            llm_concurrency: settings_before_post.llm_concurrency,
+        |ctx| {
+            load_asr_resume_snapshot(ctx).map(|snapshot| TranscribeResponse {
+                words: snapshot.words,
+                segment_total: snapshot.segment_total,
+                segment_durations_sec: Vec::new(),
+                audio_duration_sec: snapshot.audio_duration_sec,
+                vad_elapsed_sec: snapshot.vad_elapsed_sec,
+                transcribe_elapsed_sec: snapshot.transcribe_elapsed_sec,
+                execution_provider: snapshot.execution_provider,
+            })
         },
-        move |phase| {
-            emit_bridge_event(
-                app_handle.as_ref(),
-                "transcribe-phase",
-                &TranscribePhaseEvent {
-                    task_id: phase_task_id.clone(),
-                    phase: phase.to_string(),
-                    phase_detail: None,
-                },
-            );
+        |value| !value.words.is_empty(),
+        || {
+            let task_id = task.id.clone();
+            let media_path = task.media_path.clone();
+            let app_opt = app.cloned();
+            let settings = settings_before_asr.clone();
+            async move {
+                let mut transcribe_audio_path = media_path.clone();
+                if !settings.enable_vocal_separation {
+                    transcribe_audio_path =
+                        crate::services::demucs::prepare_audio_for_asr(&task_id, &media_path)?;
+                }
+                if settings.enable_vocal_separation {
+                    if let Some(app_handle) = app_opt.as_ref() {
+                        let _ = app_handle.emit(
+                            "transcribe-phase",
+                            &TranscribePhaseEvent {
+                                task_id: task_id.clone(),
+                                phase: "separating".to_string(),
+                                phase_detail: None,
+                            },
+                        );
+                    }
+                    let app_handle = app_opt.clone();
+                    let req = crate::services::demucs::SeparateVocalsRequest {
+                        task_id: task_id.clone(),
+                        audio_path: media_path.clone(),
+                        model: settings.demucs_model.clone(),
+                    };
+                    let progress_task_id = task_id.clone();
+                    let separated = spawn_blocking(move || {
+                        crate::services::demucs::separate_vocals_blocking(req, |percent| {
+                            emit_bridge_event(
+                                app_handle.as_ref(),
+                                "separate-progress",
+                                &SeparateProgressEvent {
+                                    task_id: progress_task_id.clone(),
+                                    percent,
+                                },
+                            );
+                        })
+                    })
+                    .await
+                    .map_err(|err| err.to_string())??;
+                    transcribe_audio_path = separated.vocals_path;
+                }
+
+                let app_handle = app_opt.clone();
+                let progress_task_id = task_id.clone();
+                let transcribe_req = TranscribeRequest {
+                    task_id: task_id.clone(),
+                    audio_path: transcribe_audio_path,
+                    provider: settings.provider.clone(),
+                    chunk_target_seconds: settings.chunk_target_seconds,
+                    model_dir: None,
+                };
+                let transcribed = spawn_blocking(move || {
+                    transcribe_blocking(transcribe_req, |current, total| {
+                        emit_bridge_event(
+                            app_handle.as_ref(),
+                            "transcribe-progress",
+                            &TranscribeProgressEvent {
+                                task_id: progress_task_id.clone(),
+                                current_segment: current,
+                                total_segments: total,
+                            },
+                        );
+                    })
+                })
+                .await
+                .map_err(|err| err.to_string())??;
+                Ok(transcribed)
+            }
+        },
+        |value| {
+            json!({
+                "segmentTotal": value.segment_total,
+                "audioDurationSec": value.audio_duration_sec,
+                "provider": value.execution_provider,
+                "words": value.words,
+            })
+        },
+        |value| {
+            json!({
+                "transcribeElapsedSec": value.transcribe_elapsed_sec,
+                "vadElapsedSec": value.vad_elapsed_sec,
+            })
         },
     )
     .await?;
-    context.mark_stage_done(
+
+    let settings_before_post = load_user_preferences(pool).await?.settings;
+    let mut words = transcribed.words.clone();
+
+    words = run_stage(
+        pool,
+        &task.id,
+        context,
         STAGE_PUNCTUATE,
-        json!({
-            "wordTotal": processed.words.len(),
-        }),
-        json!({
-            "postAsrElapsedSec": processed.post_asr_elapsed_sec
-        }),
-    );
-    context.mark_stage_done(
+        |ctx| load_stage_words(ctx, STAGE_PUNCTUATE),
+        |value| !value.is_empty(),
+        || {
+            if resumed_from_asr {
+                emit_bridge_event(
+                    app,
+                    "transcribe-phase",
+                    &TranscribePhaseEvent {
+                        task_id: task.id.clone(),
+                        phase: "punctuate".to_string(),
+                        phase_detail: None,
+                    },
+                );
+            }
+            let words_for_exec = words.clone();
+            let media_path = task.media_path.clone();
+            let task_id = task.id.clone();
+            let settings = settings_before_post.clone();
+            async move {
+                let optimized_words = optimize_words_with_rig_node(
+                    &task_id,
+                    &media_path,
+                    beautify_words_for_subtitle(to_core_words(words_for_exec)),
+                    &PunctuationConfig {
+                        enabled: settings.enable_punctuation_optimization,
+                        base_url: settings.translate_base_url.clone(),
+                        api_key: settings.translate_api_key.clone(),
+                        model: settings.translate_model.clone(),
+                        llm_concurrency: settings.llm_concurrency,
+                    },
+                )
+                .await?;
+                Ok(from_core_words(optimized_words))
+            }
+        },
+        |value| json!({ "wordTotal": value.len(), "words": value }),
+        |_| Value::Null,
+    )
+    .await?;
+
+    words = run_stage(
+        pool,
+        &task.id,
+        context,
+        STAGE_CORRECT,
+        |ctx| load_stage_words(ctx, STAGE_CORRECT),
+        |value| !value.is_empty(),
+        || {
+            let words_for_exec = words.clone();
+            let media_path = task.media_path.clone();
+            let task_id = task.id.clone();
+            let source_lang = task.source_lang.clone();
+            let settings = settings_before_post.clone();
+            async move {
+                let corrected_words = correct_words_with_rig_node(
+                    &task_id,
+                    &media_path,
+                    to_core_words(words_for_exec),
+                    &CorrectionConfig {
+                        source_lang,
+                        base_url: settings.translate_base_url.clone(),
+                        api_key: settings.translate_api_key.clone(),
+                        model: settings.translate_model.clone(),
+                        terminology_entries: if settings.enable_terminology {
+                            map_correction_terminology_entries(&settings.terminology_groups)
+                        } else {
+                            Vec::new()
+                        },
+                    },
+                )
+                .await?;
+                Ok(from_core_words(corrected_words))
+            }
+        },
+        |value| json!({ "wordTotal": value.len(), "words": value }),
+        |_| Value::Null,
+    )
+    .await?;
+
+    let processed = run_stage(
+        pool,
+        &task.id,
+        context,
         STAGE_SEGMENT,
-        json!({
-            "segmentTotal": processed.segments.len(),
-            "sourceSrtPath": processed.srt_output_path,
-        }),
-        Value::Null,
-    );
+        load_segment_snapshot,
+        |value| !value.segments.is_empty() && !value.srt.trim().is_empty(),
+        || {
+            let task_id = task.id.clone();
+            let media_path = task.media_path.clone();
+            let words_for_exec = words.clone();
+            let subtitle_max_words_per_segment = settings_before_post.subtitle_max_words_per_segment;
+            async move {
+                let built = build_segments_from_words(BuildSegmentsRequest {
+                    task_id,
+                    audio_path: media_path,
+                    words: words_for_exec,
+                    subtitle_max_words_per_segment,
+                })?;
+                Ok(SegmentResumeSnapshot {
+                    text: built.text,
+                    srt: built.srt,
+                    srt_output_path: built.srt_output_path,
+                    segments: built.segments,
+                })
+            }
+        },
+        |value| {
+            json!({
+                "segmentTotal": value.segments.len(),
+                "sourceSrtPath": value.srt_output_path,
+                "text": value.text,
+                "srt": value.srt,
+                "srtOutputPath": value.srt_output_path,
+                "segments": value.segments,
+            })
+        },
+        |_| Value::Null,
+    )
+    .await?;
 
     if !with_translate {
         save_srt(crate::services::file::SaveSrtRequest {
@@ -917,24 +1089,7 @@ async fn run_transcribe_and_maybe_translate(
         String::new(),
     );
     persist_task_context(pool, &task.id, context).await?;
-    context.mark_stage_running(STAGE_SUMMARIZE);
-    context.mark_stage_running(STAGE_TRANSLATE);
-    context.set_queue_projection(
-        "processing",
-        "summarize",
-        "",
-        99,
-        transcribed.segment_total as u32,
-        transcribed.segment_total as u32,
-        "",
-    );
-    persist_task_context(pool, &task.id, context).await?;
-
-    let translate_phase_task_id = task.id.clone();
-    let translate_phase_app = app.cloned();
-    let translate_progress_task_id = task.id.clone();
-    let translate_progress_app = app.cloned();
-    let translated = run_translate_pipeline_with_phase(TranslatePipelineRequest {
+    let translate_request = TranslatePipelineRequest {
         task_id: task.id.clone(),
         media_path: task.media_path.clone(),
         source_lang: task.source_lang.clone(),
@@ -958,179 +1113,242 @@ async fn run_transcribe_and_maybe_translate(
         } else {
             Vec::new()
         },
-    }, move |phase| {
-        emit_bridge_event(
-            translate_phase_app.as_ref(),
-            "transcribe-phase",
-            &TranscribePhaseEvent {
-                task_id: translate_phase_task_id.clone(),
-                phase: phase.to_string(),
-                phase_detail: None,
-            },
-        );
-    }, move |current_batch, total_batches| {
-        emit_bridge_event(
-            translate_progress_app.as_ref(),
-            "translate-progress",
-            &TranslateProgressEvent {
-                task_id: translate_progress_task_id.clone(),
-                current_batch,
-                total_batches,
-            },
-        );
-    })
-    .await?;
-    context.mark_stage_running(STAGE_QA);
-    context.set_queue_projection(
-        "processing",
-        "qa",
-        "",
-        99,
-        translated.segments.len() as u32,
-        translated.segments.len() as u32,
-        "",
-    );
-    persist_task_context(pool, &task.id, context).await?;
-    emit_bridge_event(
-        app,
-        "transcribe-phase",
-        &TranscribePhaseEvent {
-            task_id: task.id.clone(),
-            phase: "qa".to_string(),
-            phase_detail: None,
-        },
-    );
-    let qa_pass1 = run_qa_agent(
-        QaAgentRequest {
-            task_id: task.id.clone(),
-            media_path: task.media_path.clone(),
-            source_lang: task.source_lang.clone(),
-            target_lang: task.target_lang.clone(),
-            api_key: settings_before_post.translate_api_key.clone(),
-            base_url: settings_before_post.translate_base_url.clone(),
-            model: settings_before_post.translate_model.clone(),
-            target_reference_len: settings_before_post.subtitle_length_reference,
-            terminology_entries: if settings_before_post.enable_terminology {
-                map_terminology_entries(&settings_before_post.terminology_groups)
-            } else {
-                Vec::new()
-            },
-            segments: translated.segments.clone(),
-            pass: "pass1_segment".to_string(),
-            prior_report: None,
-        }
-    ).await;
-    let (pass1_segments, pass1_report, pass1_applied_total) = match qa_pass1 {
-        Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
-        Err(err) => (
-            translated.segments.clone(),
-            json!({
-                "finalized": false,
-                "fallback": true,
-                "error": err
-            }),
-            0usize,
-        )
     };
-    let qa_pass2 = run_qa_agent(
-        QaAgentRequest {
-            task_id: task.id.clone(),
-            media_path: task.media_path.clone(),
-            source_lang: task.source_lang.clone(),
-            target_lang: task.target_lang.clone(),
-            api_key: settings_before_post.translate_api_key.clone(),
-            base_url: settings_before_post.translate_base_url.clone(),
-            model: settings_before_post.translate_model.clone(),
-            target_reference_len: settings_before_post.subtitle_length_reference,
-            terminology_entries: if settings_before_post.enable_terminology {
-                map_terminology_entries(&settings_before_post.terminology_groups)
-            } else {
-                Vec::new()
-            },
-            segments: pass1_segments.clone(),
-            pass: "pass2_quality".to_string(),
-            prior_report: Some(pass1_report.clone()),
-        }
-    ).await;
-    let (mut final_segments, pass2_report, pass2_applied_total) = match qa_pass2 {
-        Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
-        Err(err) => (
-            pass1_segments,
-            json!({
-                "finalized": false,
-                "fallback": true,
-                "error": err
-            }),
-            0usize,
-        )
-    };
-    let qa_report = json!({
-        "mode": "two_pass",
-        "pass1": pass1_report,
-        "pass2": pass2_report,
-    });
-    let qa_applied_total = pass1_applied_total + pass2_applied_total;
-    let _qa_align = realign_segments_with_words(
-        &mut final_segments,
-        &processed
-            .words
-            .iter()
-            .map(|w| QaWordTiming {
-                start: w.start,
-                end: w.end,
-                word: w.word.clone(),
-            })
-            .collect::<Vec<_>>(),
-    );
-    let final_source_srt = build_srt_from_translate_segments(&final_segments, false);
-    let final_target_srt = build_srt_from_translate_segments(&final_segments, true);
-    let final_src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
-    let final_trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
-    context.mark_stage_done(
+    let summarize_snapshot = run_stage(
+        pool,
+        &task.id,
+        context,
         STAGE_SUMMARIZE,
-        json!({
-            "topicSummary": translated.style_topic_summary,
-            "toneStrategy": translated.style_tone_strategy,
-        }),
-        Value::Null,
-    );
-    context.mark_stage_done(
+        load_summarize_snapshot,
+        |value| {
+            !value.topic_summary.trim().is_empty() && !value.tone_strategy.trim().is_empty()
+        },
+        || {
+            let request = translate_request.clone();
+            let task_id = task.id.clone();
+            let app_handle = app.cloned();
+            async move {
+                emit_bridge_event(
+                    app_handle.as_ref(),
+                    "transcribe-phase",
+                    &TranscribePhaseEvent {
+                        task_id,
+                        phase: "summarize".to_string(),
+                        phase_detail: None,
+                    },
+                );
+                let (topic_summary, tone_strategy) = run_translate_summarize(&request).await?;
+                Ok(SummarizeSnapshot {
+                    topic_summary,
+                    tone_strategy,
+                })
+            }
+        },
+        |value| {
+            json!({
+                "topicSummary": value.topic_summary,
+                "toneStrategy": value.tone_strategy,
+            })
+        },
+        |_| Value::Null,
+    )
+    .await?;
+
+    let translate_snapshot = run_stage(
+        pool,
+        &task.id,
+        context,
         STAGE_TRANSLATE,
-        json!({
-            "translatedSegmentTotal": final_segments.len(),
-            "batchSize": 20,
-        }),
-        Value::Null,
-    );
-    context.mark_stage_done(
+        load_translate_snapshot,
+        |value| !value.segments.is_empty(),
+        || {
+            let request = translate_request.clone();
+            let summarize = summarize_snapshot.clone();
+            let task_id = task.id.clone();
+            let phase_app = app.cloned();
+            let progress_app = app.cloned();
+            async move {
+                emit_bridge_event(
+                    phase_app.as_ref(),
+                    "transcribe-phase",
+                    &TranscribePhaseEvent {
+                        task_id: task_id.clone(),
+                        phase: "translate".to_string(),
+                        phase_detail: None,
+                    },
+                );
+                let mut on_progress = move |current_batch: usize, total_batches: usize| {
+                    emit_bridge_event(
+                        progress_app.as_ref(),
+                        "translate-progress",
+                        &TranslateProgressEvent {
+                            task_id: task_id.clone(),
+                            current_batch,
+                            total_batches,
+                        },
+                    );
+                };
+                let translated = run_translate_with_style(
+                    request,
+                    summarize.topic_summary,
+                    summarize.tone_strategy,
+                    &mut on_progress,
+                )
+                .await?;
+                Ok(TranslateSnapshot {
+                    source_srt: translated.source_srt,
+                    target_srt: translated.target_srt,
+                    bilingual_srt_source_first: translated.bilingual_srt_source_first,
+                    bilingual_srt_target_first: translated.bilingual_srt_target_first,
+                    segments: translated.segments,
+                })
+            }
+        },
+        |value| {
+            json!({
+                "translatedSegmentTotal": value.segments.len(),
+                "batchSize": 20,
+                "sourceSrt": value.source_srt,
+                "targetSrt": value.target_srt,
+                "bilingualSrtSourceFirst": value.bilingual_srt_source_first,
+                "bilingualSrtTargetFirst": value.bilingual_srt_target_first,
+                "segments": value.segments,
+            })
+        },
+        |_| Value::Null,
+    )
+    .await?;
+
+    let qa_snapshot = run_stage(
+        pool,
+        &task.id,
+        context,
         STAGE_QA,
-        json!({
-            "appliedChangeTotal": qa_applied_total,
-            "report": qa_report,
-        }),
-        Value::Null,
-    );
-    context.set_queue_projection(
-        "processing",
-        "translate",
-        "",
-        99,
-        transcribed.segment_total as u32,
-        transcribed.segment_total as u32,
-        "",
-    );
-    persist_task_context(pool, &task.id, context).await?;
+        load_qa_snapshot,
+        |value| !value.segments.is_empty(),
+        || {
+            let task_id = task.id.clone();
+            let media_path = task.media_path.clone();
+            let source_lang = task.source_lang.clone();
+            let target_lang = task.target_lang.clone();
+            let settings = settings_before_post.clone();
+            let mut final_segments = translate_snapshot.segments.clone();
+            let qa_words = words.clone();
+            let app_handle = app.cloned();
+            async move {
+                emit_bridge_event(
+                    app_handle.as_ref(),
+                    "transcribe-phase",
+                    &TranscribePhaseEvent {
+                        task_id: task_id.clone(),
+                        phase: "qa".to_string(),
+                        phase_detail: None,
+                    },
+                );
+                let qa_pass1 = run_qa_agent(QaAgentRequest {
+                    task_id: task_id.clone(),
+                    media_path: media_path.clone(),
+                    source_lang: source_lang.clone(),
+                    target_lang: target_lang.clone(),
+                    api_key: settings.translate_api_key.clone(),
+                    base_url: settings.translate_base_url.clone(),
+                    model: settings.translate_model.clone(),
+                    target_reference_len: settings.subtitle_length_reference,
+                    terminology_entries: if settings.enable_terminology {
+                        map_terminology_entries(&settings.terminology_groups)
+                    } else {
+                        Vec::new()
+                    },
+                    segments: final_segments,
+                    pass: "pass1_segment".to_string(),
+                    prior_report: None,
+                })
+                .await
+                .map_err(|err| format!("qa pass1 failed: {err}"))?;
+                let pass1_segments = qa_pass1.segments;
+                let pass1_report = qa_pass1.report;
+                let pass1_applied_total = qa_pass1.applied_changes.len();
+                let qa_pass2 = run_qa_agent(QaAgentRequest {
+                    task_id: task_id.clone(),
+                    media_path: media_path.clone(),
+                    source_lang,
+                    target_lang,
+                    api_key: settings.translate_api_key.clone(),
+                    base_url: settings.translate_base_url.clone(),
+                    model: settings.translate_model.clone(),
+                    target_reference_len: settings.subtitle_length_reference,
+                    terminology_entries: if settings.enable_terminology {
+                        map_terminology_entries(&settings.terminology_groups)
+                    } else {
+                        Vec::new()
+                    },
+                    segments: pass1_segments,
+                    pass: "pass2_quality".to_string(),
+                    prior_report: Some(pass1_report.clone()),
+                })
+                .await
+                .map_err(|err| format!("qa pass2 failed: {err}"))?;
+                final_segments = qa_pass2.segments;
+                let pass2_report = qa_pass2.report;
+                let pass2_applied_total = qa_pass2.applied_changes.len();
+                let qa_report = json!({
+                    "mode": "two_pass",
+                    "pass1": pass1_report,
+                    "pass2": pass2_report,
+                });
+                let qa_applied_total = pass1_applied_total + pass2_applied_total;
+                let _qa_align = realign_segments_with_words(
+                    &mut final_segments,
+                    &qa_words
+                        .iter()
+                        .map(|w| QaWordTiming {
+                            start: w.start,
+                            end: w.end,
+                            word: w.word.clone(),
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                let source_srt = build_srt_from_translate_segments(&final_segments, false);
+                let target_srt = build_srt_from_translate_segments(&final_segments, true);
+                let src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
+                let trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
+                Ok(QaSnapshot {
+                    segments: final_segments,
+                    report: qa_report,
+                    applied_change_total: qa_applied_total,
+                    source_srt,
+                    target_srt,
+                    src_trans_srt,
+                    trans_src_srt,
+                })
+            }
+        },
+        |value| {
+            json!({
+                "appliedChangeTotal": value.applied_change_total,
+                "report": value.report,
+                "segments": value.segments,
+                "sourceSrt": value.source_srt,
+                "targetSrt": value.target_srt,
+                "srcTransSrt": value.src_trans_srt,
+                "transSrcSrt": value.trans_src_srt,
+            })
+        },
+        |_| Value::Null,
+    )
+    .await?;
 
     save_translation_srt_set(
         &task.id,
         &task.media_path,
-        &final_source_srt,
-        &final_target_srt,
-        &final_src_trans_srt,
-        &final_trans_src_srt,
+        &qa_snapshot.source_srt,
+        &qa_snapshot.target_srt,
+        &qa_snapshot.src_trans_srt,
+        &qa_snapshot.trans_src_srt,
     )?;
 
-    let merged = final_segments
+    let merged = qa_snapshot
+        .segments
         .iter()
         .map(|segment| {
             json!({
@@ -1150,13 +1368,13 @@ async fn run_transcribe_and_maybe_translate(
 
     Ok(DonePayload {
         result_text,
-        result_srt: final_source_srt,
+        result_srt: qa_snapshot.source_srt,
         subtitle_segments_json: serde_json::to_string(&merged).map_err(|err| err.to_string())?,
         segment_total: transcribed.segment_total as i64,
     })
 }
 
-async fn run_translate_only(
+async fn run_translate_from_existing_segments(
     pool: &SqlitePool,
     app: Option<&tauri::AppHandle>,
     task: &TaskRunExecRow,
@@ -1175,13 +1393,7 @@ async fn run_translate_only(
         })
         .collect::<Vec<_>>();
     let settings = load_user_preferences(pool).await?.settings;
-    context.mark_stage_running(STAGE_SUMMARIZE);
-    context.mark_stage_running(STAGE_TRANSLATE);
-    let translate_phase_task_id = task.id.clone();
-    let translate_phase_app = app.cloned();
-    let translate_progress_task_id = task.id.clone();
-    let translate_progress_app = app.cloned();
-    let translated = run_translate_pipeline_with_phase(TranslatePipelineRequest {
+    let translate_request = TranslatePipelineRequest {
         task_id: task.id.clone(),
         media_path: task.media_path.clone(),
         source_lang: task.source_lang.clone(),
@@ -1197,157 +1409,228 @@ async fn run_translate_only(
         } else {
             Vec::new()
         },
-    }, move |phase| {
-        emit_bridge_event(
-            translate_phase_app.as_ref(),
-            "transcribe-phase",
-            &TranscribePhaseEvent {
-                task_id: translate_phase_task_id.clone(),
-                phase: phase.to_string(),
-                phase_detail: None,
-            },
-        );
-    }, move |current_batch, total_batches| {
-        emit_bridge_event(
-            translate_progress_app.as_ref(),
-            "translate-progress",
-            &TranslateProgressEvent {
-                task_id: translate_progress_task_id.clone(),
-                current_batch,
-                total_batches,
-            },
-        );
-    })
-    .await?;
-    context.mark_stage_running(STAGE_QA);
-    context.set_queue_projection(
-        "processing",
-        "qa",
-        "",
-        99,
-        translated.segments.len() as u32,
-        translated.segments.len() as u32,
-        "",
-    );
-    persist_task_context(pool, &task.id, context).await?;
-    emit_bridge_event(
-        app,
-        "transcribe-phase",
-        &TranscribePhaseEvent {
-            task_id: task.id.clone(),
-            phase: "qa".to_string(),
-            phase_detail: None,
-        },
-    );
-    let qa_pass1 = run_qa_agent(
-        QaAgentRequest {
-            task_id: task.id.clone(),
-            media_path: task.media_path.clone(),
-            source_lang: task.source_lang.clone(),
-            target_lang: task.target_lang.clone(),
-            api_key: settings.translate_api_key.clone(),
-            base_url: settings.translate_base_url.clone(),
-            model: settings.translate_model.clone(),
-            target_reference_len: settings.subtitle_length_reference,
-            terminology_entries: if settings.enable_terminology {
-                map_terminology_entries(&settings.terminology_groups)
-            } else {
-                Vec::new()
-            },
-            segments: translated.segments.clone(),
-            pass: "pass1_segment".to_string(),
-            prior_report: None,
-        }
-    ).await;
-    let (pass1_segments, pass1_report, pass1_applied_total) = match qa_pass1 {
-        Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
-        Err(err) => (
-            translated.segments.clone(),
-            json!({
-                "finalized": false,
-                "fallback": true,
-                "error": err
-            }),
-            0usize,
-        )
     };
-    let qa_pass2 = run_qa_agent(
-        QaAgentRequest {
-            task_id: task.id.clone(),
-            media_path: task.media_path.clone(),
-            source_lang: task.source_lang.clone(),
-            target_lang: task.target_lang.clone(),
-            api_key: settings.translate_api_key.clone(),
-            base_url: settings.translate_base_url.clone(),
-            model: settings.translate_model.clone(),
-            target_reference_len: settings.subtitle_length_reference,
-            terminology_entries: if settings.enable_terminology {
-                map_terminology_entries(&settings.terminology_groups)
-            } else {
-                Vec::new()
-            },
-            segments: pass1_segments.clone(),
-            pass: "pass2_quality".to_string(),
-            prior_report: Some(pass1_report.clone()),
-        }
-    ).await;
-    let (mut final_segments, pass2_report, pass2_applied_total) = match qa_pass2 {
-        Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
-        Err(err) => (
-            pass1_segments,
-            json!({
-                "finalized": false,
-                "fallback": true,
-                "error": err
-            }),
-            0usize,
-        )
-    };
-    let qa_report = json!({
-        "mode": "two_pass",
-        "pass1": pass1_report,
-        "pass2": pass2_report,
-    });
-    let qa_applied_total = pass1_applied_total + pass2_applied_total;
-    let _qa_align = realign_segments_with_words(&mut final_segments, &qa_word_timestamps);
-    let final_source_srt = build_srt_from_translate_segments(&final_segments, false);
-    let final_target_srt = build_srt_from_translate_segments(&final_segments, true);
-    let final_src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
-    let final_trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
-    context.mark_stage_done(
+    let summarize_snapshot = run_stage(
+        pool,
+        &task.id,
+        context,
         STAGE_SUMMARIZE,
-        json!({
-            "topicSummary": translated.style_topic_summary,
-            "toneStrategy": translated.style_tone_strategy,
-        }),
-        Value::Null,
-    );
-    context.mark_stage_done(
+        load_summarize_snapshot,
+        |value| {
+            !value.topic_summary.trim().is_empty() && !value.tone_strategy.trim().is_empty()
+        },
+        || {
+            let request = translate_request.clone();
+            let task_id = task.id.clone();
+            let app_handle = app.cloned();
+            async move {
+                emit_bridge_event(
+                    app_handle.as_ref(),
+                    "transcribe-phase",
+                    &TranscribePhaseEvent {
+                        task_id,
+                        phase: "summarize".to_string(),
+                        phase_detail: None,
+                    },
+                );
+                let (topic_summary, tone_strategy) = run_translate_summarize(&request).await?;
+                Ok(SummarizeSnapshot {
+                    topic_summary,
+                    tone_strategy,
+                })
+            }
+        },
+        |value| {
+            json!({
+                "topicSummary": value.topic_summary,
+                "toneStrategy": value.tone_strategy,
+            })
+        },
+        |_| Value::Null,
+    )
+    .await?;
+    let translate_snapshot = run_stage(
+        pool,
+        &task.id,
+        context,
         STAGE_TRANSLATE,
-        json!({
-            "translatedSegmentTotal": final_segments.len(),
-            "batchSize": 20,
-        }),
-        Value::Null,
-    );
-    context.mark_stage_done(
+        load_translate_snapshot,
+        |value| !value.segments.is_empty(),
+        || {
+            let request = translate_request.clone();
+            let summarize = summarize_snapshot.clone();
+            let task_id = task.id.clone();
+            let progress_app = app.cloned();
+            async move {
+                emit_bridge_event(
+                    progress_app.as_ref(),
+                    "transcribe-phase",
+                    &TranscribePhaseEvent {
+                        task_id: task_id.clone(),
+                        phase: "translate".to_string(),
+                        phase_detail: None,
+                    },
+                );
+                let mut on_progress = move |current_batch: usize, total_batches: usize| {
+                    emit_bridge_event(
+                        progress_app.as_ref(),
+                        "translate-progress",
+                        &TranslateProgressEvent {
+                            task_id: task_id.clone(),
+                            current_batch,
+                            total_batches,
+                        },
+                    );
+                };
+                let translated = run_translate_with_style(
+                    request,
+                    summarize.topic_summary,
+                    summarize.tone_strategy,
+                    &mut on_progress,
+                )
+                .await?;
+                Ok(TranslateSnapshot {
+                    source_srt: translated.source_srt,
+                    target_srt: translated.target_srt,
+                    bilingual_srt_source_first: translated.bilingual_srt_source_first,
+                    bilingual_srt_target_first: translated.bilingual_srt_target_first,
+                    segments: translated.segments,
+                })
+            }
+        },
+        |value| {
+            json!({
+                "translatedSegmentTotal": value.segments.len(),
+                "batchSize": 20,
+                "sourceSrt": value.source_srt,
+                "targetSrt": value.target_srt,
+                "bilingualSrtSourceFirst": value.bilingual_srt_source_first,
+                "bilingualSrtTargetFirst": value.bilingual_srt_target_first,
+                "segments": value.segments,
+            })
+        },
+        |_| Value::Null,
+    )
+    .await?;
+    let qa_snapshot = run_stage(
+        pool,
+        &task.id,
+        context,
         STAGE_QA,
-        json!({
-            "appliedChangeTotal": qa_applied_total,
-            "report": qa_report,
-        }),
-        Value::Null,
-    );
+        load_qa_snapshot,
+        |value| !value.segments.is_empty(),
+        || {
+            let task_id = task.id.clone();
+            let media_path = task.media_path.clone();
+            let source_lang = task.source_lang.clone();
+            let target_lang = task.target_lang.clone();
+            let settings = settings.clone();
+            let qa_words = qa_word_timestamps.clone();
+            let mut final_segments = translate_snapshot.segments.clone();
+            let app_handle = app.cloned();
+            async move {
+                emit_bridge_event(
+                    app_handle.as_ref(),
+                    "transcribe-phase",
+                    &TranscribePhaseEvent {
+                        task_id: task_id.clone(),
+                        phase: "qa".to_string(),
+                        phase_detail: None,
+                    },
+                );
+                let qa_pass1 = run_qa_agent(QaAgentRequest {
+                    task_id: task_id.clone(),
+                    media_path: media_path.clone(),
+                    source_lang: source_lang.clone(),
+                    target_lang: target_lang.clone(),
+                    api_key: settings.translate_api_key.clone(),
+                    base_url: settings.translate_base_url.clone(),
+                    model: settings.translate_model.clone(),
+                    target_reference_len: settings.subtitle_length_reference,
+                    terminology_entries: if settings.enable_terminology {
+                        map_terminology_entries(&settings.terminology_groups)
+                    } else {
+                        Vec::new()
+                    },
+                    segments: final_segments,
+                    pass: "pass1_segment".to_string(),
+                    prior_report: None,
+                })
+                .await
+                .map_err(|err| format!("qa pass1 failed: {err}"))?;
+                let pass1_segments = qa_pass1.segments;
+                let pass1_report = qa_pass1.report;
+                let pass1_applied_total = qa_pass1.applied_changes.len();
+                let qa_pass2 = run_qa_agent(QaAgentRequest {
+                    task_id: task_id.clone(),
+                    media_path: media_path.clone(),
+                    source_lang,
+                    target_lang,
+                    api_key: settings.translate_api_key.clone(),
+                    base_url: settings.translate_base_url.clone(),
+                    model: settings.translate_model.clone(),
+                    target_reference_len: settings.subtitle_length_reference,
+                    terminology_entries: if settings.enable_terminology {
+                        map_terminology_entries(&settings.terminology_groups)
+                    } else {
+                        Vec::new()
+                    },
+                    segments: pass1_segments,
+                    pass: "pass2_quality".to_string(),
+                    prior_report: Some(pass1_report.clone()),
+                })
+                .await
+                .map_err(|err| format!("qa pass2 failed: {err}"))?;
+                final_segments = qa_pass2.segments;
+                let pass2_report = qa_pass2.report;
+                let pass2_applied_total = qa_pass2.applied_changes.len();
+                let qa_report = json!({
+                    "mode": "two_pass",
+                    "pass1": pass1_report,
+                    "pass2": pass2_report,
+                });
+                let qa_applied_total = pass1_applied_total + pass2_applied_total;
+                let _qa_align = realign_segments_with_words(&mut final_segments, &qa_words);
+                let source_srt = build_srt_from_translate_segments(&final_segments, false);
+                let target_srt = build_srt_from_translate_segments(&final_segments, true);
+                let src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
+                let trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
+                Ok(QaSnapshot {
+                    segments: final_segments,
+                    report: qa_report,
+                    applied_change_total: qa_applied_total,
+                    source_srt,
+                    target_srt,
+                    src_trans_srt,
+                    trans_src_srt,
+                })
+            }
+        },
+        |value| {
+            json!({
+                "appliedChangeTotal": value.applied_change_total,
+                "report": value.report,
+                "segments": value.segments,
+                "sourceSrt": value.source_srt,
+                "targetSrt": value.target_srt,
+                "srcTransSrt": value.src_trans_srt,
+                "transSrcSrt": value.trans_src_srt,
+            })
+        },
+        |_| Value::Null,
+    )
+    .await?;
     save_translation_srt_set(
         &task.id,
         &task.media_path,
-        &final_source_srt,
-        &final_target_srt,
-        &final_src_trans_srt,
-        &final_trans_src_srt,
+        &qa_snapshot.source_srt,
+        &qa_snapshot.target_srt,
+        &qa_snapshot.src_trans_srt,
+        &qa_snapshot.trans_src_srt,
     )?;
 
-    let merged = final_segments
+    let merged = qa_snapshot
+        .segments
         .iter()
         .map(|segment| {
             json!({
@@ -1368,13 +1651,271 @@ async fn run_translate_only(
             context.projections.editor.result_text.clone()
         },
         result_srt: if context.projections.editor.result_srt.trim().is_empty() {
-            final_source_srt
+            qa_snapshot.source_srt
         } else {
             context.projections.editor.result_srt.clone()
         },
         subtitle_segments_json: serde_json::to_string(&merged).map_err(|err| err.to_string())?,
         segment_total: merged.len() as i64,
     })
+}
+
+fn has_source_segments_available(raw: &str) -> bool {
+    parse_tokens_from_segments(raw)
+        .iter()
+        .any(|token| !token.word.trim().is_empty())
+}
+
+fn load_asr_resume_snapshot(context: &TaskContext) -> Option<AsrResumeSnapshot> {
+    if !stage_is_done(context.stage_status(STAGE_ASR)) {
+        return None;
+    }
+    let words_value = context.stages.asr.output.get("words")?.clone();
+    let words = serde_json::from_value::<Vec<WordTokenDto>>(words_value).ok()?;
+    if words.is_empty() {
+        return None;
+    }
+    let segment_total = context
+        .stages
+        .asr
+        .output
+        .get("segmentTotal")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(words.len());
+    let audio_duration_sec = context
+        .stages
+        .asr
+        .output
+        .get("audioDurationSec")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let execution_provider = context
+        .stages
+        .asr
+        .output
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let vad_elapsed_sec = context
+        .stages
+        .asr
+        .metrics
+        .get("vadElapsedSec")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let transcribe_elapsed_sec = context
+        .stages
+        .asr
+        .metrics
+        .get("transcribeElapsedSec")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    Some(AsrResumeSnapshot {
+        words,
+        segment_total,
+        audio_duration_sec,
+        vad_elapsed_sec,
+        transcribe_elapsed_sec,
+        execution_provider,
+    })
+}
+
+fn load_stage_words(context: &TaskContext, stage: &str) -> Option<Vec<WordTokenDto>> {
+    if !stage_is_done(context.stage_status(stage)) {
+        return None;
+    }
+    let output = match stage {
+        STAGE_PUNCTUATE => &context.stages.punctuate.output,
+        STAGE_CORRECT => &context.stages.correct.output,
+        _ => return None,
+    };
+    let words_value = output.get("words")?.clone();
+    let words = serde_json::from_value::<Vec<WordTokenDto>>(words_value).ok()?;
+    if words.is_empty() {
+        return None;
+    }
+    Some(words)
+}
+
+fn load_segment_snapshot(context: &TaskContext) -> Option<SegmentResumeSnapshot> {
+    if !stage_is_done(context.stage_status(STAGE_SEGMENT)) {
+        return None;
+    }
+    let output = &context.stages.segment.output;
+    let text = output.get("text")?.as_str()?.to_string();
+    let srt = output.get("srt")?.as_str()?.to_string();
+    let srt_output_path = output.get("srtOutputPath")?.as_str()?.to_string();
+    let segments_value = output.get("segments")?.clone();
+    let segments = serde_json::from_value::<Vec<SegmentWithWordsDto>>(segments_value).ok()?;
+    if segments.is_empty() {
+        return None;
+    }
+    Some(SegmentResumeSnapshot {
+        text,
+        srt,
+        srt_output_path,
+        segments,
+    })
+}
+
+fn load_summarize_snapshot(context: &TaskContext) -> Option<SummarizeSnapshot> {
+    if !stage_is_done(context.stage_status(STAGE_SUMMARIZE)) {
+        return None;
+    }
+    let output = &context.stages.summarize.output;
+    let topic_summary = output.get("topicSummary")?.as_str()?.to_string();
+    let tone_strategy = output.get("toneStrategy")?.as_str()?.to_string();
+    if topic_summary.trim().is_empty() || tone_strategy.trim().is_empty() {
+        return None;
+    }
+    Some(SummarizeSnapshot {
+        topic_summary,
+        tone_strategy,
+    })
+}
+
+fn load_translate_snapshot(context: &TaskContext) -> Option<TranslateSnapshot> {
+    if !stage_is_done(context.stage_status(STAGE_TRANSLATE)) {
+        return None;
+    }
+    let output = &context.stages.translate.output;
+    let source_srt = output.get("sourceSrt")?.as_str()?.to_string();
+    let target_srt = output.get("targetSrt")?.as_str()?.to_string();
+    let bilingual_srt_source_first = output.get("bilingualSrtSourceFirst")?.as_str()?.to_string();
+    let bilingual_srt_target_first = output.get("bilingualSrtTargetFirst")?.as_str()?.to_string();
+    let segments = serde_json::from_value::<Vec<crate::services::translate::types::TranslateSegment>>(
+        output.get("segments")?.clone(),
+    )
+    .ok()?;
+    if segments.is_empty() {
+        return None;
+    }
+    Some(TranslateSnapshot {
+        source_srt,
+        target_srt,
+        bilingual_srt_source_first,
+        bilingual_srt_target_first,
+        segments,
+    })
+}
+
+fn load_qa_snapshot(context: &TaskContext) -> Option<QaSnapshot> {
+    if !stage_is_done(context.stage_status(STAGE_QA)) {
+        return None;
+    }
+    let output = &context.stages.qa.output;
+    let segments = serde_json::from_value::<Vec<crate::services::translate::types::TranslateSegment>>(
+        output.get("segments")?.clone(),
+    )
+    .ok()?;
+    if segments.is_empty() {
+        return None;
+    }
+    let applied_change_total = output
+        .get("appliedChangeTotal")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    Some(QaSnapshot {
+        segments,
+        report: output.get("report").cloned().unwrap_or(Value::Null),
+        applied_change_total,
+        source_srt: output.get("sourceSrt")?.as_str()?.to_string(),
+        target_srt: output.get("targetSrt")?.as_str()?.to_string(),
+        src_trans_srt: output.get("srcTransSrt")?.as_str()?.to_string(),
+        trans_src_srt: output.get("transSrcSrt")?.as_str()?.to_string(),
+    })
+}
+
+fn has_translated_segments_available(raw: &str) -> bool {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return false;
+    };
+    let Some(arr) = parsed.as_array() else {
+        return false;
+    };
+    arr.iter().any(|segment| {
+        segment
+            .get("translatedText")
+            .and_then(|v| v.as_str())
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+    })
+}
+
+fn stage_is_done(status: &str) -> bool {
+    status.trim().eq_ignore_ascii_case("done")
+}
+
+async fn run_stage<T, FLoad, FValid, FExec, Fut, FOutput, FMetrics>(
+    pool: &SqlitePool,
+    task_id: &str,
+    context: &mut TaskContext,
+    stage: &str,
+    load_existing: FLoad,
+    validate: FValid,
+    exec: FExec,
+    output_of: FOutput,
+    metrics_of: FMetrics,
+) -> Result<T, String>
+where
+    FLoad: Fn(&TaskContext) -> Option<T>,
+    FValid: Fn(&T) -> bool,
+    FExec: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+    FOutput: Fn(&T) -> Value,
+    FMetrics: Fn(&T) -> Value,
+{
+    if stage_is_done(context.stage_status(stage)) {
+        if let Some(existing) = load_existing(context) {
+            if validate(&existing) {
+                return Ok(existing);
+            }
+        }
+    }
+
+    context.mark_stage_running(stage);
+    persist_task_context(pool, task_id, context).await?;
+
+    let value = match exec().await {
+        Ok(v) => v,
+        Err(err) => {
+            context.mark_failed(stage, "STAGE_FAILED", &err, true);
+            persist_task_context(pool, task_id, context).await?;
+            return Err(err);
+        }
+    };
+    if !validate(&value) {
+        let err = format!("{stage} failed: invalid output");
+        context.mark_failed(stage, "INVALID_OUTPUT", &err, false);
+        persist_task_context(pool, task_id, context).await?;
+        return Err(err);
+    }
+
+    context.mark_stage_done(stage, output_of(&value), metrics_of(&value));
+    persist_task_context(pool, task_id, context).await?;
+    Ok(value)
+}
+
+fn done_payload_from_context(context: &TaskContext) -> DonePayload {
+    let segment_total = count_segments_from_json(&context.projections.editor.subtitle_segments_json);
+    DonePayload {
+        result_text: context.projections.editor.result_text.clone(),
+        result_srt: context.projections.editor.result_srt.clone(),
+        subtitle_segments_json: context.projections.editor.subtitle_segments_json.clone(),
+        segment_total,
+    }
+}
+
+fn count_segments_from_json(raw: &str) -> i64 {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return 0;
+    };
+    parsed
+        .as_array()
+        .map(|arr| arr.len() as i64)
+        .unwrap_or(0)
 }
 
 fn parse_tokens_from_segments(raw: &str) -> Vec<TranslateToken> {
@@ -1406,6 +1947,28 @@ fn parse_tokens_from_segments(raw: &str) -> Vec<TranslateToken> {
         .collect()
 }
 
+fn to_core_words(words: Vec<WordTokenDto>) -> Vec<WordToken> {
+    words
+        .into_iter()
+        .map(|word| WordToken {
+            start: word.start,
+            end: word.end,
+            word: word.word,
+        })
+        .collect()
+}
+
+fn from_core_words(words: Vec<WordToken>) -> Vec<WordTokenDto> {
+    words
+        .into_iter()
+        .map(|word| WordTokenDto {
+            start: word.start,
+            end: word.end,
+            word: word.word,
+        })
+        .collect()
+}
+
 fn map_terminology_entries(
     groups: &[crate::services::preferences::TerminologyGroup],
 ) -> Vec<TranslateTerminologyEntry> {
@@ -1424,11 +1987,11 @@ fn map_terminology_entries(
 
 fn map_correction_terminology_entries(
     groups: &[crate::services::preferences::TerminologyGroup],
-) -> Vec<CorrectionTerminologyEntryDto> {
+) -> Vec<CorrectionTerminologyEntry> {
     groups
         .iter()
         .flat_map(|group| {
-            group.terms.iter().map(|term| CorrectionTerminologyEntryDto {
+            group.terms.iter().map(|term| CorrectionTerminologyEntry {
                 source: term.origin.trim().to_string(),
                 target: term.target.trim().to_string(),
                 note: term.note.trim().to_string(),
@@ -1438,12 +2001,87 @@ fn map_correction_terminology_entries(
         .collect()
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct TaskStageSnapshotRow {
+    stage: String,
+    status: String,
+    started_at: Option<i64>,
+    finished_at: Option<i64>,
+    output_json: String,
+    metrics_json: String,
+    error_code: String,
+    error_message: String,
+}
+
+async fn hydrate_task_context(
+    pool: &SqlitePool,
+    task: &TaskRunExecRow,
+    settings_snapshot: Value,
+) -> Result<TaskContext, String> {
+    let mut context = TaskContext::new(TaskContextSeed {
+        task_id: task.id.clone(),
+        intent: task.intent.clone(),
+        source_lang: task.source_lang.clone(),
+        target_lang: task.target_lang.clone(),
+        media_path: task.media_path.clone(),
+        media_kind: task.media_kind.clone(),
+        media_size_bytes: task.size_bytes.max(0) as u64,
+        settings_snapshot,
+        created_at: task.created_at,
+    });
+
+    context.runtime.status = normalize_runtime_status(&task.overall_status);
+    context.runtime.current_stage = task.current_stage.clone();
+    context.runtime.progress_percent = task.progress_percent.clamp(0, 100) as u32;
+    context.set_queue_projection(
+        map_workspace_status(&task.overall_status),
+        map_workspace_phase(&task.current_stage).as_str(),
+        &task.phase_detail,
+        task.progress_percent.clamp(0, 100) as u32,
+        task.segment_current.max(0) as u32,
+        task.segment_total.max(0) as u32,
+        &task.error_message,
+    );
+    context.set_editor_projection(
+        task.subtitle_segments_json.clone(),
+        task.result_text.clone(),
+        task.result_srt.clone(),
+        task.translated_srt.clone(),
+    );
+
+    let rows = sqlx::query_as::<_, TaskStageSnapshotRow>(
+        "SELECT stage, status, started_at, finished_at, output_json, metrics_json, error_code, error_message
+         FROM task_stage_runs
+         WHERE task_id = ?",
+    )
+    .bind(&task.id)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    for row in rows {
+        let output = serde_json::from_str::<Value>(&row.output_json).unwrap_or(Value::Null);
+        let metrics = serde_json::from_str::<Value>(&row.metrics_json).unwrap_or(Value::Null);
+        context.set_stage_snapshot(
+            &row.stage,
+            row.status,
+            row.started_at,
+            row.finished_at,
+            output,
+            metrics,
+            row.error_code,
+            row.error_message,
+        );
+    }
+
+    Ok(context)
+}
+
 async fn persist_task_context(
     pool: &SqlitePool,
     task_id: &str,
     context: &TaskContext,
 ) -> Result<(), String> {
-    let context_json = context.to_json_string()?;
     let now = unix_now();
     let is_final = matches!(
         context.runtime.status.as_str(),
@@ -1451,7 +2089,17 @@ async fn persist_task_context(
     );
     sqlx::query(
         "UPDATE task_runs
-         SET context_json = ?,
+         SET overall_status = ?,
+             current_stage = ?,
+             progress_percent = ?,
+             phase_detail = ?,
+             segment_current = ?,
+             segment_total = ?,
+             error_message = ?,
+             result_text = ?,
+             result_srt = ?,
+             subtitle_segments_json = ?,
+             translated_srt = ?,
              started_at = CASE
                  WHEN started_at IS NULL AND ? = 'running' THEN ?
                  ELSE started_at
@@ -1463,7 +2111,17 @@ async fn persist_task_context(
              updated_at = ?
          WHERE id = ?",
     )
-    .bind(context_json)
+    .bind(normalize_overall_status(&context.runtime.status))
+    .bind(&context.runtime.current_stage)
+    .bind(context.runtime.progress_percent as i64)
+    .bind(&context.projections.queue.phase_detail)
+    .bind(context.projections.queue.transcribe_segment_current as i64)
+    .bind(context.projections.queue.transcribe_segment_total as i64)
+    .bind(&context.projections.queue.transcribe_error)
+    .bind(&context.projections.editor.result_text)
+    .bind(&context.projections.editor.result_srt)
+    .bind(&context.projections.editor.subtitle_segments_json)
+    .bind(&context.projections.editor.translated_srt)
     .bind(&context.runtime.status)
     .bind(now)
     .bind(if is_final { 1 } else { 0 })
@@ -1473,6 +2131,65 @@ async fn persist_task_context(
     .execute(pool)
     .await
     .map_err(|err| err.to_string())?;
+
+    for (stage, envelope) in [
+        (STAGE_INIT, &context.stages.init),
+        (STAGE_SEPARATE, &context.stages.separate),
+        (STAGE_ASR, &context.stages.asr),
+        (STAGE_PUNCTUATE, &context.stages.punctuate),
+        (STAGE_CORRECT, &context.stages.correct),
+        (STAGE_SEGMENT, &context.stages.segment),
+        (STAGE_SUMMARIZE, &context.stages.summarize),
+        (STAGE_TRANSLATE, &context.stages.translate),
+        (STAGE_QA, &context.stages.qa),
+        (STAGE_COMPOSE, &context.stages.compose),
+    ] {
+        let output_json = serde_json::to_string(&envelope.output).unwrap_or_else(|_| "{}".to_string());
+        let metrics_json = serde_json::to_string(&envelope.metrics).unwrap_or_else(|_| "{}".to_string());
+        let error_code = envelope.error.as_ref().map(|e| e.code.clone()).unwrap_or_default();
+        let error_message = envelope.error.as_ref().map(|e| e.message.clone()).unwrap_or_default();
+        let duration_ms = match (envelope.started_at, envelope.finished_at) {
+            (Some(start), Some(end)) if end >= start => (end - start) * 1000,
+            _ => 0,
+        };
+        sqlx::query(
+            "INSERT INTO task_stage_runs (
+                task_id, stage, status, attempt, input_hash, output_json, metrics_json, error_code, error_message,
+                started_at, finished_at, duration_ms, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(task_id, stage) DO UPDATE SET
+                status = excluded.status,
+                attempt = CASE
+                    WHEN excluded.status = 'running' THEN task_stage_runs.attempt + 1
+                    ELSE task_stage_runs.attempt
+                END,
+                output_json = excluded.output_json,
+                metrics_json = excluded.metrics_json,
+                error_code = excluded.error_code,
+                error_message = excluded.error_message,
+                started_at = excluded.started_at,
+                finished_at = excluded.finished_at,
+                duration_ms = excluded.duration_ms,
+                updated_at = excluded.updated_at",
+        )
+        .bind(task_id)
+        .bind(stage)
+        .bind(&envelope.status)
+        .bind(if envelope.status == "running" { 1_i64 } else { 0_i64 })
+        .bind("")
+        .bind(output_json)
+        .bind(metrics_json)
+        .bind(error_code)
+        .bind(error_message)
+        .bind(envelope.started_at)
+        .bind(envelope.finished_at)
+        .bind(duration_ms)
+        .bind(now)
+        .execute(pool)
+        .await
+        .map_err(|err| err.to_string())?;
+    }
+
     Ok(())
 }
 
@@ -1498,34 +2215,63 @@ fn emit_bridge_event<T: serde::Serialize>(
 }
 
 async fn load_task_runtime_error(pool: &SqlitePool, task_id: &str) -> Option<String> {
-    let context_json = sqlx::query_scalar::<_, String>(
-        "SELECT context_json FROM task_runs WHERE id = ?",
+    let task_error = sqlx::query_scalar::<_, String>(
+        "SELECT error_message FROM task_runs WHERE id = ?",
     )
     .bind(task_id)
     .fetch_optional(pool)
     .await
     .ok()
     .flatten()?;
-
-    let parsed = serde_json::from_str::<Value>(&context_json).ok()?;
-    let transcribe_error = parsed
-        .pointer("/projections/queue/transcribeError")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if !transcribe_error.is_empty() {
-        return Some(transcribe_error);
+    if !task_error.trim().is_empty() {
+        return Some(task_error);
     }
-    let runtime_error = parsed
-        .pointer("/runtime/lastError")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if runtime_error.is_empty() {
-        None
-    } else {
-        Some(runtime_error)
+    sqlx::query_scalar::<_, String>(
+        "SELECT error_message FROM task_stage_runs
+         WHERE task_id = ? AND error_message <> ''
+         ORDER BY updated_at DESC LIMIT 1",
+    )
+    .bind(task_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+}
+
+fn normalize_overall_status(runtime_status: &str) -> &str {
+    match runtime_status {
+        "queued" => "queued",
+        "running" => "running",
+        "failed" => "failed",
+        "completed" => "completed",
+        _ => "pending",
+    }
+}
+
+fn normalize_runtime_status(overall_status: &str) -> String {
+    match overall_status {
+        "queued" => "queued".to_string(),
+        "running" => "running".to_string(),
+        "failed" => "failed".to_string(),
+        "completed" => "completed".to_string(),
+        _ => "queued".to_string(),
+    }
+}
+
+fn map_workspace_status(overall_status: &str) -> &str {
+    match overall_status {
+        "queued" => "queued",
+        "running" => "processing",
+        "failed" => "error",
+        "completed" => "done",
+        _ => "pending",
+    }
+}
+
+fn map_workspace_phase(current_stage: &str) -> String {
+    match current_stage {
+        "separate" => "separating".to_string(),
+        "asr" => "recognizing".to_string(),
+        other => other.to_string(),
     }
 }

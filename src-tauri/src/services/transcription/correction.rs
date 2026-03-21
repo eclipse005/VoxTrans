@@ -78,14 +78,14 @@ pub async fn correct_words_with_rig_node(
     media_path: &str,
     words: Vec<WordToken>,
     config: &CorrectionConfig,
-) -> Vec<WordToken> {
+) -> Result<Vec<WordToken>, String> {
     let logger = TaskLogger::main_with_media(task_id.to_string(), media_path.to_string());
     if words.is_empty() {
         logger.event(
             "transcribe.correction.skip",
             Some(&json!({ "reason": "empty_words" })),
         );
-        return words;
+        return Ok(words);
     }
     if !is_english_priority(&config.source_lang) {
         logger.event(
@@ -95,7 +95,7 @@ pub async fn correct_words_with_rig_node(
                 "sourceLang": config.source_lang
             })),
         );
-        return words;
+        return Ok(words);
     }
     if config.api_key.trim().is_empty()
         || config.base_url.trim().is_empty()
@@ -105,7 +105,7 @@ pub async fn correct_words_with_rig_node(
             "transcribe.correction.skip",
             Some(&json!({ "reason": "missing_llm_config" })),
         );
-        return words;
+        return Err("correction failed: missing llm config".to_string());
     }
 
     let mut sentences = split_sentences(&words);
@@ -114,7 +114,7 @@ pub async fn correct_words_with_rig_node(
             "transcribe.correction.skip",
             Some(&json!({ "reason": "empty_sentences" })),
         );
-        return words;
+        return Ok(words);
     }
 
     let batch_ranges = split_batch_ranges(sentences.len(), BATCH_SENTENCE_SIZE);
@@ -143,7 +143,7 @@ pub async fn correct_words_with_rig_node(
                     "error": err
                 })),
             );
-            return words;
+            return Err(format!("correction failed: create client: {err}"));
         }
     };
 
@@ -152,8 +152,8 @@ pub async fn correct_words_with_rig_node(
     let mut previous_batch_corrected: Vec<PreviousBatchItem> = Vec::new();
 
     let mut succeeded_batch_total = 0usize;
-    let mut fallback_batch_total = 0usize;
-    let mut parse_error_total = 0usize;
+    let fallback_batch_total = 0usize;
+    let parse_error_total = 0usize;
     let mut changed_sentence_total = 0usize;
     let mut changed_token_total = 0usize;
     let mut low_confidence_skip_total = 0usize;
@@ -184,7 +184,6 @@ pub async fn correct_words_with_rig_node(
         let raw_json = match response {
             Ok(ok) => ok.json,
             Err(err) => {
-                fallback_batch_total += 1;
                 logger.event(
                     "transcribe.correction.error",
                     Some(&json!({
@@ -193,22 +192,13 @@ pub async fn correct_words_with_rig_node(
                         "error": err.message
                     })),
                 );
-                previous_batch_corrected = batch
-                    .iter()
-                    .map(|sentence| PreviousBatchItem {
-                        index: sentence.index,
-                        corrected_text: sentence_text(&sentence.words),
-                    })
-                    .collect();
-                continue;
+                return Err(format!("correction failed: {}", err.message));
             }
         };
 
         let extracted = match serde_json::from_value::<CorrectionExtraction>(raw_json) {
             Ok(v) => v,
             Err(err) => {
-                fallback_batch_total += 1;
-                parse_error_total += 1;
                 logger.event(
                     "transcribe.correction.error",
                     Some(&json!({
@@ -217,14 +207,7 @@ pub async fn correct_words_with_rig_node(
                         "error": err.to_string()
                     })),
                 );
-                previous_batch_corrected = batch
-                    .iter()
-                    .map(|sentence| PreviousBatchItem {
-                        index: sentence.index,
-                        corrected_text: sentence_text(&sentence.words),
-                    })
-                    .collect();
-                continue;
+                return Err(format!("correction parse failed: {err}"));
             }
         };
 
@@ -238,8 +221,6 @@ pub async fn correct_words_with_rig_node(
             by_index.insert(item.index, item.corrections);
         }
         if invalid_index {
-            fallback_batch_total += 1;
-            parse_error_total += 1;
             logger.event(
                 "transcribe.correction.error",
                 Some(&json!({
@@ -247,14 +228,7 @@ pub async fn correct_words_with_rig_node(
                     "batchIndex": batch_idx + 1
                 })),
             );
-            previous_batch_corrected = batch
-                .iter()
-                .map(|sentence| PreviousBatchItem {
-                    index: sentence.index,
-                    corrected_text: sentence_text(&sentence.words),
-                })
-                .collect();
-            continue;
+            return Err(format!("correction failed: invalid index at batch {}", batch_idx + 1));
         }
 
         succeeded_batch_total += 1;
@@ -327,7 +301,7 @@ pub async fn correct_words_with_rig_node(
         })),
     );
 
-    flatten_sentences(sentences)
+    Ok(flatten_sentences(sentences))
 }
 
 fn is_english_priority(source_lang: &str) -> bool {

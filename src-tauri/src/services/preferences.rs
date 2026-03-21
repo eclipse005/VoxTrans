@@ -208,7 +208,7 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         .await?
         .and_then(|v| v.parse::<u32>().ok())
         .map(|v| v.clamp(30, 300))
-        .unwrap_or(300);
+        .unwrap_or(180);
     let subtitle_max_words_per_segment = get_setting(pool, KEY_SUBTITLE_MAX_WORDS_PER_SEGMENT)
         .await?
         .and_then(|v| v.parse::<u32>().ok())

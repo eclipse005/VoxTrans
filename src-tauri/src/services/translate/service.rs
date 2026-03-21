@@ -7,14 +7,20 @@ pub async fn run_translate_pipeline(
     pipeline::run_translate_pipeline(request, |_| {}, |_, _| {}).await
 }
 
-pub async fn run_translate_pipeline_with_phase<F, G>(
+pub async fn run_translate_summarize(
+    request: &TranslatePipelineRequest,
+) -> Result<(String, String), String> {
+    pipeline::summarize_translate_style(request).await
+}
+
+pub async fn run_translate_with_style<G>(
     request: TranslatePipelineRequest,
-    on_phase: F,
-    on_batch_progress: G,
+    topic_summary: String,
+    tone_strategy: String,
+    on_batch_progress: &mut G,
 ) -> Result<TranslatePipelineResponse, String>
 where
-    F: FnMut(&str),
     G: FnMut(usize, usize),
 {
-    pipeline::run_translate_pipeline(request, on_phase, on_batch_progress).await
+    pipeline::run_translate_with_style(request, topic_summary, tone_strategy, on_batch_progress).await
 }

@@ -8,7 +8,7 @@ type DeleteTasksRequest = {
 
 type ExecuteTaskRunRequest = {
   taskId: string;
-  intent?: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" | "TRANSLATE_ONLY";
+  intent?: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE";
 };
 
 type ExecuteTaskBatchRequest = {
@@ -29,7 +29,7 @@ type EnqueueTaskRunRequest = {
   name: string;
   mediaKind: "audio" | "video";
   sizeBytes: number;
-  intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" | "TRANSLATE_ONLY";
+  intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE";
   sourceLang?: string;
   targetLang?: string;
   maxRetries?: number;

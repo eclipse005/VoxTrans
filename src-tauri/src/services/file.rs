@@ -1,5 +1,4 @@
 use crate::services::task_log::{TaskLogger, event};
-use crate::services::task_context::{TaskContext, TaskContextSeed};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -53,8 +52,8 @@ struct ExportTaskRow {
     media_path: String,
     source_lang: String,
     target_lang: String,
-    created_at: i64,
-    context_json: String,
+    subtitle_segments_json: String,
+    result_srt: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,7 +188,7 @@ pub async fn export_task_srts(
 
     let started_at = std::time::Instant::now();
     let row = sqlx::query_as::<_, ExportTaskRow>(
-        "SELECT id, name, media_path, source_lang, target_lang, created_at, context_json
+        "SELECT id, name, media_path, source_lang, target_lang, subtitle_segments_json, result_srt
          FROM task_runs
          WHERE id = ?",
     )
@@ -205,22 +204,8 @@ pub async fn export_task_srts(
         return Err(format!("导出目录不存在: {}", target_dir));
     }
 
-    let context = TaskContext::parse_or_new(
-        &row.context_json,
-        TaskContextSeed {
-            task_id: row.id.clone(),
-            intent: "TRANSCRIBE".to_string(),
-            source_lang: row.source_lang.clone(),
-            target_lang: row.target_lang.clone(),
-            media_path: row.media_path.clone(),
-            media_kind: "audio".to_string(),
-            media_size_bytes: 0,
-            settings_snapshot: serde_json::json!({}),
-            created_at: row.created_at,
-        },
-    );
-    let segments = parse_subtitle_segments(&context.projections.editor.subtitle_segments_json);
-    let source_from_editor = context.projections.editor.result_srt.trim().to_string();
+    let segments = parse_subtitle_segments(&row.subtitle_segments_json);
+    let source_from_editor = row.result_srt.trim().to_string();
     let source_srt = if source_from_editor.is_empty() {
         build_srt_from_segments(&segments, ExportSrtItem::Source)
     } else {
