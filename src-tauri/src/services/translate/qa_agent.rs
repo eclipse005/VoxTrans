@@ -1,9 +1,18 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::Mutex;
 use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 
-use crate::services::task_log::TaskLogger;
+use crate::services::task_log::{TaskLogTarget, TaskLogger, append_event_best_effort};
+use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
+use rig::client::CompletionClient;
+use rig::completion::{CompletionModel, Prompt, PromptError, ToolDefinition};
+use rig::message::{Message, UserContent};
+use rig::providers::openai;
+use rig::tool::Tool;
 
 use super::types::{TranslateSegment, TranslateTerminologyEntry};
 
@@ -162,196 +171,128 @@ pub async fn run_qa_agent(request: QaAgentRequest) -> Result<QaAgentResponse, St
 
     let logger = TaskLogger::main_with_media(request.task_id.clone(), request.media_path.clone());
     let llm_logger = TaskLogger::llm_with_media(request.task_id.clone(), request.media_path.clone());
-    let mut state = QaState {
-        original_segments: request.segments.clone(),
-        working_segments: request.segments.clone(),
-        target_reference_len: request.target_reference_len.clamp(8, 80),
-        source_lang: request.source_lang.clone(),
-        target_lang: request.target_lang.clone(),
-        terminology_entries: request.terminology_entries.clone(),
-        applied_changes: Vec::new(),
+    let main_target =
+        TaskLogTarget::main_with_media(request.task_id.clone(), request.media_path.clone());
+    let llm_target =
+        TaskLogTarget::llm_with_media(request.task_id.clone(), request.media_path.clone());
+    let pass = normalize_pass(&request.pass);
+    let runtime = QaRuntime {
+        state: Arc::new(Mutex::new(QaState {
+            original_segments: request.segments.clone(),
+            working_segments: request.segments.clone(),
+            target_reference_len: request.target_reference_len.clamp(8, 80),
+            source_lang: request.source_lang.clone(),
+            target_lang: request.target_lang.clone(),
+            terminology_entries: request.terminology_entries.clone(),
+            applied_changes: Vec::new(),
+        })),
+        finalized: Arc::new(AtomicBool::new(false)),
+        pass,
     };
 
-    let base = request.base_url.trim_end_matches('/');
-    let url = format!("{base}/chat/completions");
-    let client = reqwest::Client::new();
+    let system_prompt = build_qa_system_prompt(pass);
+    let user_prompt = {
+        let state = runtime.state.lock().await;
+        build_qa_user_prompt(&request, &state, pass)
+    };
 
-    let pass = normalize_pass(&request.pass);
-    let mut messages = vec![
-        json!({
-            "role": "system",
-            "content": build_qa_system_prompt(pass)
-        }),
-        json!({
-            "role": "user",
-            "content": build_qa_user_prompt(&request, &state, pass)
-        }),
-    ];
+    let mut client_builder = openai::Client::builder().api_key(&request.api_key);
+    if !request.base_url.trim().is_empty() {
+        client_builder = client_builder.base_url(request.base_url.trim());
+    }
+    let responses_client = client_builder
+        .build()
+        .map_err(|err| format!("failed to create rig openai client: {err}"))?;
+    let client = responses_client.completions_api();
+    let hook = QaPromptHook {
+        model: request.model.clone(),
+        pass_raw: request.pass.clone(),
+        turn_state: Arc::new(Mutex::new(QaHookState::default())),
+        llm_target: llm_target.clone(),
+        main_target: main_target.clone(),
+    };
 
-    let mut finalized = false;
-    let mut finish_reason = String::new();
-    let tools = build_tools(pass);
+    let agent_builder = client
+        .agent(request.model.clone())
+        .preamble(&system_prompt)
+        .temperature(0.2)
+        .default_max_turns(MAX_TURNS);
+    let agent_builder = match pass {
+        QaPassKind::Segment => agent_builder
+            .tool(ListOverlengthSegmentsTool {
+                runtime: runtime.clone(),
+            })
+            .tool(PlanSegmentOpsTool {
+                runtime: runtime.clone(),
+            })
+            .tool(ApplySegmentOpsTool {
+                runtime: runtime.clone(),
+            }),
+        QaPassKind::Quality => agent_builder
+            .tool(CheckTranslationConsistencyTool {
+                runtime: runtime.clone(),
+            })
+            .tool(UpdateTranslationTool {
+                runtime: runtime.clone(),
+            }),
+    };
+    let agent = agent_builder
+        .tool(CheckChangeImpactTool {
+            runtime: runtime.clone(),
+        })
+        .tool(FinalizeQaTool {
+            runtime: runtime.clone(),
+        })
+        .build();
 
-    for turn in 1..=MAX_TURNS {
-        let payload = json!({
-            "model": request.model,
-            "temperature": 0.2,
-            "messages": messages.clone(),
-            "tools": tools.clone(),
-            "tool_choice": "auto",
-        });
-        logger.event(
-            "qa.turn.request",
-            Some(&json!({
-                "turn": turn,
-                "model": request.model,
-                "pass": request.pass,
-            })),
-        );
-        llm_logger.event(
-            "qa.turn.request",
-            Some(&json!({
-                "turn": turn,
-                "url": url,
-                "payload": payload,
-                "pass": request.pass,
-            })),
-        );
-
-        let response = client
-            .post(&url)
-            .bearer_auth(&request.api_key)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|err| format!("qa chat request failed: {err}"))?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
-            return Err(format!("qa chat http {status}: {body}"));
+    let prompt_result = agent
+        .prompt(&user_prompt)
+        .with_hook(hook)
+        .max_turns(MAX_TURNS)
+        .await;
+    let mut max_turns_reached = false;
+    let final_text = match prompt_result {
+        Ok(text) => Some(text),
+        Err(PromptError::MaxTurnsError { .. }) => {
+            max_turns_reached = true;
+            logger.event(
+                "qa.max_turns_reached",
+                Some(&json!({
+                    "maxTurns": MAX_TURNS,
+                    "pass": request.pass,
+                })),
+            );
+            llm_logger.event(
+                "qa.max_turns_reached",
+                Some(&json!({
+                    "maxTurns": MAX_TURNS,
+                    "pass": request.pass,
+                })),
+            );
+            None
         }
-        let value = response
-            .json::<Value>()
-            .await
-            .map_err(|err| format!("qa chat parse failed: {err}"))?;
-        let choice = value
-            .get("choices")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .cloned()
-            .ok_or_else(|| "qa missing choices".to_string())?;
-        let message = choice
-            .get("message")
-            .cloned()
-            .ok_or_else(|| "qa missing message".to_string())?;
-        let tool_calls = message
-            .get("tool_calls")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        finish_reason = choice
-            .get("finish_reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-
-        messages.push(message.clone());
+        Err(err) => return Err(format!("qa rig prompt failed: {err}")),
+    };
+    if let Some(text) = final_text {
         llm_logger.event(
             "qa.turn.response",
             Some(&json!({
-                "turn": turn,
-                "response": value,
-                "finishReason": finish_reason,
+                "turn": "final",
+                "responseText": text,
+                "pass": request.pass,
             })),
         );
-
-        if tool_calls.is_empty() {
-            logger.event(
-                "qa.turn.no_tool_calls",
-                Some(&json!({
-                    "turn": turn,
-                    "finishReason": finish_reason,
-                })),
-            );
-            break;
-        }
-
-        for tool_call in tool_calls.into_iter().take(MAX_TOOL_CALLS_PER_TURN) {
-            let call_id = tool_call
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let name = tool_call
-                .get("function")
-                .and_then(|v| v.get("name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let raw_args = tool_call
-                .get("function")
-                .and_then(|v| v.get("arguments"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("{}");
-            let args = serde_json::from_str::<Value>(raw_args).unwrap_or_else(|_| json!({}));
-            llm_logger.event(
-                "qa.tool.call",
-                Some(&json!({
-                    "turn": turn,
-                    "tool": name,
-                    "callId": call_id,
-                    "args": args,
-                })),
-            );
-            let result = execute_tool(&name, args, &mut state, &mut finalized);
-            logger.event(
-                "qa.tool.executed",
-                Some(&json!({
-                    "turn": turn,
-                    "tool": name,
-                    "callId": call_id,
-                    "pass": request.pass,
-                })),
-            );
-            if result
-                .get("ok")
-                .and_then(|v| v.as_bool())
-                .is_some_and(|ok| !ok)
-            {
-                logger.event(
-                    "qa.tool.error",
-                    Some(&json!({
-                        "turn": turn,
-                        "tool": name,
-                        "callId": call_id,
-                        "error": result.get("error").cloned().unwrap_or(Value::Null),
-                        "pass": request.pass,
-                    })),
-                );
-            }
-            llm_logger.event(
-                "qa.tool.result",
-                Some(&json!({
-                    "turn": turn,
-                    "tool": name,
-                    "callId": call_id,
-                    "result": result,
-                    "pass": request.pass,
-                })),
-            );
-            messages.push(json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": result.to_string()
-            }));
-        }
-
-        if finalized {
-            break;
-        }
     }
 
+    let state = runtime.state.lock().await.clone();
+    let finalized = runtime.finalized.load(Ordering::SeqCst);
+    let finish_reason = if finalized {
+        "finalize_qa".to_string()
+    } else if max_turns_reached {
+        "max_turns_reached".to_string()
+    } else {
+        "agent_stopped_without_finalize".to_string()
+    };
     let source_srt = build_srt(&state.working_segments, false);
     let target_srt = build_srt(&state.working_segments, true);
     let bilingual_srt_source_first = build_bilingual_srt(&state.working_segments, true);
@@ -375,7 +316,7 @@ pub async fn run_qa_agent(request: QaAgentRequest) -> Result<QaAgentResponse, St
             "segmentTotalAfter": state.working_segments.len(),
             "appliedChangeTotal": state.applied_changes.len(),
             "impact": check_change_impact(&state),
-            "appliedChanges": state.applied_changes,
+            "appliedChanges": state.applied_changes.clone(),
             "pass": request.pass,
         })),
     );
@@ -400,6 +341,437 @@ pub async fn run_qa_agent(request: QaAgentRequest) -> Result<QaAgentResponse, St
         report,
         applied_changes: state.applied_changes,
     })
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct EmptyArgs {}
+
+#[derive(Debug, Clone)]
+struct QaToolError(String);
+
+impl std::fmt::Display for QaToolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for QaToolError {}
+
+#[derive(Debug, Clone)]
+struct QaRuntime {
+    state: Arc<Mutex<QaState>>,
+    finalized: Arc<AtomicBool>,
+    pass: QaPassKind,
+}
+
+#[derive(Debug, Clone, Default)]
+struct QaHookState {
+    turn: usize,
+    tool_calls_in_turn: usize,
+}
+
+#[derive(Clone)]
+struct QaPromptHook {
+    model: String,
+    pass_raw: String,
+    turn_state: Arc<Mutex<QaHookState>>,
+    llm_target: TaskLogTarget,
+    main_target: TaskLogTarget,
+}
+
+impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
+    async fn on_completion_call(&self, prompt: &Message, _history: &[Message]) -> HookAction {
+        let mut turn_state = self.turn_state.lock().await;
+        turn_state.turn += 1;
+        turn_state.tool_calls_in_turn = 0;
+        let turn = turn_state.turn;
+        drop(turn_state);
+        append_event_best_effort(
+            &self.main_target,
+            "qa.turn.request",
+            Some(&json!({
+                "turn": turn,
+                "model": self.model,
+                "pass": self.pass_raw,
+            })),
+        );
+        append_event_best_effort(
+            &self.llm_target,
+            "qa.turn.request",
+            Some(&json!({
+                "turn": turn,
+                "model": self.model,
+                "pass": self.pass_raw,
+                "prompt": message_to_text(prompt),
+            })),
+        );
+        HookAction::cont()
+    }
+
+    async fn on_completion_response(
+        &self,
+        _prompt: &Message,
+        response: &rig::completion::CompletionResponse<M::Response>,
+    ) -> HookAction {
+        let turn = self.turn_state.lock().await.turn;
+        let raw = serde_json::to_value(&response.raw_response).unwrap_or_else(|_| Value::Null);
+        append_event_best_effort(
+            &self.llm_target,
+            "qa.turn.response",
+            Some(&json!({
+                "turn": turn,
+                "response": raw,
+                "pass": self.pass_raw,
+            })),
+        );
+        HookAction::cont()
+    }
+
+    async fn on_tool_call(
+        &self,
+        tool_name: &str,
+        tool_call_id: Option<String>,
+        _internal_call_id: &str,
+        args: &str,
+    ) -> ToolCallHookAction {
+        let mut turn_state = self.turn_state.lock().await;
+        let turn = turn_state.turn;
+        if turn_state.tool_calls_in_turn >= MAX_TOOL_CALLS_PER_TURN {
+            append_event_best_effort(
+                &self.main_target,
+                "qa.tool.skipped",
+                Some(&json!({
+                    "turn": turn,
+                    "tool": tool_name,
+                    "callId": tool_call_id,
+                    "reason": "max_tool_calls_per_turn",
+                })),
+            );
+            return ToolCallHookAction::skip(
+                json!({
+                    "ok": false,
+                    "retryable": true,
+                    "error": format!("max tool calls per turn exceeded: {}", MAX_TOOL_CALLS_PER_TURN)
+                })
+                .to_string(),
+            );
+        }
+        turn_state.tool_calls_in_turn += 1;
+        drop(turn_state);
+        let parsed_args = serde_json::from_str::<Value>(args).unwrap_or_else(|_| json!({ "raw": args }));
+        append_event_best_effort(
+            &self.llm_target,
+            "qa.tool.call",
+            Some(&json!({
+                "turn": turn,
+                "tool": tool_name,
+                "callId": tool_call_id,
+                "args": parsed_args,
+                "pass": self.pass_raw,
+            })),
+        );
+        ToolCallHookAction::cont()
+    }
+
+    async fn on_tool_result(
+        &self,
+        tool_name: &str,
+        tool_call_id: Option<String>,
+        _internal_call_id: &str,
+        _args: &str,
+        result: &str,
+    ) -> HookAction {
+        let turn = self.turn_state.lock().await.turn;
+        let parsed_result =
+            serde_json::from_str::<Value>(result).unwrap_or_else(|_| json!({ "raw": result }));
+        append_event_best_effort(
+            &self.main_target,
+            "qa.tool.executed",
+            Some(&json!({
+                "turn": turn,
+                "tool": tool_name,
+                "callId": tool_call_id,
+                "pass": self.pass_raw,
+            })),
+        );
+        append_event_best_effort(
+            &self.llm_target,
+            "qa.tool.result",
+            Some(&json!({
+                "turn": turn,
+                "tool": tool_name,
+                "callId": tool_call_id,
+                "result": parsed_result,
+                "pass": self.pass_raw,
+            })),
+        );
+        HookAction::cont()
+    }
+}
+
+fn message_to_text(message: &Message) -> String {
+    let Message::User { content } = message else {
+        return String::new();
+    };
+    content
+        .iter()
+        .filter_map(|item| match item {
+            UserContent::Text(text) => Some(text.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[derive(Clone)]
+struct ListOverlengthSegmentsTool {
+    runtime: QaRuntime,
+}
+
+impl Tool for ListOverlengthSegmentsTool {
+    const NAME: &'static str = "list_overlength_segments";
+    type Error = QaToolError;
+    type Args = EmptyArgs;
+    type Output = Value;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "List segments whose translated text length is over target reference length.".to_string(),
+            parameters: json!({ "type": "object", "properties": {} }),
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let state = self.runtime.state.lock().await;
+        Ok(json!({
+            "ok": true,
+            "issues": list_overlength_segments(
+                &state.working_segments,
+                state.target_reference_len,
+                &state.source_lang,
+                &state.target_lang
+            )
+        }))
+    }
+}
+
+#[derive(Clone)]
+struct CheckTranslationConsistencyTool {
+    runtime: QaRuntime,
+}
+
+impl Tool for CheckTranslationConsistencyTool {
+    const NAME: &'static str = "check_translation_consistency";
+    type Error = QaToolError;
+    type Args = EmptyArgs;
+    type Output = Value;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Check terminology/phrase/number consistency issues.".to_string(),
+            parameters: json!({ "type": "object", "properties": {} }),
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let state = self.runtime.state.lock().await;
+        Ok(json!({
+            "ok": true,
+            "issues": check_translation_consistency(&state.working_segments, &state.terminology_entries)
+        }))
+    }
+}
+
+#[derive(Clone)]
+struct PlanSegmentOpsTool {
+    runtime: QaRuntime,
+}
+
+impl Tool for PlanSegmentOpsTool {
+    const NAME: &'static str = "plan_segment_ops";
+    type Error = QaToolError;
+    type Args = PlanSegmentOpsArgs;
+    type Output = Value;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Propose split/merge operations for given indices.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "indices": { "type": "array", "items": { "type": "integer" } }
+                },
+                "required": ["indices"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        if self.runtime.pass != QaPassKind::Segment {
+            return Ok(json!({
+                "ok": false,
+                "retryable": false,
+                "error": "plan_segment_ops is only allowed in segment pass"
+            }));
+        }
+        let state = self.runtime.state.lock().await;
+        Ok(json!({
+            "ok": true,
+            "recommendedOps": plan_segment_ops(
+                &state.working_segments,
+                args.indices,
+                state.target_reference_len,
+                &state.target_lang
+            )
+        }))
+    }
+}
+
+#[derive(Clone)]
+struct ApplySegmentOpsTool {
+    runtime: QaRuntime,
+}
+
+impl Tool for ApplySegmentOpsTool {
+    const NAME: &'static str = "apply_segment_ops";
+    type Error = QaToolError;
+    type Args = ApplySegmentOpsArgs;
+    type Output = Value;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Apply segment split/merge operations.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "ops": { "type": "array" } },
+                "required": ["ops"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        if self.runtime.pass != QaPassKind::Segment {
+            return Ok(json!({
+                "ok": false,
+                "retryable": false,
+                "error": "apply_segment_ops is only allowed in segment pass"
+            }));
+        }
+        let mut state = self.runtime.state.lock().await;
+        match apply_segment_ops(&mut state, args.ops) {
+            Ok(()) => Ok(json!({ "ok": true, "segmentTotal": state.working_segments.len() })),
+            Err(err) => Ok(json!({
+                "ok": false,
+                "retryable": true,
+                "error": format!("apply_segment_ops rejected: {err}")
+            })),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct UpdateTranslationTool {
+    runtime: QaRuntime,
+}
+
+impl Tool for UpdateTranslationTool {
+    const NAME: &'static str = "update_translation";
+    type Error = QaToolError;
+    type Args = UpdateTranslationArgs;
+    type Output = Value;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Update translated text at index.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "index": { "type": "integer" },
+                    "newText": { "type": "string" },
+                    "reason": { "type": "string" }
+                },
+                "required": ["index", "newText"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        if self.runtime.pass != QaPassKind::Quality {
+            return Ok(json!({
+                "ok": false,
+                "retryable": false,
+                "error": "update_translation is only allowed in quality pass"
+            }));
+        }
+        let mut state = self.runtime.state.lock().await;
+        match update_translation(&mut state, args) {
+            Ok(()) => Ok(json!({ "ok": true })),
+            Err(err) => Ok(json!({
+                "ok": false,
+                "retryable": true,
+                "error": format!("update_translation rejected: {err}")
+            })),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CheckChangeImpactTool {
+    runtime: QaRuntime,
+}
+
+impl Tool for CheckChangeImpactTool {
+    const NAME: &'static str = "check_change_impact";
+    type Error = QaToolError;
+    type Args = EmptyArgs;
+    type Output = Value;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Summarize changes and risks between original and current subtitles.".to_string(),
+            parameters: json!({ "type": "object", "properties": {} }),
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let state = self.runtime.state.lock().await;
+        let mut impact = check_change_impact(&state);
+        if let Some(obj) = impact.as_object_mut() {
+            obj.insert("ok".to_string(), Value::Bool(true));
+        }
+        Ok(impact)
+    }
+}
+
+#[derive(Clone)]
+struct FinalizeQaTool {
+    runtime: QaRuntime,
+}
+
+impl Tool for FinalizeQaTool {
+    const NAME: &'static str = "finalize_qa";
+    type Error = QaToolError;
+    type Args = EmptyArgs;
+    type Output = Value;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Finish QA and return summary.".to_string(),
+            parameters: json!({ "type": "object", "properties": {} }),
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        self.runtime.finalized.store(true, Ordering::SeqCst);
+        Ok(json!({ "ok": true, "summary": "qa finalized" }))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -476,166 +848,6 @@ fn build_qa_user_prompt(request: &QaAgentRequest, state: &QaState, pass: QaPassK
         ]),
     };
     payload.to_string()
-}
-
-fn build_tools(pass: QaPassKind) -> Vec<Value> {
-    let mut tools = Vec::new();
-    if pass == QaPassKind::Segment {
-        tools.push(tool_def(
-            "list_overlength_segments",
-            "List segments whose translated text length is over target reference length.",
-            json!({ "type": "object", "properties": {} }),
-        ));
-        tools.push(tool_def(
-            "plan_segment_ops",
-            "Propose split/merge operations for given indices.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "indices": { "type": "array", "items": { "type": "integer" } }
-                },
-                "required": ["indices"]
-            }),
-        ));
-        tools.push(tool_def(
-            "apply_segment_ops",
-            "Apply segment split/merge operations.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "ops": { "type": "array" }
-                },
-                "required": ["ops"]
-            }),
-        ));
-    } else {
-        tools.push(tool_def(
-            "check_translation_consistency",
-            "Check terminology/phrase/number consistency issues.",
-            json!({ "type": "object", "properties": {} }),
-        ));
-        tools.push(tool_def(
-            "update_translation",
-            "Update translated text at index.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "index": { "type": "integer" },
-                    "newText": { "type": "string" },
-                    "reason": { "type": "string" }
-                },
-                "required": ["index", "newText"]
-            }),
-        ));
-    }
-    tools.push(tool_def(
-        "check_change_impact",
-        "Summarize changes and risks between original and current subtitles.",
-        json!({ "type": "object", "properties": {} }),
-    ));
-    tools.push(tool_def(
-        "finalize_qa",
-        "Finish QA and return summary.",
-        json!({ "type": "object", "properties": {} }),
-    ));
-    tools
-}
-
-fn tool_def(name: &str, description: &str, parameters: Value) -> Value {
-    json!({
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": parameters
-        }
-    })
-}
-
-fn execute_tool(
-    name: &str,
-    args: Value,
-    state: &mut QaState,
-    finalized: &mut bool,
-) -> Value {
-    match name {
-        "list_overlength_segments" => {
-            json!({ "ok": true, "issues": list_overlength_segments(
-                &state.working_segments,
-                state.target_reference_len,
-                &state.source_lang,
-                &state.target_lang
-            ) })
-        }
-        "check_translation_consistency" => {
-            json!({ "ok": true, "issues": check_translation_consistency(&state.working_segments, &state.terminology_entries) })
-        }
-        "plan_segment_ops" => {
-            match serde_json::from_value::<PlanSegmentOpsArgs>(args) {
-                Ok(parsed) => json!({ "ok": true, "recommendedOps": plan_segment_ops(
-                    &state.working_segments,
-                    parsed.indices,
-                    state.target_reference_len,
-                    &state.target_lang
-                ) }),
-                Err(err) => json!({
-                    "ok": false,
-                    "retryable": true,
-                    "error": format!("invalid plan_segment_ops args: {err}")
-                }),
-            }
-        }
-        "apply_segment_ops" => {
-            match serde_json::from_value::<ApplySegmentOpsArgs>(args) {
-                Ok(parsed) => match apply_segment_ops(state, parsed.ops) {
-                    Ok(()) => json!({ "ok": true, "segmentTotal": state.working_segments.len() }),
-                    Err(err) => json!({
-                        "ok": false,
-                        "retryable": true,
-                        "error": format!("apply_segment_ops rejected: {err}")
-                    }),
-                },
-                Err(err) => json!({
-                    "ok": false,
-                    "retryable": true,
-                    "error": format!("invalid apply_segment_ops args: {err}")
-                }),
-            }
-        }
-        "update_translation" => {
-            match serde_json::from_value::<UpdateTranslationArgs>(args) {
-                Ok(parsed) => match update_translation(state, parsed) {
-                    Ok(()) => json!({ "ok": true }),
-                    Err(err) => json!({
-                        "ok": false,
-                        "retryable": true,
-                        "error": format!("update_translation rejected: {err}")
-                    }),
-                },
-                Err(err) => json!({
-                    "ok": false,
-                    "retryable": true,
-                    "error": format!("invalid update_translation args: {err}")
-                }),
-            }
-        }
-        "check_change_impact" => {
-            let mut v = check_change_impact(state);
-            if let Some(obj) = v.as_object_mut() {
-                obj.insert("ok".to_string(), Value::Bool(true));
-            }
-            v
-        }
-        "finalize_qa" => {
-            *finalized = true;
-            json!({ "ok": true, "summary": "qa finalized" })
-        }
-        _ => json!({
-            "ok": false,
-            "retryable": false,
-            "error": format!("unknown tool {name}")
-        }),
-    }
 }
 
 fn list_overlength_segments(
