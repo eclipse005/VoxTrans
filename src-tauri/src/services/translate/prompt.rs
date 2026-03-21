@@ -59,7 +59,12 @@ pub struct TranslateTerminologyPromptEntry {
 }
 
 pub fn build_translate_system_prompt() -> String {
-    "You are a professional subtitle translator. Translate faithfully and naturally. Keep speaker tone and register. Do not add explanations. Output JSON only in this shape: {\"segments\":[{\"index\":0,\"translatedText\":\"...\"}]}".to_string()
+    "You are a professional subtitle translator for streaming-quality subtitles. \
+Translate faithfully, naturally, and in culturally appropriate target-language phrasing. \
+Preserve intent, tone, register, and key domain terminology. \
+Do not add commentary or explanations. \
+Output JSON only in this shape: {\"segments\":[{\"index\":0,\"translatedText\":\"...\"}]}"
+        .to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -141,6 +146,13 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
             "Translate only sourceText for each segment",
             "Do not omit any segment",
             "Do not merge or split segments",
+            "Keep the same segment index and return one translatedText for each input index",
+            "Keep meaning faithful; do not add or remove facts",
+            "Use natural and idiomatic target-language subtitle phrasing",
+            "Preserve speaker tone/register and domain context",
+            "Use provided terminology consistently; do not paraphrase required terms",
+            "Use previous/next context only to resolve ambiguity in current segment",
+            "Do not move meaning across neighboring segments",
             "Do not return markdown or commentary",
             "Return JSON only"
         ],
