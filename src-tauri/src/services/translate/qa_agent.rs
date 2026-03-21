@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 
 use crate::services::task_log::{TaskLogTarget, TaskLogger, append_event_best_effort};
+use crate::services::task_usage::{LlmTokenUsage, record_llm_usage_best_effort};
 use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
 use rig::client::CompletionClient;
 use rig::completion::{CompletionModel, Prompt, PromptError, ToolDefinition};
@@ -202,6 +203,7 @@ pub async fn run_qa_agent(request: QaAgentRequest) -> Result<QaAgentResponse, St
     let client = build_openai_completions_client(&request.api_key, &request.base_url)?;
     let normalized_base_url = normalize_base_url(&request.base_url);
     let hook = QaPromptHook {
+        task_id: request.task_id.clone(),
         model: request.model.clone(),
         base_url: normalized_base_url.clone(),
         pass_raw: request.pass.clone(),
@@ -390,6 +392,7 @@ struct QaHookState {
 
 #[derive(Clone)]
 struct QaPromptHook {
+    task_id: String,
     model: String,
     base_url: String,
     pass_raw: String,
@@ -440,6 +443,9 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
     ) -> HookAction {
         let turn = self.turn_state.lock().await.turn;
         let raw = serde_json::to_value(&response.raw_response).unwrap_or_else(|_| Value::Null);
+        if let Some(usage) = extract_usage_from_completion_raw(&raw) {
+            record_llm_usage_best_effort(&self.task_id, "qa", usage);
+        }
         append_event_best_effort(
             &self.llm_target,
             "qa.turn.response",
@@ -552,6 +558,32 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
         );
         HookAction::cont()
     }
+}
+
+fn extract_usage_from_completion_raw(raw: &Value) -> Option<LlmTokenUsage> {
+    let usage = raw.get("usage")?;
+    let prompt_tokens = usage
+        .get("input_tokens")
+        .or_else(|| usage.get("prompt_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let completion_tokens = usage
+        .get("output_tokens")
+        .or_else(|| usage.get("completion_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(prompt_tokens.saturating_add(completion_tokens));
+    if prompt_tokens == 0 && completion_tokens == 0 && total_tokens == 0 {
+        return None;
+    }
+    Some(LlmTokenUsage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+    })
 }
 
 fn message_to_text(message: &Message) -> String {

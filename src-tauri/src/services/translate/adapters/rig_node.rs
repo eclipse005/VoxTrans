@@ -9,6 +9,7 @@ use rig::completion::{AssistantContent, CompletionModel};
 use rig::providers::openai;
 
 use crate::services::task_log::TaskLogger;
+use crate::services::task_usage::{LlmTokenUsage, record_llm_usage_best_effort};
 
 use super::rig_client::{
     RIG_PROVIDER, RIG_TRANSPORT_CHAT_COMPLETIONS, build_openai_completions_client,
@@ -106,6 +107,7 @@ impl RigNodeClient {
         &self,
         task_id: &str,
         media_path: Option<&str>,
+        phase: &str,
         system_prompt: &str,
         user_prompt: &str,
         response_validator: Option<&JsonResponseValidator>,
@@ -129,6 +131,7 @@ impl RigNodeClient {
                 "baseUrl": normalize_base_url(&self.config.base_url),
                 "provider": RIG_PROVIDER,
                 "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
+                "phase": phase,
                 "request": {
                     "systemPrompt": system_prompt,
                     "userPrompt": user_prompt
@@ -158,6 +161,7 @@ impl RigNodeClient {
                                     "baseUrl": base_payload["baseUrl"],
                                     "provider": base_payload["provider"],
                                     "transport": base_payload["transport"],
+                                    "phase": base_payload["phase"],
                                     "request": base_payload["request"]
                                 })),
                             );
@@ -187,6 +191,7 @@ impl RigNodeClient {
                                     "baseUrl": base_payload["baseUrl"],
                                     "provider": base_payload["provider"],
                                     "transport": base_payload["transport"],
+                                    "phase": base_payload["phase"],
                                     "request": base_payload["request"]
                                 })),
                             );
@@ -208,6 +213,7 @@ impl RigNodeClient {
                             "baseUrl": base_payload["baseUrl"],
                             "provider": base_payload["provider"],
                             "transport": base_payload["transport"],
+                            "phase": base_payload["phase"],
                             "request": base_payload["request"],
                             "response": {
                                 "text": raw_text
@@ -219,6 +225,15 @@ impl RigNodeClient {
                                 "totalTokens": usage.total_tokens
                             }
                         })),
+                    );
+                    record_llm_usage_best_effort(
+                        task_id,
+                        phase,
+                        LlmTokenUsage {
+                            prompt_tokens: usage.prompt_tokens,
+                            completion_tokens: usage.completion_tokens,
+                            total_tokens: usage.total_tokens,
+                        },
                     );
 
                     return Ok(RigNodeJsonResult {
@@ -241,6 +256,7 @@ impl RigNodeClient {
                             "baseUrl": base_payload["baseUrl"],
                             "provider": base_payload["provider"],
                             "transport": base_payload["transport"],
+                            "phase": base_payload["phase"],
                             "request": base_payload["request"]
                         })),
                     );
@@ -263,6 +279,7 @@ impl RigNodeClient {
         &self,
         task_id: &str,
         media_path: Option<&str>,
+        phase: &str,
         tasks: Vec<RigNodeJsonTask>,
         concurrency: usize,
     ) -> Vec<(usize, Result<RigNodeJsonResult, RigNodeJsonError>)> {
@@ -277,12 +294,14 @@ impl RigNodeClient {
         let rig_node = self.clone();
         let task_id = task_id.to_string();
         let media_path = media_path.map(|s| s.to_string());
+        let phase = phase.to_string();
 
         for item in tasks {
             let semaphore = Arc::clone(&semaphore);
             let rig_node = rig_node.clone();
             let task_id = task_id.clone();
             let media_path = media_path.clone();
+            let phase = phase.clone();
             join_set.spawn(async move {
                 let permit = semaphore.acquire_owned().await;
                 let _permit = match permit {
@@ -300,6 +319,7 @@ impl RigNodeClient {
                     .call(
                         &task_id,
                         media_path.as_deref(),
+                        &phase,
                         &item.system_prompt,
                         &item.user_prompt,
                         item.response_validator.as_ref(),

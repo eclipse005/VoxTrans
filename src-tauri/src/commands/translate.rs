@@ -71,6 +71,7 @@ pub async fn test_translate_llm(
         .call(
             "settings-llm-test",
             None,
+            "connectivity_test",
             system_prompt,
             user_prompt,
             Some(&validator),

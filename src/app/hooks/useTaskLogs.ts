@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { clearTaskLogs, readTaskLog } from "../api/logs";
+import { clearTaskLogs, getTaskTotalTokens, readTaskLog } from "../api/logs";
 import { openTaskLogDir } from "../api/system";
 import type { QueueItem } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
@@ -31,6 +31,7 @@ export function useTaskLogs({
   const [logContent, setLogContent] = useState("");
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [logChannel, setLogChannel] = useState<"main" | "llm">("main");
+  const [totalTokens, setTotalTokens] = useState(0);
 
   const loadLogs = useCallback(async () => {
     if (!logTaskContext) return;
@@ -42,6 +43,8 @@ export function useTaskLogs({
         channel: logChannel,
       });
       setLogContent(content || "");
+      const tokens = await getTaskTotalTokens(logTaskContext.taskId);
+      setTotalTokens(Number.isFinite(tokens) ? Math.max(0, Math.floor(tokens)) : 0);
     } catch (error) {
       const message = error instanceof Error ? error.message : "加载日志失败";
       pushToast(message, "error");
@@ -62,6 +65,7 @@ export function useTaskLogs({
     });
     setLogChannel("main");
     setLogContent("");
+    setTotalTokens(0);
     dispatch({ type: "set_ui", payload: { showLogs: true } });
   }, [activeQueueItem, dispatch, pushToast]);
 
@@ -74,6 +78,7 @@ export function useTaskLogs({
         channel: logChannel,
       });
       setLogContent("");
+      setTotalTokens(0);
       pushToast(`${logChannel.toUpperCase()} 日志已清空`, "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : "清空日志失败";
@@ -105,6 +110,7 @@ export function useTaskLogs({
     logContent,
     logChannel,
     loadingLogs,
+    totalTokens,
     taskName,
     loadLogs,
     setLogChannel,

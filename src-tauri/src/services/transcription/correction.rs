@@ -174,6 +174,7 @@ pub async fn correct_words_with_rig_node(
             .call(
                 task_id,
                 Some(media_path),
+                "correct",
                 &system_prompt,
                 &user_prompt,
                 Some(&validator),

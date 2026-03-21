@@ -163,7 +163,7 @@ pub async fn optimize_words_with_rig_node(
         })
         .collect::<Vec<_>>();
     let extraction_result = rig_client
-        .call_batch(task_id, Some(media_path), tasks, concurrency)
+        .call_batch(task_id, Some(media_path), "punctuate", tasks, concurrency)
         .await;
 
     let mut optimized = words.clone();

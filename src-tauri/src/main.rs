@@ -16,6 +16,7 @@ fn main() {
         .setup(|app| {
             let app_handle = app.handle().clone();
             let pool = tauri::async_runtime::block_on(async { db::init_pool(&app_handle).await })?;
+            services::task_usage::init_task_usage_pool(pool.clone());
             app.manage(app_state::AppState {
                 pool,
                 asr_model_download: Arc::new(std::sync::Mutex::new(
@@ -70,6 +71,7 @@ fn main() {
             commands::logs::append_task_log,
             commands::logs::read_task_log,
             commands::logs::clear_task_logs,
+            commands::logs::get_task_total_tokens,
         ])
         .run(tauri::generate_context!())
         .expect("error while running voxtrans desktop");

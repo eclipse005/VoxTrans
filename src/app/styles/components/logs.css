@@ -112,10 +112,10 @@
 .logs-usage-stage {
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
+  height: 34px;
   padding: 0 10px;
-  border-radius: 8px;
-  border: 1px solid var(--apple-border-lighter);
+  border-radius: 10px;
+  border: 1px solid var(--apple-border-light);
   background: #fff;
   font-size: 12px;
   color: var(--apple-text-secondary);

@@ -14,6 +14,7 @@ pub mod preferences;
 pub mod subtitle;
 pub mod system;
 pub mod task_log;
+pub mod task_usage;
 pub mod task_context;
 pub mod task_worker;
 pub mod task_engine;

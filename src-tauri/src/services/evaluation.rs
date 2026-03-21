@@ -191,6 +191,7 @@ pub async fn evaluate_task(
         .call_batch(
             task_id,
             Some(&row.media_path),
+            "evaluation",
             tasks,
             prefs.llm_concurrency.clamp(1, 16) as usize,
         )

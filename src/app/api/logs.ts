@@ -17,3 +17,9 @@ export async function clearTaskLogs(request: TaskLogRequest): Promise<void> {
     request,
   });
 }
+
+export async function getTaskTotalTokens(taskId: string): Promise<number> {
+  return invoke<number>("get_task_total_tokens", {
+    taskId,
+  });
+}

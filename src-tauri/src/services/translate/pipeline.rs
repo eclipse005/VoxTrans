@@ -187,6 +187,7 @@ async fn build_global_style_profile(
         .call(
             &request.task_id,
             Some(&request.media_path),
+            "summarize",
             &style_system_prompt,
             &style_prompt,
             Some(&validator),
@@ -275,6 +276,7 @@ where
         .call_batch(
             &request.task_id,
             Some(&request.media_path),
+            "translate",
             tasks,
             concurrency,
         )

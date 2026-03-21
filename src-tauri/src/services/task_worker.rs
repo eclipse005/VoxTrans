@@ -11,6 +11,7 @@ use tauri::Emitter;
 
 use crate::app_state::TaskWorkerRuntime;
 use crate::services::task_executor::{ExecuteTaskRunRequest, execute_task_run};
+use crate::services::task_usage;
 
 const WORKER_ARG: &str = "--voxtrans-worker";
 const WORKER_EVENT_PREFIX: &str = "VOXTRANS_EVENT:";
@@ -86,6 +87,7 @@ fn run_worker_from_args(args: &[String]) -> Result<(), String> {
             .connect_with(options)
             .await
             .map_err(|err| err.to_string())?;
+        task_usage::init_task_usage_pool(pool.clone());
         execute_task_run(
             &pool,
             None,

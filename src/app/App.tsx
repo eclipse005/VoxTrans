@@ -153,6 +153,7 @@ function App() {
     logContent,
     logChannel,
     loadingLogs,
+    totalTokens,
     loadLogs,
     setLogChannel,
     openLogs,
@@ -318,6 +319,7 @@ function App() {
       <LogsModal
         visible={showLogs}
         loading={loadingLogs}
+        totalTokens={totalTokens}
         taskName={logTaskName}
         content={logContent}
         channel={logChannel}

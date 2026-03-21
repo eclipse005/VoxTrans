@@ -5,6 +5,7 @@ import { useDialogA11y } from "./useDialogA11y";
 type LogsModalProps = {
   visible: boolean;
   loading: boolean;
+  totalTokens: number;
   taskName: string;
   content: string;
   channel: "main" | "llm";
@@ -18,6 +19,7 @@ type LogsModalProps = {
 export default function LogsModal({
   visible,
   loading,
+  totalTokens,
   taskName,
   content,
   channel,
@@ -112,6 +114,9 @@ export default function LogsModal({
                 >
                   <TrashIcon />
                 </button>
+              </div>
+              <div className="logs-usage-stage">
+                Tokens: {formatNumber(totalTokens)}
               </div>
             </div>
             <div className="logs-task-name" title={taskName}>{taskName}</div>
@@ -226,4 +231,9 @@ function decodeVisibleEscapes(text: string): string {
     .replace(/\\n/g, "\n")
     .replace(/\\"/g, "\"")
     .replace(/\\\\/g, "\\");
+}
+
+function formatNumber(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  return new Intl.NumberFormat("en-US").format(Math.floor(value));
 }
