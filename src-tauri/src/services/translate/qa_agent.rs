@@ -6,18 +6,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 
-use crate::services::task_log::{TaskLogTarget, TaskLogger, append_event_best_effort};
+use crate::services::task_log::TaskLogger;
 use crate::services::task_usage::{LlmTokenUsage, record_llm_usage_best_effort};
 use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
 use rig::client::CompletionClient;
 use rig::completion::{CompletionModel, Prompt, PromptError, ToolDefinition};
-use rig::message::{Message, UserContent};
+use rig::message::Message;
 use rig::tool::Tool;
 
-use super::adapters::rig_client::{
-    RIG_PROVIDER, RIG_TRANSPORT_CHAT_COMPLETIONS, build_openai_completions_client,
-    normalize_base_url,
-};
+use super::adapters::rig_client::build_openai_completions_client;
 use super::types::{TranslateSegment, TranslateTerminologyEntry};
 
 const MAX_TURNS: usize = 12;
@@ -174,11 +171,6 @@ pub async fn run_qa_agent(request: QaAgentRequest) -> Result<QaAgentResponse, St
     }
 
     let logger = TaskLogger::main_with_media(request.task_id.clone(), request.media_path.clone());
-    let llm_logger = TaskLogger::llm_with_media(request.task_id.clone(), request.media_path.clone());
-    let main_target =
-        TaskLogTarget::main_with_media(request.task_id.clone(), request.media_path.clone());
-    let llm_target =
-        TaskLogTarget::llm_with_media(request.task_id.clone(), request.media_path.clone());
     let pass = normalize_pass(&request.pass);
     let runtime = QaRuntime {
         state: Arc::new(Mutex::new(QaState {
@@ -201,28 +193,10 @@ pub async fn run_qa_agent(request: QaAgentRequest) -> Result<QaAgentResponse, St
     };
 
     let client = build_openai_completions_client(&request.api_key, &request.base_url)?;
-    let normalized_base_url = normalize_base_url(&request.base_url);
     let hook = QaPromptHook {
         task_id: request.task_id.clone(),
-        model: request.model.clone(),
-        base_url: normalized_base_url.clone(),
-        pass_raw: request.pass.clone(),
         turn_state: Arc::new(Mutex::new(QaHookState::default())),
-        llm_target: llm_target.clone(),
-        main_target: main_target.clone(),
     };
-    llm_logger.event(
-        "qa.agent.config",
-        Some(&json!({
-            "provider": RIG_PROVIDER,
-            "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
-            "model": request.model,
-            "baseUrl": normalized_base_url,
-            "pass": request.pass,
-            "maxTurns": MAX_TURNS,
-            "maxToolCallsPerTurn": MAX_TOOL_CALLS_PER_TURN
-        })),
-    );
 
     let agent_builder = client
         .agent(request.model.clone())
@@ -267,42 +241,11 @@ pub async fn run_qa_agent(request: QaAgentRequest) -> Result<QaAgentResponse, St
         Ok(text) => Some(text),
         Err(PromptError::MaxTurnsError { .. }) => {
             max_turns_reached = true;
-            logger.event(
-                "qa.max_turns_reached",
-                Some(&json!({
-                    "maxTurns": MAX_TURNS,
-                    "pass": request.pass,
-                })),
-            );
-            llm_logger.event(
-                "qa.max_turns_reached",
-                Some(&json!({
-                    "maxTurns": MAX_TURNS,
-                    "provider": RIG_PROVIDER,
-                    "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
-                    "model": request.model,
-                    "baseUrl": normalize_base_url(&request.base_url),
-                    "pass": request.pass,
-                })),
-            );
             None
         }
         Err(err) => return Err(format!("qa rig prompt failed: {err}")),
     };
-    if let Some(text) = final_text {
-        llm_logger.event(
-            "qa.turn.response",
-            Some(&json!({
-                "turn": "final",
-                "provider": RIG_PROVIDER,
-                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
-                "model": request.model,
-                "baseUrl": normalize_base_url(&request.base_url),
-                "responseText": text,
-                "pass": request.pass,
-            })),
-        );
-    }
+    let _ = final_text;
 
     let state = runtime.state.lock().await.clone();
     let finalized = runtime.finalized.load(Ordering::SeqCst);
@@ -340,18 +283,6 @@ pub async fn run_qa_agent(request: QaAgentRequest) -> Result<QaAgentResponse, St
             "pass": request.pass,
         })),
     );
-    llm_logger.event(
-        "qa.completed",
-        Some(&json!({
-            "finalized": finalized,
-            "finishReason": finish_reason,
-            "segmentTotal": state.working_segments.len(),
-            "appliedChangeTotal": state.applied_changes.len(),
-            "report": report,
-            "pass": request.pass,
-        })),
-    );
-
     Ok(QaAgentResponse {
         segments: state.working_segments,
         source_srt,
@@ -393,12 +324,7 @@ struct QaHookState {
 #[derive(Clone)]
 struct QaPromptHook {
     task_id: String,
-    model: String,
-    base_url: String,
-    pass_raw: String,
     turn_state: Arc<Mutex<QaHookState>>,
-    llm_target: TaskLogTarget,
-    main_target: TaskLogTarget,
 }
 
 impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
@@ -406,33 +332,7 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
         let mut turn_state = self.turn_state.lock().await;
         turn_state.turn += 1;
         turn_state.tool_calls_in_turn = 0;
-        let turn = turn_state.turn;
-        drop(turn_state);
-        append_event_best_effort(
-            &self.main_target,
-            "qa.turn.request",
-            Some(&json!({
-                "turn": turn,
-                "provider": RIG_PROVIDER,
-                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
-                "model": self.model,
-                "baseUrl": self.base_url,
-                "pass": self.pass_raw,
-            })),
-        );
-        append_event_best_effort(
-            &self.llm_target,
-            "qa.turn.request",
-            Some(&json!({
-                "turn": turn,
-                "provider": RIG_PROVIDER,
-                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
-                "model": self.model,
-                "baseUrl": self.base_url,
-                "pass": self.pass_raw,
-                "prompt": message_to_text(prompt),
-            })),
-        );
+        let _ = prompt;
         HookAction::cont()
     }
 
@@ -441,24 +341,11 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
         _prompt: &Message,
         response: &rig::completion::CompletionResponse<M::Response>,
     ) -> HookAction {
-        let turn = self.turn_state.lock().await.turn;
+        let _turn = self.turn_state.lock().await.turn;
         let raw = serde_json::to_value(&response.raw_response).unwrap_or_else(|_| Value::Null);
         if let Some(usage) = extract_usage_from_completion_raw(&raw) {
             record_llm_usage_best_effort(&self.task_id, "qa", usage);
         }
-        append_event_best_effort(
-            &self.llm_target,
-            "qa.turn.response",
-            Some(&json!({
-                "turn": turn,
-                "provider": RIG_PROVIDER,
-                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
-                "model": self.model,
-                "baseUrl": self.base_url,
-                "response": raw,
-                "pass": self.pass_raw,
-            })),
-        );
         HookAction::cont()
     }
 
@@ -470,22 +357,7 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
         args: &str,
     ) -> ToolCallHookAction {
         let mut turn_state = self.turn_state.lock().await;
-        let turn = turn_state.turn;
         if turn_state.tool_calls_in_turn >= MAX_TOOL_CALLS_PER_TURN {
-            append_event_best_effort(
-                &self.main_target,
-                "qa.tool.skipped",
-                Some(&json!({
-                    "turn": turn,
-                    "tool": tool_name,
-                    "callId": tool_call_id,
-                    "provider": RIG_PROVIDER,
-                    "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
-                    "model": self.model,
-                    "baseUrl": self.base_url,
-                    "reason": "max_tool_calls_per_turn",
-                })),
-            );
             return ToolCallHookAction::skip(
                 json!({
                     "ok": false,
@@ -496,23 +368,7 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
             );
         }
         turn_state.tool_calls_in_turn += 1;
-        drop(turn_state);
-        let parsed_args = serde_json::from_str::<Value>(args).unwrap_or_else(|_| json!({ "raw": args }));
-        append_event_best_effort(
-            &self.llm_target,
-            "qa.tool.call",
-            Some(&json!({
-                "turn": turn,
-                "tool": tool_name,
-                "callId": tool_call_id,
-                "provider": RIG_PROVIDER,
-                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
-                "model": self.model,
-                "baseUrl": self.base_url,
-                "args": parsed_args,
-                "pass": self.pass_raw,
-            })),
-        );
+        let _ = (tool_name, tool_call_id, args);
         ToolCallHookAction::cont()
     }
 
@@ -524,38 +380,7 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
         _args: &str,
         result: &str,
     ) -> HookAction {
-        let turn = self.turn_state.lock().await.turn;
-        let parsed_result =
-            serde_json::from_str::<Value>(result).unwrap_or_else(|_| json!({ "raw": result }));
-        append_event_best_effort(
-            &self.main_target,
-            "qa.tool.executed",
-            Some(&json!({
-                "turn": turn,
-                "tool": tool_name,
-                "callId": tool_call_id,
-                "provider": RIG_PROVIDER,
-                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
-                "model": self.model,
-                "baseUrl": self.base_url,
-                "pass": self.pass_raw,
-            })),
-        );
-        append_event_best_effort(
-            &self.llm_target,
-            "qa.tool.result",
-            Some(&json!({
-                "turn": turn,
-                "tool": tool_name,
-                "callId": tool_call_id,
-                "provider": RIG_PROVIDER,
-                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
-                "model": self.model,
-                "baseUrl": self.base_url,
-                "result": parsed_result,
-                "pass": self.pass_raw,
-            })),
-        );
+        let _ = (tool_name, tool_call_id, result);
         HookAction::cont()
     }
 }
@@ -584,20 +409,6 @@ fn extract_usage_from_completion_raw(raw: &Value) -> Option<LlmTokenUsage> {
         completion_tokens,
         total_tokens,
     })
-}
-
-fn message_to_text(message: &Message) -> String {
-    let Message::User { content } = message else {
-        return String::new();
-    };
-    content
-        .iter()
-        .filter_map(|item| match item {
-            UserContent::Text(text) => Some(text.text.clone()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 #[derive(Clone)]

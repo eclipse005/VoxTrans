@@ -29,7 +29,8 @@
     "targets": "all",
     "resources": [
       "bin/fireredvad.exe",
-      "bin/demucs.exe"
+      "bin/demucs.exe",
+      "bin/yt-dlp.exe"
     ],
     "icon": [
       "icons/32x32.png",

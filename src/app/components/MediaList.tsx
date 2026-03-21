@@ -5,6 +5,7 @@ import { AudioFileIcon, CheckIcon, MicIcon, PlayIcon, TranslateIcon, TrashIcon, 
 type MediaListProps = {
   queue: QueueItem[];
   queueCount: number;
+  workspaceHydrated: boolean;
   activeId: string;
   isProcessing: boolean;
   onSetActiveId: (id: string) => void;
@@ -29,6 +30,9 @@ function resolvePrimaryStatus(item: QueueItem): QueueStatus {
 
 function getTranscribeProcessingText(item: QueueItem): string {
   const detail = item.transcribePhaseDetail?.trim() ?? "";
+  if (item.transcribePhase === "downloading") {
+    return detail ? `下载中 ${detail}` : "下载中";
+  }
   if (item.transcribePhase === "initializing") {
     return detail ? `转录准备中 ${detail}` : "转录准备中";
   }
@@ -63,6 +67,7 @@ function getTranscribeProcessingText(item: QueueItem): string {
 export default function MediaList({
   queue,
   queueCount,
+  workspaceHydrated,
   activeId,
   isProcessing,
   onSetActiveId,
@@ -73,15 +78,17 @@ export default function MediaList({
   onEvaluateItem,
   onRemoveItem,
 }: MediaListProps) {
+  const listBusy = isProcessing || !workspaceHydrated;
+
   return (
     <div className="apple-animate-on-scroll apple-delay-200 file-list-section animated">
       <div className="file-list-header">
-        <span className="file-count">共 {queueCount} 个媒体</span>
+        <span className="file-count">{workspaceHydrated ? `共 ${queueCount} 个媒体` : "加载任务中..."}</span>
         <div className="file-list-actions">
-          <button className="file-list-icon-btn" disabled={isProcessing} onClick={onProcessQueue} title="全部开始" aria-label="全部开始">
+          <button className="file-list-icon-btn" disabled={listBusy} onClick={onProcessQueue} title="全部开始" aria-label="全部开始">
             <PlayIcon />
           </button>
-          <button className="file-list-icon-btn file-list-icon-btn-danger" disabled={isProcessing} onClick={onClearQueue} title="清空" aria-label="清空">
+          <button className="file-list-icon-btn file-list-icon-btn-danger" disabled={listBusy} onClick={onClearQueue} title="清空" aria-label="清空">
             <TrashIcon />
           </button>
         </div>

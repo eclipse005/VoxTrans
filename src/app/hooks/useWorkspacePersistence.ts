@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { loadWorkspaceState } from "../api/workspace";
 import { normalizeTranscribeStatus } from "../../features/media/stateMachine";
 import type { QueueItem, SubtitleSegment } from "../../features/media/types";
@@ -13,17 +13,25 @@ type UseWorkspacePersistenceArgs = {
 export function useWorkspacePersistence({
   dispatch,
 }: UseWorkspacePersistenceArgs) {
+  const [workspaceHydrated, setWorkspaceHydrated] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const res = await loadWorkspaceState();
-      if (cancelled) return;
+      try {
+        const res = await loadWorkspaceState();
+        if (cancelled) return;
 
-      const queueItems = Array.isArray(res.queue) ? res.queue.map(normalizeQueueItem) : [];
-      const deduped = dedupeById(queueItems);
-      if (deduped.length > 0) {
-        dispatch({ type: "add_queue_items", items: deduped });
-        dispatch({ type: "set_ui", payload: { activeId: deduped[0]?.id || "" } });
+        const queueItems = Array.isArray(res.queue) ? res.queue.map(normalizeQueueItem) : [];
+        const deduped = dedupeById(queueItems);
+        if (deduped.length > 0) {
+          dispatch({ type: "add_queue_items", items: deduped });
+          dispatch({ type: "set_ui", payload: { activeId: deduped[0]?.id || "" } });
+        }
+      } finally {
+        if (!cancelled) {
+          setWorkspaceHydrated(true);
+        }
       }
     })();
 
@@ -31,6 +39,10 @@ export function useWorkspacePersistence({
       cancelled = true;
     };
   }, [dispatch]);
+
+  return {
+    workspaceHydrated,
+  };
 }
 
 function dedupeById(items: QueueItem[]): QueueItem[] {
@@ -60,6 +72,7 @@ function normalizeQueueItem(item: QueueItem): QueueItem {
 
 function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] {
   switch (value) {
+    case "downloading":
     case "initializing":
     case "separating":
     case "recognizing":
@@ -110,6 +123,20 @@ function parseSubtitleSegments(raw: string): SubtitleSegment[] {
 }
 
 function recoverTransientStates(item: QueueItem): QueueItem {
+  const isYoutubePlaceholder = item.path.startsWith("youtube://pending/");
+  if (isYoutubePlaceholder) {
+    return {
+      ...item,
+      transcribeStatus: "error",
+      transcribeProgress: 0,
+      transcribeSegmentCurrent: 0,
+      transcribeSegmentTotal: 0,
+      transcribePhase: "",
+      transcribePhaseDetail: "",
+      transcribeError: "下载任务中断，请点击转录或转译继续下载",
+    };
+  }
+
   if (item.transcribeStatus === "queued") {
     return {
       ...item,

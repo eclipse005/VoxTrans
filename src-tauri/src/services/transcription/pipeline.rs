@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::PathBuf;
 
 use crate::services::task_log::{TaskLogger, event};
 use super::correction::{
@@ -104,14 +103,7 @@ where
     } else {
         words
     };
-    let words_output_path = save_words_json(&request.task_id, &request.audio_path, &words)?;
-    logger.event(
-        "transcribe.words_saved",
-        Some(&json!({
-            "outputPath": words_output_path,
-            "wordTotal": words.len(),
-        })),
-    );
+    let words_output_path = String::new();
 
     on_phase("segment");
     let built = build_segments_from_words(BuildSegmentsRequest {
@@ -184,17 +176,6 @@ fn from_core_words(words: Vec<WordToken>) -> Vec<WordTokenDto> {
             word: word.word,
         })
         .collect()
-}
-
-fn save_words_json(task_id: &str, audio_path: &str, words: &[WordTokenDto]) -> Result<String, String> {
-    let media_path = PathBuf::from(audio_path);
-    let output_path = crate::services::task_path::task_words_output_path(task_id, &media_path);
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-    }
-    let content = serde_json::to_vec_pretty(words).map_err(|err| err.to_string())?;
-    std::fs::write(&output_path, content).map_err(|err| err.to_string())?;
-    Ok(output_path.display().to_string())
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -91,7 +91,7 @@ function App() {
   const { pushToast } = useToast(dispatch);
 
   useAppPersistence(dispatch);
-  useWorkspacePersistence({
+  const { workspaceHydrated } = useWorkspacePersistence({
     dispatch,
   });
 
@@ -105,6 +105,10 @@ function App() {
     evaluateItem,
     clearQueue,
     removeItem,
+    downloadYoutube,
+    ytDlpVersion,
+    ytDlpUpdating,
+    updateYtDlpBinary,
   } = useQueueWorkflow({
     queue,
     settings,
@@ -222,15 +226,23 @@ function App() {
             activeTab={activeTab}
             dragActive={dragActive}
             youtubeUrl={youtubeUrl}
+            ytDlpVersion={ytDlpVersion}
+            ytDlpUpdating={ytDlpUpdating}
             onTabChange={(tab) => dispatch({ type: "set_ui", payload: { activeTab: tab } })}
             onPickFiles={pickFiles}
             onYoutubeUrlChange={(value) => dispatch({ type: "set_ui", payload: { youtubeUrl: value } })}
-            onYoutubeDownload={() => pushToast("YouTube 下载功能即将接入", "info")}
+            onYoutubeDownload={() => {
+              void downloadYoutube(youtubeUrl);
+            }}
+            onUpdateYtDlp={() => {
+              void updateYtDlpBinary();
+            }}
           />
 
           <MediaList
             queue={queue}
             queueCount={queueCount}
+            workspaceHydrated={workspaceHydrated}
             activeId={activeId}
             isProcessing={queueBusy}
             onSetActiveId={(id) => dispatch({ type: "set_ui", payload: { activeId: activeId === id ? "" : id } })}
@@ -360,8 +372,3 @@ function App() {
 }
 
 export default App;
-
-
-
-
-

@@ -16,3 +16,4 @@ pub mod translate;
 pub mod transcribe;
 pub mod transcription;
 pub mod workspace;
+pub mod youtube;

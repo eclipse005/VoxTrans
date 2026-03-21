@@ -33,14 +33,17 @@ export function useQueueScheduler({
   setTaskMode,
   takeTaskMode,
 }: UseQueueSchedulerArgs) {
+  const isYoutubePlaceholder = useCallback((item: QueueItem) => (
+    item.path.startsWith("youtube://")
+  ), []);
   const runBatchInFlightRef = useRef(false);
   const hasProcessingTask = useMemo(
-    () => queue.some((item) => item.transcribeStatus === "processing"),
-    [queue],
+    () => queue.some((item) => item.transcribeStatus === "processing" && !isYoutubePlaceholder(item)),
+    [isYoutubePlaceholder, queue],
   );
   const hasQueuedTask = useMemo(
-    () => queue.some((item) => item.transcribeStatus === "queued"),
-    [queue],
+    () => queue.some((item) => item.transcribeStatus === "queued" && !isYoutubePlaceholder(item)),
+    [isYoutubePlaceholder, queue],
   );
   const queueBusy = hasProcessingTask || hasQueuedTask;
 
@@ -86,7 +89,7 @@ export function useQueueScheduler({
   useEffect(() => {
     if (hasProcessingTask) return;
     if (runBatchInFlightRef.current) return;
-    const queuedItems = queue.filter((item) => item.transcribeStatus === "queued");
+    const queuedItems = queue.filter((item) => item.transcribeStatus === "queued" && !isYoutubePlaceholder(item));
     if (queuedItems.length === 0) return;
     runBatchInFlightRef.current = true;
     const batch = queuedItems.map((item) => ({
@@ -100,10 +103,10 @@ export function useQueueScheduler({
       .finally(() => {
         runBatchInFlightRef.current = false;
       });
-  }, [hasProcessingTask, queue, runBatch, takeTaskMode, pushToast]);
+  }, [hasProcessingTask, isYoutubePlaceholder, queue, runBatch, takeTaskMode, pushToast]);
 
   const processQueue = useCallback(async () => {
-    const pendingItems = queue.filter((item) => item.transcribeStatus === "pending");
+    const pendingItems = queue.filter((item) => item.transcribeStatus === "pending" && !isYoutubePlaceholder(item));
     if (!pendingItems.length) {
       pushToast("没有待处理文件", "error");
       return;
@@ -122,18 +125,20 @@ export function useQueueScheduler({
     }
 
     pushToast(`开始批量处理，共 ${queuedCount} 个文件`, "info");
-  }, [enqueueForMode, pushToast, queue]);
+  }, [enqueueForMode, isYoutubePlaceholder, pushToast, queue]);
 
   const processSingle = useCallback(async (item: QueueItem) => {
+    if (isYoutubePlaceholder(item)) return;
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
     const ok = await enqueueForMode(item, "transcribe");
     if (!ok) return;
     if (queueBusy) {
       pushToast(`已加入排队：${item.name}`, "info");
     }
-  }, [enqueueForMode, pushToast, queueBusy]);
+  }, [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy]);
 
   const processSingleTranscribeTranslate = useCallback(async (item: QueueItem) => {
+    if (isYoutubePlaceholder(item)) return;
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
     const mode = resolveTranslateMode(item);
     const ok = await enqueueForMode(item, mode);
@@ -141,7 +146,7 @@ export function useQueueScheduler({
     if (queueBusy) {
       pushToast(`已加入排队：${item.name}`, "info");
     }
-  }, [enqueueForMode, pushToast, queueBusy]);
+  }, [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy]);
 
   const clearQueue = useCallback(async () => {
     if (queueBusy) {

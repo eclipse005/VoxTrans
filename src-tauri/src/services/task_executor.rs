@@ -293,7 +293,15 @@ pub async fn execute_task_run_via_worker(
 ) -> Result<(), String> {
     let db_path = task_worker::resolve_db_path(pool).await?;
     task_worker::spawn_worker(runtime, &db_path, &request, Some(app))?;
-    task_worker::wait_worker_finish(runtime, request.task_id.trim()).await
+    match task_worker::wait_worker_finish(runtime, request.task_id.trim()).await {
+        Ok(()) => Ok(()),
+        Err(worker_err) => {
+            if let Some(real_err) = load_task_runtime_error(pool, request.task_id.trim()).await {
+                return Err(real_err);
+            }
+            Err(worker_err)
+        }
+    }
 }
 
 pub async fn execute_task_batch_via_worker(
@@ -637,6 +645,75 @@ fn build_srt_from_translate_segments(
     to_srt_from_cues(&cues)
 }
 
+fn build_bilingual_srt_from_translate_segments(
+    segments: &[crate::services::translate::types::TranslateSegment],
+    source_first: bool,
+) -> String {
+    let cues = segments
+        .iter()
+        .enumerate()
+        .map(|(idx, segment)| {
+            let source = segment.source_text.trim();
+            let translated = segment.translated_text.trim();
+            let text = if source_first {
+                format!("{source}\n{translated}")
+            } else {
+                format!("{translated}\n{source}")
+            };
+            SrtCue {
+                index: idx + 1,
+                start_ms: segment.start_ms,
+                end_ms: segment.end_ms.max(segment.start_ms),
+                text,
+            }
+        })
+        .collect::<Vec<_>>();
+    to_srt_from_cues(&cues)
+}
+
+fn save_translation_srt_set(
+    task_id: &str,
+    media_path: &str,
+    source_srt: &str,
+    target_srt: &str,
+    src_trans_srt: &str,
+    trans_src_srt: &str,
+) -> Result<(), String> {
+    let media_path_obj = std::path::Path::new(media_path);
+    let src_output_path = crate::services::task_path::task_src_srt_output_path(task_id, media_path_obj);
+    let trans_output_path = crate::services::task_path::task_trans_srt_output_path(task_id, media_path_obj);
+    let src_trans_output_path =
+        crate::services::task_path::task_src_trans_srt_output_path(task_id, media_path_obj);
+    let trans_src_output_path =
+        crate::services::task_path::task_trans_src_srt_output_path(task_id, media_path_obj);
+
+    save_srt(crate::services::file::SaveSrtRequest {
+        task_id: Some(task_id.to_string()),
+        media_path: Some(media_path.to_string()),
+        output_path: src_output_path.display().to_string(),
+        content: source_srt.to_string(),
+    })?;
+    save_srt(crate::services::file::SaveSrtRequest {
+        task_id: Some(task_id.to_string()),
+        media_path: Some(media_path.to_string()),
+        output_path: trans_output_path.display().to_string(),
+        content: target_srt.to_string(),
+    })?;
+    save_srt(crate::services::file::SaveSrtRequest {
+        task_id: Some(task_id.to_string()),
+        media_path: Some(media_path.to_string()),
+        output_path: src_trans_output_path.display().to_string(),
+        content: src_trans_srt.to_string(),
+    })?;
+    save_srt(crate::services::file::SaveSrtRequest {
+        task_id: Some(task_id.to_string()),
+        media_path: Some(media_path.to_string()),
+        output_path: trans_src_output_path.display().to_string(),
+        content: trans_src_srt.to_string(),
+    })?;
+    Ok(())
+}
+
 async fn run_transcribe_and_maybe_translate(
     pool: &SqlitePool,
     app: Option<&tauri::AppHandle>,
@@ -646,6 +723,12 @@ async fn run_transcribe_and_maybe_translate(
 ) -> Result<DonePayload, String> {
     let mut transcribe_audio_path = task.media_path.clone();
     let settings_before_asr = load_user_preferences(pool).await?.settings;
+    if !settings_before_asr.enable_vocal_separation {
+        transcribe_audio_path = crate::services::demucs::prepare_audio_for_asr(
+            &task.id,
+            &task.media_path,
+        )?;
+    }
     if settings_before_asr.enable_vocal_separation {
         context.mark_stage_running(STAGE_SEPARATE);
         emit_bridge_event(
@@ -939,24 +1022,15 @@ async fn run_transcribe_and_maybe_translate(
     ).await;
     let (pass1_segments, pass1_report, pass1_applied_total) = match qa_pass1 {
         Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
-        Err(err) => {
-            TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
-                "qa.pass1.failed",
-                Some(&json!({
-                    "error": err,
-                    "fallback": "use_translate_result"
-                })),
-            );
-            (
-                translated.segments.clone(),
-                json!({
-                    "finalized": false,
-                    "fallback": true,
-                    "error": err
-                }),
-                0usize,
-            )
-        }
+        Err(err) => (
+            translated.segments.clone(),
+            json!({
+                "finalized": false,
+                "fallback": true,
+                "error": err
+            }),
+            0usize,
+        )
     };
     let qa_pass2 = run_qa_agent(
         QaAgentRequest {
@@ -980,24 +1054,15 @@ async fn run_transcribe_and_maybe_translate(
     ).await;
     let (mut final_segments, pass2_report, pass2_applied_total) = match qa_pass2 {
         Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
-        Err(err) => {
-            TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
-                "qa.pass2.failed",
-                Some(&json!({
-                    "error": err,
-                    "fallback": "use_pass1_result"
-                })),
-            );
-            (
-                pass1_segments,
-                json!({
-                    "finalized": false,
-                    "fallback": true,
-                    "error": err
-                }),
-                0usize,
-            )
-        }
+        Err(err) => (
+            pass1_segments,
+            json!({
+                "finalized": false,
+                "fallback": true,
+                "error": err
+            }),
+            0usize,
+        )
     };
     let qa_report = json!({
         "mode": "two_pass",
@@ -1005,7 +1070,7 @@ async fn run_transcribe_and_maybe_translate(
         "pass2": pass2_report,
     });
     let qa_applied_total = pass1_applied_total + pass2_applied_total;
-    let qa_align = realign_segments_with_words(
+    let _qa_align = realign_segments_with_words(
         &mut final_segments,
         &processed
             .words
@@ -1017,12 +1082,10 @@ async fn run_transcribe_and_maybe_translate(
             })
             .collect::<Vec<_>>(),
     );
-    TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
-        "qa.alignment",
-        Some(&qa_align),
-    );
     let final_source_srt = build_srt_from_translate_segments(&final_segments, false);
     let final_target_srt = build_srt_from_translate_segments(&final_segments, true);
+    let final_src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
+    let final_trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
     context.mark_stage_done(
         STAGE_SUMMARIZE,
         json!({
@@ -1058,24 +1121,14 @@ async fn run_transcribe_and_maybe_translate(
     );
     persist_task_context(pool, &task.id, context).await?;
 
-    save_srt(crate::services::file::SaveSrtRequest {
-        task_id: Some(task.id.clone()),
-        media_path: Some(task.media_path.clone()),
-        output_path: processed.srt_output_path.clone(),
-        content: final_source_srt.clone(),
-    })?;
-
-    let target_output_path = crate::services::task_path::task_srt_output_path_for_lang(
+    save_translation_srt_set(
         &task.id,
-        std::path::Path::new(&task.media_path),
-        &task.target_lang,
-    );
-    save_srt(crate::services::file::SaveSrtRequest {
-        task_id: Some(task.id.clone()),
-        media_path: Some(task.media_path.clone()),
-        output_path: target_output_path.display().to_string(),
-        content: final_target_srt.clone(),
-    })?;
+        &task.media_path,
+        &final_source_srt,
+        &final_target_srt,
+        &final_src_trans_srt,
+        &final_trans_src_srt,
+    )?;
 
     let merged = final_segments
         .iter()
@@ -1208,24 +1261,15 @@ async fn run_translate_only(
     ).await;
     let (pass1_segments, pass1_report, pass1_applied_total) = match qa_pass1 {
         Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
-        Err(err) => {
-            TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
-                "qa.pass1.failed",
-                Some(&json!({
-                    "error": err,
-                    "fallback": "use_translate_result"
-                })),
-            );
-            (
-                translated.segments.clone(),
-                json!({
-                    "finalized": false,
-                    "fallback": true,
-                    "error": err
-                }),
-                0usize,
-            )
-        }
+        Err(err) => (
+            translated.segments.clone(),
+            json!({
+                "finalized": false,
+                "fallback": true,
+                "error": err
+            }),
+            0usize,
+        )
     };
     let qa_pass2 = run_qa_agent(
         QaAgentRequest {
@@ -1249,24 +1293,15 @@ async fn run_translate_only(
     ).await;
     let (mut final_segments, pass2_report, pass2_applied_total) = match qa_pass2 {
         Ok(qa) => (qa.segments, qa.report, qa.applied_changes.len()),
-        Err(err) => {
-            TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
-                "qa.pass2.failed",
-                Some(&json!({
-                    "error": err,
-                    "fallback": "use_pass1_result"
-                })),
-            );
-            (
-                pass1_segments,
-                json!({
-                    "finalized": false,
-                    "fallback": true,
-                    "error": err
-                }),
-                0usize,
-            )
-        }
+        Err(err) => (
+            pass1_segments,
+            json!({
+                "finalized": false,
+                "fallback": true,
+                "error": err
+            }),
+            0usize,
+        )
     };
     let qa_report = json!({
         "mode": "two_pass",
@@ -1274,13 +1309,11 @@ async fn run_translate_only(
         "pass2": pass2_report,
     });
     let qa_applied_total = pass1_applied_total + pass2_applied_total;
-    let qa_align = realign_segments_with_words(&mut final_segments, &qa_word_timestamps);
-    TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
-        "qa.alignment",
-        Some(&qa_align),
-    );
+    let _qa_align = realign_segments_with_words(&mut final_segments, &qa_word_timestamps);
     let final_source_srt = build_srt_from_translate_segments(&final_segments, false);
     let final_target_srt = build_srt_from_translate_segments(&final_segments, true);
+    let final_src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
+    let final_trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
     context.mark_stage_done(
         STAGE_SUMMARIZE,
         json!({
@@ -1305,17 +1338,14 @@ async fn run_translate_only(
         }),
         Value::Null,
     );
-    let target_output_path = crate::services::task_path::task_srt_output_path_for_lang(
+    save_translation_srt_set(
         &task.id,
-        std::path::Path::new(&task.media_path),
-        &task.target_lang,
-    );
-    save_srt(crate::services::file::SaveSrtRequest {
-        task_id: Some(task.id.clone()),
-        media_path: Some(task.media_path.clone()),
-        output_path: target_output_path.display().to_string(),
-        content: final_target_srt.clone(),
-    })?;
+        &task.media_path,
+        &final_source_srt,
+        &final_target_srt,
+        &final_src_trans_srt,
+        &final_trans_src_srt,
+    )?;
 
     let merged = final_segments
         .iter()
@@ -1464,5 +1494,38 @@ fn emit_bridge_event<T: serde::Serialize>(
     }
     if let Ok(envelope) = serde_json::to_string(&WorkerEventEnvelope { event, payload }) {
         println!("{WORKER_EVENT_PREFIX}{envelope}");
+    }
+}
+
+async fn load_task_runtime_error(pool: &SqlitePool, task_id: &str) -> Option<String> {
+    let context_json = sqlx::query_scalar::<_, String>(
+        "SELECT context_json FROM task_runs WHERE id = ?",
+    )
+    .bind(task_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()?;
+
+    let parsed = serde_json::from_str::<Value>(&context_json).ok()?;
+    let transcribe_error = parsed
+        .pointer("/projections/queue/transcribeError")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !transcribe_error.is_empty() {
+        return Some(transcribe_error);
+    }
+    let runtime_error = parsed
+        .pointer("/runtime/lastError")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if runtime_error.is_empty() {
+        None
+    } else {
+        Some(runtime_error)
     }
 }

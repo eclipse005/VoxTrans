@@ -3,6 +3,8 @@ import { evaluateTask } from "../api/workspace";
 import { useQueueInput } from "./queue/useQueueInput";
 import { useQueueRunner } from "./queue/useQueueRunner";
 import { useQueueScheduler } from "./queue/useQueueScheduler";
+import { useYoutubeDownloadWorkflow } from "./useYoutubeDownloadWorkflow";
+import { useYtDlpManager } from "./useYtDlpManager";
 import type { QueueItem, SavedSettings } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { QueueRunMode } from "./queue/useQueueRunner";
@@ -26,6 +28,7 @@ export function useQueueWorkflow({
 }: UseQueueWorkflowArgs) {
   const queueRef = useRef(queue);
   const taskModeRef = useRef<Map<string, QueueRunMode>>(new Map());
+
   useEffect(() => {
     queueRef.current = queue;
   }, [queue]);
@@ -60,10 +63,10 @@ export function useQueueWorkflow({
     queueCount,
     queueBusy,
     processQueue,
-    processSingle,
-    processSingleTranscribeTranslate,
-    clearQueue,
-    removeItem,
+    processSingle: processSingleFromScheduler,
+    processSingleTranscribeTranslate: processSingleTranscribeTranslateFromScheduler,
+    clearQueue: clearQueueFromScheduler,
+    removeItem: removeItemFromScheduler,
   } = useQueueScheduler({
     queue,
     settings,
@@ -73,6 +76,27 @@ export function useQueueWorkflow({
     setTaskMode,
     takeTaskMode,
   });
+
+  const {
+    downloadYoutube,
+    processSingle: processSingleFromYoutube,
+    processSingleTranscribeTranslate: processSingleTranscribeTranslateFromYoutube,
+    removeItem: removeItemFromYoutube,
+    clearYoutubeQueue,
+  } = useYoutubeDownloadWorkflow({
+    queue,
+    dispatch,
+    pushToast,
+    isTaskPresent,
+    processSingleFromScheduler,
+    processSingleTranscribeTranslateFromScheduler,
+  });
+
+  const {
+    ytDlpVersion,
+    ytDlpUpdating,
+    updateYtDlpBinary,
+  } = useYtDlpManager({ pushToast });
 
   const evaluateItem = useCallback(async (item: QueueItem) => {
     if (item.transcribeStatus !== "done") {
@@ -88,6 +112,39 @@ export function useQueueWorkflow({
     }
   }, [pushToast]);
 
+  const processSingle = useCallback(async (item: QueueItem) => {
+    const handledByYoutube = await processSingleFromYoutube(item);
+    if (handledByYoutube) return;
+    await processSingleFromScheduler(item);
+  }, [processSingleFromScheduler, processSingleFromYoutube]);
+
+  const processSingleTranscribeTranslate = useCallback(async (item: QueueItem) => {
+    const handledByYoutube = await processSingleTranscribeTranslateFromYoutube(item);
+    if (handledByYoutube) return;
+    await processSingleTranscribeTranslateFromScheduler(item);
+  }, [processSingleTranscribeTranslateFromScheduler, processSingleTranscribeTranslateFromYoutube]);
+
+  const removeItem = useCallback(async (id: string) => {
+    const handledByYoutube = await removeItemFromYoutube(id);
+    if (handledByYoutube) return;
+    await removeItemFromScheduler(id);
+  }, [removeItemFromScheduler, removeItemFromYoutube]);
+
+  const clearQueue = useCallback(async () => {
+    await clearYoutubeQueue();
+    await clearQueueFromScheduler();
+  }, [clearQueueFromScheduler, clearYoutubeQueue]);
+
+  const downloadYoutubeAndResetInput = useCallback(async (url: string) => {
+    const trimmed = url.trim();
+    if (!trimmed) {
+      await downloadYoutube(url);
+      return;
+    }
+    await downloadYoutube(trimmed);
+    dispatch({ type: "set_ui", payload: { youtubeUrl: "" } });
+  }, [dispatch, downloadYoutube]);
+
   return {
     queueCount,
     queueBusy,
@@ -99,5 +156,9 @@ export function useQueueWorkflow({
     evaluateItem,
     clearQueue,
     removeItem,
+    downloadYoutube: downloadYoutubeAndResetInput,
+    ytDlpVersion,
+    ytDlpUpdating,
+    updateYtDlpBinary,
   };
 }

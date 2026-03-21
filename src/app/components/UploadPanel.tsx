@@ -1,32 +1,34 @@
 import type { CSSProperties } from "react";
 import type { UploadTab } from "../types";
-import { DownloadIcon, UploadIcon, YoutubeIcon } from "./Icons";
+import { DownloadIcon, UpdateIcon, UploadIcon, YoutubeIcon } from "./Icons";
 
 type UploadPanelProps = {
   activeTab: UploadTab;
   dragActive: boolean;
   youtubeUrl: string;
+  ytDlpVersion: string;
+  ytDlpUpdating: boolean;
   onTabChange: (tab: UploadTab) => void;
   onPickFiles: () => void | Promise<void>;
   onYoutubeUrlChange: (value: string) => void;
   onYoutubeDownload: () => void;
+  onUpdateYtDlp: () => void;
 };
 
 export default function UploadPanel({
   activeTab,
   dragActive,
   youtubeUrl,
+  ytDlpVersion,
+  ytDlpUpdating,
   onTabChange,
   onPickFiles,
   onYoutubeUrlChange,
   onYoutubeDownload,
+  onUpdateYtDlp,
 }: UploadPanelProps) {
   const tabIndex = activeTab === "local" ? 0 : 1;
   const tabIndicatorStyle = { ["--upload-tab-index" as string]: tabIndex } as CSSProperties;
-  const showYoutubeProgress = false;
-  const youtubeTitle = "";
-  const youtubeSpeed = "";
-  const youtubeSize = "";
 
   return (
     <div className="apple-animate-on-scroll apple-delay-100 upload-section animated">
@@ -74,49 +76,49 @@ export default function UploadPanel({
 
         <div className={`upload-panel-content ${activeTab === "youtube" ? "active" : ""}`} aria-hidden={activeTab !== "youtube"}>
           <div className="youtube-download-area youtube-download-compact">
-            <div className="youtube-headline">
-              <YoutubeIcon />
-              <span>YouTube 下载</span>
-            </div>
-
-            <div className="youtube-input-group">
-              <input
-                type="text"
-                className="youtube-url-input"
-                placeholder="粘贴 YouTube 链接"
-                value={youtubeUrl}
-                onChange={(e) => onYoutubeUrlChange(e.target.value)}
-                autoComplete="off"
-              />
-              <button
-                className="youtube-download-icon-btn"
-                type="button"
-                onClick={onYoutubeDownload}
-                disabled={!youtubeUrl.trim()}
-                aria-label="下载视频"
-                title="下载视频"
-              >
-                <DownloadIcon />
-              </button>
-            </div>
-            {showYoutubeProgress ? (
-              <div className="youtube-progress-shell" aria-label="下载进度">
-                {youtubeTitle ? (
-                  <div className="youtube-progress-head">
-                    <span className="youtube-progress-title" title={youtubeTitle}>{youtubeTitle}</span>
-                  </div>
-                ) : null}
-                <div className="youtube-progress-track">
-                  <div className="youtube-progress-fill" style={{ width: "0%" }} />
-                </div>
-                {youtubeSpeed || youtubeSize ? (
-                  <div className="youtube-progress-meta">
-                    <span>{youtubeSpeed}</span>
-                    <span>{youtubeSize}</span>
-                  </div>
-                ) : null}
+            <div className="youtube-center-wrap">
+              <div className="youtube-headline">
+                <YoutubeIcon />
+                <span>YouTube 下载</span>
               </div>
-            ) : null}
+              <div className="youtube-input-group">
+                <input
+                  type="text"
+                  className="youtube-url-input"
+                  placeholder="粘贴 YouTube 链接"
+                  value={youtubeUrl}
+                  onChange={(e) => onYoutubeUrlChange(e.target.value)}
+                  autoComplete="off"
+                />
+                <button
+                  className="youtube-download-icon-btn"
+                  type="button"
+                  onClick={onYoutubeDownload}
+                  disabled={!youtubeUrl.trim()}
+                  aria-label="下载视频"
+                  title="下载视频"
+                >
+                  <DownloadIcon />
+                </button>
+              </div>
+              <div className="youtube-tools-row">
+                <div className="youtube-tools-version-wrap">
+                  <span className="youtube-tools-version">
+                    yt-dlp: {ytDlpVersion || "未检测到"}
+                  </span>
+                  <button
+                    type="button"
+                    className="youtube-update-icon-btn"
+                    onClick={onUpdateYtDlp}
+                    disabled={ytDlpUpdating}
+                    aria-label={ytDlpUpdating ? "正在更新 yt-dlp" : "更新 yt-dlp"}
+                    title={ytDlpUpdating ? "更新中..." : "更新 yt-dlp"}
+                  >
+                    <UpdateIcon />
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -31,6 +31,8 @@ Current architecture:
 - `src/app/`: UI components, reducer state, styles, app-level utilities
 - `src/app/api/`: frontend invoke/API wrappers for desktop commands
 - `src/app/hooks/`: workflow hooks for queue, subtitle, workspace, and persistence flows
+- `src/app/hooks/useYoutubeDownloadWorkflow.ts`: YouTube 下载任务编排（占位任务、进度、入队执行、取消）
+- `src/app/hooks/useYtDlpManager.ts`: `yt-dlp` 版本读取与更新
 - `src/app/state/`: app/queue/settings/subtitle reducers and domain actions
 - `src/features/media/`: media task domain types and helpers
 - `src-tauri/src/commands/`: Tauri command entrypoints
@@ -39,6 +41,7 @@ Current architecture:
 - `src-tauri/src/services/task_engine.rs`: task lifecycle query/enqueue services (register upload / enqueue / list / get)
 - `src-tauri/src/services/task_executor.rs`: task execution orchestration (single/batch enqueue+execute)
 - `src-tauri/src/services/task_worker.rs`: worker-process runtime management (spawn/wait/kill)
+- `src-tauri/src/services/youtube.rs`: YouTube 下载、进度事件、取消、`yt-dlp` 版本与更新
 - `src-tauri/src/services/transcription/`: post-ASR punctuation/hotword/transcription pipeline
 - `src-tauri/src/services/translate/`: translation pipeline modules (Rig adapters/prompt/rules/validation)
 - `src-tauri/src/services/translate/adapters/rig_node.rs`: shared Rig node client for JSON-constrained LLM calls
@@ -47,6 +50,7 @@ Current architecture:
 - `model/`: local model files (not committed; may be absent before first setup)
 - `runtime/`: local ONNX Runtime files (not committed; may be absent before first setup)
 - `output/`: generated SRT outputs (not committed; may be absent before first export)
+  - Dev runtime commonly writes under `target/debug/output/`
 
 ## Tech Stack
 
@@ -81,7 +85,7 @@ Run commands from the repository root.
 - Preserve the current single-repo structure.
 - Prefer reusing existing components/utilities before adding new abstractions.
 - Task lifecycle is command-driven:
-  - Frontend sends commands only (`register_task_upload`, `enqueue_task_run`, `enqueue_and_execute_task_batch`, `delete_task_summaries`)
+  - Frontend sends commands only (`register_task_upload`, `enqueue_task_run`, `enqueue_and_execute_task_batch`, `delete_task_summaries`, `download_youtube_to_task_run`)
   - Backend (`task_runs`) is the source of truth and single writer for task lifecycle state
   - Frontend is a projection/read model; do not re-introduce frontend-owned queue lifecycle persistence
 - When changing Tauri command payloads, update both:
@@ -100,6 +104,12 @@ Run commands from the repository root.
 - New LLM-facing integration should go through Rig node adapters; do not add a parallel ad-hoc LLM client stack.
 - For punctuation/translation node calls, prefer `RigNodeClient` with explicit JSON validation and bounded concurrency.
 - Do not add new dependence on `save_queue_state` for task lifecycle control; use task-engine commands.
+- YouTube placeholder path format is `youtube://pending/<taskId>?url=<encoded>`; treat it as transitional input only.
+- Task output artifacts are fixed-name files under task root:
+  - Transcribe only: `src.srt`
+  - With translation: `src.srt`, `trans.srt`, `src_trans.srt`, `trans_src.srt`
+  - Do not reintroduce `*_words.json` output unless explicitly requested.
+- Task logs must stay in `<task_root>/logs/` (do not write into stage subdirs such as `asr_input/logs`).
 - Do not commit generated/runtime artifacts:
   - `dist/`, `target/`, `output/`, `src-tauri/output/`
   - local model/runtime binaries in `model/` and `runtime/`

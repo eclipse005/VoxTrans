@@ -39,6 +39,7 @@ export type SavedSettings = {
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
 export type TranscribePhase =
+  | "downloading"
   | "initializing"
   | "separating"
   | "recognizing"

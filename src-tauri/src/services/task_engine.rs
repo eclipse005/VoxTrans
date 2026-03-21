@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use std::path::Path;
 use crate::services::task_context::{STAGE_INIT, TaskContext, TaskContextSeed};
 
 pub const INTENT_TRANSCRIBE: &str = "TRANSCRIBE";
@@ -193,6 +194,7 @@ pub async fn register_task_upload(
     request: RegisterTaskUploadRequest,
 ) -> Result<TaskRunRecord, String> {
     validate_upload_request(&request)?;
+    ensure_task_output_dir_for_upload(&request)?;
     let now = unix_now();
     let context_json = build_upload_context_json(&request, now)?;
 
@@ -244,6 +246,23 @@ pub async fn register_task_upload(
     .await?
     .run
     .pipe(Ok)
+}
+
+fn ensure_task_output_dir_for_upload(request: &RegisterTaskUploadRequest) -> Result<(), String> {
+    let media_path = Path::new(request.media_path.as_str());
+    let target_dir = if request.media_path.starts_with("youtube://") {
+        let safe_name = crate::services::task_path::sanitize_filename_component(&request.name);
+        let safe_task_id = crate::services::task_path::sanitize_filename_component(&request.id);
+        let base_name = if safe_name.is_empty() {
+            "youtube_task".to_string()
+        } else {
+            safe_name
+        };
+        crate::services::output::resolve_output_dir().join(format!("{base_name}_{safe_task_id}"))
+    } else {
+        crate::services::task_path::task_output_dir(&request.id, media_path)
+    };
+    std::fs::create_dir_all(target_dir).map_err(|err| format!("创建任务目录失败: {err}"))
 }
 
 pub async fn list_task_runs(pool: &SqlitePool, request: ListTaskRunsRequest) -> Result<Vec<TaskRunRecord>, String> {

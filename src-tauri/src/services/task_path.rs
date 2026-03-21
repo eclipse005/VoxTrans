@@ -13,6 +13,18 @@ pub fn sanitize_filename_component(raw: &str) -> String {
 }
 
 pub fn task_output_dir(task_id: &str, audio_path: &Path) -> PathBuf {
+    if is_virtual_media_path(audio_path) {
+        if let Some(existing_dir) = find_existing_task_dir_by_id(task_id) {
+            return existing_dir;
+        }
+        return task_output_dir_by_id(task_id);
+    }
+    if let Some(existing_dir) = media_parent_under_output(audio_path) {
+        if let Some(task_dir) = find_existing_task_dir_by_id(task_id) {
+            return task_dir;
+        }
+        return existing_dir;
+    }
     let stem = audio_path
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -29,43 +41,23 @@ pub fn task_output_dir_by_id(task_id: &str) -> PathBuf {
 }
 
 pub fn task_srt_output_path(task_id: &str, audio_path: &Path) -> PathBuf {
-    task_srt_output_path_for_lang(task_id, audio_path, "en")
+    task_src_srt_output_path(task_id, audio_path)
 }
 
-pub fn task_srt_output_path_for_lang(task_id: &str, audio_path: &Path, lang: &str) -> PathBuf {
-    let stem = audio_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "transcript".to_string());
-    let safe_stem = sanitize_filename_component(&stem);
-    let lang_suffix = normalize_lang_suffix(lang);
-    task_output_dir(task_id, audio_path).join(format!("{}_{}.srt", safe_stem, lang_suffix))
+pub fn task_src_srt_output_path(task_id: &str, audio_path: &Path) -> PathBuf {
+    task_output_dir(task_id, audio_path).join("src.srt")
 }
 
-pub fn task_words_output_path(task_id: &str, audio_path: &Path) -> PathBuf {
-    let stem = audio_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "transcript".to_string());
-    let safe_stem = sanitize_filename_component(&stem);
-    task_output_dir(task_id, audio_path).join(format!("{}_words.json", safe_stem))
+pub fn task_trans_srt_output_path(task_id: &str, audio_path: &Path) -> PathBuf {
+    task_output_dir(task_id, audio_path).join("trans.srt")
 }
 
-fn normalize_lang_suffix(lang: &str) -> String {
-    let lowered = lang.trim().to_lowercase();
-    if lowered.is_empty() {
-        return "en".to_string();
-    }
-    if lowered.starts_with("zh") {
-        return "zh".to_string();
-    }
-    let prefix = lowered
-        .split(|ch: char| ch == '-' || ch == '_' || !ch.is_ascii_alphanumeric())
-        .find(|part| !part.is_empty())
-        .unwrap_or("en");
-    sanitize_filename_component(prefix)
+pub fn task_src_trans_srt_output_path(task_id: &str, audio_path: &Path) -> PathBuf {
+    task_output_dir(task_id, audio_path).join("src_trans.srt")
+}
+
+pub fn task_trans_src_srt_output_path(task_id: &str, audio_path: &Path) -> PathBuf {
+    task_output_dir(task_id, audio_path).join("trans_src.srt")
 }
 
 pub fn task_log_dir(task_id: &str, media_path: Option<&Path>) -> PathBuf {
@@ -74,4 +66,44 @@ pub fn task_log_dir(task_id: &str, media_path: Option<&Path>) -> PathBuf {
         None => task_output_dir_by_id(task_id),
     };
     task_root.join("logs")
+}
+
+fn media_parent_under_output(audio_path: &Path) -> Option<PathBuf> {
+    let parent = audio_path.parent()?.to_path_buf();
+    let output_root = crate::services::output::resolve_output_dir();
+    if parent.starts_with(&output_root) {
+        Some(parent)
+    } else {
+        None
+    }
+}
+
+fn is_virtual_media_path(audio_path: &Path) -> bool {
+    let raw = audio_path.to_string_lossy();
+    raw.starts_with("youtube://")
+}
+
+fn find_existing_task_dir_by_id(task_id: &str) -> Option<PathBuf> {
+    let safe_task_id = sanitize_filename_component(task_id);
+    if safe_task_id.is_empty() {
+        return None;
+    }
+    let suffix = format!("_{safe_task_id}");
+    let output_root = crate::services::output::resolve_output_dir();
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(&output_root)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            if !path.is_dir() {
+                return false;
+            }
+            let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+                return false;
+            };
+            name.ends_with(&suffix)
+        })
+        .collect();
+    candidates.sort();
+    candidates.pop()
 }
