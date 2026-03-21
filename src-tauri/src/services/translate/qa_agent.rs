@@ -11,9 +11,12 @@ use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
 use rig::client::CompletionClient;
 use rig::completion::{CompletionModel, Prompt, PromptError, ToolDefinition};
 use rig::message::{Message, UserContent};
-use rig::providers::openai;
 use rig::tool::Tool;
 
+use super::adapters::rig_client::{
+    RIG_PROVIDER, RIG_TRANSPORT_CHAT_COMPLETIONS, build_openai_completions_client,
+    normalize_base_url,
+};
 use super::types::{TranslateSegment, TranslateTerminologyEntry};
 
 const MAX_TURNS: usize = 12;
@@ -196,21 +199,28 @@ pub async fn run_qa_agent(request: QaAgentRequest) -> Result<QaAgentResponse, St
         build_qa_user_prompt(&request, &state, pass)
     };
 
-    let mut client_builder = openai::Client::builder().api_key(&request.api_key);
-    if !request.base_url.trim().is_empty() {
-        client_builder = client_builder.base_url(request.base_url.trim());
-    }
-    let responses_client = client_builder
-        .build()
-        .map_err(|err| format!("failed to create rig openai client: {err}"))?;
-    let client = responses_client.completions_api();
+    let client = build_openai_completions_client(&request.api_key, &request.base_url)?;
+    let normalized_base_url = normalize_base_url(&request.base_url);
     let hook = QaPromptHook {
         model: request.model.clone(),
+        base_url: normalized_base_url.clone(),
         pass_raw: request.pass.clone(),
         turn_state: Arc::new(Mutex::new(QaHookState::default())),
         llm_target: llm_target.clone(),
         main_target: main_target.clone(),
     };
+    llm_logger.event(
+        "qa.agent.config",
+        Some(&json!({
+            "provider": RIG_PROVIDER,
+            "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
+            "model": request.model,
+            "baseUrl": normalized_base_url,
+            "pass": request.pass,
+            "maxTurns": MAX_TURNS,
+            "maxToolCallsPerTurn": MAX_TOOL_CALLS_PER_TURN
+        })),
+    );
 
     let agent_builder = client
         .agent(request.model.clone())
@@ -266,6 +276,10 @@ pub async fn run_qa_agent(request: QaAgentRequest) -> Result<QaAgentResponse, St
                 "qa.max_turns_reached",
                 Some(&json!({
                     "maxTurns": MAX_TURNS,
+                    "provider": RIG_PROVIDER,
+                    "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
+                    "model": request.model,
+                    "baseUrl": normalize_base_url(&request.base_url),
                     "pass": request.pass,
                 })),
             );
@@ -278,6 +292,10 @@ pub async fn run_qa_agent(request: QaAgentRequest) -> Result<QaAgentResponse, St
             "qa.turn.response",
             Some(&json!({
                 "turn": "final",
+                "provider": RIG_PROVIDER,
+                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
+                "model": request.model,
+                "baseUrl": normalize_base_url(&request.base_url),
                 "responseText": text,
                 "pass": request.pass,
             })),
@@ -373,6 +391,7 @@ struct QaHookState {
 #[derive(Clone)]
 struct QaPromptHook {
     model: String,
+    base_url: String,
     pass_raw: String,
     turn_state: Arc<Mutex<QaHookState>>,
     llm_target: TaskLogTarget,
@@ -391,7 +410,10 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
             "qa.turn.request",
             Some(&json!({
                 "turn": turn,
+                "provider": RIG_PROVIDER,
+                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
                 "model": self.model,
+                "baseUrl": self.base_url,
                 "pass": self.pass_raw,
             })),
         );
@@ -400,7 +422,10 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
             "qa.turn.request",
             Some(&json!({
                 "turn": turn,
+                "provider": RIG_PROVIDER,
+                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
                 "model": self.model,
+                "baseUrl": self.base_url,
                 "pass": self.pass_raw,
                 "prompt": message_to_text(prompt),
             })),
@@ -420,6 +445,10 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
             "qa.turn.response",
             Some(&json!({
                 "turn": turn,
+                "provider": RIG_PROVIDER,
+                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
+                "model": self.model,
+                "baseUrl": self.base_url,
                 "response": raw,
                 "pass": self.pass_raw,
             })),
@@ -444,6 +473,10 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
                     "turn": turn,
                     "tool": tool_name,
                     "callId": tool_call_id,
+                    "provider": RIG_PROVIDER,
+                    "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
+                    "model": self.model,
+                    "baseUrl": self.base_url,
                     "reason": "max_tool_calls_per_turn",
                 })),
             );
@@ -466,6 +499,10 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
                 "turn": turn,
                 "tool": tool_name,
                 "callId": tool_call_id,
+                "provider": RIG_PROVIDER,
+                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
+                "model": self.model,
+                "baseUrl": self.base_url,
                 "args": parsed_args,
                 "pass": self.pass_raw,
             })),
@@ -491,6 +528,10 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
                 "turn": turn,
                 "tool": tool_name,
                 "callId": tool_call_id,
+                "provider": RIG_PROVIDER,
+                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
+                "model": self.model,
+                "baseUrl": self.base_url,
                 "pass": self.pass_raw,
             })),
         );
@@ -501,6 +542,10 @@ impl<M: CompletionModel> PromptHook<M> for QaPromptHook {
                 "turn": turn,
                 "tool": tool_name,
                 "callId": tool_call_id,
+                "provider": RIG_PROVIDER,
+                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
+                "model": self.model,
+                "baseUrl": self.base_url,
                 "result": parsed_result,
                 "pass": self.pass_raw,
             })),

@@ -10,6 +10,10 @@ use rig::providers::openai;
 
 use crate::services::task_log::TaskLogger;
 
+use super::rig_client::{
+    RIG_PROVIDER, RIG_TRANSPORT_CHAT_COMPLETIONS, build_openai_completions_client,
+    normalize_base_url,
+};
 use super::json_repair::extract_and_repair_json;
 
 #[derive(Debug, Clone)]
@@ -90,18 +94,11 @@ pub struct RigNodeClient {
 
 impl RigNodeClient {
     pub fn new(config: RigNodeConfig) -> Result<Self, String> {
-        let mut builder = openai::Client::builder().api_key(&config.api_key);
-        if !config.base_url.trim().is_empty() {
-            builder = builder.base_url(&config.base_url);
-        }
-
-        let client = builder
-            .build()
-            .map_err(|err| format!("failed to create rig openai client: {err}"))?;
+        let client = build_openai_completions_client(&config.api_key, &config.base_url)?;
 
         Ok(Self {
             config,
-            completions_client: client.completions_api(),
+            completions_client: client,
         })
     }
 
@@ -129,7 +126,9 @@ impl RigNodeClient {
                 "attempt": attempt,
                 "maxAttempts": max_attempts,
                 "model": self.config.model,
-                "baseUrl": self.config.base_url,
+                "baseUrl": normalize_base_url(&self.config.base_url),
+                "provider": RIG_PROVIDER,
+                "transport": RIG_TRANSPORT_CHAT_COMPLETIONS,
                 "request": {
                     "systemPrompt": system_prompt,
                     "userPrompt": user_prompt
@@ -157,6 +156,8 @@ impl RigNodeClient {
                                     "backoffMs": backoff_ms,
                                     "model": base_payload["model"],
                                     "baseUrl": base_payload["baseUrl"],
+                                    "provider": base_payload["provider"],
+                                    "transport": base_payload["transport"],
                                     "request": base_payload["request"]
                                 })),
                             );
@@ -184,6 +185,8 @@ impl RigNodeClient {
                                     "backoffMs": backoff_ms,
                                     "model": base_payload["model"],
                                     "baseUrl": base_payload["baseUrl"],
+                                    "provider": base_payload["provider"],
+                                    "transport": base_payload["transport"],
                                     "request": base_payload["request"]
                                 })),
                             );
@@ -203,6 +206,8 @@ impl RigNodeClient {
                             "maxAttempts": base_payload["maxAttempts"],
                             "model": base_payload["model"],
                             "baseUrl": base_payload["baseUrl"],
+                            "provider": base_payload["provider"],
+                            "transport": base_payload["transport"],
                             "request": base_payload["request"],
                             "response": {
                                 "text": raw_text
@@ -234,6 +239,8 @@ impl RigNodeClient {
                             "backoffMs": backoff_ms,
                             "model": base_payload["model"],
                             "baseUrl": base_payload["baseUrl"],
+                            "provider": base_payload["provider"],
+                            "transport": base_payload["transport"],
                             "request": base_payload["request"]
                         })),
                     );
