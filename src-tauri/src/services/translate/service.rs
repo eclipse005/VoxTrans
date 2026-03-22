@@ -9,18 +9,18 @@ pub async fn run_translate_pipeline(
 
 pub async fn run_translate_summarize(
     request: &TranslatePipelineRequest,
-) -> Result<(String, String), String> {
-    pipeline::summarize_translate_style(request).await
+) -> Result<(String, Vec<super::types::TranslateTerminologyEntry>, usize, usize), String> {
+    pipeline::summarize_translate_theme(request).await
 }
 
-pub async fn run_translate_with_style<G>(
+pub async fn run_translate_with_theme<G>(
     request: TranslatePipelineRequest,
-    topic_summary: String,
-    tone_strategy: String,
+    theme: String,
+    terminology_entries: Vec<super::types::TranslateTerminologyEntry>,
     on_batch_progress: &mut G,
 ) -> Result<TranslatePipelineResponse, String>
 where
     G: FnMut(usize, usize),
 {
-    pipeline::run_translate_with_style(request, topic_summary, tone_strategy, on_batch_progress).await
+    pipeline::run_translate_with_theme(request, theme, terminology_entries, on_batch_progress).await
 }

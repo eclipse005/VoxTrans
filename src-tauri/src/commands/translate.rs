@@ -1,8 +1,10 @@
 use crate::services::translate::{
-    adapters::rig_node::{JsonResponseValidator, RigNodeClient, RigNodeConfig},
     run_translate_pipeline as run_translate_pipeline_service,
     types::TranslatePipelineRequest,
 };
+use crate::services::llm::client::OpenAiCompatLlmClient;
+use crate::services::llm::json_guard::JsonResponseValidator;
+use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort};
 use serde::{Deserialize, Serialize};
 
 #[tauri::command]
@@ -58,20 +60,24 @@ pub async fn test_translate_llm(
         return Err("translateModel is required".to_string());
     }
 
-    let client = RigNodeClient::new(RigNodeConfig::new(
+    let client = OpenAiCompatLlmClient::new(LlmConfig::new(
         request.base_url.trim().to_string(),
         request.api_key.trim().to_string(),
         request.model.trim().to_string(),
-    ))?;
+    ))
+    .map_err(|err| err.message)?;
 
     let system_prompt = "你是连通性测试助手。只返回 JSON。";
     let user_prompt = "返回 JSON：{\"ok\":true,\"message\":\"pong\"}";
     let validator = JsonResponseValidator::with_required_keys(&["ok", "message"]);
+    let context = LlmCallContext {
+        task_id: "settings-llm-test".to_string(),
+        media_path: None,
+        phase: "connectivity_test".to_string(),
+    };
     let result = client
-        .call(
-            "settings-llm-test",
-            None,
-            "connectivity_test",
+        .call_json(
+            &context,
             system_prompt,
             user_prompt,
             Some(&validator),
@@ -92,11 +98,9 @@ pub async fn test_translate_llm(
     if !ok {
         return Err(format!("LLM 连通性测试失败: {msg}"));
     }
-    let model = result.model;
-
     Ok(TestTranslateLlmResponse {
         ok: true,
         message: msg.to_string(),
-        model,
+        model: request.model.trim().to_string(),
     })
 }

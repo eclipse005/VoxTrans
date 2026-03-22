@@ -7,9 +7,9 @@ use voxtrans_core::subtitle::text_rules::{
 };
 
 use crate::services::task_log::TaskLogger;
-use crate::services::translate::adapters::rig_node::{
-    JsonResponseValidator, RigNodeClient, RigNodeConfig, RigNodeJsonTask,
-};
+use crate::services::llm::client::OpenAiCompatLlmClient;
+use crate::services::llm::json_guard::JsonResponseValidator;
+use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, LlmPort};
 use crate::services::translate::prompt::{
     PunctuationPromptInput, build_punctuation_system_prompt, build_punctuation_user_prompt,
 };
@@ -45,7 +45,7 @@ struct PunctuationExtraction {
     punctuated_text: String,
 }
 
-pub async fn optimize_words_with_rig_node(
+pub async fn optimize_words_with_llm(
     task_id: &str,
     media_path: &str,
     words: Vec<WordToken>,
@@ -102,7 +102,7 @@ pub async fn optimize_words_with_rig_node(
             "suspiciousSentenceTotal": suspicious_indexes.len()
         })),
     );
-    let rig_client = match RigNodeClient::new(RigNodeConfig::new(
+    let llm_client = match OpenAiCompatLlmClient::new(LlmConfig::new(
         config.base_url.clone(),
         config.api_key.clone(),
         config.model.clone(),
@@ -143,15 +143,20 @@ pub async fn optimize_words_with_rig_node(
     let tasks = prompt_tasks
         .iter()
         .enumerate()
-        .map(|(idx, (_, user_prompt))| RigNodeJsonTask {
+        .map(|(idx, (_, user_prompt))| LlmJsonTask {
             id: idx,
             system_prompt: system_prompt.clone(),
             user_prompt: user_prompt.clone(),
             response_validator: Some(validator.clone()),
         })
         .collect::<Vec<_>>();
-    let extraction_result = rig_client
-        .call_batch(task_id, Some(media_path), "punctuate", tasks, concurrency)
+    let context = LlmCallContext {
+        task_id: task_id.to_string(),
+        media_path: Some(media_path.to_string()),
+        phase: "punctuate".to_string(),
+    };
+    let extraction_result = llm_client
+        .call_batch_json(&context, tasks, concurrency)
         .await;
 
     let mut optimized = words.clone();
@@ -207,7 +212,7 @@ pub async fn optimize_words_with_rig_node(
             "llmMetrics": {
                 "concurrency": concurrency,
                 "requestTotal": suspicious_indexes.len(),
-                "backend": "rig_node_client"
+                "backend": "openai_compatible_http"
             }
         })),
     );

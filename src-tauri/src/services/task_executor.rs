@@ -26,15 +26,15 @@ use crate::services::transcribe::{
     transcribe_blocking,
 };
 use crate::services::transcription::{
-    CorrectionConfig, CorrectionTerminologyEntry, PunctuationConfig, correct_words_with_rig_node,
-    optimize_words_with_rig_node,
+    CorrectionConfig, CorrectionTerminologyEntry, PunctuationConfig, correct_words_with_llm,
+    optimize_words_with_llm,
 };
 use crate::services::translate::types::{
     TranslatePipelineRequest, TranslateTerminologyEntry, TranslateToken,
 };
 use crate::services::translate::pipeline::beautify_translated_text;
-use crate::services::translate::{run_translate_summarize, run_translate_with_style};
-use crate::services::translate::qa_simple::{QaAgentRequest, run_qa_simple};
+use crate::services::translate::{run_translate_summarize, run_translate_with_theme};
+use crate::services::translate::segment_optimize::{SegmentOptimizeRequest, run_segment_optimize};
 
 const WORKER_EVENT_PREFIX: &str = "VOXTRANS_EVENT:";
 
@@ -325,14 +325,7 @@ pub async fn execute_task_run(
                 }));
             }
 
-            let qa_quality_changes = context
-                .stages
-                .qa_quality
-                .output
-                .get("appliedChangeTotal")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let qa_layout_changes = context
+            let segment_optimize_changes = context
                 .stages
                 .qa_layout
                 .output
@@ -346,8 +339,7 @@ pub async fn execute_task_run(
                     "segmentTotal": done.segment_total,
                     "resultTextChars": done.result_text.chars().count(),
                     "resultSrtChars": done.result_srt.chars().count(),
-                    "qaQualityAppliedChangeTotal": qa_quality_changes,
-                    "qaLayoutAppliedChangeTotal": qa_layout_changes,
+                    "segmentOptimizeAppliedChangeTotal": segment_optimize_changes,
                     "outputs": outputs,
                 })),
             );
@@ -538,8 +530,10 @@ struct SegmentResumeSnapshot {
 
 #[derive(Debug, Clone)]
 struct SummarizeSnapshot {
-    topic_summary: String,
-    tone_strategy: String,
+    theme: String,
+    terminology_entries: Vec<TranslateTerminologyEntry>,
+    terminology_primary_total: usize,
+    terminology_supporting_total: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -552,7 +546,7 @@ struct TranslateSnapshot {
 }
 
 #[derive(Debug, Clone)]
-struct QaSnapshot {
+struct SegmentOptimizeSnapshot {
     segments: Vec<crate::services::translate::types::TranslateSegment>,
     report: Value,
     applied_change_total: usize,
@@ -563,7 +557,7 @@ struct QaSnapshot {
 }
 
 #[derive(Debug, Clone)]
-struct QaWordTiming {
+struct WordTimingAnchor {
     start: f64,
     end: f64,
     word: String,
@@ -571,7 +565,7 @@ struct QaWordTiming {
 
 fn realign_segments_with_words(
     segments: &mut [crate::services::translate::types::TranslateSegment],
-    word_timestamps: &[QaWordTiming],
+    word_timestamps: &[WordTimingAnchor],
 ) -> Value {
     if segments.is_empty() {
         return json!({ "applied": false, "reason": "empty_segments" });
@@ -865,9 +859,8 @@ async fn run_transcribe_and_maybe_translate(
     task: &TaskRunExecRow,
     with_translate: bool,
     context: &mut TaskContext,
-    asr_resume: Option<AsrResumeSnapshot>,
+    _asr_resume: Option<AsrResumeSnapshot>,
 ) -> Result<DonePayload, String> {
-    let resumed_from_asr = asr_resume.is_some();
     let settings_before_asr = load_user_preferences(pool).await?.settings;
     let transcribed = run_stage(
         pool,
@@ -987,23 +980,21 @@ async fn run_transcribe_and_maybe_translate(
         |ctx| load_stage_words(ctx, STAGE_PUNCTUATE),
         |value| !value.is_empty(),
         || {
-            if resumed_from_asr {
-                emit_bridge_event(
-                    app,
-                    "transcribe-phase",
-                    &TranscribePhaseEvent {
-                        task_id: task.id.clone(),
-                        phase: "punctuate".to_string(),
-                        phase_detail: None,
-                    },
-                );
-            }
+            emit_bridge_event(
+                app,
+                "transcribe-phase",
+                &TranscribePhaseEvent {
+                    task_id: task.id.clone(),
+                    phase: "punctuate".to_string(),
+                    phase_detail: None,
+                },
+            );
             let words_for_exec = words.clone();
             let media_path = task.media_path.clone();
             let task_id = task.id.clone();
             let settings = settings_before_post.clone();
             async move {
-                let optimized_words = optimize_words_with_rig_node(
+                let optimized_words = optimize_words_with_llm(
                     &task_id,
                     &media_path,
                     beautify_words_for_subtitle(to_core_words(words_for_exec)),
@@ -1032,13 +1023,22 @@ async fn run_transcribe_and_maybe_translate(
         |ctx| load_stage_words(ctx, STAGE_CORRECT),
         |value| !value.is_empty(),
         || {
+            emit_bridge_event(
+                app,
+                "transcribe-phase",
+                &TranscribePhaseEvent {
+                    task_id: task.id.clone(),
+                    phase: "correct".to_string(),
+                    phase_detail: None,
+                },
+            );
             let words_for_exec = words.clone();
             let media_path = task.media_path.clone();
             let task_id = task.id.clone();
             let source_lang = task.source_lang.clone();
             let settings = settings_before_post.clone();
             async move {
-                let corrected_words = correct_words_with_rig_node(
+                let corrected_words = correct_words_with_llm(
                     &task_id,
                     &media_path,
                     to_core_words(words_for_exec),
@@ -1198,9 +1198,7 @@ async fn run_transcribe_and_maybe_translate(
         context,
         STAGE_SUMMARIZE,
         load_summarize_snapshot,
-        |value| {
-            !value.topic_summary.trim().is_empty() && !value.tone_strategy.trim().is_empty()
-        },
+        |value| !value.theme.trim().is_empty(),
         || {
             let request = translate_request.clone();
             let task_id = task.id.clone();
@@ -1215,17 +1213,22 @@ async fn run_transcribe_and_maybe_translate(
                         phase_detail: None,
                     },
                 );
-                let (topic_summary, tone_strategy) = run_translate_summarize(&request).await?;
+                let (theme, terminology_entries, primary_total, supporting_total) =
+                    run_translate_summarize(&request).await?;
                 Ok(SummarizeSnapshot {
-                    topic_summary,
-                    tone_strategy,
+                    theme,
+                    terminology_entries,
+                    terminology_primary_total: primary_total,
+                    terminology_supporting_total: supporting_total,
                 })
             }
         },
         |value| {
             json!({
-                "topicSummary": value.topic_summary,
-                "toneStrategy": value.tone_strategy,
+                "theme": value.theme,
+                "terminologyEntries": value.terminology_entries,
+                "terminologyPrimaryTotal": value.terminology_primary_total,
+                "terminologySupportingTotal": value.terminology_supporting_total,
             })
         },
         |_| Value::Null,
@@ -1236,8 +1239,11 @@ async fn run_transcribe_and_maybe_translate(
         "summarize",
         "completed",
         json!({
-            "topicSummary": summarize_snapshot.topic_summary,
-            "toneStrategy": summarize_snapshot.tone_strategy,
+            "theme": summarize_snapshot.theme,
+            "terminologyInputTotal": translate_request.terminology_entries.len(),
+            "terminologyPrimaryTotal": summarize_snapshot.terminology_primary_total,
+            "terminologySupportingTotal": summarize_snapshot.terminology_supporting_total,
+            "terminologyOutputTotal": summarize_snapshot.terminology_entries.len(),
         }),
     );
 
@@ -1276,10 +1282,10 @@ async fn run_transcribe_and_maybe_translate(
                         },
                     );
                 };
-                let translated = run_translate_with_style(
+                let translated = run_translate_with_theme(
                     request,
-                    summarize.topic_summary,
-                    summarize.tone_strategy,
+                    summarize.theme,
+                    summarize.terminology_entries,
                     &mut on_progress,
                 )
                 .await?;
@@ -1315,110 +1321,20 @@ async fn run_transcribe_and_maybe_translate(
         }),
     );
 
-    log_pipeline_stage(task, "qa_quality", "started", Value::Null);
-    let qa_quality_snapshot = run_stage(
-        pool,
-        &task.id,
-        context,
-        STAGE_QA_QUALITY,
-        load_qa_quality_snapshot,
-        |value| !value.segments.is_empty(),
-        || {
-            let task_id = task.id.clone();
-            let media_path = task.media_path.clone();
-            let source_lang = task.source_lang.clone();
-            let target_lang = task.target_lang.clone();
-            let settings = settings_before_post.clone();
-            let final_segments = translate_snapshot.segments.clone();
-            let style_guidance = summarize_snapshot.tone_strategy.clone();
-            let app_handle = app.cloned();
-            async move {
-                emit_bridge_event(
-                    app_handle.as_ref(),
-                    "transcribe-phase",
-                    &TranscribePhaseEvent {
-                        task_id: task_id.clone(),
-                        phase: "qa_quality".to_string(),
-                        phase_detail: None,
-                    },
-                );
-                let qa_pass2 = run_qa_simple(QaAgentRequest {
-                    task_id,
-                    media_path,
-                    source_lang,
-                    target_lang,
-                    api_key: settings.translate_api_key.clone(),
-                    base_url: settings.translate_base_url.clone(),
-                    model: settings.translate_model.clone(),
-                    llm_concurrency: settings.llm_concurrency,
-                    source_max_words_per_segment: settings.subtitle_max_words_per_segment,
-                    target_reference_len: settings.subtitle_length_reference,
-                    terminology_entries: if settings.enable_terminology {
-                        map_terminology_entries(&settings.terminology_groups)
-                    } else {
-                        Vec::new()
-                    },
-                    segments: final_segments,
-                    style_guidance: style_guidance.clone(),
-                    pass: "pass2_quality".to_string(),
-                    prior_report: None,
-                })
-                .await
-                .map_err(|err| format!("qa quality failed: {err}"))?;
-                Ok(QaSnapshot {
-                    segments: qa_pass2.segments,
-                    report: qa_pass2.report,
-                    applied_change_total: qa_pass2.applied_changes.len(),
-                    source_srt: qa_pass2.source_srt,
-                    target_srt: qa_pass2.target_srt,
-                    src_trans_srt: qa_pass2.bilingual_srt_source_first,
-                    trans_src_srt: qa_pass2.bilingual_srt_target_first,
-                })
-            }
-        },
-        |value| {
-            json!({
-                "appliedChangeTotal": value.applied_change_total,
-                "report": value.report,
-                "segments": value.segments,
-                "sourceSrt": value.source_srt,
-                "targetSrt": value.target_srt,
-                "srcTransSrt": value.src_trans_srt,
-                "transSrcSrt": value.trans_src_srt,
-            })
-        },
-        |_| Value::Null,
-    )
-    .await?;
-    log_pipeline_stage(
-        task,
-        "qa_quality",
-        "completed",
-        json!({
-            "appliedChangeTotal": qa_quality_snapshot.applied_change_total,
-            "segmentTotal": qa_quality_snapshot.segments.len(),
-        }),
-    );
-
-    log_pipeline_stage(task, "qa_layout", "started", Value::Null);
-    let qa_snapshot = run_stage(
+    log_pipeline_stage(task, "segment_optimize", "started", Value::Null);
+    let segment_optimize_snapshot = run_stage(
         pool,
         &task.id,
         context,
         STAGE_QA_LAYOUT,
-        load_qa_layout_snapshot,
+        load_segment_optimize_snapshot,
         |value| !value.segments.is_empty(),
         || {
             let task_id = task.id.clone();
             let media_path = task.media_path.clone();
-            let source_lang = task.source_lang.clone();
-            let target_lang = task.target_lang.clone();
             let settings = settings_before_post.clone();
-            let mut final_segments = qa_quality_snapshot.segments.clone();
-            let qa_words = words.clone();
-            let pass_quality_report = qa_quality_snapshot.report.clone();
-            let pass_quality_applied_total = qa_quality_snapshot.applied_change_total;
-            let style_guidance = summarize_snapshot.tone_strategy.clone();
+            let mut final_segments = translate_snapshot.segments.clone();
+            let word_timestamps = words.clone();
             let app_handle = app.cloned();
             async move {
                 emit_bridge_event(
@@ -1426,47 +1342,31 @@ async fn run_transcribe_and_maybe_translate(
                     "transcribe-phase",
                     &TranscribePhaseEvent {
                         task_id: task_id.clone(),
-                        phase: "qa_layout".to_string(),
+                        phase: "segment_optimize".to_string(),
                         phase_detail: None,
                     },
                 );
-                let qa_pass1 = run_qa_simple(QaAgentRequest {
+                let segment_optimize_result = run_segment_optimize(SegmentOptimizeRequest {
                     task_id: task_id.clone(),
                     media_path: media_path.clone(),
-                    source_lang,
-                    target_lang,
-                    api_key: settings.translate_api_key.clone(),
-                    base_url: settings.translate_base_url.clone(),
-                    model: settings.translate_model.clone(),
+                    translate_api_key: settings.translate_api_key.clone(),
+                    translate_base_url: settings.translate_base_url.clone(),
+                    translate_model: settings.translate_model.clone(),
                     llm_concurrency: settings.llm_concurrency,
                     source_max_words_per_segment: settings.subtitle_max_words_per_segment,
                     target_reference_len: settings.subtitle_length_reference,
-                    terminology_entries: if settings.enable_terminology {
-                        map_terminology_entries(&settings.terminology_groups)
-                    } else {
-                        Vec::new()
-                    },
                     segments: final_segments,
-                    style_guidance: style_guidance.clone(),
-                    pass: "pass1_segment".to_string(),
-                    prior_report: Some(pass_quality_report.clone()),
                 })
                 .await
-                .map_err(|err| format!("qa layout failed: {err}"))?;
-                final_segments = qa_pass1.segments;
-                let pass_layout_report = qa_pass1.report;
-                let pass_layout_applied_total = qa_pass1.applied_changes.len();
-                let qa_report = json!({
-                    "mode": "two_pass",
-                    "passQuality": pass_quality_report,
-                    "passLayout": pass_layout_report,
-                });
-                let qa_applied_total = pass_quality_applied_total + pass_layout_applied_total;
-                let _qa_align = realign_segments_with_words(
+                .map_err(|err| format!("segment optimize failed: {err}"))?;
+                final_segments = segment_optimize_result.segments;
+                let segment_optimize_report = segment_optimize_result.report;
+                let segment_optimize_applied_total = segment_optimize_result.applied_changes.len();
+                let _align_result = realign_segments_with_words(
                     &mut final_segments,
-                    &qa_words
+                    &word_timestamps
                         .iter()
-                        .map(|w| QaWordTiming {
+                        .map(|w| WordTimingAnchor {
                             start: w.start,
                             end: w.end,
                             word: w.word.clone(),
@@ -1477,10 +1377,10 @@ async fn run_transcribe_and_maybe_translate(
                 let target_srt = build_srt_from_translate_segments(&final_segments, true);
                 let src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
                 let trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
-                Ok(QaSnapshot {
+                Ok(SegmentOptimizeSnapshot {
                     segments: final_segments,
-                    report: qa_report,
-                    applied_change_total: qa_applied_total,
+                    report: segment_optimize_report,
+                    applied_change_total: segment_optimize_applied_total,
                     source_srt,
                     target_srt,
                     src_trans_srt,
@@ -1504,16 +1404,16 @@ async fn run_transcribe_and_maybe_translate(
     .await?;
     log_pipeline_stage(
         task,
-        "qa_layout",
+        "segment_optimize",
         "completed",
         json!({
-            "appliedChangeTotal": qa_snapshot.applied_change_total,
-            "segmentTotal": qa_snapshot.segments.len(),
+            "appliedChangeTotal": segment_optimize_snapshot.applied_change_total,
+            "segmentTotal": segment_optimize_snapshot.segments.len(),
         }),
     );
 
     let final_segments = apply_subtitle_beautify_to_segments(
-        &qa_snapshot.segments,
+        &segment_optimize_snapshot.segments,
         settings_before_post.enable_subtitle_beautify,
     );
     let final_source_srt = build_srt_from_translate_segments(&final_segments, false);
@@ -1623,9 +1523,9 @@ async fn run_translate_from_existing_segments(
     if tokens.is_empty() {
         return Err("当前任务没有可翻译内容，请先执行转录".to_string());
     }
-    let qa_word_timestamps = tokens
+    let word_timestamps_for_opt = tokens
         .iter()
-        .map(|w| QaWordTiming {
+        .map(|w| WordTimingAnchor {
             start: w.start,
             end: w.end,
             word: w.word.clone(),
@@ -1654,9 +1554,7 @@ async fn run_translate_from_existing_segments(
         context,
         STAGE_SUMMARIZE,
         load_summarize_snapshot,
-        |value| {
-            !value.topic_summary.trim().is_empty() && !value.tone_strategy.trim().is_empty()
-        },
+        |value| !value.theme.trim().is_empty(),
         || {
             let request = translate_request.clone();
             let task_id = task.id.clone();
@@ -1671,17 +1569,22 @@ async fn run_translate_from_existing_segments(
                         phase_detail: None,
                     },
                 );
-                let (topic_summary, tone_strategy) = run_translate_summarize(&request).await?;
+                let (theme, terminology_entries, primary_total, supporting_total) =
+                    run_translate_summarize(&request).await?;
                 Ok(SummarizeSnapshot {
-                    topic_summary,
-                    tone_strategy,
+                    theme,
+                    terminology_entries,
+                    terminology_primary_total: primary_total,
+                    terminology_supporting_total: supporting_total,
                 })
             }
         },
         |value| {
             json!({
-                "topicSummary": value.topic_summary,
-                "toneStrategy": value.tone_strategy,
+                "theme": value.theme,
+                "terminologyEntries": value.terminology_entries,
+                "terminologyPrimaryTotal": value.terminology_primary_total,
+                "terminologySupportingTotal": value.terminology_supporting_total,
             })
         },
         |_| Value::Null,
@@ -1692,8 +1595,11 @@ async fn run_translate_from_existing_segments(
         "summarize",
         "completed",
         json!({
-            "topicSummary": summarize_snapshot.topic_summary,
-            "toneStrategy": summarize_snapshot.tone_strategy,
+            "theme": summarize_snapshot.theme,
+            "terminologyInputTotal": translate_request.terminology_entries.len(),
+            "terminologyPrimaryTotal": summarize_snapshot.terminology_primary_total,
+            "terminologySupportingTotal": summarize_snapshot.terminology_supporting_total,
+            "terminologyOutputTotal": summarize_snapshot.terminology_entries.len(),
         }),
     );
     log_pipeline_stage(task, "translate", "started", Value::Null);
@@ -1730,10 +1636,10 @@ async fn run_translate_from_existing_segments(
                         },
                     );
                 };
-                let translated = run_translate_with_style(
+                let translated = run_translate_with_theme(
                     request,
-                    summarize.topic_summary,
-                    summarize.tone_strategy,
+                    summarize.theme,
+                    summarize.terminology_entries,
                     &mut on_progress,
                 )
                 .await?;
@@ -1768,109 +1674,20 @@ async fn run_translate_from_existing_segments(
             "translatedSegmentTotal": translate_snapshot.segments.len(),
         }),
     );
-    log_pipeline_stage(task, "qa_quality", "started", Value::Null);
-    let qa_quality_snapshot = run_stage(
-        pool,
-        &task.id,
-        context,
-        STAGE_QA_QUALITY,
-        load_qa_quality_snapshot,
-        |value| !value.segments.is_empty(),
-        || {
-            let task_id = task.id.clone();
-            let media_path = task.media_path.clone();
-            let source_lang = task.source_lang.clone();
-            let target_lang = task.target_lang.clone();
-            let settings = settings.clone();
-            let final_segments = translate_snapshot.segments.clone();
-            let style_guidance = summarize_snapshot.tone_strategy.clone();
-            let app_handle = app.cloned();
-            async move {
-                emit_bridge_event(
-                    app_handle.as_ref(),
-                    "transcribe-phase",
-                    &TranscribePhaseEvent {
-                        task_id: task_id.clone(),
-                        phase: "qa_quality".to_string(),
-                        phase_detail: None,
-                    },
-                );
-                let qa_pass2 = run_qa_simple(QaAgentRequest {
-                    task_id,
-                    media_path,
-                    source_lang,
-                    target_lang,
-                    api_key: settings.translate_api_key.clone(),
-                    base_url: settings.translate_base_url.clone(),
-                    model: settings.translate_model.clone(),
-                    llm_concurrency: settings.llm_concurrency,
-                    source_max_words_per_segment: settings.subtitle_max_words_per_segment,
-                    target_reference_len: settings.subtitle_length_reference,
-                    terminology_entries: if settings.enable_terminology {
-                        map_terminology_entries(&settings.terminology_groups)
-                    } else {
-                        Vec::new()
-                    },
-                    segments: final_segments,
-                    style_guidance: style_guidance.clone(),
-                    pass: "pass2_quality".to_string(),
-                    prior_report: None,
-                })
-                .await
-                .map_err(|err| format!("qa quality failed: {err}"))?;
-                Ok(QaSnapshot {
-                    segments: qa_pass2.segments,
-                    report: qa_pass2.report,
-                    applied_change_total: qa_pass2.applied_changes.len(),
-                    source_srt: qa_pass2.source_srt,
-                    target_srt: qa_pass2.target_srt,
-                    src_trans_srt: qa_pass2.bilingual_srt_source_first,
-                    trans_src_srt: qa_pass2.bilingual_srt_target_first,
-                })
-            }
-        },
-        |value| {
-            json!({
-                "appliedChangeTotal": value.applied_change_total,
-                "report": value.report,
-                "segments": value.segments,
-                "sourceSrt": value.source_srt,
-                "targetSrt": value.target_srt,
-                "srcTransSrt": value.src_trans_srt,
-                "transSrcSrt": value.trans_src_srt,
-            })
-        },
-        |_| Value::Null,
-    )
-    .await?;
-    log_pipeline_stage(
-        task,
-        "qa_quality",
-        "completed",
-        json!({
-            "appliedChangeTotal": qa_quality_snapshot.applied_change_total,
-            "segmentTotal": qa_quality_snapshot.segments.len(),
-        }),
-    );
-    log_pipeline_stage(task, "qa_layout", "started", Value::Null);
-    let qa_snapshot = run_stage(
+    log_pipeline_stage(task, "segment_optimize", "started", Value::Null);
+    let segment_optimize_snapshot = run_stage(
         pool,
         &task.id,
         context,
         STAGE_QA_LAYOUT,
-        load_qa_layout_snapshot,
+        load_segment_optimize_snapshot,
         |value| !value.segments.is_empty(),
         || {
             let task_id = task.id.clone();
             let media_path = task.media_path.clone();
-            let source_lang = task.source_lang.clone();
-            let target_lang = task.target_lang.clone();
             let settings = settings.clone();
-            let qa_words = qa_word_timestamps.clone();
-            let mut final_segments = qa_quality_snapshot.segments.clone();
-            let pass_quality_report = qa_quality_snapshot.report.clone();
-            let pass_quality_applied_total = qa_quality_snapshot.applied_change_total;
-            let style_guidance = summarize_snapshot.tone_strategy.clone();
+            let word_timestamps = word_timestamps_for_opt.clone();
+            let mut final_segments = translate_snapshot.segments.clone();
             let app_handle = app.cloned();
             async move {
                 emit_bridge_event(
@@ -1878,51 +1695,35 @@ async fn run_translate_from_existing_segments(
                     "transcribe-phase",
                     &TranscribePhaseEvent {
                         task_id: task_id.clone(),
-                        phase: "qa_layout".to_string(),
+                        phase: "segment_optimize".to_string(),
                         phase_detail: None,
                     },
                 );
-                let qa_pass1 = run_qa_simple(QaAgentRequest {
+                let segment_optimize_result = run_segment_optimize(SegmentOptimizeRequest {
                     task_id: task_id.clone(),
                     media_path: media_path.clone(),
-                    source_lang,
-                    target_lang,
-                    api_key: settings.translate_api_key.clone(),
-                    base_url: settings.translate_base_url.clone(),
-                    model: settings.translate_model.clone(),
+                    translate_api_key: settings.translate_api_key.clone(),
+                    translate_base_url: settings.translate_base_url.clone(),
+                    translate_model: settings.translate_model.clone(),
                     llm_concurrency: settings.llm_concurrency,
                     source_max_words_per_segment: settings.subtitle_max_words_per_segment,
                     target_reference_len: settings.subtitle_length_reference,
-                    terminology_entries: if settings.enable_terminology {
-                        map_terminology_entries(&settings.terminology_groups)
-                    } else {
-                        Vec::new()
-                    },
                     segments: final_segments,
-                    style_guidance: style_guidance.clone(),
-                    pass: "pass1_segment".to_string(),
-                    prior_report: Some(pass_quality_report.clone()),
                 })
                 .await
-                .map_err(|err| format!("qa layout failed: {err}"))?;
-                final_segments = qa_pass1.segments;
-                let pass_layout_report = qa_pass1.report;
-                let pass_layout_applied_total = qa_pass1.applied_changes.len();
-                let qa_report = json!({
-                    "mode": "two_pass",
-                    "passQuality": pass_quality_report,
-                    "passLayout": pass_layout_report,
-                });
-                let qa_applied_total = pass_quality_applied_total + pass_layout_applied_total;
-                let _qa_align = realign_segments_with_words(&mut final_segments, &qa_words);
+                .map_err(|err| format!("segment optimize failed: {err}"))?;
+                final_segments = segment_optimize_result.segments;
+                let segment_optimize_report = segment_optimize_result.report;
+                let segment_optimize_applied_total = segment_optimize_result.applied_changes.len();
+                let _align_result = realign_segments_with_words(&mut final_segments, &word_timestamps);
                 let source_srt = build_srt_from_translate_segments(&final_segments, false);
                 let target_srt = build_srt_from_translate_segments(&final_segments, true);
                 let src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
                 let trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
-                Ok(QaSnapshot {
+                Ok(SegmentOptimizeSnapshot {
                     segments: final_segments,
-                    report: qa_report,
-                    applied_change_total: qa_applied_total,
+                    report: segment_optimize_report,
+                    applied_change_total: segment_optimize_applied_total,
                     source_srt,
                     target_srt,
                     src_trans_srt,
@@ -1946,15 +1747,15 @@ async fn run_translate_from_existing_segments(
     .await?;
     log_pipeline_stage(
         task,
-        "qa_layout",
+        "segment_optimize",
         "completed",
         json!({
-            "appliedChangeTotal": qa_snapshot.applied_change_total,
-            "segmentTotal": qa_snapshot.segments.len(),
+            "appliedChangeTotal": segment_optimize_snapshot.applied_change_total,
+            "segmentTotal": segment_optimize_snapshot.segments.len(),
         }),
     );
     let final_segments = apply_subtitle_beautify_to_segments(
-        &qa_snapshot.segments,
+        &segment_optimize_snapshot.segments,
         settings.enable_subtitle_beautify,
     );
     let final_source_srt = build_srt_from_translate_segments(&final_segments, false);
@@ -2105,14 +1906,30 @@ fn load_summarize_snapshot(context: &TaskContext) -> Option<SummarizeSnapshot> {
         return None;
     }
     let output = &context.stages.summarize.output;
-    let topic_summary = output.get("topicSummary")?.as_str()?.to_string();
-    let tone_strategy = output.get("toneStrategy")?.as_str()?.to_string();
-    if topic_summary.trim().is_empty() || tone_strategy.trim().is_empty() {
+    let theme = output.get("theme")?.as_str()?.trim().to_string();
+    if theme.is_empty() {
         return None;
     }
+    let terminology_entries = output
+        .get("terminologyEntries")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<Vec<TranslateTerminologyEntry>>(value).ok())
+        .unwrap_or_default();
+    let terminology_primary_total = output
+        .get("terminologyPrimaryTotal")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(0);
+    let terminology_supporting_total = output
+        .get("terminologySupportingTotal")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(0);
     Some(SummarizeSnapshot {
-        topic_summary,
-        tone_strategy,
+        theme,
+        terminology_entries,
+        terminology_primary_total,
+        terminology_supporting_total,
     })
 }
 
@@ -2141,15 +1958,11 @@ fn load_translate_snapshot(context: &TaskContext) -> Option<TranslateSnapshot> {
     })
 }
 
-fn load_qa_layout_snapshot(context: &TaskContext) -> Option<QaSnapshot> {
-    load_qa_stage_snapshot(context, STAGE_QA_LAYOUT)
+fn load_segment_optimize_snapshot(context: &TaskContext) -> Option<SegmentOptimizeSnapshot> {
+    load_segment_optimize_stage_snapshot(context, STAGE_QA_LAYOUT)
 }
 
-fn load_qa_quality_snapshot(context: &TaskContext) -> Option<QaSnapshot> {
-    load_qa_stage_snapshot(context, STAGE_QA_QUALITY)
-}
-
-fn load_qa_stage_snapshot(context: &TaskContext, stage: &str) -> Option<QaSnapshot> {
+fn load_segment_optimize_stage_snapshot(context: &TaskContext, stage: &str) -> Option<SegmentOptimizeSnapshot> {
     if !stage_is_done(context.stage_status(stage)) {
         return None;
     }
@@ -2170,7 +1983,7 @@ fn load_qa_stage_snapshot(context: &TaskContext, stage: &str) -> Option<QaSnapsh
         .get("appliedChangeTotal")
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize;
-    Some(QaSnapshot {
+    Some(SegmentOptimizeSnapshot {
         segments,
         report: output.get("report").cloned().unwrap_or(Value::Null),
         applied_change_total,

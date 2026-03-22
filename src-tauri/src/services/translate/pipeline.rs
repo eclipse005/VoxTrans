@@ -5,15 +5,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 use voxtrans_core::subtitle::text_rules::has_break_terminal_punctuation;
-use crate::services::translate::adapters::rig_node::{
-    JsonResponseValidator, RigNodeClient, RigNodeConfig, RigNodeJsonTask,
-};
+use crate::services::llm::client::OpenAiCompatLlmClient;
+use crate::services::llm::json_guard::JsonResponseValidator;
+use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, LlmPort};
 
 use super::prompt::{
-    TranslatePromptInput, TranslatePromptSegmentInput, TranslateStylePromptInput,
-    TranslateTerminologyPromptEntry, build_translate_style_system_prompt,
-    build_translate_style_user_prompt, build_translate_system_prompt, build_translate_user_prompt,
-    resolve_translate_style,
+    TranslatePromptInput, TranslatePromptSegmentInput, TranslateSummaryPromptInput,
+    TranslateTerminologyPromptEntry, build_translate_summary_system_prompt,
+    build_translate_summary_user_prompt, build_translate_system_prompt, build_translate_user_prompt,
 };
 use super::types::{
     TranslatePipelineRequest, TranslatePipelineResponse, TranslateSegment, TranslateTerminologyEntry,
@@ -23,6 +22,7 @@ use super::validation::{validate_llm_segments, validate_request};
 
 const BATCH_SEGMENT_SIZE: usize = 20;
 const STYLE_CONTEXT_WORDS: usize = 1000;
+const DEFAULT_THEME: &str = "内容围绕一个明确主题展开。关键信息以解释和示例为主。";
 
 #[derive(Debug, Clone)]
 struct SourceSegment {
@@ -33,9 +33,11 @@ struct SourceSegment {
 }
 
 #[derive(Debug, Clone)]
-struct StyleProfile {
-    topic_summary: String,
-    tone_strategy: String,
+struct SummaryProfile {
+    theme: String,
+    primary_terminology_entries: Vec<TranslateTerminologyPromptEntry>,
+    supporting_terminology_entries: Vec<TranslateTerminologyPromptEntry>,
+    terminology_entries: Vec<TranslateTerminologyPromptEntry>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,9 +49,13 @@ struct SegmentBatch {
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-struct StyleExtraction {
-    topic_summary: String,
-    style_id: String,
+struct SummaryExtraction {
+    #[serde(default)]
+    theme: String,
+    #[serde(default)]
+    primary_terminology_entries: Vec<TranslateTerminologyPromptEntry>,
+    #[serde(default)]
+    supporting_terminology_entries: Vec<TranslateTerminologyPromptEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -75,36 +81,35 @@ where
     G: FnMut(usize, usize),
 {
     on_phase("summarize");
-    let (topic_summary, tone_strategy) = summarize_translate_style(&request).await?;
+    let (theme, terminology_entries, _, _) = summarize_translate_theme(&request).await?;
     on_phase("translate");
-    run_translate_with_style(
-        request,
-        topic_summary,
-        tone_strategy,
-        &mut on_batch_progress,
-    )
-    .await
+    run_translate_with_theme(request, theme, terminology_entries, &mut on_batch_progress).await
 }
 
-pub async fn summarize_translate_style(
+pub async fn summarize_translate_theme(
     request: &TranslatePipelineRequest,
-) -> Result<(String, String), String> {
+) -> Result<(String, Vec<TranslateTerminologyEntry>, usize, usize), String> {
     validate_request(request)?;
     let segments = build_source_segments(&request.tokens);
     if segments.is_empty() {
         return Err("tokens did not produce any non-empty subtitle segment".to_string());
     }
-    let rig_client = build_rig_client(request)?;
+    let llm_client = build_llm_client(request)?;
     let terminology_entries = normalize_terminology_entries(&request.terminology_entries);
-    let style_profile =
-        build_global_style_profile(request, &segments, &terminology_entries, &rig_client).await?;
-    Ok((style_profile.topic_summary, style_profile.tone_strategy))
+    let summary_profile =
+        build_global_summary_profile(request, &segments, &terminology_entries, &llm_client).await?;
+    Ok((
+        summary_profile.theme,
+        to_translate_terminology_entries(&summary_profile.terminology_entries),
+        summary_profile.primary_terminology_entries.len(),
+        summary_profile.supporting_terminology_entries.len(),
+    ))
 }
 
-pub async fn run_translate_with_style<G>(
+pub async fn run_translate_with_theme<G>(
     request: TranslatePipelineRequest,
-    topic_summary: String,
-    tone_strategy: String,
+    theme: String,
+    summary_terminology_entries: Vec<TranslateTerminologyEntry>,
     on_batch_progress: &mut G,
 ) -> Result<TranslatePipelineResponse, String>
 where
@@ -115,29 +120,29 @@ where
     if segments.is_empty() {
         return Err("tokens did not produce any non-empty subtitle segment".to_string());
     }
-    let rig_client = build_rig_client(&request)?;
-    let terminology_entries = normalize_terminology_entries(&request.terminology_entries);
-    let style_profile = StyleProfile {
-        topic_summary,
-        tone_strategy,
+    let llm_client = build_llm_client(&request)?;
+    let terminology_entries = normalize_terminology_entries(&summary_terminology_entries);
+    let summary_profile = SummaryProfile {
+        theme,
+        primary_terminology_entries: Vec::new(),
+        supporting_terminology_entries: terminology_entries.clone(),
+        terminology_entries,
     };
-    translate_from_style(
+    translate_from_theme(
         &request,
         &segments,
-        &terminology_entries,
-        &style_profile,
-        &rig_client,
+        &summary_profile,
+        &llm_client,
         on_batch_progress,
     )
     .await
 }
 
-async fn translate_from_style<G>(
+async fn translate_from_theme<G>(
     request: &TranslatePipelineRequest,
     segments: &[SourceSegment],
-    terminology_entries: &[TranslateTerminologyPromptEntry],
-    style_profile: &StyleProfile,
-    rig_client: &RigNodeClient,
+    summary_profile: &SummaryProfile,
+    llm_client: &OpenAiCompatLlmClient,
     on_batch_progress: &mut G,
 ) -> Result<TranslatePipelineResponse, String>
 where
@@ -148,9 +153,9 @@ where
         request,
         segments,
         &batches,
-        terminology_entries,
-        style_profile,
-        rig_client,
+        &summary_profile.terminology_entries,
+        summary_profile,
+        llm_client,
         on_batch_progress,
     )
     .await?;
@@ -200,31 +205,31 @@ where
         bilingual_srt_source_first,
         bilingual_srt_target_first,
         segments: translated_segments,
-        style_topic_summary: style_profile.topic_summary.clone(),
-        style_tone_strategy: style_profile.tone_strategy.clone(),
+        theme_summary: summary_profile.theme.clone(),
     })
 }
 
-fn build_rig_client(request: &TranslatePipelineRequest) -> Result<RigNodeClient, String> {
-    RigNodeClient::new(RigNodeConfig::new(
+fn build_llm_client(request: &TranslatePipelineRequest) -> Result<OpenAiCompatLlmClient, String> {
+    OpenAiCompatLlmClient::new(LlmConfig::new(
         request.translate_base_url.clone(),
         request.translate_api_key.clone(),
         request.translate_model.clone(),
     ))
+    .map_err(|err| err.message)
 }
 
-async fn build_global_style_profile(
+async fn build_global_summary_profile(
     request: &TranslatePipelineRequest,
     segments: &[SourceSegment],
     terminology_entries: &[TranslateTerminologyPromptEntry],
-    rig_client: &RigNodeClient,
-) -> Result<StyleProfile, String> {
+    llm_client: &OpenAiCompatLlmClient,
+) -> Result<SummaryProfile, String> {
     let (head, middle, tail) = sample_global_contexts(segments, STYLE_CONTEXT_WORDS);
     if head.is_empty() && middle.is_empty() && tail.is_empty() {
-        return Err("summarize failed: empty style context".to_string());
+        return Err("summarize failed: empty context".to_string());
     }
 
-    let style_prompt = build_translate_style_user_prompt(&TranslateStylePromptInput {
+    let summary_prompt = build_translate_summary_user_prompt(&TranslateSummaryPromptInput {
         source_lang: request.source_lang.clone(),
         target_lang: request.target_lang.clone(),
         context_head: head,
@@ -232,33 +237,60 @@ async fn build_global_style_profile(
         context_tail: tail,
         terminology_entries: terminology_entries.to_vec(),
     });
-    let style_system_prompt = build_translate_style_system_prompt();
-    let validator = JsonResponseValidator::with_required_keys(&["topicSummary", "styleId"]);
-    let result = rig_client
-        .call(
-            &request.task_id,
-            Some(&request.media_path),
-            "summarize",
-            &style_system_prompt,
-            &style_prompt,
+    let summary_system_prompt = build_translate_summary_system_prompt();
+    let validator = JsonResponseValidator::with_required_keys(&[
+        "theme",
+        "primaryTerminologyEntries",
+        "supportingTerminologyEntries",
+    ]);
+    let context = LlmCallContext {
+        task_id: request.task_id.clone(),
+        media_path: Some(request.media_path.clone()),
+        phase: "summarize".to_string(),
+    };
+    let result = llm_client
+        .call_json(
+            &context,
+            &summary_system_prompt,
+            &summary_prompt,
             Some(&validator),
         )
         .await;
     let parsed = result
         .map_err(|err| format!("summarize failed: {}", err.message))?
         .json;
-    let style = serde_json::from_value::<StyleExtraction>(parsed)
+    let summary = serde_json::from_value::<SummaryExtraction>(parsed)
         .map_err(|err| format!("summarize parse failed: {err}"))?;
-    let topic_summary = style.topic_summary.trim().to_string();
-    let resolved_style = resolve_translate_style(&style.style_id);
-    let tone_strategy = format!("{} ({})", resolved_style.label, resolved_style.guidance);
-    if topic_summary.is_empty() {
-        return Err("summarize failed: empty summary fields".to_string());
-    }
-    Ok(StyleProfile {
-        topic_summary,
-        tone_strategy,
+    let theme = normalize_theme(summary.theme.as_str());
+    let primary_terms = filter_selected_terminology_entries(
+        &summary.primary_terminology_entries,
+        terminology_entries,
+    );
+    let supporting_terms = filter_selected_terminology_entries(
+        &summary.supporting_terminology_entries,
+        terminology_entries,
+    );
+    let selected_terms = merge_selected_terms(&primary_terms, &supporting_terms, terminology_entries);
+    Ok(SummaryProfile {
+        theme,
+        primary_terminology_entries: primary_terms,
+        supporting_terminology_entries: supporting_terms,
+        terminology_entries: selected_terms,
     })
+}
+
+fn normalize_theme(theme: &str) -> String {
+    let normalized = theme
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string();
+    if normalized.is_empty() {
+        DEFAULT_THEME.to_string()
+    } else {
+        normalized
+    }
 }
 
 async fn run_batch_translate_pipeline<G>(
@@ -266,8 +298,8 @@ async fn run_batch_translate_pipeline<G>(
     segments: &[SourceSegment],
     batches: &[SegmentBatch],
     terminology_entries: &[TranslateTerminologyPromptEntry],
-    style_profile: &StyleProfile,
-    rig_client: &RigNodeClient,
+    summary_profile: &SummaryProfile,
+    llm_client: &OpenAiCompatLlmClient,
     on_batch_progress: &mut G,
 ) -> Result<Vec<TranslationBatchExtraction>, String>
 where
@@ -283,8 +315,7 @@ where
                 target_lang: request.target_lang.clone(),
                 previous_context: prev,
                 next_context: next,
-                topic_summary: style_profile.topic_summary.clone(),
-                tone_strategy: style_profile.tone_strategy.clone(),
+                theme: summary_profile.theme.clone(),
                 terminology_entries: terminology_entries.to_vec(),
                 segments: batch
                     .segments
@@ -310,18 +341,21 @@ where
     let tasks = prompts
         .into_iter()
         .enumerate()
-        .map(|(index, user_prompt)| RigNodeJsonTask {
+        .map(|(index, user_prompt)| LlmJsonTask {
             id: index,
             system_prompt: build_translate_system_prompt(),
             user_prompt,
             response_validator: Some(validator.clone()),
         })
         .collect::<Vec<_>>();
-    let results = rig_client
-        .call_batch(
-            &request.task_id,
-            Some(&request.media_path),
-            "translate",
+    let context = LlmCallContext {
+        task_id: request.task_id.clone(),
+        media_path: Some(request.media_path.clone()),
+        phase: "translate".to_string(),
+    };
+    let results = llm_client
+        .call_batch_json(
+            &context,
             tasks,
             concurrency,
         )
@@ -370,6 +404,70 @@ fn normalize_terminology_entries(
                 target,
                 note: entry.note.trim().to_string(),
             })
+        })
+        .collect()
+}
+
+fn filter_selected_terminology_entries(
+    selected: &[TranslateTerminologyPromptEntry],
+    full: &[TranslateTerminologyPromptEntry],
+) -> Vec<TranslateTerminologyPromptEntry> {
+    if full.is_empty() || selected.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for item in selected {
+        let source = item.source.trim();
+        let target = item.target.trim();
+        if source.is_empty() || target.is_empty() {
+            continue;
+        }
+        let matched = full.iter().find(|entry| {
+            entry.source.trim().eq_ignore_ascii_case(source)
+                && entry.target.trim().eq_ignore_ascii_case(target)
+        });
+        if let Some(entry) = matched {
+            if !out.iter().any(|v: &TranslateTerminologyPromptEntry| {
+                v.source.trim().eq_ignore_ascii_case(entry.source.trim())
+                    && v.target.trim().eq_ignore_ascii_case(entry.target.trim())
+            }) {
+                out.push(entry.clone());
+            }
+        }
+    }
+    out
+}
+
+fn merge_selected_terms(
+    priority: &[TranslateTerminologyPromptEntry],
+    related: &[TranslateTerminologyPromptEntry],
+    full: &[TranslateTerminologyPromptEntry],
+) -> Vec<TranslateTerminologyPromptEntry> {
+    let mut out: Vec<TranslateTerminologyPromptEntry> = Vec::new();
+    for entry in priority.iter().chain(related.iter()) {
+        if !out.iter().any(|v| {
+            v.source.trim().eq_ignore_ascii_case(entry.source.trim())
+                && v.target.trim().eq_ignore_ascii_case(entry.target.trim())
+        }) {
+            out.push(entry.clone());
+        }
+    }
+    // Prefer recall over precision: if model returned none, fallback to full terminology set.
+    if out.is_empty() {
+        return full.to_vec();
+    }
+    out
+}
+
+fn to_translate_terminology_entries(
+    entries: &[TranslateTerminologyPromptEntry],
+) -> Vec<TranslateTerminologyEntry> {
+    entries
+        .iter()
+        .map(|entry| TranslateTerminologyEntry {
+            source: entry.source.clone(),
+            target: entry.target.clone(),
+            note: entry.note.clone(),
         })
         .collect()
 }

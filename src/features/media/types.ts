@@ -48,9 +48,7 @@ export type TranscribePhase =
   | "segment"
   | "summarize"
   | "translate"
-  | "qa"
-  | "qa_quality"
-  | "qa_layout";
+  | "segment_optimize";
 
 export type SubtitleCue = {
   id: string;
@@ -130,8 +128,7 @@ export type TranslatePipelineResponse = {
   bilingualSrtSourceFirst: string;
   bilingualSrtTargetFirst: string;
   segments: TranslateSegment[];
-  styleTopicSummary?: string;
-  styleToneStrategy?: string;
+  themeSummary?: string;
 };
 
 export type SegmentWithWords = {

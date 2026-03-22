@@ -1,6 +1,36 @@
 use serde_json::Value;
 
-pub fn extract_and_repair_json(raw: &str) -> Result<Value, String> {
+use super::error::{LlmError, LlmErrorKind};
+
+#[derive(Debug, Clone)]
+pub struct JsonResponseValidator {
+    pub required_top_level_keys: Vec<String>,
+}
+
+impl JsonResponseValidator {
+    pub fn with_required_keys(keys: &[&str]) -> Self {
+        Self {
+            required_top_level_keys: keys.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+
+    pub fn validate(&self, value: &Value) -> Result<(), LlmError> {
+        let obj = value.as_object().ok_or_else(|| {
+            LlmError::new(LlmErrorKind::InvalidSchema, "schema check failed: root JSON is not object")
+        })?;
+        for key in &self.required_top_level_keys {
+            if !obj.contains_key(key) {
+                return Err(LlmError::new(
+                    LlmErrorKind::InvalidSchema,
+                    format!("schema check failed: missing key `{key}`"),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn extract_and_repair_json(raw: &str) -> Result<Value, LlmError> {
     let mut candidates: Vec<String> = Vec::new();
     let trimmed = raw.trim();
     if !trimmed.is_empty() {
@@ -24,7 +54,10 @@ pub fn extract_and_repair_json(raw: &str) -> Result<Value, String> {
         }
     }
 
-    Err("failed to extract valid JSON from LLM response".to_string())
+    Err(LlmError::new(
+        LlmErrorKind::InvalidJson,
+        "failed to extract valid JSON from LLM response",
+    ))
 }
 
 fn extract_fenced_json(text: &str) -> Option<String> {
@@ -109,3 +142,4 @@ fn repair_common_json_issues(input: &str) -> String {
 
     out.trim().to_string()
 }
+

@@ -5,9 +5,9 @@ use voxtrans_core::subtitle::segmenter::WordToken;
 use voxtrans_core::subtitle::text_rules::has_break_terminal_punctuation;
 
 use crate::services::task_log::TaskLogger;
-use crate::services::translate::adapters::rig_node::{
-    JsonResponseValidator, RigNodeClient, RigNodeConfig,
-};
+use crate::services::llm::client::OpenAiCompatLlmClient;
+use crate::services::llm::json_guard::JsonResponseValidator;
+use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort};
 
 const SENTENCE_GAP_SEC: f64 = 2.0;
 const BATCH_SENTENCE_SIZE: usize = 100;
@@ -73,7 +73,7 @@ struct PreviousBatchItem {
     corrected_text: String,
 }
 
-pub async fn correct_words_with_rig_node(
+pub async fn correct_words_with_llm(
     task_id: &str,
     media_path: &str,
     words: Vec<WordToken>,
@@ -129,7 +129,7 @@ pub async fn correct_words_with_rig_node(
         })),
     );
 
-    let rig_client = match RigNodeClient::new(RigNodeConfig::new(
+    let llm_client = match OpenAiCompatLlmClient::new(LlmConfig::new(
         config.base_url.clone(),
         config.api_key.clone(),
         config.model.clone(),
@@ -140,7 +140,7 @@ pub async fn correct_words_with_rig_node(
                 "transcribe.correction.error",
                 Some(&json!({
                     "reason": "create_client_failed",
-                    "error": err
+                    "error": err.message
                 })),
             );
             return Err(format!("correction failed: create client: {err}"));
@@ -149,6 +149,11 @@ pub async fn correct_words_with_rig_node(
 
     let validator = JsonResponseValidator::with_required_keys(&["items"]);
     let system_prompt = build_correction_system_prompt();
+    let context = LlmCallContext {
+        task_id: task_id.to_string(),
+        media_path: Some(media_path.to_string()),
+        phase: "correct".to_string(),
+    };
     let mut previous_batch_corrected: Vec<PreviousBatchItem> = Vec::new();
 
     let mut succeeded_batch_total = 0usize;
@@ -170,11 +175,9 @@ pub async fn correct_words_with_rig_node(
             batch_idx + 1,
             batch_ranges.len(),
         );
-        let response = rig_client
-            .call(
-                task_id,
-                Some(media_path),
-                "correct",
+        let response = llm_client
+            .call_json(
+                &context,
                 &system_prompt,
                 &user_prompt,
                 Some(&validator),
@@ -382,9 +385,11 @@ Analyze sentence by sentence using the provided sentence index. \
 Do NOT do grammar polish, style rewrite, fluency optimization, or punctuation beautification. \
 Do NOT rewrite meaning. \
 Only correct misrecognized words, names, domain terms, and numbers/symbols caused by ASR. \
+Each correction must be token-level: only a word or short phrase replacement, never a full-sentence rewrite. \
 Return strict JSON only: {\"items\":[{\"index\":1,\"corrections\":[{\"before\":\"...\",\"after\":\"...\",\"confidence\":0.0}]}]}. \
 Only include changed sentences in items. \
 Each corrections item must include before/after/confidence. \
+before and after must be different strings; if they are identical, do not return that correction. \
 confidence must be in [0,1].".to_string()
 }
 
@@ -434,6 +439,9 @@ fn build_correction_user_prompt(
             "Do not change grammar/style/fluency if the original words are already correctly recognized",
             "Only fix misrecognized tokens (names, domain terms, homophones, numbers/symbols)",
             "No semantic rewrite",
+            "Each correction must be minimal token/phrase replacement, not whole sentence replacement",
+            "before/after should be short phrase only (typically 1-6 tokens)",
+            "before and after must be different; if identical, do not output that correction",
             "Return only changed sentences in items",
             "For each changed sentence, return corrections list with before/after/confidence",
             "confidence must be in [0,1]"

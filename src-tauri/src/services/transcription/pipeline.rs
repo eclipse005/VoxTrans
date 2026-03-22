@@ -3,14 +3,14 @@ use serde_json::json;
 
 use crate::services::task_log::{TaskLogger, event};
 use super::correction::{
-    CorrectionConfig, CorrectionTerminologyEntry, correct_words_with_rig_node,
+    CorrectionConfig, CorrectionTerminologyEntry, correct_words_with_llm,
 };
 use crate::services::transcribe::{
     BuildSegmentsRequest, SegmentWithWordsDto, WordTokenDto, build_segments_from_words,
 };
 use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
 use voxtrans_core::subtitle::segmenter::WordToken;
-use super::punctuation::{PunctuationConfig, optimize_words_with_rig_node};
+use super::punctuation::{PunctuationConfig, optimize_words_with_llm};
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -64,7 +64,7 @@ where
     let base_words = beautify_words_for_subtitle(to_core_words(request.words.clone()));
     on_phase("punctuate");
     let words = from_core_words(
-        optimize_words_with_rig_node(
+        optimize_words_with_llm(
             &request.task_id,
             &request.audio_path,
             base_words,
@@ -82,7 +82,7 @@ where
     let words = if request.enable_asr_correction {
         on_phase("correct");
         from_core_words(
-            correct_words_with_rig_node(
+            correct_words_with_llm(
                 &request.task_id,
                 &request.audio_path,
                 to_core_words(words),

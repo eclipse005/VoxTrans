@@ -602,3 +602,58 @@
 .settings-tab-btn.active {
   color: var(--apple-blue);
 }
+
+.file-list-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.file-list-confirm-card {
+  width: min(360px, 100%);
+  border: 1px solid var(--apple-border-light);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.2);
+  padding: 16px;
+}
+
+.file-list-confirm-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--apple-text-primary);
+}
+
+.file-list-confirm-text {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--apple-text-secondary);
+}
+
+.file-list-confirm-actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.file-list-confirm-btn {
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--apple-border-light);
+  background: #fff;
+  color: var(--apple-text-primary);
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.file-list-confirm-btn-danger {
+  border-color: #ef4444;
+  background: #ef4444;
+  color: #fff;
+}

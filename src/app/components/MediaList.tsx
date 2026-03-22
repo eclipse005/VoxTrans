@@ -78,14 +78,8 @@ function getTranscribeProcessingText(item: QueueItem): string {
   if (item.transcribePhase === "translate") {
     return detail ? `翻译中 ${detail}` : "翻译中";
   }
-  if (item.transcribePhase === "qa") {
-    return detail ? `质量复核中 ${detail}` : "质量复核中";
-  }
-  if (item.transcribePhase === "qa_quality") {
-    return detail ? `润色中 ${detail}` : "润色中";
-  }
-  if (item.transcribePhase === "qa_layout") {
-    return detail ? `观感优化中 ${detail}` : "观感优化中";
+  if (item.transcribePhase === "segment_optimize") {
+    return detail ? `断句优化中 ${detail}` : "断句优化中";
   }
   if (detail) return detail;
   return "处理中";
@@ -107,6 +101,7 @@ export default function MediaList({
   const listBusy = isProcessing || !workspaceHydrated;
   const [batchMode, setBatchMode] = useState<QueueBatchMode>(() => loadSavedBatchMode());
   const [batchMenuOpen, setBatchMenuOpen] = useState(false);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const batchMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -178,7 +173,13 @@ export default function MediaList({
               </div>
             ) : null}
           </div>
-          <button className="file-list-icon-btn file-list-icon-btn-danger" disabled={listBusy} onClick={onClearQueue} title="清空" aria-label="清空">
+          <button
+            className="file-list-icon-btn file-list-icon-btn-danger"
+            disabled={listBusy}
+            onClick={() => setClearConfirmOpen(true)}
+            title="清空"
+            aria-label="清空"
+          >
             <TrashIcon />
           </button>
         </div>
@@ -237,6 +238,32 @@ export default function MediaList({
           })
         )}
       </div>
+
+      {clearConfirmOpen ? (
+        <div className="file-list-confirm-backdrop" role="dialog" aria-modal="true" aria-label="确认清空任务列表">
+          <div className="file-list-confirm-card">
+            <div className="file-list-confirm-title">确认清空任务列表？</div>
+            <div className="file-list-confirm-text">该操作不可恢复。</div>
+            <div className="file-list-confirm-actions">
+              <button
+                className="file-list-confirm-btn"
+                onClick={() => setClearConfirmOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                className="file-list-confirm-btn file-list-confirm-btn-danger"
+                onClick={() => {
+                  setClearConfirmOpen(false);
+                  void onClearQueue();
+                }}
+              >
+                确认清空
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

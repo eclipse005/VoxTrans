@@ -61,7 +61,5 @@ pub struct TranslatePipelineResponse {
     pub bilingual_srt_target_first: String,
     pub segments: Vec<TranslateSegment>,
     #[serde(default)]
-    pub style_topic_summary: String,
-    #[serde(default)]
-    pub style_tone_strategy: String,
+    pub theme_summary: String,
 }

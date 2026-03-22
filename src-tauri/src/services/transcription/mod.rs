@@ -9,5 +9,5 @@ mod correction;
 pub use pipeline::{
     RunPostAsrPipelineRequest, RunPostAsrPipelineResponse, run_post_asr_pipeline,
 };
-pub use punctuation::{PunctuationConfig, optimize_words_with_rig_node};
-pub use correction::{CorrectionConfig, CorrectionTerminologyEntry, correct_words_with_rig_node};
+pub use punctuation::{PunctuationConfig, optimize_words_with_llm};
+pub use correction::{CorrectionConfig, CorrectionTerminologyEntry, correct_words_with_llm};

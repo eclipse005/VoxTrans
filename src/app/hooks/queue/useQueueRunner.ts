@@ -135,9 +135,7 @@ export function useQueueRunner({
       if (
         payload.phase === "summarize"
         || payload.phase === "translate"
-        || payload.phase === "qa"
-        || payload.phase === "qa_quality"
-        || payload.phase === "qa_layout"
+        || payload.phase === "segment_optimize"
       ) {
         void (async () => {
           try {

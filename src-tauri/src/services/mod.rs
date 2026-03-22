@@ -6,6 +6,7 @@
 pub mod file;
 pub mod binary;
 pub mod demucs;
+pub mod llm;
 pub mod logs;
 pub mod model;
 pub mod output;
