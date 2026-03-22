@@ -128,7 +128,7 @@ export function useQueueRunner({
         phase: payload.phase,
         phaseDetail: payload.phaseDetail,
       });
-      if (payload.phase === "qa") {
+      if (payload.phase === "qa" || payload.phase === "qa_quality" || payload.phase === "qa_layout") {
         void (async () => {
           try {
             const workspace = await loadWorkspaceState();

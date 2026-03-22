@@ -44,18 +44,12 @@ pub struct TranslatePipelineRequest {
     pub translate_model: String,
     #[serde(default = "default_llm_concurrency")]
     pub llm_concurrency: u32,
-    #[serde(default = "default_true")]
-    pub enable_subtitle_beautify: bool,
     #[serde(default)]
     pub terminology_entries: Vec<TranslateTerminologyEntry>,
 }
 
 fn default_llm_concurrency() -> u32 {
     4
-}
-
-fn default_true() -> bool {
-    true
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

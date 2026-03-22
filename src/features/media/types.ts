@@ -48,7 +48,9 @@ export type TranscribePhase =
   | "segment"
   | "summarize"
   | "translate"
-  | "qa";
+  | "qa"
+  | "qa_quality"
+  | "qa_layout";
 
 export type SubtitleCue = {
   id: string;

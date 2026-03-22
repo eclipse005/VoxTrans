@@ -8,7 +8,7 @@ export function reduceQueueState(state: AppState, action: QueueAction): AppState
       return {
         ...state,
         queue: [...state.queue, ...toAdd],
-        activeId: state.activeId || toAdd[0]?.id || state.activeId,
+        activeId: state.activeId,
       };
     }
     case "patch_queue_item":

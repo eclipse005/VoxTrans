@@ -78,6 +78,10 @@ export function useTaskLogs({
 
   const clearLogs = useCallback(async () => {
     if (!logTaskContext) return;
+    const confirmed = window.confirm(
+      `确认清空当前 ${logChannel.toUpperCase()} 日志吗？该操作不可恢复。`,
+    );
+    if (!confirmed) return;
     try {
       await clearTaskLogs({
         taskId: logTaskContext.taskId,

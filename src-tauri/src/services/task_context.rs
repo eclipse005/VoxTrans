@@ -10,6 +10,8 @@ pub const STAGE_SEGMENT: &str = "segment";
 pub const STAGE_SUMMARIZE: &str = "summarize";
 pub const STAGE_TRANSLATE: &str = "translate";
 pub const STAGE_QA: &str = "qa";
+pub const STAGE_QA_LAYOUT: &str = "qa_layout";
+pub const STAGE_QA_QUALITY: &str = "qa_quality";
 pub const STAGE_COMPOSE: &str = "compose";
 pub const STAGE_PERSIST: &str = "persist";
 pub const STAGE_DONE: &str = "done";
@@ -69,6 +71,10 @@ pub struct StageMap {
     pub summarize: StageEnvelope,
     pub translate: StageEnvelope,
     pub qa: StageEnvelope,
+    #[serde(default)]
+    pub qa_layout: StageEnvelope,
+    #[serde(default)]
+    pub qa_quality: StageEnvelope,
     pub compose: StageEnvelope,
     pub persist: StageEnvelope,
 }
@@ -335,6 +341,8 @@ impl TaskContext {
             STAGE_SUMMARIZE => Some(&mut self.stages.summarize),
             STAGE_TRANSLATE => Some(&mut self.stages.translate),
             STAGE_QA => Some(&mut self.stages.qa),
+            STAGE_QA_LAYOUT => Some(&mut self.stages.qa_layout),
+            STAGE_QA_QUALITY => Some(&mut self.stages.qa_quality),
             STAGE_COMPOSE => Some(&mut self.stages.compose),
             STAGE_PERSIST => Some(&mut self.stages.persist),
             _ => None,
@@ -352,6 +360,8 @@ impl TaskContext {
             STAGE_SUMMARIZE => Some(&self.stages.summarize),
             STAGE_TRANSLATE => Some(&self.stages.translate),
             STAGE_QA => Some(&self.stages.qa),
+            STAGE_QA_LAYOUT => Some(&self.stages.qa_layout),
+            STAGE_QA_QUALITY => Some(&self.stages.qa_quality),
             STAGE_COMPOSE => Some(&self.stages.compose),
             STAGE_PERSIST => Some(&self.stages.persist),
             _ => None,
@@ -371,6 +381,8 @@ impl StageMap {
             summarize: StageEnvelope::new(),
             translate: StageEnvelope::new(),
             qa: StageEnvelope::new(),
+            qa_layout: StageEnvelope::new(),
+            qa_quality: StageEnvelope::new(),
             compose: StageEnvelope::new(),
             persist: StageEnvelope::new(),
         }
@@ -388,6 +400,12 @@ impl StageEnvelope {
             metrics: Value::Null,
             error: None,
         }
+    }
+}
+
+impl Default for StageEnvelope {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

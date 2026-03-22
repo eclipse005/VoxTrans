@@ -77,8 +77,56 @@ pub struct TranslateStylePromptInput {
     pub terminology_entries: Vec<TranslateTerminologyPromptEntry>,
 }
 
+pub struct FixedTranslateStyle {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub guidance: &'static str,
+}
+
+const FIXED_TRANSLATE_STYLES: [FixedTranslateStyle; 5] = [
+    FixedTranslateStyle {
+        id: "teaching_concise",
+        label: "教学精炼",
+        guidance: "Short sentences first; keep terminology consistent; remove filler words; preserve numbers, conditions, and causal logic; avoid literary phrasing.",
+    },
+    FixedTranslateStyle {
+        id: "conversational_explainer",
+        label: "口语讲解",
+        guidance: "Use natural spoken phrasing; keep sentence rhythm smooth; preserve intent and key facts; avoid rigid written style.",
+    },
+    FixedTranslateStyle {
+        id: "marketing_persuasive",
+        label: "营销鼓动",
+        guidance: "Use energetic and persuasive phrasing; preserve claims and calls to action; keep terms consistent; avoid exaggerating beyond source.",
+    },
+    FixedTranslateStyle {
+        id: "news_neutral",
+        label: "新闻客观",
+        guidance: "Use neutral and objective wording; keep facts precise; avoid emotional amplification; preserve names, numbers, and chronology.",
+    },
+    FixedTranslateStyle {
+        id: "technical_precise",
+        label: "技术严谨",
+        guidance: "Use precise technical wording; maintain term consistency; prioritize accuracy over flourish; preserve constraints, numbers, and definitions.",
+    },
+];
+
+pub fn default_translate_style() -> &'static FixedTranslateStyle {
+    &FIXED_TRANSLATE_STYLES[0]
+}
+
+pub fn resolve_translate_style(style_id: &str) -> &'static FixedTranslateStyle {
+    FIXED_TRANSLATE_STYLES
+        .iter()
+        .find(|s| s.id.eq_ignore_ascii_case(style_id.trim()))
+        .unwrap_or(default_translate_style())
+}
+
 pub fn build_translate_style_system_prompt() -> String {
-    "You are a subtitle localization strategy planner. Return JSON only with concise strategy. Output shape: {\"topicSummary\":\"...\",\"toneStrategy\":\"...\"}".to_string()
+    "You are a subtitle localization strategy planner. \
+Return JSON only in this shape: {\"topicSummary\":\"...\",\"styleId\":\"...\"}. \
+Choose one styleId from the provided fixed style catalog."
+        .to_string()
 }
 
 pub fn build_translate_style_user_prompt(input: &TranslateStylePromptInput) -> String {
@@ -96,17 +144,23 @@ pub fn build_translate_style_user_prompt(input: &TranslateStylePromptInput) -> S
             "middle": input.context_middle,
             "tail": input.context_tail
         },
+        "styleCatalog": FIXED_TRANSLATE_STYLES.iter().map(|s| serde_json::json!({
+            "styleId": s.id,
+            "label": s.label,
+            "guidance": s.guidance
+        })).collect::<Vec<_>>(),
         "terminology": glossary,
         "requirements": [
-            "topicSummary must be 1-2 short sentences",
-            "toneStrategy must be concrete and subtitle-friendly",
+            "topicSummary must be one short sentence that captures core teaching objective",
+            "Select exactly one styleId from styleCatalog",
+            "Prefer teaching_concise for instructional videos unless another style clearly fits better",
             "respect provided terminology"
         ],
         "output": {
             "json_only": true,
             "schema": {
                 "topicSummary": "string",
-                "toneStrategy": "string"
+                "styleId": "string(enum from styleCatalog.styleId)"
             }
         }
     });
@@ -144,16 +198,11 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
             .collect::<Vec<_>>(),
         "rules": [
             "Translate only sourceText for each segment",
-            "Do not omit any segment",
-            "Do not merge or split segments",
-            "Keep the same segment index and return one translatedText for each input index",
-            "Keep meaning faithful; do not add or remove facts",
-            "Use natural and idiomatic target-language subtitle phrasing",
-            "Preserve speaker tone/register and domain context",
-            "Use provided terminology consistently; do not paraphrase required terms",
-            "Use previous/next context only to resolve ambiguity in current segment",
-            "Do not move meaning across neighboring segments",
-            "Do not return markdown or commentary",
+            "Keep one output for each input index; do not omit, merge, or split segments",
+            "Preserve meaning and speaker intent; do not add facts or commentary",
+            "Use natural subtitle phrasing in target language",
+            "Use provided terminology consistently",
+            "Use previous/next context only for disambiguation",
             "Return JSON only"
         ],
         "segments": segments,

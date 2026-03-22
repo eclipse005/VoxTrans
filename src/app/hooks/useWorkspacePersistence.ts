@@ -26,7 +26,6 @@ export function useWorkspacePersistence({
         const deduped = dedupeById(queueItems);
         if (deduped.length > 0) {
           dispatch({ type: "add_queue_items", items: deduped });
-          dispatch({ type: "set_ui", payload: { activeId: deduped[0]?.id || "" } });
         }
       } finally {
         if (!cancelled) {
@@ -82,6 +81,8 @@ function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] 
     case "summarize":
     case "translate":
     case "qa":
+    case "qa_quality":
+    case "qa_layout":
       return value;
     default:
       return "";

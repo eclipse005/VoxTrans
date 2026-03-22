@@ -13,6 +13,7 @@ use super::prompt::{
     TranslatePromptInput, TranslatePromptSegmentInput, TranslateStylePromptInput,
     TranslateTerminologyPromptEntry, build_translate_style_system_prompt,
     build_translate_style_user_prompt, build_translate_system_prompt, build_translate_user_prompt,
+    resolve_translate_style,
 };
 use super::types::{
     TranslatePipelineRequest, TranslatePipelineResponse, TranslateSegment, TranslateTerminologyEntry,
@@ -48,7 +49,7 @@ struct SegmentBatch {
 #[serde(rename_all = "camelCase")]
 struct StyleExtraction {
     topic_summary: String,
-    tone_strategy: String,
+    style_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -182,12 +183,6 @@ where
             translated_text,
         });
     }
-    if request.enable_subtitle_beautify {
-        for segment in &mut translated_segments {
-            segment.translated_text = beautify_translated_text(&segment.translated_text);
-        }
-    }
-
     let source_srt = build_srt(&translated_segments, false);
     let target_srt = build_srt(&translated_segments, true);
     let bilingual_srt_source_first = build_bilingual_srt(&translated_segments, true);
@@ -232,7 +227,7 @@ async fn build_global_style_profile(
         terminology_entries: terminology_entries.to_vec(),
     });
     let style_system_prompt = build_translate_style_system_prompt();
-    let validator = JsonResponseValidator::with_required_keys(&["topicSummary", "toneStrategy"]);
+    let validator = JsonResponseValidator::with_required_keys(&["topicSummary", "styleId"]);
     let result = rig_client
         .call(
             &request.task_id,
@@ -249,8 +244,9 @@ async fn build_global_style_profile(
     let style = serde_json::from_value::<StyleExtraction>(parsed)
         .map_err(|err| format!("summarize parse failed: {err}"))?;
     let topic_summary = style.topic_summary.trim().to_string();
-    let tone_strategy = style.tone_strategy.trim().to_string();
-    if topic_summary.is_empty() || tone_strategy.is_empty() {
+    let resolved_style = resolve_translate_style(&style.style_id);
+    let tone_strategy = format!("{} ({})", resolved_style.label, resolved_style.guidance);
+    if topic_summary.is_empty() {
         return Err("summarize failed: empty summary fields".to_string());
     }
     Ok(StyleProfile {
@@ -576,7 +572,7 @@ fn sec_to_ms(seconds: f64) -> u64 {
     (seconds.max(0.0) * 1000.0).round() as u64
 }
 
-fn beautify_translated_text(raw: &str) -> String {
+pub(crate) fn beautify_translated_text(raw: &str) -> String {
     let trimmed = trim_edge_punctuation(raw.trim());
     if trimmed.is_empty() {
         return String::new();
