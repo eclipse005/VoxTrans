@@ -23,7 +23,7 @@ Use it as the default execution guide for changes.
 - Tauri v2 desktop shell (`src-tauri/`)
 - React + TypeScript frontend (`src/`)
 - Rust transcription core (`voxtrans-core/`)
-- Rig (`rig-core`) as the LLM/Agent node integration layer on desktop services
+- OpenAI-compatible HTTP LLM client stack (`src-tauri/src/services/llm/`)
 
 Current architecture:
 
@@ -43,8 +43,8 @@ Current architecture:
 - `src-tauri/src/services/task_worker.rs`: worker-process runtime management (spawn/wait/kill)
 - `src-tauri/src/services/youtube.rs`: YouTube 下载、进度事件、取消、`yt-dlp` 版本与更新
 - `src-tauri/src/services/transcription/`: post-ASR punctuation/hotword/transcription pipeline
-- `src-tauri/src/services/translate/`: translation pipeline modules (Rig adapters/prompt/rules/validation)
-- `src-tauri/src/services/translate/adapters/rig_node.rs`: shared Rig node client for JSON-constrained LLM calls
+- `src-tauri/src/services/llm/`: unified LLM client/batch/json-guard/error abstraction
+- `src-tauri/src/services/translate/`: translation pipeline modules (prompt/pipeline/validation/segment_optimize)
 - `src-tauri/src/services/demucs/`: vocal separation services
 - `voxtrans-core/`: ASR/transcription core (Parakeet v2, SRT generation)
 - `model/`: local model files (not committed; may be absent before first setup)
@@ -61,7 +61,7 @@ Current architecture:
 - Vite `7.3.x`
 - ESLint `9.39.x`
 - `parakeet-rs` for ASR
-- `rig-core` for provider-agnostic LLM access and concurrent node calls
+- OpenAI-compatible HTTP API + JSON guard + bounded concurrency for LLM calls
 
 ## Commands
 
@@ -101,8 +101,8 @@ Run commands from the repository root.
 - Do not break existing command names used by frontend `invoke` unless explicitly requested.
 - Keep business logic in `voxtrans-core`; keep UI concerns in `src/app`.
 - Do not rename files, move modules, or reshape public APIs unless required by the task.
-- New LLM-facing integration should go through Rig node adapters; do not add a parallel ad-hoc LLM client stack.
-- For punctuation/translation node calls, prefer `RigNodeClient` with explicit JSON validation and bounded concurrency.
+- New LLM-facing integration should go through `src-tauri/src/services/llm/`; do not add parallel ad-hoc HTTP client stacks in business modules.
+- For punctuation/translation/summary/segment optimize calls, prefer统一 `LlmPort` + explicit JSON validation + bounded concurrency.
 - Do not add new dependence on `save_queue_state` for task lifecycle control; use task-engine commands.
 - YouTube placeholder path format is `youtube://pending/<taskId>?url=<encoded>`; treat it as transitional input only.
 - Task output artifacts are fixed-name files under task root:
