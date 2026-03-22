@@ -4,6 +4,7 @@
 //! - `transcribe`: ASR runtime calls and token-level output.
 //! - `transcription`: post-ASR processing pipeline (segment/srt generation phases).
 pub mod file;
+pub mod binary;
 pub mod demucs;
 pub mod logs;
 pub mod model;

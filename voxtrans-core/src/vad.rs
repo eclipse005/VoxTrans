@@ -5,6 +5,7 @@ use std::time::Instant;
 use serde::Deserialize;
 
 use crate::transcribe_engine::AudioSegment;
+use crate::binary::resolve_bundled_or_path;
 
 #[derive(Debug, Deserialize)]
 struct VadOutput {
@@ -113,26 +114,7 @@ fn resolve_fireredvad_program() -> PathBuf {
         }
     }
 
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            #[cfg(target_os = "windows")]
-            let bundled = exe_dir.join("bin").join("fireredvad.exe");
-            #[cfg(not(target_os = "windows"))]
-            let bundled = exe_dir.join("bin").join("fireredvad");
-            if bundled.exists() {
-                return bundled;
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        PathBuf::from("fireredvad.exe")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        PathBuf::from("fireredvad")
-    }
+    resolve_bundled_or_path("fireredvad")
 }
 
 fn normalize_ranges(ranges: &[[f64; 2]], total_duration_sec: f64) -> Vec<(f64, f64)> {

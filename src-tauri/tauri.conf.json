@@ -30,7 +30,8 @@
     "resources": [
       "bin/fireredvad.exe",
       "bin/demucs.exe",
-      "bin/yt-dlp.exe"
+      "bin/yt-dlp.exe",
+      "bin/ffmpeg.exe"
     ],
     "icon": [
       "icons/32x32.png",

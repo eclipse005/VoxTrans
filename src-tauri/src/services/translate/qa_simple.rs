@@ -340,6 +340,7 @@ async fn decide_layout_splits(
     let validator = JsonResponseValidator::with_required_keys(&["items"]);
     let system_prompt = build_layout_system_prompt();
     let mut tasks: Vec<RigNodeJsonTask> = Vec::new();
+    let mut local_to_global_by_task: Vec<Vec<usize>> = Vec::new();
     let mut start = 0usize;
     let mut task_idx = 0usize;
     while start < candidates.len() {
@@ -359,6 +360,7 @@ async fn decide_layout_splits(
             user_prompt,
             response_validator: Some(validator.clone()),
         });
+        local_to_global_by_task.push(batch.iter().map(|cand| cand.index).collect());
         task_idx += 1;
         start = end;
     }
@@ -373,14 +375,27 @@ async fn decide_layout_splits(
         )
         .await;
     let mut out: Vec<LayoutDecisionItem> = Vec::new();
-    for (_, result) in results {
+    for (task_id, result) in results {
         let json = match result {
             Ok(ok) => ok.json,
             Err(err) => return Err(format!("qa layout call failed: {}", err.message)),
         };
         let extracted = serde_json::from_value::<LayoutDecisionExtraction>(json)
             .map_err(|err| format!("qa layout parse failed: {err}"))?;
-        out.extend(extracted.items.into_iter());
+        let local_to_global = local_to_global_by_task
+            .get(task_id)
+            .ok_or_else(|| format!("qa layout returned unknown task id {task_id}"))?;
+        for mut item in extracted.items {
+            if item.index == 0 || item.index > local_to_global.len() {
+                return Err(format!(
+                    "qa layout returned invalid local index {} for task {}",
+                    item.index,
+                    task_id + 1
+                ));
+            }
+            item.index = local_to_global[item.index - 1];
+            out.push(item);
+        }
     }
     Ok(out)
 }
@@ -391,7 +406,7 @@ For each candidate item, decide whether it should be split into two subtitle seg
 Split only when it clearly improves readability without changing meaning. \
 Do not rewrite text and do not merge segments. \
 Reason must focus on semantic/readability judgment, not numeric thresholds. \
-Return strict JSON only: {\"items\":[{\"index\":0,\"shouldSplit\":true,\"confidence\":0.0,\"reason\":\"...\"}]}. \
+Return strict JSON only: {\"items\":[{\"index\":1,\"shouldSplit\":true,\"confidence\":0.0,\"reason\":\"...\"}]}. \
 Include every input candidate index in output items."
         .to_string()
 }
@@ -406,10 +421,13 @@ fn build_layout_user_prompt(
 ) -> String {
     let items = candidates
         .iter()
+        .enumerate()
         .map(|cand| {
+            let local_index = cand.0 + 1;
+            let cand = cand.1;
             let seg = &segments[cand.index];
             json!({
-                "index": cand.index,
+                "index": local_index,
                 "sourceText": seg.source_text,
                 "translatedText": seg.translated_text,
                 "overLimitSignals": {
@@ -425,6 +443,7 @@ fn build_layout_user_prompt(
         "targetLang": target_lang,
         "candidates": items,
         "requirements": [
+            "Use local candidate index only (1..N in current batch), not global subtitle index",
             "Decide only split-or-keep for each candidate",
             "Prefer keep unless split benefit is clear",
             "Do not consider merge operations",
@@ -511,6 +530,7 @@ async fn run_quality_refine(
             Some(v) => v,
             None => continue,
         };
+        let batch_len = end.saturating_sub(start);
         let json = match result {
             Ok(ok) => ok.json,
             Err(err) => return Err(format!("qa quality call failed: {}", err.message)),
@@ -518,10 +538,15 @@ async fn run_quality_refine(
         let extracted = serde_json::from_value::<QualityExtraction>(json)
             .map_err(|err| format!("qa quality parse failed: {err}"))?;
 
-        for item in extracted.items {
-            if item.index < start || item.index >= end {
-                continue;
+        for mut item in extracted.items {
+            if item.index == 0 || item.index > batch_len {
+                return Err(format!(
+                    "qa quality returned invalid local index {} at batch {}",
+                    item.index,
+                    batch_id + 1
+                ));
             }
+            item.index = start + (item.index - 1);
             if item.confidence < MIN_QUALITY_CONFIDENCE {
                 continue;
             }
@@ -564,7 +589,7 @@ Do not change segmentation or index mapping. \
 Preserve numbers, symbols, named entities, and terminology mappings. \
 Only perform minimal necessary edits and do not modify lines that are already good enough. \
 For each changed item, ensure: faithful_to_source=true, idiomatic_target_language=true, terminology_consistent=true, subtitle_concise=true. \
-Return strict JSON only: {\"items\":[{\"index\":0,\"newText\":\"...\",\"reason\":\"semantic_or_fluency_refine\",\"confidence\":0.0}]}. \
+Return strict JSON only: {\"items\":[{\"index\":1,\"newText\":\"...\",\"reason\":\"semantic_or_fluency_refine\",\"confidence\":0.0}]}. \
 Only include changed items. Reason must be short and generic; do not include counts or formulas."
         .to_string()
 }
@@ -583,6 +608,7 @@ fn build_quality_user_prompt(
         .enumerate()
         .map(|(offset, segment)| {
             let idx = start_index + offset;
+            let local_index = offset + 1;
             let previous = if idx > 0 {
                 all_segments
                     .get(idx - 1)
@@ -596,7 +622,7 @@ fn build_quality_user_prompt(
                 .map(|s| s.translated_text.as_str())
                 .unwrap_or("");
             json!({
-                "index": idx,
+                "index": local_index,
                 "sourceText": segment.source_text,
                 "translatedText": segment.translated_text,
                 "context": {
@@ -626,7 +652,8 @@ fn build_quality_user_prompt(
         "items": items,
         "terminology": terms,
         "requirements": [
-            "Do not change segmentation structure or item index",
+            "Use local item index only (1..N in current batch), not global subtitle index",
+            "Do not change segmentation structure or item index mapping",
             "Priority order: faithfulness > clarity > style fit",
             "Keep meaning, facts, logic, stance, and intent fully faithful to sourceText",
             "Use previous/next context only to avoid mistranslation",

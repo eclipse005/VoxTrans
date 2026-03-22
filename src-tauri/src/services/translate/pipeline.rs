@@ -160,15 +160,21 @@ where
         let batch = batches
             .get(batch_id)
             .ok_or_else(|| format!("internal error: unknown batch id {batch_id}"))?;
-        let expected = batch
-            .segments
-            .iter()
-            .map(|segment| segment.index)
-            .collect::<Vec<_>>();
+        let expected = (1..=batch.segments.len()).collect::<Vec<_>>();
         let extracted_json = serde_json::to_value(extracted).map_err(|err| err.to_string())?;
-        let translated = validate_llm_segments(&extracted_json, &expected)
+        let mut translated_local = validate_llm_segments(&extracted_json, &expected)
             .map_err(|err| format!("translate batch {} invalid: {err}", batch_id + 1))?;
-        translated_by_index.extend(translated);
+        for (offset, segment) in batch.segments.iter().enumerate() {
+            let local_index = offset + 1;
+            let translated_text = translated_local.remove(&local_index).ok_or_else(|| {
+                format!(
+                    "translate batch {} invalid: missing local index {}",
+                    batch_id + 1,
+                    local_index
+                )
+            })?;
+            translated_by_index.insert(segment.index, translated_text);
+        }
     }
 
     let mut translated_segments: Vec<TranslateSegment> = Vec::new();
@@ -283,8 +289,9 @@ where
                 segments: batch
                     .segments
                     .iter()
-                    .map(|segment| TranslatePromptSegmentInput {
-                        index: segment.index,
+                    .enumerate()
+                    .map(|(idx, segment)| TranslatePromptSegmentInput {
+                        index: idx + 1,
                         source_text: segment.source_text.clone(),
                     })
                     .collect(),

@@ -20,6 +20,7 @@ use crate::services::task_engine::{
     TaskRunRecord,
     register_task_upload,
 };
+use crate::services::binary::resolve_bundled_or_path;
 use crate::services::task_path::sanitize_filename_component;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -624,30 +625,7 @@ fn build_youtube_task_dir(descriptor: &YoutubeVideoDescriptor, task_id: &str) ->
 }
 
 fn resolve_yt_dlp_binary() -> Result<PathBuf, String> {
-    let candidates = [
-        PathBuf::from("src-tauri").join("bin").join("yt-dlp.exe"),
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("src-tauri")
-            .join("bin")
-            .join("yt-dlp.exe"),
-        std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(|dir| dir.join("yt-dlp.exe")))
-            .unwrap_or_else(|| PathBuf::from("yt-dlp.exe")),
-        std::env::current_exe()
-            .ok()
-            .and_then(|path| path.parent().map(|dir| dir.join("bin").join("yt-dlp.exe")))
-            .unwrap_or_else(|| PathBuf::from("bin").join("yt-dlp.exe")),
-    ];
-
-    for candidate in candidates {
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-    }
-
-    Err("未找到 yt-dlp.exe，请放到 src-tauri/bin/yt-dlp.exe".to_string())
+    Ok(resolve_bundled_or_path("yt-dlp"))
 }
 
 fn detect_downloaded_file_path(stdout: &str, output_dir: &Path) -> Option<PathBuf> {

@@ -2,6 +2,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::services::binary::resolve_bundled_or_path;
 use super::progress_parse::parse_progress_percent;
 
 pub(super) fn run_demucs_with_progress<F>(
@@ -82,24 +83,5 @@ fn resolve_demucs_program() -> PathBuf {
         }
     }
 
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            #[cfg(target_os = "windows")]
-            let bundled = exe_dir.join("bin").join("demucs.exe");
-            #[cfg(not(target_os = "windows"))]
-            let bundled = exe_dir.join("bin").join("demucs");
-            if bundled.exists() {
-                return bundled;
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        PathBuf::from("demucs.exe")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        PathBuf::from("demucs")
-    }
+    resolve_bundled_or_path("demucs")
 }

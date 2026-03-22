@@ -106,14 +106,17 @@ export function useQueueScheduler({
   }, [hasProcessingTask, isYoutubePlaceholder, queue, runBatch, takeTaskMode, pushToast]);
 
   const processQueue = useCallback(async (mode: QueueBatchMode = "transcribe") => {
-    const pendingItems = queue.filter((item) => item.transcribeStatus === "pending" && !isYoutubePlaceholder(item));
-    if (!pendingItems.length) {
+    const retryableItems = queue.filter((item) => (
+      (item.transcribeStatus === "pending" || item.transcribeStatus === "error")
+      && !isYoutubePlaceholder(item)
+    ));
+    if (!retryableItems.length) {
       pushToast("没有待处理文件", "error");
       return;
     }
 
     let queuedCount = 0;
-    for (const item of pendingItems) {
+    for (const item of retryableItems) {
       const resolvedMode = mode === "transcribe" ? "transcribe" : "transcribe_translate";
       if (await enqueueForMode(item, resolvedMode)) {
         queuedCount += 1;

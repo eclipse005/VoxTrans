@@ -4,6 +4,7 @@ use std::time::Instant;
 use parakeet_rs::TimedToken;
 
 mod audio;
+mod binary;
 mod provider;
 mod transcribe_engine;
 mod vad;

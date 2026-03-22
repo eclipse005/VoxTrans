@@ -63,7 +63,7 @@ pub fn build_translate_system_prompt() -> String {
 Translate faithfully, naturally, and in culturally appropriate target-language phrasing. \
 Preserve intent, tone, register, and key domain terminology. \
 Do not add commentary or explanations. \
-Output JSON only in this shape: {\"segments\":[{\"index\":0,\"translatedText\":\"...\"}]}"
+Output JSON only in this shape: {\"segments\":[{\"index\":1,\"translatedText\":\"...\"}]}"
         .to_string()
 }
 
@@ -198,6 +198,7 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
             .collect::<Vec<_>>(),
         "rules": [
             "Translate only sourceText for each segment",
+            "Use local segment index only (1..N in current batch), not global subtitle index",
             "Keep one output for each input index; do not omit, merge, or split segments",
             "Preserve meaning and speaker intent; do not add facts or commentary",
             "Use natural subtitle phrasing in target language",

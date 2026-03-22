@@ -17,6 +17,5 @@ tauri = { version = "2.10.3", features = [] }
 tauri-plugin-dialog = "2.6.0"
 chrono = { version = "0.4", features = ["clock"] }
 hound = "3.5"
-symphonia = { version = "0.5", default-features = true, features = ["aac", "mp3", "isomp4"] }
 voxtrans-core = { path = "../voxtrans-core" }
 tokio = { version = "1", features = ["rt", "sync", "time"] }

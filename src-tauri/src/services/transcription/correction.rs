@@ -214,11 +214,12 @@ pub async fn correct_words_with_rig_node(
         let mut by_index: HashMap<usize, Vec<CorrectionPair>> = HashMap::new();
         let mut invalid_index = false;
         for item in extracted.items {
-            if item.index < start || item.index >= end {
+            if item.index == 0 || item.index > batch.len() {
                 invalid_index = true;
                 break;
             }
-            by_index.insert(item.index, item.corrections);
+            let global_index = start + (item.index - 1);
+            by_index.insert(global_index, item.corrections);
         }
         if invalid_index {
             logger.event(
@@ -234,7 +235,7 @@ pub async fn correct_words_with_rig_node(
         succeeded_batch_total += 1;
         let mut batch_memory: Vec<PreviousBatchItem> = Vec::with_capacity(end - start);
 
-        for sentence in &mut sentences[start..end] {
+        for (offset, sentence) in sentences[start..end].iter_mut().enumerate() {
             if let Some(corrections) = by_index.get(&sentence.index) {
                 let (
                     changed_any,
@@ -262,7 +263,7 @@ pub async fn correct_words_with_rig_node(
 
             let corrected_text = sentence_text(&sentence.words);
             batch_memory.push(PreviousBatchItem {
-                index: sentence.index,
+                index: offset + 1,
                 corrected_text,
             });
         }
@@ -381,7 +382,7 @@ Analyze sentence by sentence using the provided sentence index. \
 Do NOT do grammar polish, style rewrite, fluency optimization, or punctuation beautification. \
 Do NOT rewrite meaning. \
 Only correct misrecognized words, names, domain terms, and numbers/symbols caused by ASR. \
-Return strict JSON only: {\"items\":[{\"index\":0,\"corrections\":[{\"before\":\"...\",\"after\":\"...\",\"confidence\":0.0}]}]}. \
+Return strict JSON only: {\"items\":[{\"index\":1,\"corrections\":[{\"before\":\"...\",\"after\":\"...\",\"confidence\":0.0}]}]}. \
 Only include changed sentences in items. \
 Each corrections item must include before/after/confidence. \
 confidence must be in [0,1].".to_string()
@@ -408,9 +409,10 @@ fn build_correction_user_prompt(
 
     let items = batch
         .iter()
-        .map(|sentence| {
+        .enumerate()
+        .map(|(offset, sentence)| {
             json!({
-                "index": sentence.index,
+                "index": offset + 1,
                 "sourceText": sentence_text(&sentence.words)
             })
         })
@@ -427,6 +429,7 @@ fn build_correction_user_prompt(
         "previousBatchCorrected": previous_batch_corrected,
         "items": items,
         "requirements": [
+            "Use local sentence index only (1..N in current batch), not global subtitle index",
             "Process sentence-by-sentence by index; focus on ASR recognition mistakes only",
             "Do not change grammar/style/fluency if the original words are already correctly recognized",
             "Only fix misrecognized tokens (names, domain terms, homophones, numbers/symbols)",
