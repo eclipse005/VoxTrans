@@ -4,7 +4,7 @@ use serde_json::json;
 use std::path::PathBuf;
 use voxtrans_core::subtitle::segmenter::{
     WordToken, normalize_word_tokens, plain_text_from_segments, split_english_segments,
-    words_from_timed_tokens,
+    split_translate_segments, words_from_timed_tokens,
 };
 use voxtrans_core::subtitle::srt::to_srt_from_segments;
 use voxtrans_core::{Provider, TimestampKind, TranscribeOptions};
@@ -55,6 +55,8 @@ pub struct BuildSegmentsRequest {
     pub audio_path: String,
     pub words: Vec<WordTokenDto>,
     pub subtitle_max_words_per_segment: u32,
+    #[serde(default)]
+    pub segment_mode: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -183,7 +185,12 @@ pub fn build_segments_from_words(
         crate::services::task_path::task_srt_output_path(&request.task_id, &audio_path);
 
     let words: Vec<WordToken> = request.words.into_iter().map(dto_to_word).collect();
-    let segments = split_english_segments(&words, request.subtitle_max_words_per_segment as usize);
+    let segment_mode = request.segment_mode.trim().to_lowercase();
+    let segments = if segment_mode == "translate_source" {
+        split_translate_segments(&words, request.subtitle_max_words_per_segment as usize)
+    } else {
+        split_english_segments(&words, request.subtitle_max_words_per_segment as usize)
+    };
     let srt = to_srt_from_segments(&segments);
     let text = plain_text_from_segments(&segments);
 

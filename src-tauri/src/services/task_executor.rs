@@ -125,6 +125,12 @@ struct TranscribePhaseEvent {
 
 #[derive(Debug, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+struct WorkspaceSyncHintEvent {
+    task_id: String,
+}
+
+#[derive(Debug, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct TranslateProgressEvent {
     task_id: String,
     current_batch: usize,
@@ -1075,6 +1081,11 @@ async fn run_transcribe_and_maybe_translate(
                     audio_path: media_path,
                     words: words_for_exec,
                     subtitle_max_words_per_segment,
+                    segment_mode: if with_translate {
+                        "translate_source".to_string()
+                    } else {
+                        "transcribe".to_string()
+                    },
                 })?;
                 Ok(SegmentResumeSnapshot {
                     text: built.text,
@@ -1551,7 +1562,64 @@ async fn run_translate_from_existing_segments(
     task: &TaskRunExecRow,
     context: &mut TaskContext,
 ) -> Result<DonePayload, String> {
-    let tokens = parse_tokens_from_segments(&context.projections.editor.subtitle_segments_json);
+    let settings = load_user_preferences(pool).await?.settings;
+    let latest_words = if let words @ Some(_) = load_stage_words(context, STAGE_CORRECT) {
+        words
+    } else if let words @ Some(_) = load_stage_words(context, STAGE_PUNCTUATE) {
+        words
+    } else {
+        load_stage_words(context, STAGE_ASR)
+    };
+
+    let tokens = if let Some(words) = latest_words.filter(|w| !w.is_empty()) {
+        let built = build_segments_from_words(BuildSegmentsRequest {
+            task_id: task.id.clone(),
+            audio_path: task.media_path.clone(),
+            words: words.clone(),
+            subtitle_max_words_per_segment: settings.subtitle_max_words_per_segment,
+            segment_mode: "translate_source".to_string(),
+        })?;
+        let source_segments_json = built
+            .segments
+            .iter()
+            .map(|segment| {
+                json!({
+                    "startMs": (segment.start * 1000.0).round() as i64,
+                    "endMs": (segment.end * 1000.0).round() as i64,
+                    "sourceText": segment.text,
+                    "translatedText": "",
+                })
+            })
+            .collect::<Vec<_>>();
+        let source_segments_json =
+            serde_json::to_string(&source_segments_json).map_err(|err| err.to_string())?;
+        context.set_editor_projection(
+            source_segments_json,
+            built.text.clone(),
+            built.srt.clone(),
+            String::new(),
+        );
+        persist_task_context(pool, &task.id, context).await?;
+        emit_bridge_event(
+            app,
+            "workspace-sync-hint",
+            &WorkspaceSyncHintEvent {
+                task_id: task.id.clone(),
+            },
+        );
+        built
+            .segments
+            .iter()
+            .map(|segment| TranslateToken {
+                start: segment.start,
+                end: segment.end,
+                word: segment.text.clone(),
+            })
+            .collect::<Vec<_>>()
+    } else {
+        parse_tokens_from_segments(&context.projections.editor.subtitle_segments_json)
+    };
+
     if tokens.is_empty() {
         return Err("当前任务没有可翻译内容，请先执行转录".to_string());
     }
@@ -1563,7 +1631,6 @@ async fn run_translate_from_existing_segments(
             word: w.word.clone(),
         })
         .collect::<Vec<_>>();
-    let settings = load_user_preferences(pool).await?.settings;
     let translate_request = TranslatePipelineRequest {
         task_id: task.id.clone(),
         media_path: task.media_path.clone(),

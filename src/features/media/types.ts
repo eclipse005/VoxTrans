@@ -156,6 +156,7 @@ export type BuildSegmentsRequest = {
   audioPath: string;
   words: WordToken[];
   subtitleMaxWordsPerSegment: number;
+  segmentMode?: "transcribe" | "translate_source";
 };
 
 export type BuildSegmentsResponse = {

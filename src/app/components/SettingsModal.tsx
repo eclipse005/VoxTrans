@@ -263,7 +263,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                     />
                     <div className="toggle-label">
                       <span className="toggle-title">识别矫正</span>
-                      <span className="toggle-desc">在标点优化后执行 LLM 识别矫正，修复错词并保留时间轴。</span>
+                      <span className="toggle-desc">利用 LLM 矫正识别错误，配合术语效果更好。</span>
                     </div>
                     <span className="toggle-switch" />
                   </label>

@@ -25,7 +25,8 @@
 .subtitle-all-editor {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   border: 1px solid var(--apple-border-light);
   border-radius: 14px;
   background-color: #fff;
@@ -342,9 +343,10 @@
   color: #7c2d12;
 }
 .subtitle-row-text-value {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .subtitle-editor-layout {

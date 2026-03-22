@@ -111,6 +111,7 @@ where
         audio_path: request.audio_path.clone(),
         words: words.clone(),
         subtitle_max_words_per_segment: request.subtitle_max_words_per_segment,
+        segment_mode: "transcribe".to_string(),
     });
     let built = match built {
         Ok(v) => v,

@@ -38,6 +38,10 @@ type TranscribePhaseEvent = {
   phaseDetail?: string;
 };
 
+type WorkspaceSyncHintEvent = {
+  taskId: string;
+};
+
 type SeparateProgressEvent = {
   taskId: string;
   percent: number;
@@ -128,7 +132,13 @@ export function useQueueRunner({
         phase: payload.phase,
         phaseDetail: payload.phaseDetail,
       });
-      if (payload.phase === "qa" || payload.phase === "qa_quality" || payload.phase === "qa_layout") {
+      if (
+        payload.phase === "summarize"
+        || payload.phase === "translate"
+        || payload.phase === "qa"
+        || payload.phase === "qa_quality"
+        || payload.phase === "qa_layout"
+      ) {
         void (async () => {
           try {
             const workspace = await loadWorkspaceState();
@@ -150,6 +160,35 @@ export function useQueueRunner({
     return () => {
       disposed = true;
       if (unlistenPhase) unlistenPhase();
+    };
+  }, [dispatch, isTaskPresent]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenWorkspaceSyncHint: undefined | (() => void);
+    listen<WorkspaceSyncHintEvent>("workspace-sync-hint", (event) => {
+      const payload = event.payload;
+      if (!payload?.taskId) return;
+      void (async () => {
+        try {
+          const workspace = await loadWorkspaceState();
+          syncQueueItem(dispatch, isTaskPresent, workspace, payload.taskId);
+        } catch {
+          // Ignore sync error; task flow continues.
+        }
+      })();
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
+        unlistenWorkspaceSyncHint = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      if (unlistenWorkspaceSyncHint) unlistenWorkspaceSyncHint();
     };
   }, [dispatch, isTaskPresent]);
 
