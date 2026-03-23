@@ -4,7 +4,7 @@ use crate::services::translate::{
 };
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
-use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort};
+use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort, next_llm_request_id};
 use serde::{Deserialize, Serialize};
 
 #[tauri::command]
@@ -75,9 +75,11 @@ pub async fn test_translate_llm(
         media_path: None,
         phase: "connectivity_test".to_string(),
     };
+    let llm_id = next_llm_request_id();
     let result = client
         .call_json(
             &context,
+            &llm_id,
             system_prompt,
             user_prompt,
             Some(&validator),

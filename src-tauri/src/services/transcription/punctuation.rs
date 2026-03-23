@@ -9,7 +9,7 @@ use voxtrans_core::subtitle::text_rules::{
 use crate::services::task_log::TaskLogger;
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
-use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, LlmPort};
+use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, LlmPort, next_llm_request_id};
 use crate::services::translate::prompt::{
     PunctuationPromptInput, build_punctuation_system_prompt, build_punctuation_user_prompt,
 };
@@ -145,6 +145,7 @@ pub async fn optimize_words_with_llm(
         .enumerate()
         .map(|(idx, (_, user_prompt))| LlmJsonTask {
             id: idx,
+            request_id: next_llm_request_id(),
             system_prompt: system_prompt.clone(),
             user_prompt: user_prompt.clone(),
             response_validator: Some(validator.clone()),

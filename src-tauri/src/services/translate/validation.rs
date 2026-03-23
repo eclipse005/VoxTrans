@@ -54,12 +54,13 @@ pub fn validate_llm_segments(
             .map(|v| v as usize)
             .ok_or_else(|| "schema check failed: each segment.index must be number".to_string())?;
         let translated_text = item
-            .get("translatedText")
+            .get("translation")
+            .or_else(|| item.get("translatedText"))
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
             .ok_or_else(|| {
-                format!("schema check failed: translatedText is empty for index {index}")
+                format!("schema check failed: translation is empty for index {index}")
             })?;
 
         if translated_by_index.insert(index, translated_text).is_some() {

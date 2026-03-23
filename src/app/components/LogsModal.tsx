@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
-import { FolderIcon, RefreshIcon, TrashIcon } from "./Icons";
+import { useEffect, useRef, useState } from "react";
+import type { MutableRefObject, ReactNode } from "react";
+import { ChevronLeftIcon, ChevronRightIcon, FolderIcon, RefreshIcon, TrashIcon } from "./Icons";
 import { useDialogA11y } from "./useDialogA11y";
 
 type LogsModalProps = {
@@ -33,7 +34,31 @@ export default function LogsModal({
   const entries = parseLogEntries(content);
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
   const [isMaximized, setIsMaximized] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const matchRefs = useRef<Array<HTMLElement | null>>([]);
+
+  const normalizedQuery = searchText.trim().toLowerCase();
+  const viewEntries = buildViewEntries(entries, normalizedQuery);
+  const matchCount = viewEntries.reduce(
+    (sum, entry) => sum + entry.timestampRanges.length + entry.eventRanges.length + entry.contentRanges.length,
+    0,
+  );
+  const currentMatchIndex = matchCount === 0
+    ? -1
+    : (activeMatchIndex >= 0 && activeMatchIndex < matchCount ? activeMatchIndex : 0);
+
+  useEffect(() => {
+    matchRefs.current = [];
+  }, [content, channel]);
+
+  useEffect(() => {
+    if (currentMatchIndex < 0) return;
+    const target = matchRefs.current[currentMatchIndex];
+    if (!target) return;
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [currentMatchIndex, normalizedQuery, content, channel]);
 
   if (!visible) return null;
 
@@ -118,6 +143,58 @@ export default function LogsModal({
               <div className="logs-usage-stage">
                 Tokens: {formatNumber(totalTokens)}
               </div>
+              <div className="logs-search" role="search" aria-label="日志查找">
+                <input
+                  className="apple-input logs-search-input"
+                  value={searchText}
+                  onChange={(event) => {
+                    setSearchText(event.target.value);
+                    setActiveMatchIndex(0);
+                  }}
+                  placeholder="查找日志"
+                  aria-label="查找日志"
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    if (matchCount === 0) return;
+                    setActiveMatchIndex((prev) => {
+                      if (event.shiftKey) return prev <= 0 ? matchCount - 1 : prev - 1;
+                      return prev >= matchCount - 1 ? 0 : prev + 1;
+                    });
+                  }}
+                />
+                <div className="logs-search-nav" role="group" aria-label="日志查找导航">
+                  <button
+                    type="button"
+                    className="logs-search-btn"
+                    onClick={() => {
+                      if (matchCount === 0) return;
+                      setActiveMatchIndex((prev) => (prev <= 0 ? matchCount - 1 : prev - 1));
+                    }}
+                    disabled={matchCount === 0}
+                    aria-label="上一条匹配"
+                    title="上一条匹配"
+                  >
+                    <ChevronLeftIcon />
+                  </button>
+                  <span className="logs-search-count" aria-live="polite">
+                    {matchCount === 0 ? "0/0" : `${currentMatchIndex + 1}/${matchCount}`}
+                  </span>
+                  <button
+                    type="button"
+                    className="logs-search-btn"
+                    onClick={() => {
+                      if (matchCount === 0) return;
+                      setActiveMatchIndex((prev) => (prev >= matchCount - 1 ? 0 : prev + 1));
+                    }}
+                    disabled={matchCount === 0}
+                    aria-label="下一条匹配"
+                    title="下一条匹配"
+                  >
+                    <ChevronRightIcon />
+                  </button>
+                </div>
+              </div>
             </div>
             <div className="logs-task-name" title={taskName}>{taskName}</div>
           </div>
@@ -131,14 +208,31 @@ export default function LogsModal({
           {!loading && content.trim().length === 0 ? <div className="logs-empty">暂无日志</div> : null}
           {!loading && content.trim().length > 0 ? (
             <div className="logs-entries">
-              {entries.map((entry, index) => {
+              {viewEntries.map((entry, index) => {
                 const entryKey = `${entry.timestamp}-${entry.event}-${index}`;
-                const collapsed = collapsedMap[entryKey] ?? false;
+                const entryMatchTotal = entry.timestampRanges.length + entry.eventRanges.length + entry.contentRanges.length;
+                const collapsed = normalizedQuery && entryMatchTotal > 0
+                  ? false
+                  : (collapsedMap[entryKey] ?? false);
                 return (
                   <article key={entryKey} className="logs-entry">
                   <div className="logs-entry-head">
-                    <span className="logs-entry-time">{entry.timestamp}</span>
-                    <span className="logs-entry-event">{entry.event}</span>
+                    <span className="logs-entry-time">
+                      {renderHighlightedText({
+                        text: entry.timestamp,
+                        ranges: entry.timestampRanges,
+                        matchRefs,
+                        activeMatchIndex: currentMatchIndex,
+                      })}
+                    </span>
+                    <span className="logs-entry-event">
+                      {renderHighlightedText({
+                        text: entry.event,
+                        ranges: entry.eventRanges,
+                        matchRefs,
+                        activeMatchIndex: currentMatchIndex,
+                      })}
+                    </span>
                     <span className="logs-entry-spacer" />
                     <button
                       type="button"
@@ -152,9 +246,23 @@ export default function LogsModal({
                     </button>
                   </div>
                   {!collapsed && entry.payload != null ? (
-                    <pre className="logs-json">{formatPayloadForDisplay(entry.payload)}</pre>
+                    <pre className="logs-json">
+                      {renderHighlightedText({
+                        text: entry.displayText,
+                        ranges: entry.contentRanges,
+                        matchRefs,
+                        activeMatchIndex: currentMatchIndex,
+                      })}
+                    </pre>
                   ) : !collapsed && entry.body ? (
-                    <pre className="logs-text">{decodeVisibleEscapes(entry.body)}</pre>
+                    <pre className="logs-text">
+                      {renderHighlightedText({
+                        text: entry.displayText,
+                        ranges: entry.contentRanges,
+                        matchRefs,
+                        activeMatchIndex: currentMatchIndex,
+                      })}
+                    </pre>
                   ) : null}
                 </article>
                 );
@@ -182,11 +290,31 @@ export default function LogsModal({
   );
 }
 
+type MatchRange = {
+  start: number;
+  end: number;
+  globalIndex: number;
+};
+
+type HighlightRenderArgs = {
+  text: string;
+  ranges: MatchRange[];
+  matchRefs: MutableRefObject<Array<HTMLElement | null>>;
+  activeMatchIndex: number;
+};
+
 type LogEntry = {
   timestamp: string;
   event: string;
   body: string;
   payload: unknown | null;
+};
+
+type ViewLogEntry = LogEntry & {
+  displayText: string;
+  timestampRanges: MatchRange[];
+  eventRanges: MatchRange[];
+  contentRanges: MatchRange[];
 };
 
 function parseLogEntries(content: string): LogEntry[] {
@@ -236,4 +364,79 @@ function decodeVisibleEscapes(text: string): string {
 function formatNumber(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0";
   return new Intl.NumberFormat("en-US").format(Math.floor(value));
+}
+
+function buildViewEntries(entries: LogEntry[], normalizedQuery: string): ViewLogEntry[] {
+  let nextMatchIndex = 0;
+  return entries.map((entry) => {
+    const displayText = entry.payload != null
+      ? formatPayloadForDisplay(entry.payload)
+      : entry.body
+        ? decodeVisibleEscapes(entry.body)
+        : "";
+    const timestampRanges = findMatchRanges(entry.timestamp, normalizedQuery, nextMatchIndex);
+    nextMatchIndex += timestampRanges.length;
+    const eventRanges = findMatchRanges(entry.event, normalizedQuery, nextMatchIndex);
+    nextMatchIndex += eventRanges.length;
+    const contentRanges = findMatchRanges(displayText, normalizedQuery, nextMatchIndex);
+    nextMatchIndex += contentRanges.length;
+    return {
+      ...entry,
+      displayText,
+      timestampRanges,
+      eventRanges,
+      contentRanges,
+    };
+  });
+}
+
+function findMatchRanges(text: string, normalizedQuery: string, baseIndex = 0): MatchRange[] {
+  if (!normalizedQuery || !text) return [];
+  const lowerText = text.toLowerCase();
+  const ranges: MatchRange[] = [];
+  let searchFrom = 0;
+  while (searchFrom < lowerText.length) {
+    const foundAt = lowerText.indexOf(normalizedQuery, searchFrom);
+    if (foundAt < 0) break;
+    ranges.push({
+      start: foundAt,
+      end: foundAt + normalizedQuery.length,
+      globalIndex: baseIndex + ranges.length,
+    });
+    searchFrom = foundAt + normalizedQuery.length;
+  }
+  return ranges;
+}
+
+function renderHighlightedText({
+  text,
+  ranges,
+  matchRefs,
+  activeMatchIndex,
+}: HighlightRenderArgs): ReactNode {
+  if (!ranges.length) return text;
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    if (cursor < range.start) {
+      parts.push(text.slice(cursor, range.start));
+    }
+    const isActive = range.globalIndex === activeMatchIndex;
+    parts.push(
+      <mark
+        key={`${range.start}-${range.end}-${range.globalIndex}`}
+        ref={(node) => {
+          matchRefs.current[range.globalIndex] = node;
+        }}
+        className={`logs-search-hit ${isActive ? "active" : ""}`}
+      >
+        {text.slice(range.start, range.end)}
+      </mark>,
+    );
+    cursor = range.end;
+  }
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor));
+  }
+  return parts;
 }

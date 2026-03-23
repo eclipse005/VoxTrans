@@ -7,7 +7,7 @@ use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 use voxtrans_core::subtitle::text_rules::has_break_terminal_punctuation;
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
-use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, LlmPort};
+use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, LlmPort, next_llm_request_id};
 
 use super::prompt::{
     TranslatePromptInput, TranslatePromptSegmentInput, TranslateSummaryPromptInput,
@@ -68,6 +68,9 @@ struct TranslationBatchExtraction {
 #[serde(rename_all = "camelCase")]
 struct TranslationBatchItem {
     index: usize,
+    #[serde(alias = "translatedText")]
+    #[serde(alias = "translated_text")]
+    #[serde(rename = "translation")]
     translated_text: String,
 }
 
@@ -248,17 +251,19 @@ async fn build_global_summary_profile(
         media_path: Some(request.media_path.clone()),
         phase: "summarize".to_string(),
     };
+    let llm_id = next_llm_request_id();
     let result = llm_client
         .call_json(
             &context,
+            &llm_id,
             &summary_system_prompt,
             &summary_prompt,
             Some(&validator),
         )
         .await;
-    let parsed = result
-        .map_err(|err| format!("summarize failed: {}", err.message))?
-        .json;
+    let summary_result = result
+        .map_err(|err| format!("summarize failed (llmId={}): {}", llm_id, err.message))?;
+    let parsed = summary_result.json;
     let summary = serde_json::from_value::<SummaryExtraction>(parsed)
         .map_err(|err| format!("summarize parse failed: {err}"))?;
     let theme = normalize_theme(summary.theme.as_str());
@@ -351,10 +356,15 @@ where
         .enumerate()
         .map(|(index, user_prompt)| LlmJsonTask {
             id: index,
+            request_id: next_llm_request_id(),
             system_prompt: build_translate_system_prompt(),
             user_prompt,
             response_validator: Some(validator.clone()),
         })
+        .collect::<Vec<_>>();
+    let request_ids = tasks
+        .iter()
+        .map(|task| task.request_id.clone())
         .collect::<Vec<_>>();
     let context = LlmCallContext {
         task_id: request.task_id.clone(),
@@ -377,10 +387,31 @@ where
         }
         let json = match result {
             Ok(ok) => ok.json,
-            Err(err) => return Err(format!("translate pipeline failed: {}", err.message)),
+            Err(err) => {
+                let request_id = request_ids
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
+                return Err(format!(
+                    "translate pipeline failed at {} (llmId={}): {}",
+                    index + 1,
+                    request_id,
+                    err.message
+                ));
+            }
         };
         let extracted = parse_translation_batch_extraction(json)
-            .map_err(|err| format!("translate batch parse failed at {}: {err}", index + 1))?;
+            .map_err(|err| {
+                let request_id = request_ids
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
+                format!(
+                    "translate batch parse failed at {} (llmId={}): {err}",
+                    index + 1,
+                    request_id
+                )
+            })?;
         out[index] = Some(extracted);
         done += 1;
         on_batch_progress(done.min(total_batches), total_batches);

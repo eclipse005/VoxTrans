@@ -6,11 +6,11 @@ use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
-use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, LlmPort};
+use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, LlmPort, next_llm_request_id};
 use crate::services::task_log::TaskLogger;
 use crate::services::translate::prompt::{
-    SegmentOptimizePromptCandidateInput, SegmentOptimizePromptConstraints,
-    SegmentOptimizePromptInput, SegmentOptimizePromptSegmentInput,
+    SegmentOptimizePromptCandidateInput, SegmentOptimizePromptInput,
+    SegmentOptimizePromptSegmentInput,
     build_segment_optimize_system_prompt, build_segment_optimize_user_prompt,
 };
 use crate::services::translate::types::TranslateSegment;
@@ -101,18 +101,13 @@ struct SplitProposal {
 #[derive(Debug, Clone)]
 struct SplitDecisionGroup {
     index: usize,
-    preferred_mode: LayoutMode,
-    target_segment_count: usize,
+    preferred_segment_count: usize,
     proposals: Vec<SplitProposal>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 struct SegmentOptimizeExtraction {
-    #[serde(default)]
-    action: String,
-    #[serde(default)]
-    candidate_id: String,
     #[serde(default)]
     segments: Vec<SegmentOptimizeExtractionSegment>,
     #[serde(default)]
@@ -124,13 +119,15 @@ struct SegmentOptimizeExtraction {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 struct SegmentOptimizeExtractionSegment {
+    #[serde(rename = "origin", alias = "sourceText")]
     #[serde(default)]
     source_text: String,
+    #[serde(rename = "translation", alias = "translatedText")]
     #[serde(default)]
     translated_text: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum LayoutMode {
     DualSplit,
@@ -249,12 +246,10 @@ async fn optimize_layout(
         if proposals.is_empty() {
             continue;
         }
-        let preferred_mode = proposals[0].mode;
-        let target_segment_count = proposals[0].source_segments.len();
+        let preferred_segment_count = proposals[0].source_segments.len();
         decision_groups.push(SplitDecisionGroup {
             index,
-            preferred_mode,
-            target_segment_count,
+            preferred_segment_count,
             proposals,
         });
     }
@@ -353,13 +348,8 @@ async fn review_split_proposals(
         return Ok(Vec::new());
     }
 
-    let validator = JsonResponseValidator::with_required_keys(&[
-        "action",
-        "candidateId",
-        "segments",
-        "reason",
-        "confidence",
-    ]);
+    let validator =
+        JsonResponseValidator::with_required_keys(&["segments", "reason", "confidence"]);
     let tasks = decision_groups
         .iter()
         .enumerate()
@@ -374,17 +364,13 @@ async fn review_split_proposals(
                     translated_text: String::new(),
                 });
             let user_prompt = build_segment_optimize_user_prompt(&SegmentOptimizePromptInput {
-                preferred_mode: group.preferred_mode.as_str().to_string(),
-                target_segment_count: group.target_segment_count,
+                preferred_segment_count: group.preferred_segment_count,
                 source_text: current.source_text,
                 translated_text: current.translated_text,
-                candidate_actions: group
+                reference_candidates: group
                     .proposals
                     .iter()
                     .map(|proposal| SegmentOptimizePromptCandidateInput {
-                        candidate_id: proposal.candidate_id.clone(),
-                        action: proposal.mode.as_str().to_string(),
-                        timing_strategy: proposal.timing_strategy.as_str().to_string(),
                         segments: proposal
                             .source_segments
                             .iter()
@@ -396,20 +382,21 @@ async fn review_split_proposals(
                                 }
                             })
                             .collect(),
-                        constraints: prompt_constraints_for_mode(
-                            proposal.mode,
-                            proposal.timing_strategy,
-                        ),
                     })
                     .collect(),
             });
             LlmJsonTask {
                 id: task_id,
+                request_id: next_llm_request_id(),
                 system_prompt: build_segment_optimize_system_prompt(),
                 user_prompt,
                 response_validator: Some(validator.clone()),
             }
         })
+        .collect::<Vec<_>>();
+    let llm_ids = tasks
+        .iter()
+        .map(|task| task.request_id.clone())
         .collect::<Vec<_>>();
 
     let context = LlmCallContext {
@@ -429,46 +416,29 @@ async fn review_split_proposals(
             Ok(ok) => match parse_segment_optimize_decision(group, ok.json) {
                 Ok(Some(parsed)) => reviewed.push(parsed),
                 Ok(None) => {}
-                Err(_) => {
-                    if let Some(fallback) = group.proposals.first() {
-                        reviewed.push(fallback.clone());
-                    }
+                Err(err) => {
+                    return Err(format!(
+                        "segment optimize llm decision invalid for index {} (llmId={}): {err}",
+                        group.index,
+                        ok.request_id
+                    ));
                 }
             },
-            Err(_) => {
-                if let Some(fallback) = group.proposals.first() {
-                    reviewed.push(fallback.clone());
-                }
+            Err(err) => {
+                let llm_id = llm_ids
+                    .get(task_id)
+                    .cloned()
+                    .unwrap_or_else(next_llm_request_id);
+                return Err(format!(
+                    "segment optimize llm call failed for index {} (llmId={}): {}",
+                    group.index,
+                    llm_id,
+                    err.message
+                ));
             }
         }
     }
     Ok(reviewed)
-}
-
-fn prompt_constraints_for_mode(
-    mode: LayoutMode,
-    timing_strategy: TimingStrategy,
-) -> SegmentOptimizePromptConstraints {
-    match mode {
-        LayoutMode::DualSplit => SegmentOptimizePromptConstraints {
-            allow_split_source: true,
-            allow_split_target: true,
-            allow_reuse_target: false,
-            allow_proportional_timing: false,
-        },
-        LayoutMode::SourceOnlySplit => SegmentOptimizePromptConstraints {
-            allow_split_source: true,
-            allow_split_target: false,
-            allow_reuse_target: true,
-            allow_proportional_timing: false,
-        },
-        LayoutMode::TargetOnlyAdjust => SegmentOptimizePromptConstraints {
-            allow_split_source: timing_strategy == TimingStrategy::SourceWordAlign,
-            allow_split_target: true,
-            allow_reuse_target: false,
-            allow_proportional_timing: timing_strategy == TimingStrategy::ProportionalDuration,
-        },
-    }
 }
 
 fn parse_segment_optimize_decision(
@@ -477,23 +447,8 @@ fn parse_segment_optimize_decision(
 ) -> Result<Option<SplitProposal>, String> {
     let extracted = serde_json::from_value::<SegmentOptimizeExtraction>(value)
         .map_err(|err| format!("segment optimize parse failed: {err}"))?;
-    let action = extracted.action.trim().to_ascii_lowercase();
-    if matches!(action.as_str(), "no_change" | "reject" | "skip") {
-        return Ok(None);
-    }
-    let candidate_id = extracted.candidate_id.trim();
-    let Some(selected) = group
-        .proposals
-        .iter()
-        .find(|proposal| proposal.candidate_id == candidate_id && proposal.mode.as_str() == action)
-        .or_else(|| group.proposals.iter().find(|proposal| proposal.mode.as_str() == action))
-    else {
-        return Err(format!("unsupported segment optimize action: {}", extracted.action));
-    };
-
-    let parsed_segments = if extracted.segments.len() == group.target_segment_count
-        && matches!(group.target_segment_count, 2 | 3)
-    {
+    let segment_count = extracted.segments.len();
+    let (source_segments, target_segments) = if matches!(segment_count, 1 | 2 | 3) {
         let source_segments = extracted
             .segments
             .iter()
@@ -507,47 +462,41 @@ fn parse_segment_optimize_decision(
         if source_segments.iter().any(|segment| segment.is_empty())
             || target_segments.iter().any(|segment| segment.is_empty())
         {
-            None
+            return Err("segment optimize returned empty source/target segment".to_string());
         } else {
-            Some((source_segments, target_segments))
+            (source_segments, target_segments)
         }
     } else {
-        None
+        return Err("segment optimize must return 1, 2, or 3 segments".to_string());
     };
 
-    let (source_segments, target_segments) = parsed_segments.unwrap_or_else(|| {
-        (
-            selected.source_segments.clone(),
-            selected.target_segments.clone(),
-        )
-    });
+    if segment_count == 1 {
+        return Ok(None);
+    }
 
-    validate_mode_output(
-        selected.mode,
-        &source_segments,
-        &target_segments,
-    )?;
+    let inferred_mode = infer_layout_mode(&source_segments, &target_segments)?;
+
+    validate_mode_output(inferred_mode, &source_segments, &target_segments)?;
 
     let recomputed_split_ratio = recompute_split_ratio(
-        selected.mode,
-        selected.timing_strategy,
+        inferred_mode,
+        infer_timing_strategy(inferred_mode),
         &source_segments,
         &target_segments,
-    )
-    .or(selected.segment_ratios.clone());
+    );
 
     Ok(Some(SplitProposal {
-        candidate_id: selected.candidate_id.clone(),
-        index: selected.index,
-        mode: selected.mode,
-        timing_strategy: selected.timing_strategy,
+        candidate_id: format!("llm_{}", inferred_mode.as_str()),
+        index: group.index,
+        mode: inferred_mode,
+        timing_strategy: infer_timing_strategy(inferred_mode),
         source_segments,
         target_segments,
         confidence: extracted.confidence.clamp(0.0, 1.0),
         reason: if extracted.reason.trim().is_empty() {
-            selected.reason.clone()
+            format!("llm_result.{}", inferred_mode.as_str())
         } else {
-            format!("{}.llm_{}", selected.reason, normalize_reason_token(&extracted.reason))
+            format!("llm_result.{}", normalize_reason_token(&extracted.reason))
         },
         segment_ratios: recomputed_split_ratio,
     }))
@@ -565,6 +514,30 @@ fn recompute_split_ratio(
             LayoutMode::DualSplit | LayoutMode::SourceOnlySplit => segment_ratios_from_texts(source_segments, true),
             LayoutMode::TargetOnlyAdjust => segment_ratios_from_texts(target_segments, false),
         },
+    }
+}
+
+fn infer_layout_mode(
+    source_segments: &[String],
+    target_segments: &[String],
+) -> Result<LayoutMode, String> {
+    if source_segments.len() != target_segments.len() || !matches!(source_segments.len(), 2 | 3) {
+        return Err("segment count must be 2 or 3 and source/target counts must match".to_string());
+    }
+    let source_split = !all_same(source_segments);
+    let target_split = !all_same(target_segments);
+    match (source_split, target_split) {
+        (true, true) => Ok(LayoutMode::DualSplit),
+        (true, false) => Ok(LayoutMode::SourceOnlySplit),
+        (false, true) => Ok(LayoutMode::TargetOnlyAdjust),
+        (false, false) => Err("at least one side must actually split".to_string()),
+    }
+}
+
+fn infer_timing_strategy(mode: LayoutMode) -> TimingStrategy {
+    match mode {
+        LayoutMode::DualSplit | LayoutMode::SourceOnlySplit => TimingStrategy::SourceWordAlign,
+        LayoutMode::TargetOnlyAdjust => TimingStrategy::ProportionalDuration,
     }
 }
 

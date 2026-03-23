@@ -1,7 +1,11 @@
 use serde_json::Value;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::error::LlmError;
 use super::json_guard::JsonResponseValidator;
+
+static LLM_REQUEST_SEQ: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
@@ -39,6 +43,7 @@ pub struct LlmCallContext {
 #[derive(Debug, Clone)]
 pub struct LlmJsonTask {
     pub id: usize,
+    pub request_id: String,
     pub system_prompt: String,
     pub user_prompt: String,
     pub response_validator: Option<JsonResponseValidator>,
@@ -46,13 +51,24 @@ pub struct LlmJsonTask {
 
 #[derive(Debug, Clone)]
 pub struct LlmJsonResult {
+    pub request_id: String,
     pub json: Value,
+}
+
+pub fn next_llm_request_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let seq = LLM_REQUEST_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{millis}-{:04x}", seq & 0xffff)
 }
 
 pub trait LlmPort {
     async fn call_json(
         &self,
         context: &LlmCallContext,
+        request_id: &str,
         system_prompt: &str,
         user_prompt: &str,
         response_validator: Option<&JsonResponseValidator>,

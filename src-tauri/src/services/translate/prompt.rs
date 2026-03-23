@@ -54,11 +54,10 @@ pub struct TranslatePromptInput {
 
 #[derive(Debug, Clone)]
 pub struct SegmentOptimizePromptInput {
-    pub preferred_mode: String,
-    pub target_segment_count: usize,
+    pub preferred_segment_count: usize,
     pub source_text: String,
     pub translated_text: String,
-    pub candidate_actions: Vec<SegmentOptimizePromptCandidateInput>,
+    pub reference_candidates: Vec<SegmentOptimizePromptCandidateInput>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,19 +68,7 @@ pub struct SegmentOptimizePromptSegmentInput {
 
 #[derive(Debug, Clone)]
 pub struct SegmentOptimizePromptCandidateInput {
-    pub candidate_id: String,
-    pub action: String,
-    pub timing_strategy: String,
     pub segments: Vec<SegmentOptimizePromptSegmentInput>,
-    pub constraints: SegmentOptimizePromptConstraints,
-}
-
-#[derive(Debug, Clone)]
-pub struct SegmentOptimizePromptConstraints {
-    pub allow_split_source: bool,
-    pub allow_split_target: bool,
-    pub allow_reuse_target: bool,
-    pub allow_proportional_timing: bool,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
@@ -99,15 +86,15 @@ pub fn build_translate_system_prompt() -> String {
 Translate faithfully, naturally, and in culturally appropriate target-language phrasing. \
 Preserve intent, tone, register, and key domain terminology. \
 Do not add commentary or explanations. \
-Output JSON only in this shape: {\"segments\":[{\"index\":1,\"translatedText\":\"...\"}]}"
+Output JSON only in this shape: {\"segments\":[{\"index\":1,\"translation\":\"...\"}]}"
         .to_string()
 }
 
 pub fn build_segment_optimize_system_prompt() -> String {
-    "You are a subtitle segmentation optimizer. Decide whether the subtitle should keep its current layout or use one of the provided candidate actions. \
-Return JSON only in this shape: {\"action\":\"dual_split|source_only_split|target_only_adjust|no_change\",\"candidateId\":\"...\",\"segments\":[{\"sourceText\":\"...\",\"translatedText\":\"...\"}],\"reason\":\"...\",\"confidence\":0.0}. \
-This is a one-shot final decision for the current original subtitle only; do not assume any later follow-up split on sub-parts. \
-If action is not no_change, candidateId must match one provided candidate action, segments must contain exactly the requested targetSegmentCount items, and the result must obey the selected candidate action's constraints. Do not add commentary."
+    "You are a subtitle segmentation optimizer. Produce the final subtitle split for the current overlong subtitle in one shot. \
+Return JSON only in this shape: {\"segments\":[{\"origin\":\"...\",\"translation\":\"...\"}],\"reason\":\"...\",\"confidence\":0.0}. \
+Return either 2 or 3 segments. Prefer the provided preferredSegmentCount when it keeps the result natural, but return 2 or 3 based on the best watchable outcome. \
+Keep source and target segment counts identical. Do not add commentary."
         .to_string()
 }
 
@@ -185,7 +172,7 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
         .map(|segment| {
             serde_json::json!({
                 "index": segment.index,
-                "sourceText": segment.source_text,
+                "origin": segment.source_text,
             })
         })
         .collect::<Vec<_>>();
@@ -207,7 +194,7 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
             .map(terminology_entry_to_json)
             .collect::<Vec<_>>(),
         "rules": [
-            "Translate only sourceText for each segment",
+            "Translate only origin for each segment",
             "Use local segment index only (1..N in current batch), not global subtitle index",
             "Keep one output for each input index; do not omit, merge, or split segments",
             "Do not move meaning across lines; translate each input line independently",
@@ -225,7 +212,7 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
                 "segments": [
                     {
                         "index": "number",
-                        "translatedText": "string"
+                        "translation": "string"
                     }
                 ]
             }
@@ -238,53 +225,40 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
 pub fn build_segment_optimize_user_prompt(input: &SegmentOptimizePromptInput) -> String {
     let payload = serde_json::json!({
         "task": "subtitle_segment_optimize",
-        "preferredMode": input.preferred_mode,
-        "targetSegmentCount": input.target_segment_count,
+        "preferredSegmentCount": input.preferred_segment_count,
         "original": {
-            "sourceText": input.source_text,
-            "translatedText": input.translated_text,
+            "origin": input.source_text,
+            "translation": input.translated_text,
         },
-        "candidateActions": input.candidate_actions.iter().map(|candidate| {
+        "referenceCandidates": input.reference_candidates.iter().map(|candidate| {
             serde_json::json!({
-                "candidateId": candidate.candidate_id,
-                "action": candidate.action,
-                "timingStrategy": candidate.timing_strategy,
                 "segments": candidate.segments.iter().map(|segment| {
                     serde_json::json!({
-                        "sourceText": segment.source_text,
-                        "translatedText": segment.translated_text,
+                        "origin": segment.source_text,
+                        "translation": segment.translated_text,
                     })
-                }).collect::<Vec<_>>(),
-                "constraints": {
-                    "allowSplitSource": candidate.constraints.allow_split_source,
-                    "allowSplitTarget": candidate.constraints.allow_split_target,
-                    "allowReuseTarget": candidate.constraints.allow_reuse_target,
-                    "allowProportionalTiming": candidate.constraints.allow_proportional_timing,
-                }
+                }).collect::<Vec<_>>()
             })
         }).collect::<Vec<_>>(),
         "rules": [
             "Treat this as a one-shot final segmentation decision for the current original subtitle",
-            "Choose action=no_change if none of the candidate actions are safe and natural",
-            "If you choose a candidate action, candidateId must exactly match one candidateActions.candidateId value",
-            "action must match the selected candidate's action",
             "Preserve meaning; do not add or remove information",
             "Prefer semantically complete segments",
             "Keep subtitle reading flow natural and watchable",
-            "Respect the selected candidate action's constraints strictly",
-            "If action is not no_change, return exactly targetSegmentCount segments",
-            "Keep sourceText and translatedText non-empty for every returned segment",
+            "Use referenceCandidates only as helpers; you may improve split boundaries when needed",
+            "Return either 2 or 3 segments",
+            "Prefer preferredSegmentCount when natural, but do not force it if 2 or 3 is clearly better",
+            "Keep source and translated segment counts identical",
+            "Keep origin and translation non-empty for every returned segment",
             "Only adjust split boundaries; do not rewrite beyond what is needed for split alignment"
         ],
         "output": {
             "json_only": true,
             "schema": {
-                "action": "dual_split|source_only_split|target_only_adjust|no_change",
-                "candidateId": "string(empty only when action=no_change)",
                 "segments": [
                     {
-                        "sourceText": "string",
-                        "translatedText": "string"
+                        "origin": "string",
+                        "translation": "string"
                     }
                 ],
                 "reason": "string",

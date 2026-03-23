@@ -95,6 +95,7 @@ impl LlmPort for OpenAiCompatLlmClient {
     async fn call_json(
         &self,
         context: &LlmCallContext,
+        request_id: &str,
         system_prompt: &str,
         user_prompt: &str,
         response_validator: Option<&JsonResponseValidator>,
@@ -119,6 +120,7 @@ impl LlmPort for OpenAiCompatLlmClient {
                 "provider": LLM_PROVIDER,
                 "transport": LLM_TRANSPORT,
                 "phase": context.phase,
+                "llmId": request_id,
                 "request": {
                     "systemPrompt": system_prompt,
                     "userPrompt": user_prompt,
@@ -146,6 +148,7 @@ impl LlmPort for OpenAiCompatLlmClient {
                                     "provider": base_payload["provider"],
                                     "transport": base_payload["transport"],
                                     "phase": base_payload["phase"],
+                                    "llmId": base_payload["llmId"],
                                     "request": base_payload["request"],
                                 })),
                             );
@@ -174,6 +177,7 @@ impl LlmPort for OpenAiCompatLlmClient {
                                     "provider": base_payload["provider"],
                                     "transport": base_payload["transport"],
                                     "phase": base_payload["phase"],
+                                    "llmId": base_payload["llmId"],
                                     "request": base_payload["request"],
                                 })),
                             );
@@ -196,6 +200,7 @@ impl LlmPort for OpenAiCompatLlmClient {
                             "provider": base_payload["provider"],
                             "transport": base_payload["transport"],
                             "phase": base_payload["phase"],
+                            "llmId": base_payload["llmId"],
                             "request": base_payload["request"],
                             "response": { "text": raw_text },
                             "elapsedMs": elapsed_ms,
@@ -217,6 +222,7 @@ impl LlmPort for OpenAiCompatLlmClient {
                     );
 
                     return Ok(LlmJsonResult {
+                        request_id: request_id.to_string(),
                         json: parsed,
                     });
                 }
@@ -236,6 +242,7 @@ impl LlmPort for OpenAiCompatLlmClient {
                             "provider": base_payload["provider"],
                             "transport": base_payload["transport"],
                             "phase": base_payload["phase"],
+                            "llmId": base_payload["llmId"],
                             "request": base_payload["request"],
                         })),
                     );
@@ -272,6 +279,7 @@ impl LlmPort for OpenAiCompatLlmClient {
                     client
                         .call_json(
                             &context,
+                            &item.request_id,
                             &item.system_prompt,
                             &item.user_prompt,
                             item.response_validator.as_ref(),
