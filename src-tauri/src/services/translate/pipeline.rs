@@ -2,12 +2,13 @@ use std::collections::HashMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 use voxtrans_core::subtitle::text_rules::has_break_terminal_punctuation;
 use crate::services::llm::client::OpenAiCompatLlmClient;
+use crate::services::llm::client::LlmSemanticValidationError;
 use crate::services::llm::json_guard::JsonResponseValidator;
-use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, LlmPort, next_llm_request_id};
+use crate::services::llm::batch::run_indexed_concurrent;
+use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 
 use super::prompt::{
     TranslatePromptInput, TranslatePromptSegmentInput, TranslateSummaryPromptInput,
@@ -253,19 +254,21 @@ async fn build_global_summary_profile(
     };
     let llm_id = next_llm_request_id();
     let result = llm_client
-        .call_json(
+        .call_json_validated(
             &context,
             &llm_id,
             &summary_system_prompt,
             &summary_prompt,
             Some(&validator),
+            |value| {
+                serde_json::from_value::<SummaryExtraction>(value)
+                    .map_err(|err| LlmSemanticValidationError::retryable(format!("summarize parse failed: {err}")))
+            },
         )
         .await;
     let summary_result = result
         .map_err(|err| format!("summarize failed (llmId={}): {}", llm_id, err.message))?;
-    let parsed = summary_result.json;
-    let summary = serde_json::from_value::<SummaryExtraction>(parsed)
-        .map_err(|err| format!("summarize parse failed: {err}"))?;
+    let summary = summary_result.value;
     let theme = normalize_theme(summary.theme.as_str());
     let primary_terms = filter_selected_terminology_entries(
         &summary.primary_terminology_entries,
@@ -362,22 +365,64 @@ where
             response_validator: Some(validator.clone()),
         })
         .collect::<Vec<_>>();
-    let request_ids = tasks
-        .iter()
-        .map(|task| task.request_id.clone())
-        .collect::<Vec<_>>();
     let context = LlmCallContext {
         task_id: request.task_id.clone(),
         media_path: Some(request.media_path.clone()),
         phase: "translate".to_string(),
     };
-    let results = llm_client
-        .call_batch_json(
-            &context,
-            tasks,
-            concurrency,
-        )
-        .await;
+    let batches_for_validation = batches.to_vec();
+    let results = run_indexed_concurrent(
+        tasks,
+        concurrency,
+        {
+            let llm_client = llm_client.clone();
+            let context = context.clone();
+            let batches_for_validation = batches_for_validation.clone();
+            move |task| {
+                let llm_client = llm_client.clone();
+                let context = context.clone();
+                let batches_for_validation = batches_for_validation.clone();
+                async move {
+                    let llm_id = task.request_id.clone();
+                    let Some(batch) = batches_for_validation.get(task.id) else {
+                        return Err(format!(
+                            "translate pipeline failed at {} (llmId={}): missing batch",
+                            task.id + 1,
+                            llm_id
+                        ));
+                    };
+                    let expected = (1..=batch.segments.len()).collect::<Vec<_>>();
+                    let result = llm_client
+                        .call_json_validated(
+                            &context,
+                            &llm_id,
+                            &task.system_prompt,
+                            &task.user_prompt,
+                            task.response_validator.as_ref(),
+                            |value| {
+                                let extraction = serde_json::from_value::<TranslationBatchExtraction>(value)
+                                    .map_err(|err| LlmSemanticValidationError::retryable(format!("translate parse failed: {err}")))?;
+                                validate_translation_batch_extraction(&extraction, &expected)
+                                    .map_err(LlmSemanticValidationError::retryable)?;
+                                Ok(extraction)
+                            },
+                        )
+                        .await;
+                    match result {
+                        Ok(validated) => Ok((task.id, validated.value)),
+                        Err(err) => Err(format!(
+                            "translate pipeline failed at {} (llmId={}): {}",
+                            task.id + 1,
+                            llm_id,
+                            err.message
+                        )),
+                    }
+                }
+            }
+        },
+        |message| message,
+    )
+    .await;
     let mut done = 0usize;
     let mut out: Vec<Option<TranslationBatchExtraction>> = vec![None; total_batches];
 
@@ -385,34 +430,10 @@ where
         if index >= total_batches {
             return Err(format!("translate task returned invalid index {index}"));
         }
-        let json = match result {
-            Ok(ok) => ok.json,
-            Err(err) => {
-                let request_id = request_ids
-                    .get(index)
-                    .cloned()
-                    .unwrap_or_else(|| "unknown".to_string());
-                return Err(format!(
-                    "translate pipeline failed at {} (llmId={}): {}",
-                    index + 1,
-                    request_id,
-                    err.message
-                ));
-            }
-        };
-        let extracted = parse_translation_batch_extraction(json)
-            .map_err(|err| {
-                let request_id = request_ids
-                    .get(index)
-                    .cloned()
-                    .unwrap_or_else(|| "unknown".to_string());
-                format!(
-                    "translate batch parse failed at {} (llmId={}): {err}",
-                    index + 1,
-                    request_id
-                )
-            })?;
-        out[index] = Some(extracted);
+        match result {
+            Ok((_, extracted)) => out[index] = Some(extracted),
+            Err(err) => return Err(err),
+        }
         done += 1;
         on_batch_progress(done.min(total_batches), total_batches);
     }
@@ -423,8 +444,12 @@ where
         .collect()
 }
 
-fn parse_translation_batch_extraction(value: Value) -> Result<TranslationBatchExtraction, String> {
-    serde_json::from_value(value).map_err(|err| err.to_string())
+fn validate_translation_batch_extraction(
+    extraction: &TranslationBatchExtraction,
+    expected_indexes: &[usize],
+) -> Result<(), String> {
+    let value = serde_json::to_value(extraction).map_err(|err| err.to_string())?;
+    validate_llm_segments(&value, expected_indexes).map(|_| ())
 }
 
 fn normalize_terminology_entries(

@@ -1,15 +1,14 @@
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::services::task_log::TaskLogger;
 use crate::services::task_usage::{LlmTokenUsage as TaskUsage, record_llm_usage_best_effort};
 
-use super::batch::run_indexed_concurrent;
 use super::error::{LlmError, LlmErrorKind};
 use super::json_guard::{JsonResponseValidator, extract_and_repair_json};
-use super::port::{LlmCallContext, LlmConfig, LlmJsonResult, LlmJsonTask, LlmPort, LlmTokenUsage};
+use super::port::{LlmCallContext, LlmConfig, LlmJsonResult, LlmPort, LlmTokenUsage};
 
 const LLM_PROVIDER: &str = "openai_compatible_http";
 const LLM_TRANSPORT: &str = "chat_completions";
@@ -18,6 +17,22 @@ const LLM_TRANSPORT: &str = "chat_completions";
 pub struct OpenAiCompatLlmClient {
     config: LlmConfig,
     http: reqwest::Client,
+}
+
+#[derive(Debug, Clone)]
+pub enum LlmSemanticValidationError {
+    Retryable(String),
+}
+
+impl LlmSemanticValidationError {
+    pub fn retryable(message: impl Into<String>) -> Self {
+        Self::Retryable(message.into())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmValidatedJsonResult<T> {
+    pub value: T,
 }
 
 impl OpenAiCompatLlmClient {
@@ -89,17 +104,19 @@ impl OpenAiCompatLlmClient {
         };
         Ok((content, usage))
     }
-}
 
-impl LlmPort for OpenAiCompatLlmClient {
-    async fn call_json(
+    pub async fn call_json_validated<T, F>(
         &self,
         context: &LlmCallContext,
         request_id: &str,
         system_prompt: &str,
         user_prompt: &str,
         response_validator: Option<&JsonResponseValidator>,
-    ) -> Result<LlmJsonResult, LlmError> {
+        semantic_validate: F,
+    ) -> Result<LlmValidatedJsonResult<T>, LlmError>
+    where
+        F: Fn(Value) -> Result<T, LlmSemanticValidationError>,
+    {
         let logger = match context.media_path.as_deref() {
             Some(path) if !path.trim().is_empty() => {
                 TaskLogger::llm_with_media(context.task_id.clone(), path.to_string())
@@ -188,43 +205,72 @@ impl LlmPort for OpenAiCompatLlmClient {
                         }
                     }
 
-                    let elapsed_ms = started.elapsed().as_millis();
-                    logger.event(
-                        "llm.call",
-                        Some(&json!({
-                            "status": "ok",
-                            "attempt": base_payload["attempt"],
-                            "maxAttempts": base_payload["maxAttempts"],
-                            "model": base_payload["model"],
-                            "baseUrl": base_payload["baseUrl"],
-                            "provider": base_payload["provider"],
-                            "transport": base_payload["transport"],
-                            "phase": base_payload["phase"],
-                            "llmId": base_payload["llmId"],
-                            "request": base_payload["request"],
-                            "response": { "text": raw_text },
-                            "elapsedMs": elapsed_ms,
-                            "usage": {
-                                "promptTokens": usage.prompt_tokens,
-                                "completionTokens": usage.completion_tokens,
-                                "totalTokens": usage.total_tokens,
-                            }
-                        })),
-                    );
-                    record_llm_usage_best_effort(
-                        &context.task_id,
-                        &context.phase,
-                        TaskUsage {
-                            prompt_tokens: usage.prompt_tokens,
-                            completion_tokens: usage.completion_tokens,
-                            total_tokens: usage.total_tokens,
-                        },
-                    );
+                    match semantic_validate(parsed) {
+                        Ok(value) => {
+                            let elapsed_ms = started.elapsed().as_millis();
+                            logger.event(
+                                "llm.call",
+                                Some(&json!({
+                                    "status": "ok",
+                                    "attempt": base_payload["attempt"],
+                                    "maxAttempts": base_payload["maxAttempts"],
+                                    "model": base_payload["model"],
+                                    "baseUrl": base_payload["baseUrl"],
+                                    "provider": base_payload["provider"],
+                                    "transport": base_payload["transport"],
+                                    "phase": base_payload["phase"],
+                                    "llmId": base_payload["llmId"],
+                                    "request": base_payload["request"],
+                                    "response": { "text": raw_text },
+                                    "elapsedMs": elapsed_ms,
+                                    "usage": {
+                                        "promptTokens": usage.prompt_tokens,
+                                        "completionTokens": usage.completion_tokens,
+                                        "totalTokens": usage.total_tokens,
+                                    }
+                                })),
+                            );
+                            record_llm_usage_best_effort(
+                                &context.task_id,
+                                &context.phase,
+                                TaskUsage {
+                                    prompt_tokens: usage.prompt_tokens,
+                                    completion_tokens: usage.completion_tokens,
+                                    total_tokens: usage.total_tokens,
+                                },
+                            );
 
-                    return Ok(LlmJsonResult {
-                        request_id: request_id.to_string(),
-                        json: parsed,
-                    });
+                            return Ok(LlmValidatedJsonResult {
+                                value,
+                            });
+                        }
+                        Err(LlmSemanticValidationError::Retryable(message)) => {
+                            last_error = message;
+                            let backoff_ms = retry_backoff_ms(attempt, max_attempts);
+                            logger.event(
+                                "llm.call",
+                                Some(&json!({
+                                    "status": "invalid_semantic",
+                                    "error": last_error,
+                                    "response": { "text": raw_text },
+                                    "attempt": base_payload["attempt"],
+                                    "maxAttempts": base_payload["maxAttempts"],
+                                    "backoffMs": backoff_ms,
+                                    "model": base_payload["model"],
+                                    "baseUrl": base_payload["baseUrl"],
+                                    "provider": base_payload["provider"],
+                                    "transport": base_payload["transport"],
+                                    "phase": base_payload["phase"],
+                                    "llmId": base_payload["llmId"],
+                                    "request": base_payload["request"],
+                                })),
+                            );
+                            if let Some(delay) = backoff_ms {
+                                sleep(Duration::from_millis(delay)).await;
+                            }
+                            continue;
+                        }
+                    }
                 }
                 Err(err) => {
                     last_error = format!("{}: {}", err.kind.as_str(), err.message);
@@ -254,52 +300,36 @@ impl LlmPort for OpenAiCompatLlmClient {
         }
 
         Err(LlmError::new(
-            LlmErrorKind::Http,
+            LlmErrorKind::InvalidSemantic,
             format!("llm call failed after {} attempts: {}", max_attempts, last_error),
         ))
     }
+}
 
-    async fn call_batch_json(
+impl LlmPort for OpenAiCompatLlmClient {
+    async fn call_json(
         &self,
         context: &LlmCallContext,
-        tasks: Vec<LlmJsonTask>,
-        concurrency: usize,
-    ) -> Vec<(usize, Result<LlmJsonResult, LlmError>)> {
-        let task_ids: Vec<usize> = tasks.iter().map(|task| task.id).collect();
-        let task_items = tasks;
-        let client = self.clone();
-        let context = context.clone();
-        run_indexed_concurrent(
-            task_items,
-            concurrency,
-            move |item| {
-                let client = client.clone();
-                let context = context.clone();
-                async move {
-                    client
-                        .call_json(
-                            &context,
-                            &item.request_id,
-                            &item.system_prompt,
-                            &item.user_prompt,
-                            item.response_validator.as_ref(),
-                        )
-                        .await
-                }
-            },
-            |message| LlmError::new(LlmErrorKind::TaskJoin, message),
-        )
-        .await
-        .into_iter()
-        .map(|(ordered_index, result)| {
-            let task_id = task_ids
-                .get(ordered_index)
-                .copied()
-                .unwrap_or(usize::MAX);
-            (task_id, result)
+        request_id: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+        response_validator: Option<&JsonResponseValidator>,
+    ) -> Result<LlmJsonResult, LlmError> {
+        let result = self
+            .call_json_validated(
+                context,
+                request_id,
+                system_prompt,
+                user_prompt,
+                response_validator,
+                Ok::<Value, LlmSemanticValidationError>,
+            )
+            .await?;
+        Ok(LlmJsonResult {
+            json: result.value,
         })
-        .collect()
     }
+
 }
 
 fn retry_backoff_ms(attempt: u32, max_attempts: u32) -> Option<u64> {

@@ -5,6 +5,7 @@ pub enum LlmErrorKind {
     Http,
     InvalidJson,
     InvalidSchema,
+    InvalidSemantic,
     TaskJoin,
     Config,
 }
@@ -15,6 +16,7 @@ impl LlmErrorKind {
             LlmErrorKind::Http => "http",
             LlmErrorKind::InvalidJson => "invalid_json",
             LlmErrorKind::InvalidSchema => "invalid_schema",
+            LlmErrorKind::InvalidSemantic => "invalid_semantic",
             LlmErrorKind::TaskJoin => "task_join",
             LlmErrorKind::Config => "config",
         }

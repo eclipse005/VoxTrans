@@ -7,9 +7,11 @@ use voxtrans_core::subtitle::text_rules::{
 };
 
 use crate::services::task_log::TaskLogger;
-use crate::services::llm::client::OpenAiCompatLlmClient;
+use crate::services::llm::batch::run_indexed_concurrent;
+use crate::services::llm::client::{LlmSemanticValidationError, OpenAiCompatLlmClient};
 use crate::services::llm::json_guard::JsonResponseValidator;
-use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, LlmPort, next_llm_request_id};
+use crate::services::llm::error::{LlmError, LlmErrorKind};
+use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 use crate::services::translate::prompt::{
     PunctuationPromptInput, build_punctuation_system_prompt, build_punctuation_user_prompt,
 };
@@ -156,37 +158,60 @@ pub async fn optimize_words_with_llm(
         media_path: Some(media_path.to_string()),
         phase: "punctuate".to_string(),
     };
-    let extraction_result = llm_client
-        .call_batch_json(&context, tasks, concurrency)
-        .await;
+    let extraction_result = run_indexed_concurrent(
+        tasks,
+        concurrency,
+        move |task| {
+            let llm_client = llm_client.clone();
+            let context = context.clone();
+            async move {
+                llm_client
+                    .call_json_validated(
+                        &context,
+                        &task.request_id,
+                        &task.system_prompt,
+                        &task.user_prompt,
+                        task.response_validator.as_ref(),
+                        |json| {
+                            let extraction = serde_json::from_value::<PunctuationExtraction>(json)
+                                .map_err(|err| {
+                                    LlmSemanticValidationError::retryable(format!(
+                                        "punctuation parse failed: {err}"
+                                    ))
+                                })?;
+                            if extraction.punctuated_text.trim().is_empty() {
+                                return Err(LlmSemanticValidationError::retryable(
+                                    "punctuation result is empty",
+                                ));
+                            }
+                            Ok(extraction)
+                        },
+                    )
+                    .await
+                    .map(|result| result.value)
+            }
+        },
+        |message| LlmError::new(LlmErrorKind::TaskJoin, message),
+    )
+    .await;
 
     let mut optimized = words.clone();
     let mut changed_tokens = 0usize;
     let mut llm_error_total = 0usize;
-    let mut empty_result_total = 0usize;
+    let empty_result_total = 0usize;
     let mut applied_total = 0usize;
     for (result_idx, result) in extraction_result {
         let Some((span_idx, _)) = prompt_tasks.get(result_idx) else {
             llm_error_total += 1;
             continue;
         };
-        let json = match result {
-            Ok(ok) => ok.json,
+        let extraction = match result {
+            Ok(ok) => ok,
             Err(err) => {
                 return Err(format!("punctuation failed: {}", err.message));
             }
         };
-        let extraction = match serde_json::from_value::<PunctuationExtraction>(json) {
-            Ok(v) => v,
-            Err(err) => {
-                return Err(format!("punctuation parse failed: {err}"));
-            }
-        };
         let punctuated = extraction.punctuated_text.trim().to_string();
-        if punctuated.is_empty() {
-            empty_result_total += 1;
-            continue;
-        }
         let span = match spans.get(*span_idx) {
             Some(v) => v,
             None => continue,

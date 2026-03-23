@@ -51,7 +51,6 @@ pub struct LlmJsonTask {
 
 #[derive(Debug, Clone)]
 pub struct LlmJsonResult {
-    pub request_id: String,
     pub json: Value,
 }
 
@@ -73,11 +72,4 @@ pub trait LlmPort {
         user_prompt: &str,
         response_validator: Option<&JsonResponseValidator>,
     ) -> Result<LlmJsonResult, LlmError>;
-
-    async fn call_batch_json(
-        &self,
-        context: &LlmCallContext,
-        tasks: Vec<LlmJsonTask>,
-        concurrency: usize,
-    ) -> Vec<(usize, Result<LlmJsonResult, LlmError>)>;
 }

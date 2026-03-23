@@ -57,18 +57,6 @@ pub struct SegmentOptimizePromptInput {
     pub preferred_segment_count: usize,
     pub source_text: String,
     pub translated_text: String,
-    pub reference_candidates: Vec<SegmentOptimizePromptCandidateInput>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SegmentOptimizePromptSegmentInput {
-    pub source_text: String,
-    pub translated_text: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct SegmentOptimizePromptCandidateInput {
-    pub segments: Vec<SegmentOptimizePromptSegmentInput>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
@@ -91,10 +79,11 @@ Output JSON only in this shape: {\"segments\":[{\"index\":1,\"translation\":\"..
 }
 
 pub fn build_segment_optimize_system_prompt() -> String {
-    "You are a subtitle segmentation optimizer. Produce the final subtitle split for the current overlong subtitle in one shot. \
+    "You are a professional bilingual subtitle splitter. \
+Choose the best final split for one overlong subtitle, optimizing for semantic completeness, natural reading rhythm, bilingual watchability, and clean alignment. \
+Consider multiple plausible split approaches internally, then return only the best result. \
 Return JSON only in this shape: {\"segments\":[{\"origin\":\"...\",\"translation\":\"...\"}],\"reason\":\"...\",\"confidence\":0.0}. \
-Return either 2 or 3 segments. Prefer the provided preferredSegmentCount when it keeps the result natural, but return 2 or 3 based on the best watchable outcome. \
-Keep source and target segment counts identical. Do not add commentary."
+Return 2 or 3 segments, keep origin and translation counts identical, and do not add commentary."
         .to_string()
 }
 
@@ -230,26 +219,13 @@ pub fn build_segment_optimize_user_prompt(input: &SegmentOptimizePromptInput) ->
             "origin": input.source_text,
             "translation": input.translated_text,
         },
-        "referenceCandidates": input.reference_candidates.iter().map(|candidate| {
-            serde_json::json!({
-                "segments": candidate.segments.iter().map(|segment| {
-                    serde_json::json!({
-                        "origin": segment.source_text,
-                        "translation": segment.translated_text,
-                    })
-                }).collect::<Vec<_>>()
-            })
-        }).collect::<Vec<_>>(),
         "rules": [
-            "Treat this as a one-shot final segmentation decision for the current original subtitle",
             "Preserve meaning; do not add or remove information",
-            "Prefer semantically complete segments",
-            "Keep subtitle reading flow natural and watchable",
-            "Use referenceCandidates only as helpers; you may improve split boundaries when needed",
-            "Return either 2 or 3 segments",
-            "Prefer preferredSegmentCount when natural, but do not force it if 2 or 3 is clearly better",
-            "Keep source and translated segment counts identical",
-            "Keep origin and translation non-empty for every returned segment",
+            "Prefer natural split points such as punctuation, clauses, conjunctions, and semantic pauses",
+            "Keep segments natural, watchable, and reasonably balanced",
+            "Align origin and translation for comfortable bilingual viewing, but do not force unnatural word-order mirroring",
+            "Prefer preferredSegmentCount when natural, but return whichever of 2 or 3 is better",
+            "Keep every segment non-empty",
             "Only adjust split boundaries; do not rewrite beyond what is needed for split alignment"
         ],
         "output": {
