@@ -49,7 +49,6 @@ export function useAppPersistence(dispatch: DispatchState) {
         const terminologyGroups = normalizeTerminologyGroups(terminologyGroupsRaw);
         const enableTerminology = Boolean(res.settings.enableTerminology ?? true);
         const enablePunctuationOptimization = Boolean(res.settings.enablePunctuationOptimization);
-        const enableAsrCorrection = Boolean(res.settings.enableAsrCorrection ?? true);
         const enableSubtitleBeautify = Boolean(res.settings.enableSubtitleBeautify ?? true);
 
         dispatch({
@@ -69,7 +68,6 @@ export function useAppPersistence(dispatch: DispatchState) {
             terminologyGroups,
             enableTerminology,
             enablePunctuationOptimization,
-            enableAsrCorrection,
             enableSubtitleBeautify,
           },
         });
@@ -90,7 +88,6 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftTerminologyGroups: terminologyGroups,
             draftEnableTerminology: enableTerminology,
             draftEnablePunctuationOptimization: enablePunctuationOptimization,
-            draftEnableAsrCorrection: enableAsrCorrection,
             draftEnableSubtitleBeautify: enableSubtitleBeautify,
           },
         });

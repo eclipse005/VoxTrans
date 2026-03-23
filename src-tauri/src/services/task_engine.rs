@@ -5,12 +5,11 @@ use std::path::Path;
 pub const INTENT_TRANSCRIBE: &str = "TRANSCRIBE";
 pub const INTENT_TRANSCRIBE_TRANSLATE: &str = "TRANSCRIBE_TRANSLATE";
 
-const TASK_STAGES: [&str; 10] = [
+const TASK_STAGES: [&str; 9] = [
     "init",
     "separate",
     "asr",
     "punctuate",
-    "correct",
     "segment",
     "summarize",
     "translate",

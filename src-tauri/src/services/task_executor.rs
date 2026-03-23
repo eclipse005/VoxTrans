@@ -13,7 +13,7 @@ use crate::app_state::TaskWorkerRuntime;
 use crate::services::file::save_srt;
 use crate::services::preferences::load_user_preferences;
 use crate::services::task_context::{
-    STAGE_ASR, STAGE_COMPOSE, STAGE_CORRECT, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEPARATE,
+    STAGE_ASR, STAGE_COMPOSE, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEPARATE,
     STAGE_SUMMARIZE, STAGE_TRANSLATE, STAGE_QA, STAGE_QA_LAYOUT, STAGE_QA_QUALITY, TaskContext,
     TaskContextSeed,
 };
@@ -26,7 +26,7 @@ use crate::services::transcribe::{
     transcribe_blocking,
 };
 use crate::services::transcription::{
-    CorrectionConfig, CorrectionTerminologyEntry, PunctuationConfig, correct_words_with_llm,
+    PunctuationConfig,
     optimize_words_with_llm,
 };
 use crate::services::translate::types::{
@@ -1015,54 +1015,6 @@ async fn run_transcribe_and_maybe_translate(
     )
     .await?;
 
-    words = run_stage(
-        pool,
-        &task.id,
-        context,
-        STAGE_CORRECT,
-        |ctx| load_stage_words(ctx, STAGE_CORRECT),
-        |value| !value.is_empty(),
-        || {
-            emit_bridge_event(
-                app,
-                "transcribe-phase",
-                &TranscribePhaseEvent {
-                    task_id: task.id.clone(),
-                    phase: "correct".to_string(),
-                    phase_detail: None,
-                },
-            );
-            let words_for_exec = words.clone();
-            let media_path = task.media_path.clone();
-            let task_id = task.id.clone();
-            let source_lang = task.source_lang.clone();
-            let settings = settings_before_post.clone();
-            async move {
-                let corrected_words = correct_words_with_llm(
-                    &task_id,
-                    &media_path,
-                    to_core_words(words_for_exec),
-                    &CorrectionConfig {
-                        source_lang,
-                        base_url: settings.translate_base_url.clone(),
-                        api_key: settings.translate_api_key.clone(),
-                        model: settings.translate_model.clone(),
-                        terminology_entries: if settings.enable_terminology {
-                            map_correction_terminology_entries(&settings.terminology_groups)
-                        } else {
-                            Vec::new()
-                        },
-                    },
-                )
-                .await?;
-                Ok(from_core_words(corrected_words))
-            }
-        },
-        |value| json!({ "wordTotal": value.len(), "words": value }),
-        |_| Value::Null,
-    )
-    .await?;
-
     let processed = run_stage(
         pool,
         &task.id,
@@ -1463,9 +1415,7 @@ async fn run_translate_from_existing_segments(
     context: &mut TaskContext,
 ) -> Result<DonePayload, String> {
     let settings = load_user_preferences(pool).await?.settings;
-    let latest_words = if let words @ Some(_) = load_stage_words(context, STAGE_CORRECT) {
-        words
-    } else if let words @ Some(_) = load_stage_words(context, STAGE_PUNCTUATE) {
+    let latest_words = if let words @ Some(_) = load_stage_words(context, STAGE_PUNCTUATE) {
         words
     } else {
         load_stage_words(context, STAGE_ASR)
@@ -1869,7 +1819,6 @@ fn load_stage_words(context: &TaskContext, stage: &str) -> Option<Vec<WordTokenD
     }
     let output = match stage {
         STAGE_PUNCTUATE => &context.stages.punctuate.output,
-        STAGE_CORRECT => &context.stages.correct.output,
         _ => return None,
     };
     let words_value = output.get("words")?.clone();
@@ -2167,22 +2116,6 @@ fn map_terminology_entries(
         .collect()
 }
 
-fn map_correction_terminology_entries(
-    groups: &[crate::services::preferences::TerminologyGroup],
-) -> Vec<CorrectionTerminologyEntry> {
-    groups
-        .iter()
-        .flat_map(|group| {
-            group.terms.iter().map(|term| CorrectionTerminologyEntry {
-                source: term.origin.trim().to_string(),
-                target: term.target.trim().to_string(),
-                note: term.note.trim().to_string(),
-            })
-        })
-        .filter(|entry| !entry.source.is_empty() && !entry.target.is_empty())
-        .collect()
-}
-
 #[derive(Debug, sqlx::FromRow)]
 struct TaskStageSnapshotRow {
     stage: String,
@@ -2319,7 +2252,6 @@ async fn persist_task_context(
         (STAGE_SEPARATE, &context.stages.separate),
         (STAGE_ASR, &context.stages.asr),
         (STAGE_PUNCTUATE, &context.stages.punctuate),
-        (STAGE_CORRECT, &context.stages.correct),
         (STAGE_SEGMENT, &context.stages.segment),
         (STAGE_SUMMARIZE, &context.stages.summarize),
         (STAGE_TRANSLATE, &context.stages.translate),

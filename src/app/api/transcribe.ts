@@ -39,7 +39,6 @@ type RunPostAsrPipelineRequest = {
   words: WordToken[];
   subtitleMaxWordsPerSegment: number;
   enablePunctuationOptimization: boolean;
-  enableAsrCorrection: boolean;
   translateApiKey: string;
   translateBaseUrl: string;
   translateModel: string;

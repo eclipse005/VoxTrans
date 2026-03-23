@@ -2,9 +2,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::services::task_log::{TaskLogger, event};
-use super::correction::{
-    CorrectionConfig, CorrectionTerminologyEntry, correct_words_with_llm,
-};
 use crate::services::transcribe::{
     BuildSegmentsRequest, SegmentWithWordsDto, WordTokenDto, build_segments_from_words,
 };
@@ -19,16 +16,8 @@ pub struct RunPostAsrPipelineRequest {
     pub audio_path: String,
     pub words: Vec<WordTokenDto>,
     pub subtitle_max_words_per_segment: u32,
-    #[serde(default = "default_source_lang")]
-    pub source_lang: String,
     #[serde(default)]
     pub enable_punctuation_optimization: bool,
-    #[serde(default = "default_true")]
-    pub enable_asr_correction: bool,
-    #[serde(default)]
-    pub enable_terminology: bool,
-    #[serde(default)]
-    pub terminology_entries: Vec<CorrectionTerminologyEntryDto>,
     #[serde(default)]
     pub translate_api_key: String,
     #[serde(default)]
@@ -79,30 +68,6 @@ where
         .await?,
     );
 
-    let words = if request.enable_asr_correction {
-        on_phase("correct");
-        from_core_words(
-            correct_words_with_llm(
-                &request.task_id,
-                &request.audio_path,
-                to_core_words(words),
-                &CorrectionConfig {
-                    source_lang: request.source_lang.clone(),
-                    base_url: request.translate_base_url.clone(),
-                    api_key: request.translate_api_key.clone(),
-                    model: request.translate_model.clone(),
-                    terminology_entries: if request.enable_terminology {
-                        map_correction_terminology_entries(&request.terminology_entries)
-                    } else {
-                        Vec::new()
-                    },
-                },
-            )
-            .await?,
-        )
-    } else {
-        words
-    };
     let words_output_path = String::new();
 
     on_phase("segment");
@@ -142,14 +107,6 @@ fn default_llm_concurrency() -> u32 {
     4
 }
 
-fn default_source_lang() -> String {
-    "auto".to_string()
-}
-
-fn default_true() -> bool {
-    true
-}
-
 fn round2(value: f64) -> f64 {
     if !value.is_finite() {
         return 0.0;
@@ -176,30 +133,5 @@ fn from_core_words(words: Vec<WordToken>) -> Vec<WordTokenDto> {
             end: word.end,
             word: word.word,
         })
-        .collect()
-}
-
-#[derive(Debug, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct CorrectionTerminologyEntryDto {
-    #[serde(default)]
-    pub source: String,
-    #[serde(default)]
-    pub target: String,
-    #[serde(default)]
-    pub note: String,
-}
-
-fn map_correction_terminology_entries(
-    items: &[CorrectionTerminologyEntryDto],
-) -> Vec<CorrectionTerminologyEntry> {
-    items
-        .iter()
-        .map(|item| CorrectionTerminologyEntry {
-            source: item.source.trim().to_string(),
-            target: item.target.trim().to_string(),
-            note: item.note.trim().to_string(),
-        })
-        .filter(|entry| !entry.source.is_empty() && !entry.target.is_empty())
         .collect()
 }

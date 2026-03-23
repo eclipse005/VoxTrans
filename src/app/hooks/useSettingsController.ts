@@ -31,7 +31,6 @@ type UseSettingsControllerArgs = {
   draftTerminologyGroups: SavedSettings["terminologyGroups"];
   draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
-  draftEnableAsrCorrection: boolean;
   draftEnableSubtitleBeautify: boolean;
   dispatch: DispatchState;
   pushToast: PushToast;
@@ -54,7 +53,6 @@ export function useSettingsController({
   draftTerminologyGroups,
   draftEnableTerminology,
   draftEnablePunctuationOptimization,
-  draftEnableAsrCorrection,
   draftEnableSubtitleBeautify,
   dispatch,
   pushToast,
@@ -79,7 +77,6 @@ export function useSettingsController({
         draftTerminologyGroups: settings.terminologyGroups,
         draftEnableTerminology: settings.enableTerminology,
         draftEnablePunctuationOptimization: settings.enablePunctuationOptimization,
-        draftEnableAsrCorrection: settings.enableAsrCorrection,
         draftEnableSubtitleBeautify: settings.enableSubtitleBeautify,
       },
     });
@@ -101,7 +98,6 @@ export function useSettingsController({
     settings.llmConcurrency,
     settings.terminologyGroups,
     settings.enableTerminology,
-    settings.enableAsrCorrection,
     settings.enableSubtitleBeautify,
   ]);
 
@@ -147,7 +143,6 @@ export function useSettingsController({
       terminologyGroups: normalizeTerminologyGroups(draftTerminologyGroups),
       enableTerminology: draftEnableTerminology,
       enablePunctuationOptimization: draftEnablePunctuationOptimization,
-      enableAsrCorrection: draftEnableAsrCorrection,
       enableSubtitleBeautify: draftEnableSubtitleBeautify,
     } satisfies SavedSettings;
 
@@ -171,7 +166,6 @@ export function useSettingsController({
         draftTerminologyGroups: nextSettings.terminologyGroups,
         draftEnableTerminology: nextSettings.enableTerminology,
         draftEnablePunctuationOptimization,
-        draftEnableAsrCorrection,
         draftEnableSubtitleBeautify,
       },
     });
@@ -200,7 +194,6 @@ export function useSettingsController({
     draftTerminologyGroups,
     draftEnableTerminology,
     pushToast,
-    draftEnableAsrCorrection,
     draftEnableSubtitleBeautify,
   ]);
 

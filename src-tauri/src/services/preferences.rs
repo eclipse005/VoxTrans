@@ -17,7 +17,6 @@ const KEY_LLM_CONCURRENCY: &str = "settings.llmConcurrency";
 const KEY_TERMINOLOGY_GROUPS: &str = "settings.terminologyGroups";
 const KEY_ENABLE_TERMINOLOGY: &str = "settings.enableTerminology";
 const KEY_ENABLE_PUNCTUATION_OPTIMIZATION: &str = "settings.enablePunctuationOptimization";
-const KEY_ENABLE_ASR_CORRECTION: &str = "settings.enableAsrCorrection";
 const KEY_ENABLE_SUBTITLE_BEAUTIFY: &str = "settings.enableSubtitleBeautify";
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -58,8 +57,6 @@ pub struct SavedSettings {
     #[serde(default = "default_true")]
     pub enable_terminology: bool,
     pub enable_punctuation_optimization: bool,
-    #[serde(default = "default_true")]
-    pub enable_asr_correction: bool,
     #[serde(default = "default_true")]
     pub enable_subtitle_beautify: bool,
 }
@@ -179,16 +176,6 @@ pub async fn save_app_settings(
     .await?;
     set_setting(
         &mut tx,
-        KEY_ENABLE_ASR_CORRECTION,
-        if request.settings.enable_asr_correction {
-            "1"
-        } else {
-            "0"
-        },
-    )
-    .await?;
-    set_setting(
-        &mut tx,
         KEY_ENABLE_SUBTITLE_BEAUTIFY,
         if request.settings.enable_subtitle_beautify {
             "1"
@@ -259,10 +246,6 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         .await?
         .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
         .unwrap_or(false);
-    let enable_asr_correction = get_setting(pool, KEY_ENABLE_ASR_CORRECTION)
-        .await?
-        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
-        .unwrap_or(true);
     let enable_subtitle_beautify = get_setting(pool, KEY_ENABLE_SUBTITLE_BEAUTIFY)
         .await?
         .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
@@ -282,7 +265,6 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         terminology_groups,
         enable_terminology,
         enable_punctuation_optimization,
-        enable_asr_correction,
         enable_subtitle_beautify,
     })
 }

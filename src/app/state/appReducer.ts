@@ -28,7 +28,6 @@ export type AppState = {
   draftTerminologyGroups: SavedSettings["terminologyGroups"];
   draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
-  draftEnableAsrCorrection: boolean;
   draftEnableSubtitleBeautify: boolean;
   youtubeUrl: string;
   youtubeQuality: string;
@@ -103,7 +102,6 @@ export type SettingsAction =
           | "draftTerminologyGroups"
           | "draftEnableTerminology"
           | "draftEnablePunctuationOptimization"
-          | "draftEnableAsrCorrection"
           | "draftEnableSubtitleBeautify"
         >
       >;
@@ -127,7 +125,6 @@ export const defaultSettings: SavedSettings = {
   terminologyGroups: [createTerminologyGroup()],
   enableTerminology: true,
   enablePunctuationOptimization: false,
-  enableAsrCorrection: true,
   enableSubtitleBeautify: true,
 };
 
@@ -153,7 +150,6 @@ export const initialAppState: AppState = {
   draftTerminologyGroups: defaultSettings.terminologyGroups,
   draftEnableTerminology: defaultSettings.enableTerminology,
   draftEnablePunctuationOptimization: defaultSettings.enablePunctuationOptimization,
-  draftEnableAsrCorrection: defaultSettings.enableAsrCorrection,
   draftEnableSubtitleBeautify: defaultSettings.enableSubtitleBeautify,
   youtubeUrl: "",
   youtubeQuality: "",

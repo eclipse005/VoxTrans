@@ -32,7 +32,6 @@ export type SavedSettings = {
   terminologyGroups: TerminologyGroup[];
   enableTerminology: boolean;
   enablePunctuationOptimization: boolean;
-  enableAsrCorrection: boolean;
   enableSubtitleBeautify: boolean;
 };
 
@@ -44,7 +43,6 @@ export type TranscribePhase =
   | "separating"
   | "recognizing"
   | "punctuate"
-  | "correct"
   | "segment"
   | "summarize"
   | "translate"

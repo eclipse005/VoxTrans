@@ -75,7 +75,6 @@ function App() {
     draftTerminologyGroups,
     draftEnableTerminology,
     draftEnablePunctuationOptimization,
-    draftEnableAsrCorrection,
     draftEnableSubtitleBeautify,
     youtubeUrl,
     toast,
@@ -189,7 +188,6 @@ function App() {
     draftTerminologyGroups,
     draftEnableTerminology,
     draftEnablePunctuationOptimization,
-    draftEnableAsrCorrection,
     draftEnableSubtitleBeautify,
     dispatch,
     pushToast,
@@ -299,7 +297,6 @@ function App() {
         draftLlmConcurrencyInput={draftLlmConcurrencyInput}
         draftEnableTerminology={draftEnableTerminology}
         draftEnablePunctuationOptimization={draftEnablePunctuationOptimization}
-        draftEnableAsrCorrection={draftEnableAsrCorrection}
         draftEnableSubtitleBeautify={draftEnableSubtitleBeautify}
         asrStatus={asrStatus}
         demucsStatus={demucsStatus}
@@ -318,7 +315,6 @@ function App() {
         onDraftLlmConcurrencyInputChange={(value) => dispatch({ type: "set_draft", payload: { draftLlmConcurrencyInput: value } })}
         onDraftEnableTerminologyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableTerminology: value } })}
         onDraftEnablePunctuationOptimizationChange={(value) => dispatch({ type: "set_draft", payload: { draftEnablePunctuationOptimization: value } })}
-        onDraftEnableAsrCorrectionChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableAsrCorrection: value } })}
         onDraftEnableSubtitleBeautifyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableSubtitleBeautify: value } })}
         onTestTranslateConnection={testTranslateConnection}
         onOpenModelDir={openModelDir}

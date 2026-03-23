@@ -24,7 +24,6 @@ type SettingsModalProps = {
   draftLlmConcurrencyInput: string;
   draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
-  draftEnableAsrCorrection: boolean;
   draftEnableSubtitleBeautify: boolean;
   asrStatus: ModelStatusResponse | null;
   demucsStatus: ModelStatusResponse | null;
@@ -43,7 +42,6 @@ type SettingsModalProps = {
   onDraftLlmConcurrencyInputChange: (value: string) => void;
   onDraftEnableTerminologyChange: (value: boolean) => void;
   onDraftEnablePunctuationOptimizationChange: (value: boolean) => void;
-  onDraftEnableAsrCorrectionChange: (value: boolean) => void;
   onDraftEnableSubtitleBeautifyChange: (value: boolean) => void;
   onTestTranslateConnection: () => void | Promise<void>;
   onOpenModelDir: (target: "asr" | "demucs") => void | Promise<void>;
@@ -102,7 +100,6 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftLlmConcurrencyInput,
     draftEnableTerminology,
     draftEnablePunctuationOptimization,
-    draftEnableAsrCorrection,
     draftEnableSubtitleBeautify,
     asrStatus,
     demucsStatus,
@@ -121,7 +118,6 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftLlmConcurrencyInputChange,
     onDraftEnableTerminologyChange,
     onDraftEnablePunctuationOptimizationChange,
-    onDraftEnableAsrCorrectionChange,
     onDraftEnableSubtitleBeautifyChange,
     onTestTranslateConnection,
     onOpenModelDir,
@@ -251,19 +247,6 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <div className="toggle-label">
                       <span className="toggle-title">标点符号优化</span>
                       <span className="toggle-desc">使用 LLM 优化大小写标点符号，有益于断句。</span>
-                    </div>
-                    <span className="toggle-switch" />
-                  </label>
-                  <label className="setting-toggle" htmlFor="enable-asr-correction">
-                    <input
-                      id="enable-asr-correction"
-                      type="checkbox"
-                      checked={draftEnableAsrCorrection}
-                      onChange={(e) => onDraftEnableAsrCorrectionChange(e.target.checked)}
-                    />
-                    <div className="toggle-label">
-                      <span className="toggle-title">识别矫正</span>
-                      <span className="toggle-desc">利用 LLM 矫正识别错误，配合术语效果更好。</span>
                     </div>
                     <span className="toggle-switch" />
                   </label>

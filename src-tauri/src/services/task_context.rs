@@ -5,7 +5,6 @@ pub const STAGE_INIT: &str = "init";
 pub const STAGE_SEPARATE: &str = "separate";
 pub const STAGE_ASR: &str = "asr";
 pub const STAGE_PUNCTUATE: &str = "punctuate";
-pub const STAGE_CORRECT: &str = "correct";
 pub const STAGE_SEGMENT: &str = "segment";
 pub const STAGE_SUMMARIZE: &str = "summarize";
 pub const STAGE_TRANSLATE: &str = "translate";
@@ -66,7 +65,6 @@ pub struct StageMap {
     pub separate: StageEnvelope,
     pub asr: StageEnvelope,
     pub punctuate: StageEnvelope,
-    pub correct: StageEnvelope,
     pub segment: StageEnvelope,
     pub summarize: StageEnvelope,
     pub translate: StageEnvelope,
@@ -336,7 +334,6 @@ impl TaskContext {
             STAGE_SEPARATE => Some(&mut self.stages.separate),
             STAGE_ASR => Some(&mut self.stages.asr),
             STAGE_PUNCTUATE => Some(&mut self.stages.punctuate),
-            STAGE_CORRECT => Some(&mut self.stages.correct),
             STAGE_SEGMENT => Some(&mut self.stages.segment),
             STAGE_SUMMARIZE => Some(&mut self.stages.summarize),
             STAGE_TRANSLATE => Some(&mut self.stages.translate),
@@ -355,7 +352,6 @@ impl TaskContext {
             STAGE_SEPARATE => Some(&self.stages.separate),
             STAGE_ASR => Some(&self.stages.asr),
             STAGE_PUNCTUATE => Some(&self.stages.punctuate),
-            STAGE_CORRECT => Some(&self.stages.correct),
             STAGE_SEGMENT => Some(&self.stages.segment),
             STAGE_SUMMARIZE => Some(&self.stages.summarize),
             STAGE_TRANSLATE => Some(&self.stages.translate),
@@ -376,7 +372,6 @@ impl StageMap {
             separate: StageEnvelope::new(),
             asr: StageEnvelope::new(),
             punctuate: StageEnvelope::new(),
-            correct: StageEnvelope::new(),
             segment: StageEnvelope::new(),
             summarize: StageEnvelope::new(),
             translate: StageEnvelope::new(),
