@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use crate::services::binary::resolve_bundled_or_path;
+use crate::services::binary::{configure_background_command, resolve_bundled_or_path};
 
 pub(super) fn prepare_demucs_input(input_path: &Path, output_root: &Path) -> Result<PathBuf, String> {
     let is_wav = input_path
@@ -19,7 +19,9 @@ pub(super) fn prepare_demucs_input(input_path: &Path, output_root: &Path) -> Res
 
 fn extract_audio_with_ffmpeg(input_path: &Path, output_wav: &Path) -> Result<(), String> {
     let ffmpeg_bin = resolve_bundled_or_path("ffmpeg");
-    let output = Command::new(&ffmpeg_bin)
+    let mut command = Command::new(&ffmpeg_bin);
+    configure_background_command(&mut command);
+    let output = command
         .arg("-y")
         .arg("-i")
         .arg(input_path)

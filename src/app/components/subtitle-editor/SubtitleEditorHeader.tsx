@@ -1,6 +1,8 @@
 import { DownloadIcon, LogsIcon } from "../Icons";
 
 type SubtitleEditorHeaderProps = {
+  canEdit: boolean;
+  readOnlyReason?: string;
   cueCount: number;
   taskName: string;
   onOpenSrtDir: () => void | Promise<void>;
@@ -9,6 +11,8 @@ type SubtitleEditorHeaderProps = {
 };
 
 export default function SubtitleEditorHeader({
+  canEdit,
+  readOnlyReason = "",
   cueCount,
   taskName,
   onOpenSrtDir,
@@ -38,6 +42,12 @@ export default function SubtitleEditorHeader({
               <span title={taskName || "--"}>{taskName || "--"}</span>
             </button>
           </div>
+          {!canEdit && readOnlyReason ? (
+            <div className="subtitle-meta-row">
+              <span className="subtitle-meta-label">状态:</span>
+              <span>{readOnlyReason}</span>
+            </div>
+          ) : null}
         </div>
       </div>
       <div className="subtitle-header-actions">

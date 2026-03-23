@@ -10,6 +10,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};
 use tauri::Emitter;
 
 use crate::app_state::TaskWorkerRuntime;
+use crate::services::binary::configure_background_command;
 use crate::services::task_executor::{ExecuteTaskRunRequest, execute_task_run};
 use crate::services::task_usage;
 
@@ -127,6 +128,7 @@ pub fn spawn_worker(
 
     let exe = std::env::current_exe().map_err(|err| err.to_string())?;
     let mut command = Command::new(exe);
+    configure_background_command(&mut command);
     command
         .arg(WORKER_ARG)
         .arg("--task-id")

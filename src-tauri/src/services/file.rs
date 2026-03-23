@@ -1,9 +1,11 @@
+use crate::services::final_subtitle::{
+    FinalSubtitleTrack, final_subtitle_segments_to_srt, parse_final_subtitle_segments,
+};
 use crate::services::task_log::{TaskLogger, event};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
-use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,18 +55,6 @@ struct ExportTaskRow {
     source_lang: String,
     target_lang: String,
     subtitle_segments_json: String,
-    result_srt: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SubtitleSegmentExport {
-    start_ms: i64,
-    end_ms: i64,
-    #[serde(default)]
-    source_text: String,
-    #[serde(default)]
-    translated_text: String,
 }
 
 pub fn save_srt(request: SaveSrtRequest) -> Result<(), String> {
@@ -188,7 +178,7 @@ pub async fn export_task_srts(
 
     let started_at = std::time::Instant::now();
     let row = sqlx::query_as::<_, ExportTaskRow>(
-        "SELECT id, name, media_path, source_lang, target_lang, subtitle_segments_json, result_srt
+        "SELECT id, name, media_path, source_lang, target_lang, subtitle_segments_json
          FROM task_runs
          WHERE id = ?",
     )
@@ -204,14 +194,10 @@ pub async fn export_task_srts(
         return Err(format!("导出目录不存在: {}", target_dir));
     }
 
-    let segments = parse_subtitle_segments(&row.subtitle_segments_json);
-    let source_from_editor = row.result_srt.trim().to_string();
-    let source_srt = if source_from_editor.is_empty() {
-        build_srt_from_segments(&segments, ExportSrtItem::Source)
-    } else {
-        source_from_editor
-    };
-    let has_source = !source_srt.trim().is_empty();
+    let segments = parse_final_subtitle_segments(&row.subtitle_segments_json);
+    if segments.is_empty() {
+        return Err("最终字幕为空，无法导出".to_string());
+    }
 
     let source_suffix = normalize_lang_suffix(&row.source_lang, "en");
     let target_suffix = normalize_lang_suffix(&row.target_lang, "zh");
@@ -234,14 +220,19 @@ pub async fn export_task_srts(
     for item in request.items {
         let content = match item {
             ExportSrtItem::Source => {
-                if !has_source {
-                    return Err("原文字幕为空，无法导出".to_string());
-                }
-                source_srt.clone()
+                final_subtitle_segments_to_srt(&segments, FinalSubtitleTrack::Source)
             }
-            ExportSrtItem::Target
-            | ExportSrtItem::BilingualSourceFirst
-            | ExportSrtItem::BilingualTargetFirst => build_srt_from_segments(&segments, item),
+            ExportSrtItem::Target => {
+                final_subtitle_segments_to_srt(&segments, FinalSubtitleTrack::Target)
+            }
+            ExportSrtItem::BilingualSourceFirst => final_subtitle_segments_to_srt(
+                &segments,
+                FinalSubtitleTrack::BilingualSourceFirst,
+            ),
+            ExportSrtItem::BilingualTargetFirst => final_subtitle_segments_to_srt(
+                &segments,
+                FinalSubtitleTrack::BilingualTargetFirst,
+            ),
         };
         if content.trim().is_empty() {
             return Err("所选导出项为空，无法导出".to_string());
@@ -284,43 +275,6 @@ fn round2(value: f64) -> f64 {
         return 0.0;
     }
     (value * 100.0).round() / 100.0
-}
-
-fn parse_subtitle_segments(raw: &str) -> Vec<SubtitleSegmentExport> {
-    let Ok(parsed) = serde_json::from_str::<Vec<SubtitleSegmentExport>>(raw) else {
-        return Vec::new();
-    };
-    parsed
-}
-
-fn build_srt_from_segments(segments: &[SubtitleSegmentExport], item: ExportSrtItem) -> String {
-    let cues = segments
-        .iter()
-        .enumerate()
-        .map(|(idx, segment)| {
-            let source = segment.source_text.trim();
-            let target = segment.translated_text.trim();
-            let text = match item {
-                ExportSrtItem::Source => source.to_string(),
-                ExportSrtItem::Target => target.to_string(),
-                ExportSrtItem::BilingualSourceFirst => {
-                    format!("{source}\n{target}")
-                }
-                ExportSrtItem::BilingualTargetFirst => {
-                    format!("{target}\n{source}")
-                }
-            };
-            let start_ms = segment.start_ms.max(0) as u64;
-            let end_ms = segment.end_ms.max(segment.start_ms).max(0) as u64;
-            SrtCue {
-                index: idx + 1,
-                start_ms,
-                end_ms,
-                text,
-            }
-        })
-        .collect::<Vec<_>>();
-    to_srt_from_cues(&cues)
 }
 
 fn normalize_lang_suffix(lang: &str, default_lang: &str) -> String {

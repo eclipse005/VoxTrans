@@ -1,11 +1,21 @@
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::services::workspace::{self, WorkspaceStateResponse};
+use crate::services::workspace::{
+    self, WorkspaceStateResponse, WorkspaceTaskRequest, WorkspaceTaskResponse,
+};
 
 #[tauri::command]
 pub async fn load_workspace_state(
     state: State<'_, AppState>,
 ) -> Result<WorkspaceStateResponse, String> {
     workspace::load_workspace_state(&state.pool).await
+}
+
+#[tauri::command]
+pub async fn load_workspace_task(
+    state: State<'_, AppState>,
+    request: WorkspaceTaskRequest,
+) -> Result<WorkspaceTaskResponse, String> {
+    workspace::load_workspace_task(&state.pool, request).await
 }

@@ -4,6 +4,7 @@ import { formatSrtTime } from "../../../features/media/srt";
 import { AlertIcon, EditIcon, TrashIcon } from "../Icons";
 
 type SubtitleCueListProps = {
+  canEdit: boolean;
   cues: SubtitleCue[];
   cueWarningsById: Record<string, string[]>;
   editingCueId: string;
@@ -22,6 +23,7 @@ type SubtitleCueListProps = {
 };
 
 export default function SubtitleCueList({
+  canEdit,
   cues,
   cueWarningsById,
   editingCueId,
@@ -49,7 +51,9 @@ export default function SubtitleCueList({
       }}
     >
       {cues.length === 0 ? (
-        <div className="subtitle-cue-empty">暂无字幕段，点击上方“新增字幕段”开始编辑。</div>
+        <div className="subtitle-cue-empty">
+          {canEdit ? "暂无字幕段，点击上方“新增字幕段”开始编辑。" : "任务完成后才可编辑字幕。"}
+        </div>
       ) : (
         cues.map((cue, idx) => (
           <article
@@ -84,6 +88,7 @@ export default function SubtitleCueList({
                     e.stopPropagation();
                     onToggleEdit(cue.id);
                   }}
+                  disabled={!canEdit}
                 >
                   <EditIcon />
                 </button>
@@ -94,7 +99,7 @@ export default function SubtitleCueList({
                     e.stopPropagation();
                     onDeleteCue(cue.id);
                   }}
-                  disabled={cues.length <= 1}
+                  disabled={!canEdit || cues.length <= 1}
                 >
                   <TrashIcon />
                 </button>
@@ -120,6 +125,7 @@ export default function SubtitleCueList({
                       className="apple-input"
                       defaultValue={formatSrtTime(cue.startMs)}
                       onBlur={(e) => onApplyStart(cue, e.currentTarget.value)}
+                      disabled={!canEdit}
                     />
                   </label>
                   <label className="subtitle-time-field">
@@ -129,6 +135,7 @@ export default function SubtitleCueList({
                       className="apple-input"
                       defaultValue={formatSrtTime(cue.endMs)}
                       onBlur={(e) => onApplyEnd(cue, e.currentTarget.value)}
+                      disabled={!canEdit}
                     />
                   </label>
                 </div>
@@ -140,12 +147,14 @@ export default function SubtitleCueList({
                   value={cue.text}
                   onChange={(e) => onUpdateCue(cue.id, { text: e.target.value })}
                   placeholder="输入该字幕段文本"
+                  disabled={!canEdit}
                 />
                 <textarea
                   className="subtitle-editor-textarea subtitle-row-textarea subtitle-row-textarea-translation"
                   value={cue.translatedText}
                   onChange={(e) => onUpdateCue(cue.id, { translatedText: e.target.value })}
                   placeholder="输入该字幕段译文（可选）"
+                  disabled={!canEdit}
                 />
               </>
             ) : null}

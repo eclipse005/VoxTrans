@@ -55,6 +55,7 @@ pub struct TranslatePromptInput {
 #[derive(Debug, Clone)]
 pub struct SegmentOptimizePromptInput {
     pub preferred_mode: String,
+    pub target_segment_count: usize,
     pub source_text: String,
     pub translated_text: String,
     pub candidate_actions: Vec<SegmentOptimizePromptCandidateInput>,
@@ -105,7 +106,8 @@ Output JSON only in this shape: {\"segments\":[{\"index\":1,\"translatedText\":\
 pub fn build_segment_optimize_system_prompt() -> String {
     "You are a subtitle segmentation optimizer. Decide whether the subtitle should keep its current layout or use one of the provided candidate actions. \
 Return JSON only in this shape: {\"action\":\"dual_split|source_only_split|target_only_adjust|no_change\",\"candidateId\":\"...\",\"segments\":[{\"sourceText\":\"...\",\"translatedText\":\"...\"}],\"reason\":\"...\",\"confidence\":0.0}. \
-If action is not no_change, candidateId must match one provided candidate action, segments must contain exactly 2 items, and the result must obey the selected candidate action's constraints. Do not add commentary."
+This is a one-shot final decision for the current original subtitle only; do not assume any later follow-up split on sub-parts. \
+If action is not no_change, candidateId must match one provided candidate action, segments must contain exactly the requested targetSegmentCount items, and the result must obey the selected candidate action's constraints. Do not add commentary."
         .to_string()
 }
 
@@ -237,6 +239,7 @@ pub fn build_segment_optimize_user_prompt(input: &SegmentOptimizePromptInput) ->
     let payload = serde_json::json!({
         "task": "subtitle_segment_optimize",
         "preferredMode": input.preferred_mode,
+        "targetSegmentCount": input.target_segment_count,
         "original": {
             "sourceText": input.source_text,
             "translatedText": input.translated_text,
@@ -261,6 +264,7 @@ pub fn build_segment_optimize_user_prompt(input: &SegmentOptimizePromptInput) ->
             })
         }).collect::<Vec<_>>(),
         "rules": [
+            "Treat this as a one-shot final segmentation decision for the current original subtitle",
             "Choose action=no_change if none of the candidate actions are safe and natural",
             "If you choose a candidate action, candidateId must exactly match one candidateActions.candidateId value",
             "action must match the selected candidate's action",
@@ -268,7 +272,7 @@ pub fn build_segment_optimize_user_prompt(input: &SegmentOptimizePromptInput) ->
             "Prefer semantically complete segments",
             "Keep subtitle reading flow natural and watchable",
             "Respect the selected candidate action's constraints strictly",
-            "If action is not no_change, return exactly 2 segments",
+            "If action is not no_change, return exactly targetSegmentCount segments",
             "Keep sourceText and translatedText non-empty for every returned segment",
             "Only adjust split boundaries; do not rewrite beyond what is needed for split alignment"
         ],

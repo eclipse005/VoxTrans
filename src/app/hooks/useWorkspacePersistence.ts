@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { loadWorkspaceState } from "../api/workspace";
 import { normalizeTranscribeStatus } from "../../features/media/stateMachine";
-import type { QueueItem, SubtitleSegment } from "../../features/media/types";
+import { normalizeSubtitleSegmentsJson } from "../../features/media/subtitleSegments";
+import type { QueueItem } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 
 type DispatchState = (action: AppAction) => void;
@@ -89,35 +90,6 @@ function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] 
 function clampProgress(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-function normalizeSubtitleSegmentsJson(raw: string): string {
-  return JSON.stringify(parseSubtitleSegments(raw));
-}
-
-function parseSubtitleSegments(raw: string): SubtitleSegment[] {
-  if (!raw?.trim()) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((segment) => {
-        const startMs = Number(segment?.startMs ?? 0);
-        const endMs = Number(segment?.endMs ?? startMs);
-        const sourceText = String(segment?.sourceText ?? "");
-        const translatedText = String(segment?.translatedText ?? "");
-        if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
-        return {
-          startMs: Math.max(0, Math.round(startMs)),
-          endMs: Math.max(0, Math.round(endMs)),
-          sourceText,
-          translatedText,
-        };
-      })
-      .filter((segment): segment is SubtitleSegment => segment !== null);
-  } catch {
-    return [];
-  }
 }
 
 function recoverTransientStates(item: QueueItem): QueueItem {

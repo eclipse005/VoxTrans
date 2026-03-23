@@ -11,6 +11,11 @@ use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 
 use crate::app_state::TaskWorkerRuntime;
 use crate::services::file::save_srt;
+use crate::services::final_subtitle::{
+    FinalSubtitleTrack, FinalSubtitleWord, final_subtitle_segments_from_source_segments,
+    final_subtitle_segments_from_translate_segments, final_subtitle_segments_to_srt,
+    final_subtitle_words_from_word_dtos, parse_final_subtitle_segments,
+};
 use crate::services::preferences::load_user_preferences;
 use crate::services::task_context::{
     STAGE_ASR, STAGE_COMPOSE, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEPARATE,
@@ -34,7 +39,9 @@ use crate::services::translate::types::{
 };
 use crate::services::translate::pipeline::beautify_translated_text;
 use crate::services::translate::{run_translate_summarize, run_translate_with_theme};
-use crate::services::translate::segment_optimize::{SegmentOptimizeRequest, run_segment_optimize};
+use crate::services::translate::segment_optimize::{
+    SEGMENT_OPTIMIZE_LAYOUT_VERSION, SegmentOptimizeRequest, run_segment_optimize,
+};
 
 const WORKER_EVENT_PREFIX: &str = "VOXTRANS_EVENT:";
 
@@ -237,7 +244,7 @@ pub async fn execute_task_run(
     context.task.intent = intent.clone();
     let with_translate = intent == "TRANSCRIBE_TRANSLATE";
     let run_result = if with_translate
-        && stage_is_done(context.stage_status(STAGE_QA_LAYOUT))
+        && load_segment_optimize_snapshot(&context).is_some()
         && has_translated_segments_available(&context.projections.editor.subtitle_segments_json)
     {
         Ok(done_payload_from_context(&context))
@@ -248,7 +255,6 @@ pub async fn execute_task_run(
         Ok(done_payload_from_context(&context))
     } else if with_translate
         && has_source_segments_available(&context.projections.editor.subtitle_segments_json)
-        && !has_translated_segments_available(&context.projections.editor.subtitle_segments_json)
     {
         run_translate_from_existing_segments(pool, app.as_ref(), &task, &mut context).await
     } else if let Some(asr_snapshot) = load_asr_resume_snapshot(&context) {
@@ -1151,45 +1157,25 @@ async fn run_transcribe_and_maybe_translate(
     .await?;
 
     if !with_translate {
+        let final_segments = final_subtitle_segments_from_source_segments(&processed.segments);
+        let final_source_srt =
+            final_subtitle_segments_to_srt(&final_segments, FinalSubtitleTrack::Source);
         save_srt(crate::services::file::SaveSrtRequest {
             task_id: Some(task.id.clone()),
             media_path: Some(task.media_path.clone()),
             output_path: processed.srt_output_path.clone(),
-            content: processed.srt.clone(),
+            content: final_source_srt.clone(),
         })?;
-        let segments = processed
-            .segments
-            .iter()
-            .map(|segment| {
-                json!({
-                    "startMs": (segment.start * 1000.0).round() as i64,
-                    "endMs": (segment.end * 1000.0).round() as i64,
-                    "sourceText": segment.text,
-                    "translatedText": "",
-                })
-            })
-            .collect::<Vec<_>>();
-
         return Ok(DonePayload {
             result_text: processed.text,
-            result_srt: processed.srt,
-            subtitle_segments_json: serde_json::to_string(&segments).map_err(|err| err.to_string())?,
+            result_srt: final_source_srt,
+            subtitle_segments_json: serde_json::to_string(&final_segments)
+                .map_err(|err| err.to_string())?,
             segment_total: transcribed.segment_total as i64,
         });
     }
 
-    let source_segments_json = processed
-        .segments
-        .iter()
-        .map(|segment| {
-            json!({
-                "startMs": (segment.start * 1000.0).round() as i64,
-                "endMs": (segment.end * 1000.0).round() as i64,
-                "sourceText": segment.text,
-                "translatedText": "",
-            })
-        })
-        .collect::<Vec<_>>();
+    let source_segments_json = final_subtitle_segments_from_source_segments(&processed.segments);
     let source_segments_json =
         serde_json::to_string(&source_segments_json).map_err(|err| err.to_string())?;
     context.set_queue_projection(
@@ -1374,8 +1360,7 @@ async fn run_transcribe_and_maybe_translate(
             let task_id = task.id.clone();
             let media_path = task.media_path.clone();
             let settings = settings_before_post.clone();
-            let mut final_segments = translate_snapshot.segments.clone();
-            let word_timestamps = words.clone();
+            let input_segments = translate_snapshot.segments.clone();
             let app_handle = app.cloned();
             async move {
                 emit_bridge_event(
@@ -1396,36 +1381,18 @@ async fn run_transcribe_and_maybe_translate(
                     llm_concurrency: settings.llm_concurrency,
                     source_max_words_per_segment: settings.subtitle_max_words_per_segment,
                     target_reference_len: settings.subtitle_length_reference,
-                    segments: final_segments,
+                    segments: input_segments,
                 })
                 .await
                 .map_err(|err| format!("segment optimize failed: {err}"))?;
-                final_segments = segment_optimize_result.segments;
-                let segment_optimize_report = segment_optimize_result.report;
-                let segment_optimize_applied_total = segment_optimize_result.applied_changes.len();
-                let _align_result = realign_segments_with_words(
-                    &mut final_segments,
-                    &word_timestamps
-                        .iter()
-                        .map(|w| WordTimingAnchor {
-                            start: w.start,
-                            end: w.end,
-                            word: w.word.clone(),
-                        })
-                        .collect::<Vec<_>>(),
-                );
-                let source_srt = build_srt_from_translate_segments(&final_segments, false);
-                let target_srt = build_srt_from_translate_segments(&final_segments, true);
-                let src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
-                let trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
                 Ok(SegmentOptimizeSnapshot {
-                    segments: final_segments,
-                    report: segment_optimize_report,
-                    applied_change_total: segment_optimize_applied_total,
-                    source_srt,
-                    target_srt,
-                    src_trans_srt,
-                    trans_src_srt,
+                    segments: segment_optimize_result.segments,
+                    report: segment_optimize_result.report,
+                    applied_change_total: segment_optimize_result.applied_changes.len(),
+                    source_srt: segment_optimize_result.source_srt,
+                    target_srt: segment_optimize_result.target_srt,
+                    src_trans_srt: segment_optimize_result.bilingual_srt_source_first,
+                    trans_src_srt: segment_optimize_result.bilingual_srt_target_first,
                 })
             }
         },
@@ -1443,6 +1410,17 @@ async fn run_transcribe_and_maybe_translate(
         |_| Value::Null,
     )
     .await?;
+    let segment_optimize_snapshot = finalize_segment_optimize_timing(
+        segment_optimize_snapshot,
+        &words
+            .iter()
+            .map(|w| WordTimingAnchor {
+                start: w.start,
+                end: w.end,
+                word: w.word.clone(),
+            })
+            .collect::<Vec<_>>(),
+    );
     log_pipeline_stage(
         task,
         "segment_optimize",
@@ -1457,10 +1435,14 @@ async fn run_transcribe_and_maybe_translate(
         &segment_optimize_snapshot.segments,
         settings_before_post.enable_subtitle_beautify,
     );
-    let final_source_srt = build_srt_from_translate_segments(&final_segments, false);
-    let final_target_srt = build_srt_from_translate_segments(&final_segments, true);
-    let final_src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
-    let final_trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
+    let final_source_words = final_subtitle_words_from_word_dtos(&words);
+    let merged = final_subtitle_segments_from_translate_segments(&final_segments, &final_source_words);
+    let final_source_srt = final_subtitle_segments_to_srt(&merged, FinalSubtitleTrack::Source);
+    let final_target_srt = final_subtitle_segments_to_srt(&merged, FinalSubtitleTrack::Target);
+    let final_src_trans_srt =
+        final_subtitle_segments_to_srt(&merged, FinalSubtitleTrack::BilingualSourceFirst);
+    let final_trans_src_srt =
+        final_subtitle_segments_to_srt(&merged, FinalSubtitleTrack::BilingualTargetFirst);
 
     save_translation_srt_set(
         &task.id,
@@ -1470,18 +1452,6 @@ async fn run_transcribe_and_maybe_translate(
         &final_src_trans_srt,
         &final_trans_src_srt,
     )?;
-
-    let merged = final_segments
-        .iter()
-        .map(|segment| {
-            json!({
-                "startMs": segment.start_ms as i64,
-                "endMs": segment.end_ms as i64,
-                "sourceText": segment.source_text,
-                "translatedText": segment.translated_text,
-            })
-        })
-        .collect::<Vec<_>>();
 
     let result_text = if context.projections.editor.result_text.trim().is_empty() {
         processed.text
@@ -1725,8 +1695,7 @@ async fn run_translate_from_existing_segments(
             let task_id = task.id.clone();
             let media_path = task.media_path.clone();
             let settings = settings.clone();
-            let word_timestamps = word_timestamps_for_opt.clone();
-            let mut final_segments = translate_snapshot.segments.clone();
+            let input_segments = translate_snapshot.segments.clone();
             let app_handle = app.cloned();
             async move {
                 emit_bridge_event(
@@ -1747,27 +1716,18 @@ async fn run_translate_from_existing_segments(
                     llm_concurrency: settings.llm_concurrency,
                     source_max_words_per_segment: settings.subtitle_max_words_per_segment,
                     target_reference_len: settings.subtitle_length_reference,
-                    segments: final_segments,
+                    segments: input_segments,
                 })
                 .await
                 .map_err(|err| format!("segment optimize failed: {err}"))?;
-                final_segments = segment_optimize_result.segments;
-                let segment_optimize_report = segment_optimize_result.report;
-                let segment_optimize_applied_total = segment_optimize_result.applied_changes.len();
-                let _align_result =
-                    realign_segments_with_words(&mut final_segments, &word_timestamps);
-                let source_srt = build_srt_from_translate_segments(&final_segments, false);
-                let target_srt = build_srt_from_translate_segments(&final_segments, true);
-                let src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
-                let trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
                 Ok(SegmentOptimizeSnapshot {
-                    segments: final_segments,
-                    report: segment_optimize_report,
-                    applied_change_total: segment_optimize_applied_total,
-                    source_srt,
-                    target_srt,
-                    src_trans_srt,
-                    trans_src_srt,
+                    segments: segment_optimize_result.segments,
+                    report: segment_optimize_result.report,
+                    applied_change_total: segment_optimize_result.applied_changes.len(),
+                    source_srt: segment_optimize_result.source_srt,
+                    target_srt: segment_optimize_result.target_srt,
+                    src_trans_srt: segment_optimize_result.bilingual_srt_source_first,
+                    trans_src_srt: segment_optimize_result.bilingual_srt_target_first,
                 })
             }
         },
@@ -1785,6 +1745,10 @@ async fn run_translate_from_existing_segments(
         |_| Value::Null,
     )
     .await?;
+    let segment_optimize_snapshot = finalize_segment_optimize_timing(
+        segment_optimize_snapshot,
+        &word_timestamps_for_opt,
+    );
     log_pipeline_stage(
         task,
         "segment_optimize",
@@ -1798,10 +1762,23 @@ async fn run_translate_from_existing_segments(
         &segment_optimize_snapshot.segments,
         settings.enable_subtitle_beautify,
     );
-    let final_source_srt = build_srt_from_translate_segments(&final_segments, false);
-    let final_target_srt = build_srt_from_translate_segments(&final_segments, true);
-    let final_src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);
-    let final_trans_src_srt = build_bilingual_srt_from_translate_segments(&final_segments, false);
+    let merged = final_subtitle_segments_from_translate_segments(
+        &final_segments,
+        &word_timestamps_for_opt
+            .iter()
+            .map(|word| FinalSubtitleWord {
+                start_ms: (word.start * 1000.0).round() as i64,
+                end_ms: (word.end * 1000.0).round() as i64,
+                word: word.word.clone(),
+            })
+            .collect::<Vec<_>>(),
+    );
+    let final_source_srt = final_subtitle_segments_to_srt(&merged, FinalSubtitleTrack::Source);
+    let final_target_srt = final_subtitle_segments_to_srt(&merged, FinalSubtitleTrack::Target);
+    let final_src_trans_srt =
+        final_subtitle_segments_to_srt(&merged, FinalSubtitleTrack::BilingualSourceFirst);
+    let final_trans_src_srt =
+        final_subtitle_segments_to_srt(&merged, FinalSubtitleTrack::BilingualTargetFirst);
     save_translation_srt_set(
         &task.id,
         &task.media_path,
@@ -1810,18 +1787,6 @@ async fn run_translate_from_existing_segments(
         &final_src_trans_srt,
         &final_trans_src_srt,
     )?;
-
-    let merged = final_segments
-        .iter()
-        .map(|segment| {
-            json!({
-                "startMs": segment.start_ms as i64,
-                "endMs": segment.end_ms as i64,
-                "sourceText": segment.source_text,
-                "translatedText": segment.translated_text,
-            })
-        })
-        .collect::<Vec<_>>();
     context.set_queue_projection("processing", "translate", "", 99, merged.len() as u32, merged.len() as u32, "");
     persist_task_context(pool, &task.id, context).await?;
 
@@ -1831,11 +1796,7 @@ async fn run_translate_from_existing_segments(
         } else {
             context.projections.editor.result_text.clone()
         },
-        result_srt: if context.projections.editor.result_srt.trim().is_empty() {
-            final_source_srt
-        } else {
-            context.projections.editor.result_srt.clone()
-        },
+        result_srt: final_source_srt,
         subtitle_segments_json: serde_json::to_string(&merged).map_err(|err| err.to_string())?,
         segment_total: merged.len() as i64,
     })
@@ -2022,15 +1983,39 @@ fn load_segment_optimize_stage_snapshot(context: &TaskContext, stage: &str) -> O
         .get("appliedChangeTotal")
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize;
+    let report = output.get("report").cloned().unwrap_or(Value::Null);
+    let layout_version = report
+        .get("layoutVersion")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    if layout_version != SEGMENT_OPTIMIZE_LAYOUT_VERSION {
+        return None;
+    }
     Some(SegmentOptimizeSnapshot {
         segments,
-        report: output.get("report").cloned().unwrap_or(Value::Null),
+        report,
         applied_change_total,
         source_srt: output.get("sourceSrt")?.as_str()?.to_string(),
         target_srt: output.get("targetSrt")?.as_str()?.to_string(),
         src_trans_srt: output.get("srcTransSrt")?.as_str()?.to_string(),
         trans_src_srt: output.get("transSrcSrt")?.as_str()?.to_string(),
     })
+}
+
+fn finalize_segment_optimize_timing(
+    mut snapshot: SegmentOptimizeSnapshot,
+    word_timestamps: &[WordTimingAnchor],
+) -> SegmentOptimizeSnapshot {
+    let align_result = realign_segments_with_words(&mut snapshot.segments, word_timestamps);
+    snapshot.source_srt = build_srt_from_translate_segments(&snapshot.segments, false);
+    snapshot.target_srt = build_srt_from_translate_segments(&snapshot.segments, true);
+    snapshot.src_trans_srt = build_bilingual_srt_from_translate_segments(&snapshot.segments, true);
+    snapshot.trans_src_srt = build_bilingual_srt_from_translate_segments(&snapshot.segments, false);
+    if let Some(report) = snapshot.report.as_object_mut() {
+        report.insert("timingFinalized".to_string(), Value::Bool(true));
+        report.insert("timingAlignResult".to_string(), align_result);
+    }
+    snapshot
 }
 
 fn has_translated_segments_available(raw: &str) -> bool {
@@ -2140,29 +2125,35 @@ fn count_segments_from_json(raw: &str) -> i64 {
 }
 
 fn parse_tokens_from_segments(raw: &str) -> Vec<TranslateToken> {
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(raw) else {
-        return Vec::new();
-    };
-    let Some(arr) = parsed.as_array() else {
-        return Vec::new();
-    };
-    arr.iter()
+    let segments = parse_final_subtitle_segments(raw);
+    let anchored_tokens = segments
+        .iter()
+        .flat_map(|segment| {
+            segment.source_words.iter().filter_map(|word| {
+                if word.word.trim().is_empty() {
+                    return None;
+                }
+                Some(TranslateToken {
+                    start: word.start_ms as f64 / 1000.0,
+                    end: word.end_ms.max(word.start_ms) as f64 / 1000.0,
+                    word: word.word.clone(),
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    if !anchored_tokens.is_empty() {
+        return anchored_tokens;
+    }
+    segments
+        .into_iter()
         .filter_map(|segment| {
-            let start_ms = segment.get("startMs").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let end_ms = segment.get("endMs").and_then(|v| v.as_f64()).unwrap_or(start_ms);
-            let source_text = segment
-                .get("sourceText")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            if source_text.is_empty() {
+            if segment.source_text.trim().is_empty() {
                 return None;
             }
             Some(TranslateToken {
-                start: start_ms / 1000.0,
-                end: end_ms / 1000.0,
-                word: source_text,
+                start: segment.start_ms as f64 / 1000.0,
+                end: segment.end_ms.max(segment.start_ms) as f64 / 1000.0,
+                word: segment.source_text,
             })
         })
         .collect()

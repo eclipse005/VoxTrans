@@ -11,6 +11,8 @@ import SubtitleEditorToolbar from "./subtitle-editor/SubtitleEditorToolbar";
 type SubtitleEditorModalProps = {
   visible: boolean;
   embedded?: boolean;
+  canEdit: boolean;
+  readOnlyReason?: string;
   taskName: string;
   cues: SubtitleCue[];
   cueWarningsById: Record<string, string[]>;
@@ -29,6 +31,8 @@ type SubtitleEditorModalProps = {
 export default function SubtitleEditorModal({
   visible,
   embedded = false,
+  canEdit,
+  readOnlyReason = "",
   taskName,
   cues,
   cueWarningsById,
@@ -109,6 +113,8 @@ export default function SubtitleEditorModal({
       ) : null}
 
       <SubtitleEditorHeader
+        canEdit={canEdit}
+        readOnlyReason={readOnlyReason}
         cueCount={cues.length}
         taskName={taskName}
         onOpenSrtDir={onOpenSrtDir}
@@ -117,6 +123,7 @@ export default function SubtitleEditorModal({
       />
 
       <SubtitleEditorToolbar
+        canEdit={canEdit}
         findText={findText}
         replaceText={replaceText}
         findCounterLabel={findCounterLabel}
@@ -142,6 +149,7 @@ export default function SubtitleEditorModal({
       />
 
       <SubtitleCueList
+        canEdit={canEdit}
         cues={cues}
         cueWarningsById={cueWarningsById}
         editingCueId={editingCueId}

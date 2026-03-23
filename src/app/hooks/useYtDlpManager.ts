@@ -22,7 +22,10 @@ export function useYtDlpManager({ pushToast }: UseYtDlpManagerArgs) {
   }, []);
 
   useEffect(() => {
-    void refreshYtDlpVersion();
+    const timer = window.setTimeout(() => {
+      void refreshYtDlpVersion();
+    }, 600);
+    return () => window.clearTimeout(timer);
   }, [refreshYtDlpVersion]);
 
   const updateYtDlpBinary = useCallback(async () => {

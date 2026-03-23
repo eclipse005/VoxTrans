@@ -116,6 +116,7 @@ function App() {
 
   const {
     activeItem,
+    canEditSubtitle,
     updateCue,
     addCueAfter,
     mergeSelectedCues,
@@ -256,6 +257,8 @@ function App() {
             <SubtitleEditorModal
               embedded
               visible
+              canEdit={canEditSubtitle}
+              readOnlyReason={canEditSubtitle ? "" : "任务完成后才可编辑字幕"}
               taskName={subtitleTaskName}
               cues={subtitleCues}
               cueWarningsById={subtitleCueWarnings}

@@ -56,11 +56,18 @@ export type SubtitleCue = {
   translatedText: string;
 };
 
+export type SubtitleWordAnchor = {
+  startMs: number;
+  endMs: number;
+  word: string;
+};
+
 export type SubtitleSegment = {
   startMs: number;
   endMs: number;
   sourceText: string;
   translatedText: string;
+  sourceWords: SubtitleWordAnchor[];
 };
 
 export type QueueItem = {
@@ -164,6 +171,7 @@ export type BuildSegmentsResponse = {
 export type SubtitleSaveRequest = {
   taskId: string;
   content: string;
+  subtitleSegmentsJson?: string;
 };
 
 export type UserPreferencesResponse = {

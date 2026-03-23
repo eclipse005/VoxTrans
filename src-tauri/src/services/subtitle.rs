@@ -2,6 +2,11 @@ use serde::Deserialize;
 use sqlx::SqlitePool;
 use voxtrans_core::subtitle::srt::{normalize_cues, parse_srt, to_srt_from_cues};
 
+use crate::services::final_subtitle::{
+    FinalSubtitleSegment, cues_to_final_subtitle_segments, normalize_final_subtitle_segments_json,
+    parse_final_subtitle_segments,
+};
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubtitleSaveRequest {
@@ -34,11 +39,9 @@ pub async fn save_subtitle_editor(
     let merged_segments_json = request
         .subtitle_segments_json
         .as_deref()
-        .and_then(normalize_subtitle_segments_json)
-        .unwrap_or(build_segments_json_with_preserved_translation(
-            &normalized,
-            &row.subtitle_segments_json,
-        )?);
+        .and_then(normalize_final_subtitle_segments_json)
+        .map(Ok)
+        .unwrap_or_else(|| build_final_subtitle_segments_json(&normalized, &row.subtitle_segments_json))?;
 
     let now = unix_now();
     sqlx::query(
@@ -64,80 +67,34 @@ struct TaskRunEditorRow {
     translated_srt: String,
 }
 
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SubtitleSegmentValue {
-    start_ms: i64,
-    end_ms: i64,
-    #[serde(default)]
-    translated_text: String,
-}
-
-fn build_segments_json_with_preserved_translation(
+fn build_final_subtitle_segments_json(
     cues: &[voxtrans_core::subtitle::srt::SrtCue],
     existing_segments_raw: &str,
 ) -> Result<String, String> {
-    let existing_segments = serde_json::from_str::<Vec<SubtitleSegmentValue>>(existing_segments_raw)
-        .unwrap_or_default();
-    let merged = cues
-        .iter()
-        .map(|cue| {
-            let translated = find_best_translated_text(cue.start_ms as i64, cue.end_ms as i64, &existing_segments);
-            serde_json::json!({
-                "startMs": cue.start_ms as i64,
-                "endMs": cue.end_ms as i64,
-                "sourceText": cue.text.clone(),
-                "translatedText": translated,
-            })
+    let existing_segments = parse_final_subtitle_segments(existing_segments_raw);
+    let merged = cues_to_final_subtitle_segments(cues, &existing_segments)
+        .into_iter()
+        .map(|segment| FinalSubtitleSegment {
+            translated_text: best_translated_text(
+                segment.start_ms,
+                segment.end_ms,
+                &segment.translated_text,
+                &existing_segments,
+            ),
+            ..segment
         })
         .collect::<Vec<_>>();
     serde_json::to_string(&merged).map_err(|err| err.to_string())
 }
 
-fn normalize_subtitle_segments_json(raw: &str) -> Option<String> {
-    let parsed = serde_json::from_str::<serde_json::Value>(raw).ok()?;
-    let arr = parsed.as_array()?;
-    let normalized = arr
-        .iter()
-        .map(|segment| {
-            let start = segment
-                .get("startMs")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0)
-                .round() as i64;
-            let end = segment
-                .get("endMs")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(start as f64)
-                .round() as i64;
-            let source = segment
-                .get("sourceText")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let translated = segment
-                .get("translatedText")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            serde_json::json!({
-                "startMs": start.max(0),
-                "endMs": end.max(start),
-                "sourceText": source,
-                "translatedText": translated,
-            })
-        })
-        .collect::<Vec<_>>();
-    serde_json::to_string(&normalized).ok()
-}
-
-fn find_best_translated_text(
+fn best_translated_text(
     start_ms: i64,
     end_ms: i64,
-    existing: &[SubtitleSegmentValue],
+    fallback: &str,
+    existing: &[FinalSubtitleSegment],
 ) -> String {
     let mut best_overlap = -1_i64;
-    let mut best_text = String::new();
+    let mut best_text = fallback.to_string();
     for segment in existing {
         let overlap = overlap_ms(start_ms, end_ms, segment.start_ms, segment.end_ms);
         if overlap > best_overlap {

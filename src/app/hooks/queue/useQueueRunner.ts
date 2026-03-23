@@ -352,9 +352,6 @@ function syncQueueItem(
     transcribePhase: synced.transcribePhase,
     transcribePhaseDetail: synced.transcribePhaseDetail,
     transcribeError: synced.transcribeError,
-    resultText: synced.resultText,
-    resultSrt: synced.resultSrt,
-    subtitleSegmentsJson: synced.subtitleSegmentsJson,
   }));
 }
 

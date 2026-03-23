@@ -54,6 +54,7 @@ fn main() {
             commands::preferences::load_user_preferences,
             commands::preferences::save_app_settings,
             commands::workspace::load_workspace_state,
+            commands::workspace::load_workspace_task,
             commands::task_engine::register_task_upload,
             commands::task_engine::enqueue_task_run,
             commands::task_engine::list_task_runs,

@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import type { QueueItem, SubtitleCue } from "../../features/media/types";
-import { cuesToSrt } from "../../features/media/srt";
+import { buildSubtitleSegmentsFromCues, subtitleSegmentsToSrt } from "../../features/media/subtitleSegments";
 import type { ExportSrtItem } from "../api/transcribe";
+import { getTaskRunQueueItem } from "../api/workspace";
 import type { AppAction } from "../state/appReducer";
 import { reportError, toUserErrorMessage } from "../utils/errors";
 import { buildCueWarningsById } from "../utils/subtitleWarnings";
@@ -46,7 +47,9 @@ export function useSubtitleWorkflow({
 }: UseSubtitleWorkflowArgs) {
   const loadedSubtitleVersionRef = useRef<string>("");
   const persistSeqRef = useRef(0);
+  const loadSeqRef = useRef(0);
   const currentSubtitleTaskIdRef = useRef<string>(subtitleTaskId);
+  const activeTaskIdRef = useRef<string>(activeId);
   const existingTaskIdsRef = useRef<Set<string>>(new Set(queue.map((item) => item.id)));
 
   useEffect(() => {
@@ -54,10 +57,21 @@ export function useSubtitleWorkflow({
   }, [subtitleTaskId]);
 
   useEffect(() => {
+    activeTaskIdRef.current = activeId;
+  }, [activeId]);
+
+  useEffect(() => {
     existingTaskIdsRef.current = new Set(queue.map((item) => item.id));
   }, [queue]);
 
-  const persistSubtitleToTask = useCallback(async (taskId: string, cues: SubtitleCue[]) => {
+  const canEditTask = useCallback((taskId: string) => {
+    return queue.some((item) => item.id === taskId && item.transcribeStatus === "done");
+  }, [queue]);
+
+  const persistSubtitleToTask = useCallback(async (
+    taskId: string,
+    cues: SubtitleCue[],
+  ) => {
     const seq = ++persistSeqRef.current;
     try {
       await saveSubtitleEditor(taskId, cues);
@@ -82,17 +96,41 @@ export function useSubtitleWorkflow({
 
   const loadSubtitleEditor = useCallback(
     async (item: QueueItem) => {
+      const seq = ++loadSeqRef.current;
+      const taskId = item.id;
+      const isStaleRequest = () => (
+        seq !== loadSeqRef.current
+        || activeTaskIdRef.current !== taskId
+        || !existingTaskIdsRef.current.has(taskId)
+      );
+
       try {
+        const taskDetail = await getTaskRunQueueItem(taskId);
+        if (isStaleRequest()) return;
+
+        const enrichedItem: QueueItem = {
+          ...item,
+          ...taskDetail,
+        };
+        dispatch({
+          type: "patch_queue_item",
+          id: taskId,
+          updater: (prev) => ({
+            ...prev,
+            ...taskDetail,
+          }),
+        });
         dispatch({
           type: "set_subtitle",
           payload: {
-            subtitleTaskId: item.id,
-            subtitleTaskName: item.name,
-            subtitleMediaPath: item.path,
+            subtitleTaskId: enrichedItem.id,
+            subtitleTaskName: enrichedItem.name,
+            subtitleMediaPath: enrichedItem.path,
           },
         });
 
-        const { response, hydratedCues } = await loadSubtitleEditorData(item);
+        const { response, hydratedCues } = await loadSubtitleEditorData(enrichedItem);
+        if (isStaleRequest()) return;
 
         dispatch({
           type: "set_subtitle",
@@ -103,14 +141,15 @@ export function useSubtitleWorkflow({
             subtitleDirty: false,
           },
         });
-        loadedSubtitleVersionRef.current = buildSubtitleVersion(item);
+        loadedSubtitleVersionRef.current = buildSubtitleVersion(enrichedItem);
       } catch (error) {
+        if (isStaleRequest()) return;
         reportError(error, "loadSubtitleEditor");
         pushToast("字幕格式有误，无法加载编辑器", "error");
         dispatch({
           type: "set_subtitle",
           payload: {
-            subtitleTaskId: item.id,
+            subtitleTaskId: taskId,
             subtitleTaskName: item.name,
             subtitleMediaPath: item.path,
             subtitleSrtPath: "",
@@ -136,19 +175,16 @@ export function useSubtitleWorkflow({
         },
       });
       if (subtitleTaskId) {
+        if (!canEditTask(subtitleTaskId)) {
+          return;
+        }
         const taskStillExists = queue.some((item) => item.id === subtitleTaskId);
         if (!taskStillExists) {
           return;
         }
-        const resultSrt = cuesToSrt(nextCues);
-        const subtitleSegmentsJson = JSON.stringify(
-          nextCues.map((cue) => ({
-            startMs: Math.max(0, Math.round(cue.startMs)),
-            endMs: Math.max(Math.round(cue.startMs), Math.round(cue.endMs)),
-            sourceText: cue.text || "",
-            translatedText: cue.translatedText || "",
-          })),
-        );
+        const segments = buildSubtitleSegmentsFromCues(nextCues);
+        const resultSrt = subtitleSegmentsToSrt(segments);
+        const subtitleSegmentsJson = JSON.stringify(segments);
         dispatch({
           type: "patch_queue_item",
           id: subtitleTaskId,
@@ -161,7 +197,7 @@ export function useSubtitleWorkflow({
         void persistSubtitleToTask(subtitleTaskId, nextCues);
       }
     },
-    [dispatch, persistSubtitleToTask, queue, subtitleTaskId],
+    [canEditTask, dispatch, persistSubtitleToTask, queue, subtitleTaskId],
   );
 
   const updateCue = useCallback(
@@ -261,6 +297,7 @@ export function useSubtitleWorkflow({
   useEffect(() => {
     const activeItem = queue.find((item) => item.id === activeId);
     if (!activeItem) {
+      loadSeqRef.current += 1;
       dispatch({
         type: "set_subtitle",
         payload: {
@@ -283,16 +320,17 @@ export function useSubtitleWorkflow({
     }
 
     if (subtitleDirty) return;
-    if (!hasSubtitleData(activeItem)) return;
     const currentVersion = buildSubtitleVersion(activeItem);
     if (loadedSubtitleVersionRef.current === currentVersion) return;
     void loadSubtitleEditor(activeItem);
   }, [activeId, dispatch, loadSubtitleEditor, queue, subtitleDirty, subtitleTaskId]);
 
   const activeItem = queue.find((item) => item.id === activeId) ?? null;
+  const canEditSubtitle = activeItem?.transcribeStatus === "done";
 
   return {
     activeItem,
+    canEditSubtitle,
     subtitleTaskName,
     subtitleSrtPath,
     subtitleCues,
@@ -304,20 +342,4 @@ export function useSubtitleWorkflow({
     removeCue,
     exportSubtitleSrt,
   };
-}
-
-function hasSubtitleData(item: QueueItem): boolean {
-  if (item.resultSrt.trim().length > 0) return true;
-  if (!item.subtitleSegmentsJson.trim()) return false;
-  try {
-    const parsed = JSON.parse(item.subtitleSegmentsJson);
-    if (!Array.isArray(parsed)) return false;
-    return parsed.some((segment) => {
-      const sourceText = typeof segment?.sourceText === "string" ? segment.sourceText : "";
-      const translatedText = typeof segment?.translatedText === "string" ? segment.translatedText : "";
-      return sourceText.trim().length > 0 || translatedText.trim().length > 0;
-    });
-  } catch {
-    return false;
-  }
 }

@@ -20,7 +20,7 @@ use crate::services::task_engine::{
     TaskRunRecord,
     register_task_upload,
 };
-use crate::services::binary::resolve_bundled_or_path;
+use crate::services::binary::{configure_background_command, resolve_bundled_or_path};
 use crate::services::task_path::sanitize_filename_component;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,6 +92,7 @@ pub async fn download_youtube_to_task(
     let cancel_flag_for_process = cancel_flag.clone();
     let command_output_result: Result<YoutubeCommandOutput, String> = tokio::task::spawn_blocking(move || -> Result<YoutubeCommandOutput, String> {
         let mut command = Command::new(&yt_dlp);
+        configure_background_command(&mut command);
         command
             .arg("--no-playlist")
             .arg("--progress")
@@ -277,7 +278,9 @@ pub fn request_cancel_youtube_download(task_id: &str) -> bool {
 
 pub fn get_yt_dlp_version() -> Result<String, String> {
     let yt_dlp = resolve_yt_dlp_binary()?;
-    let output = Command::new(yt_dlp)
+    let mut command = Command::new(yt_dlp);
+    configure_background_command(&mut command);
+    let output = command
         .arg("--version")
         .output()
         .map_err(|err| format!("读取 yt-dlp 版本失败: {err}"))?;
@@ -301,7 +304,9 @@ pub fn update_yt_dlp() -> Result<UpdateYtDlpResponse, String> {
 
     let yt_dlp = resolve_yt_dlp_binary()?;
     let from_version = get_yt_dlp_version().unwrap_or_default();
-    let output = Command::new(&yt_dlp)
+    let mut command = Command::new(&yt_dlp);
+    configure_background_command(&mut command);
+    let output = command
         .arg("-U")
         .output()
         .map_err(|err| format!("执行 yt-dlp 更新失败: {err}"))?;
@@ -581,7 +586,9 @@ fn spawn_reader_thread(
 }
 
 fn fetch_video_descriptor(yt_dlp: &Path, url: &str) -> Result<YoutubeVideoDescriptor, String> {
-    let output = Command::new(yt_dlp)
+    let mut command = Command::new(yt_dlp);
+    configure_background_command(&mut command);
+    let output = command
         .arg("--no-playlist")
         .arg("--skip-download")
         .arg("--print")
