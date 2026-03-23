@@ -1,3 +1,5 @@
+use serde::Deserialize;
+
 #[derive(Debug, Clone)]
 pub struct PunctuationPromptInput {
     pub previous_text: String,
@@ -50,10 +52,44 @@ pub struct TranslatePromptInput {
     pub segments: Vec<TranslatePromptSegmentInput>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SegmentOptimizePromptInput {
+    pub preferred_mode: String,
+    pub source_text: String,
+    pub translated_text: String,
+    pub candidate_actions: Vec<SegmentOptimizePromptCandidateInput>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SegmentOptimizePromptSegmentInput {
+    pub source_text: String,
+    pub translated_text: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SegmentOptimizePromptCandidateInput {
+    pub candidate_id: String,
+    pub action: String,
+    pub timing_strategy: String,
+    pub segments: Vec<SegmentOptimizePromptSegmentInput>,
+    pub constraints: SegmentOptimizePromptConstraints,
+}
+
+#[derive(Debug, Clone)]
+pub struct SegmentOptimizePromptConstraints {
+    pub allow_split_source: bool,
+    pub allow_split_target: bool,
+    pub allow_reuse_target: bool,
+    pub allow_proportional_timing: bool,
+}
+
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct TranslateTerminologyPromptEntry {
+    #[serde(default, deserialize_with = "deserialize_string_or_empty")]
     pub source: String,
+    #[serde(default, deserialize_with = "deserialize_string_or_empty")]
     pub target: String,
+    #[serde(default, deserialize_with = "deserialize_string_or_empty")]
     pub note: String,
 }
 
@@ -63,6 +99,13 @@ Translate faithfully, naturally, and in culturally appropriate target-language p
 Preserve intent, tone, register, and key domain terminology. \
 Do not add commentary or explanations. \
 Output JSON only in this shape: {\"segments\":[{\"index\":1,\"translatedText\":\"...\"}]}"
+        .to_string()
+}
+
+pub fn build_segment_optimize_system_prompt() -> String {
+    "You are a subtitle segmentation optimizer. Decide whether the subtitle should keep its current layout or use one of the provided candidate actions. \
+Return JSON only in this shape: {\"action\":\"dual_split|source_only_split|target_only_adjust|no_change\",\"candidateId\":\"...\",\"segments\":[{\"sourceText\":\"...\",\"translatedText\":\"...\"}],\"reason\":\"...\",\"confidence\":0.0}. \
+If action is not no_change, candidateId must match one provided candidate action, segments must contain exactly 2 items, and the result must obey the selected candidate action's constraints. Do not add commentary."
         .to_string()
 }
 
@@ -190,6 +233,64 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
     payload.to_string()
 }
 
+pub fn build_segment_optimize_user_prompt(input: &SegmentOptimizePromptInput) -> String {
+    let payload = serde_json::json!({
+        "task": "subtitle_segment_optimize",
+        "preferredMode": input.preferred_mode,
+        "original": {
+            "sourceText": input.source_text,
+            "translatedText": input.translated_text,
+        },
+        "candidateActions": input.candidate_actions.iter().map(|candidate| {
+            serde_json::json!({
+                "candidateId": candidate.candidate_id,
+                "action": candidate.action,
+                "timingStrategy": candidate.timing_strategy,
+                "segments": candidate.segments.iter().map(|segment| {
+                    serde_json::json!({
+                        "sourceText": segment.source_text,
+                        "translatedText": segment.translated_text,
+                    })
+                }).collect::<Vec<_>>(),
+                "constraints": {
+                    "allowSplitSource": candidate.constraints.allow_split_source,
+                    "allowSplitTarget": candidate.constraints.allow_split_target,
+                    "allowReuseTarget": candidate.constraints.allow_reuse_target,
+                    "allowProportionalTiming": candidate.constraints.allow_proportional_timing,
+                }
+            })
+        }).collect::<Vec<_>>(),
+        "rules": [
+            "Choose action=no_change if none of the candidate actions are safe and natural",
+            "If you choose a candidate action, candidateId must exactly match one candidateActions.candidateId value",
+            "action must match the selected candidate's action",
+            "Preserve meaning; do not add or remove information",
+            "Prefer semantically complete segments",
+            "Keep subtitle reading flow natural and watchable",
+            "Respect the selected candidate action's constraints strictly",
+            "If action is not no_change, return exactly 2 segments",
+            "Keep sourceText and translatedText non-empty for every returned segment",
+            "Only adjust split boundaries; do not rewrite beyond what is needed for split alignment"
+        ],
+        "output": {
+            "json_only": true,
+            "schema": {
+                "action": "dual_split|source_only_split|target_only_adjust|no_change",
+                "candidateId": "string(empty only when action=no_change)",
+                "segments": [
+                    {
+                        "sourceText": "string",
+                        "translatedText": "string"
+                    }
+                ],
+                "reason": "string",
+                "confidence": "number(0..1)"
+            }
+        }
+    });
+    payload.to_string()
+}
+
 fn terminology_entry_to_json(entry: &TranslateTerminologyPromptEntry) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     map.insert("source".to_string(), serde_json::Value::String(entry.source.clone()));
@@ -199,4 +300,12 @@ fn terminology_entry_to_json(entry: &TranslateTerminologyPromptEntry) -> serde_j
         map.insert("note".to_string(), serde_json::Value::String(note.to_string()));
     }
     serde_json::Value::Object(map)
+}
+
+fn deserialize_string_or_empty<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    Ok(value.unwrap_or_default())
 }

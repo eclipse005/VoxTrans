@@ -587,18 +587,24 @@ fn realign_segments_with_words(
     if words.is_empty() {
         return json!({ "applied": false, "reason": "empty_words" });
     }
-    if words.len() < segments.len() {
+    let groups = build_alignment_groups(segments);
+    if groups.is_empty() {
+        return json!({ "applied": false, "reason": "empty_source_text" });
+    }
+
+    if words.len() < groups.len() {
         return json!({
             "applied": false,
             "reason": "insufficient_words",
             "wordTotal": words.len(),
-            "segmentTotal": segments.len()
+            "segmentTotal": segments.len(),
+            "groupTotal": groups.len()
         });
     }
 
-    let source_full_text = segments
+    let source_full_text = groups
         .iter()
-        .map(|s| s.source_text.trim())
+        .map(|g| g.source_text.as_str())
         .filter(|v| !v.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
@@ -610,24 +616,25 @@ fn realign_segments_with_words(
     if aligned_words.is_empty() {
         return json!({ "applied": false, "reason": "alignment_empty" });
     }
-    if aligned_words.len() < segments.len() {
+    if aligned_words.len() < groups.len() {
         return json!({
             "applied": false,
             "reason": "alignment_insufficient_words",
             "alignedWordTotal": aligned_words.len(),
-            "segmentTotal": segments.len()
+            "segmentTotal": segments.len(),
+            "groupTotal": groups.len()
         });
     }
 
     let mut segment_token_owners: Vec<usize> = Vec::new();
     let mut segment_token_stream: Vec<String> = Vec::new();
-    for (seg_idx, segment) in segments.iter().enumerate() {
-        for token in segment.source_text.split_whitespace() {
+    for (group_idx, group) in groups.iter().enumerate() {
+        for token in group.source_text.split_whitespace() {
             let norm = normalize_alignment_token(token);
             if norm.is_empty() {
                 continue;
             }
-            segment_token_owners.push(seg_idx);
+            segment_token_owners.push(group_idx);
             segment_token_stream.push(norm);
         }
     }
@@ -646,7 +653,7 @@ fn realign_segments_with_words(
     }
 
     let matched_pairs = lcs_match_pairs(&segment_token_stream, &aligned_word_stream);
-    let mut segment_boundaries: Vec<Option<(usize, usize)>> = vec![None; segments.len()];
+    let mut segment_boundaries: Vec<Option<(usize, usize)>> = vec![None; groups.len()];
     for (segment_token_idx, aligned_word_idx) in matched_pairs {
         let seg_idx = segment_token_owners[segment_token_idx];
         match &mut segment_boundaries[seg_idx] {
@@ -664,11 +671,11 @@ fn realign_segments_with_words(
         }
     }
 
-    let total_segments = segments.len();
+    let total_segments = groups.len();
     let mut cursor_word = 0usize;
     let mut changed = 0usize;
     let mut fallback_segments = 0usize;
-    for (idx, segment) in segments.iter_mut().enumerate() {
+    for (idx, group) in groups.iter().enumerate() {
         if cursor_word >= aligned_words.len() {
             break;
         }
@@ -700,22 +707,104 @@ fn realign_segments_with_words(
         let end_word = &aligned_words[end_idx];
         let new_start_ms = (start_word.start.max(0.0) * 1000.0).round() as u64;
         let new_end_ms = (end_word.end.max(start_word.start) * 1000.0).round() as u64;
-        if segment.start_ms != new_start_ms || segment.end_ms != new_end_ms {
-            changed += 1;
-        }
-        segment.start_ms = new_start_ms;
-        segment.end_ms = new_end_ms.max(new_start_ms);
+        changed += apply_group_timing(
+            segments,
+            group,
+            new_start_ms,
+            new_end_ms.max(new_start_ms),
+        );
         cursor_word = end_idx.saturating_add(1);
     }
 
     json!({
         "applied": true,
-        "segmentTotal": total_segments,
+        "segmentTotal": segments.len(),
+        "groupTotal": total_segments,
         "wordTotal": words.len(),
         "alignedWordTotal": aligned_words.len(),
         "changedSegmentTotal": changed,
         "fallbackSegmentTotal": fallback_segments
     })
+}
+
+#[derive(Debug, Clone)]
+struct AlignmentGroup {
+    source_text: String,
+    segment_indexes: Vec<usize>,
+}
+
+fn build_alignment_groups(
+    segments: &[crate::services::translate::types::TranslateSegment],
+) -> Vec<AlignmentGroup> {
+    let mut groups: Vec<AlignmentGroup> = Vec::new();
+    for (idx, segment) in segments.iter().enumerate() {
+        let source_text = segment.source_text.trim().to_string();
+        if source_text.is_empty() {
+            continue;
+        }
+        if let Some(last) = groups.last_mut() {
+            if last.source_text == source_text {
+                last.segment_indexes.push(idx);
+                continue;
+            }
+        }
+        groups.push(AlignmentGroup {
+            source_text,
+            segment_indexes: vec![idx],
+        });
+    }
+    groups
+}
+
+fn apply_group_timing(
+    segments: &mut [crate::services::translate::types::TranslateSegment],
+    group: &AlignmentGroup,
+    group_start_ms: u64,
+    group_end_ms: u64,
+) -> usize {
+    if group.segment_indexes.is_empty() {
+        return 0;
+    }
+    if group.segment_indexes.len() == 1 {
+        let idx = group.segment_indexes[0];
+        let segment = &mut segments[idx];
+        let changed = usize::from(
+            segment.start_ms != group_start_ms || segment.end_ms != group_end_ms,
+        );
+        segment.start_ms = group_start_ms;
+        segment.end_ms = group_end_ms.max(group_start_ms);
+        return changed;
+    }
+
+    let total_duration = group_end_ms.saturating_sub(group_start_ms);
+    let weights = group
+        .segment_indexes
+        .iter()
+        .map(|idx| {
+            let segment = &segments[*idx];
+            segment.end_ms.saturating_sub(segment.start_ms).max(1)
+        })
+        .collect::<Vec<_>>();
+    let total_weight = weights.iter().copied().sum::<u64>().max(1);
+
+    let mut changed = 0usize;
+    let mut cursor = group_start_ms;
+    for (position, seg_idx) in group.segment_indexes.iter().enumerate() {
+        let segment = &mut segments[*seg_idx];
+        let next_end = if position + 1 == group.segment_indexes.len() {
+            group_end_ms
+        } else {
+            let weight = weights[position];
+            let slice = ((total_duration as f64) * (weight as f64 / total_weight as f64)).round() as u64;
+            (cursor + slice.max(1)).min(group_end_ms.saturating_sub(1).max(cursor + 1))
+        };
+        let final_end = next_end.max(cursor);
+        changed += usize::from(segment.start_ms != cursor || segment.end_ms != final_end);
+        segment.start_ms = cursor;
+        segment.end_ms = final_end;
+        cursor = final_end;
+    }
+    changed
 }
 
 fn normalize_alignment_token(token: &str) -> String {
@@ -1665,7 +1754,8 @@ async fn run_translate_from_existing_segments(
                 final_segments = segment_optimize_result.segments;
                 let segment_optimize_report = segment_optimize_result.report;
                 let segment_optimize_applied_total = segment_optimize_result.applied_changes.len();
-                let _align_result = realign_segments_with_words(&mut final_segments, &word_timestamps);
+                let _align_result =
+                    realign_segments_with_words(&mut final_segments, &word_timestamps);
                 let source_srt = build_srt_from_translate_segments(&final_segments, false);
                 let target_srt = build_srt_from_translate_segments(&final_segments, true);
                 let src_trans_srt = build_bilingual_srt_from_translate_segments(&final_segments, true);

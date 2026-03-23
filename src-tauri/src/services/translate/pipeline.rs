@@ -50,7 +50,7 @@ struct SegmentBatch {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct SummaryExtraction {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_empty")]
     theme: String,
     #[serde(default)]
     primary_terminology_entries: Vec<TranslateTerminologyPromptEntry>,
@@ -291,6 +291,14 @@ fn normalize_theme(theme: &str) -> String {
     } else {
         normalized
     }
+}
+
+fn deserialize_string_or_empty<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    Ok(value.unwrap_or_default())
 }
 
 async fn run_batch_translate_pipeline<G>(
