@@ -11,7 +11,6 @@ type SubtitleExportModalProps = {
 type ExportOption = {
   item: ExportSrtItem;
   label: string;
-  filePattern: string;
   needsTranslation: boolean;
 };
 
@@ -19,25 +18,21 @@ const EXPORT_OPTIONS: ExportOption[] = [
   {
     item: "source",
     label: "原文单语",
-    filePattern: "xxx_{source}.srt",
     needsTranslation: false,
   },
   {
     item: "target",
     label: "译文单语",
-    filePattern: "xxx_{target}.srt",
     needsTranslation: true,
   },
   {
     item: "bilingualSourceFirst",
     label: "双语（原文在上）",
-    filePattern: "xxx_{source}_{target}.srt",
     needsTranslation: true,
   },
   {
     item: "bilingualTargetFirst",
     label: "双语（译文在上）",
-    filePattern: "xxx_{target}_{source}.srt",
     needsTranslation: true,
   },
 ];
@@ -132,7 +127,6 @@ export default function SubtitleExportModal({
                 />
                 <span className="export-option-main">
                   <span className="export-option-label">{option.label}</span>
-                  <span className="export-option-file">{option.filePattern}</span>
                 </span>
               </label>
             );
