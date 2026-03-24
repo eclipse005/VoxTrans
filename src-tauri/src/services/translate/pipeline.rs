@@ -21,7 +21,8 @@ use super::types::{
 };
 use super::validation::{validate_llm_segments, validate_request};
 
-const BATCH_SEGMENT_SIZE: usize = 20;
+const MAX_SEGMENTS_PER_BATCH: usize = 20;
+const MAX_WORDS_PER_BATCH: usize = 600;
 const STYLE_CONTEXT_WORDS: usize = 1000;
 const DEFAULT_THEME: &str = "内容围绕一个明确主题展开。关键信息以解释和示例为主。";
 
@@ -152,7 +153,7 @@ async fn translate_from_theme<G>(
 where
     G: FnMut(usize, usize),
 {
-    let batches = split_batches(segments, BATCH_SEGMENT_SIZE);
+    let batches = split_batches(segments, MAX_SEGMENTS_PER_BATCH, MAX_WORDS_PER_BATCH);
     let extracted_batches = run_batch_translate_pipeline(
         request,
         segments,
@@ -569,19 +570,58 @@ fn sample_global_contexts(
     (head, middle, tail)
 }
 
-fn split_batches(segments: &[SourceSegment], batch_size: usize) -> Vec<SegmentBatch> {
+fn split_batches(
+    segments: &[SourceSegment],
+    max_segments_per_batch: usize,
+    max_words_per_batch: usize,
+) -> Vec<SegmentBatch> {
     let mut out = Vec::new();
-    let mut cursor = 0usize;
-    while cursor < segments.len() {
-        let end_exclusive = (cursor + batch_size).min(segments.len());
-        out.push(SegmentBatch {
-            start_idx: cursor,
-            end_idx: end_exclusive.saturating_sub(1),
-            segments: segments[cursor..end_exclusive].to_vec(),
-        });
-        cursor = end_exclusive;
+    let mut batch_start_idx: usize = 0;
+    let mut current_segments: Vec<SourceSegment> = Vec::new();
+    let mut current_word_total: usize = 0;
+
+    for (index, segment) in segments.iter().enumerate() {
+        let segment_words = count_words(&segment.source_text);
+        let would_exceed_words = !current_segments.is_empty()
+            && current_word_total.saturating_add(segment_words) > max_words_per_batch;
+        let would_exceed_segments = current_segments.len() >= max_segments_per_batch;
+
+        if would_exceed_words || would_exceed_segments {
+            let end_idx = batch_start_idx + current_segments.len() - 1;
+            out.push(SegmentBatch {
+                start_idx: batch_start_idx,
+                end_idx,
+                segments: std::mem::take(&mut current_segments),
+            });
+            batch_start_idx = index;
+            current_word_total = 0;
+        }
+
+        current_word_total = current_word_total.saturating_add(segment_words);
+        current_segments.push(segment.clone());
     }
+
+    if !current_segments.is_empty() {
+        let end_idx = batch_start_idx + current_segments.len() - 1;
+        out.push(SegmentBatch {
+            start_idx: batch_start_idx,
+            end_idx,
+            segments: current_segments,
+        });
+    }
+
     out
+}
+
+fn count_words(text: &str) -> usize {
+    text.split_whitespace()
+        .map(|part| {
+            part.trim_matches(|ch: char| {
+                !ch.is_ascii_alphanumeric() && ch != '\'' && ch != '-'
+            })
+        })
+        .filter(|part| !part.is_empty())
+        .count()
 }
 
 fn context_before(segments: &[SourceSegment], start_idx: usize, count: usize) -> String {

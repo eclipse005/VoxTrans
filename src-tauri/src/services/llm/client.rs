@@ -12,6 +12,7 @@ use super::port::{LlmCallContext, LlmConfig, LlmJsonResult, LlmPort, LlmTokenUsa
 
 const LLM_PROVIDER: &str = "openai_compatible_http";
 const LLM_TRANSPORT: &str = "chat_completions";
+const RETRY_HINT_MAX_CHARS: usize = 320;
 
 #[derive(Clone)]
 pub struct OpenAiCompatLlmClient {
@@ -33,6 +34,14 @@ impl LlmSemanticValidationError {
 #[derive(Debug, Clone)]
 pub struct LlmValidatedJsonResult<T> {
     pub value: T,
+}
+
+#[derive(Debug, Clone)]
+struct RetryFeedback {
+    error_kind: String,
+    retryable: bool,
+    retry_hint: Option<String>,
+    detail: String,
 }
 
 impl OpenAiCompatLlmClient {
@@ -127,8 +136,11 @@ impl OpenAiCompatLlmClient {
         let max_attempts = self.config.max_retries.saturating_add(1).max(1);
         let started = std::time::Instant::now();
         let mut last_error = String::new();
+        let mut last_feedback: Option<RetryFeedback> = None;
 
         for attempt in 1..=max_attempts {
+            let effective_user_prompt =
+                augment_user_prompt_with_retry_feedback(user_prompt, attempt, max_attempts, last_feedback.as_ref());
             let base_payload = json!({
                 "attempt": attempt,
                 "maxAttempts": max_attempts,
@@ -140,22 +152,27 @@ impl OpenAiCompatLlmClient {
                 "llmId": request_id,
                 "request": {
                     "systemPrompt": system_prompt,
-                    "userPrompt": user_prompt,
+                    "userPrompt": effective_user_prompt.clone(),
                 }
             });
 
-            match self.call_once(system_prompt, user_prompt).await {
+            match self.call_once(system_prompt, &effective_user_prompt).await {
                 Ok((raw_text, usage)) => {
                     let parsed = match extract_and_repair_json(&raw_text) {
                         Ok(v) => v,
                         Err(err) => {
-                            last_error = err.message.clone();
+                            let feedback = feedback_from_llm_error(&err);
+                            last_error = feedback.detail.clone();
+                            last_feedback = Some(feedback.clone());
                             let backoff_ms = retry_backoff_ms(attempt, max_attempts);
                             logger.event(
                                 "llm.call",
                                 Some(&json!({
                                     "status": "invalid_json",
                                     "error": last_error,
+                                    "errorKind": feedback.error_kind,
+                                    "retryable": feedback.retryable,
+                                    "retryHint": feedback.retry_hint,
                                     "response": { "text": raw_text },
                                     "attempt": base_payload["attempt"],
                                     "maxAttempts": base_payload["maxAttempts"],
@@ -178,13 +195,18 @@ impl OpenAiCompatLlmClient {
 
                     if let Some(validator) = response_validator {
                         if let Err(err) = validator.validate(&parsed) {
-                            last_error = err.message.clone();
+                            let feedback = feedback_from_llm_error(&err);
+                            last_error = feedback.detail.clone();
+                            last_feedback = Some(feedback.clone());
                             let backoff_ms = retry_backoff_ms(attempt, max_attempts);
                             logger.event(
                                 "llm.call",
                                 Some(&json!({
                                     "status": "invalid_schema",
                                     "error": last_error,
+                                    "errorKind": feedback.error_kind,
+                                    "retryable": feedback.retryable,
+                                    "retryHint": feedback.retry_hint,
                                     "response": { "text": raw_text },
                                     "attempt": base_payload["attempt"],
                                     "maxAttempts": base_payload["maxAttempts"],
@@ -245,13 +267,18 @@ impl OpenAiCompatLlmClient {
                             });
                         }
                         Err(LlmSemanticValidationError::Retryable(message)) => {
-                            last_error = message;
+                            let feedback = feedback_for_semantic(message);
+                            last_error = feedback.detail.clone();
+                            last_feedback = Some(feedback.clone());
                             let backoff_ms = retry_backoff_ms(attempt, max_attempts);
                             logger.event(
                                 "llm.call",
                                 Some(&json!({
                                     "status": "invalid_semantic",
                                     "error": last_error,
+                                    "errorKind": feedback.error_kind,
+                                    "retryable": feedback.retryable,
+                                    "retryHint": feedback.retry_hint,
                                     "response": { "text": raw_text },
                                     "attempt": base_payload["attempt"],
                                     "maxAttempts": base_payload["maxAttempts"],
@@ -273,13 +300,22 @@ impl OpenAiCompatLlmClient {
                     }
                 }
                 Err(err) => {
-                    last_error = format!("{}: {}", err.kind.as_str(), err.message);
-                    let backoff_ms = retry_backoff_ms(attempt, max_attempts);
+                    let feedback = feedback_from_llm_error(&err);
+                    last_error = feedback.detail.clone();
+                    last_feedback = Some(feedback.clone());
+                    let backoff_ms = if feedback.retryable {
+                        retry_backoff_ms(attempt, max_attempts)
+                    } else {
+                        None
+                    };
                     logger.event(
                         "llm.call",
                         Some(&json!({
                             "status": "http_error",
                             "error": last_error,
+                            "errorKind": feedback.error_kind,
+                            "retryable": feedback.retryable,
+                            "retryHint": feedback.retry_hint,
                             "attempt": base_payload["attempt"],
                             "maxAttempts": base_payload["maxAttempts"],
                             "backoffMs": backoff_ms,
@@ -292,6 +328,9 @@ impl OpenAiCompatLlmClient {
                             "request": base_payload["request"],
                         })),
                     );
+                    if !feedback.retryable {
+                        break;
+                    }
                     if let Some(delay) = backoff_ms {
                         sleep(Duration::from_millis(delay)).await;
                     }
@@ -299,9 +338,28 @@ impl OpenAiCompatLlmClient {
             }
         }
 
+        let exhausted_feedback = last_feedback.unwrap_or_else(|| RetryFeedback {
+            error_kind: LlmErrorKind::InvalidSemantic.as_str().to_string(),
+            retryable: true,
+            retry_hint: None,
+            detail: last_error.clone(),
+        });
+
+        let retry_hint_suffix = exhausted_feedback
+            .retry_hint
+            .as_ref()
+            .filter(|hint| !hint.eq_ignore_ascii_case(exhausted_feedback.detail.as_str()))
+            .map(|hint| format!("; retry_hint={hint}"))
+            .unwrap_or_default();
+
         Err(LlmError::new(
             LlmErrorKind::InvalidSemantic,
-            format!("llm call failed after {} attempts: {}", max_attempts, last_error),
+            format!(
+                "llm call failed after {} attempts: kind={}{}",
+                max_attempts,
+                exhausted_feedback.error_kind,
+                retry_hint_suffix
+            ),
         ))
     }
 }
@@ -352,6 +410,156 @@ fn chat_completions_endpoint(base_url: &str) -> String {
     } else {
         format!("{normalized}/chat/completions")
     }
+}
+
+fn feedback_for_semantic(message: String) -> RetryFeedback {
+    let hint = compact_hint(&message, RETRY_HINT_MAX_CHARS);
+    RetryFeedback {
+        error_kind: LlmErrorKind::InvalidSemantic.as_str().to_string(),
+        retryable: true,
+        retry_hint: Some(hint),
+        detail: message,
+    }
+}
+
+fn feedback_from_llm_error(err: &LlmError) -> RetryFeedback {
+    let retryable = !matches!(err.kind, LlmErrorKind::Config);
+    let retry_hint = retry_hint_from_error(err.kind, &err.message);
+    let detail = retry_hint
+        .clone()
+        .unwrap_or_else(|| compact_hint(&err.message, RETRY_HINT_MAX_CHARS));
+    RetryFeedback {
+        error_kind: err.kind.as_str().to_string(),
+        retryable,
+        retry_hint,
+        detail,
+    }
+}
+
+fn retry_hint_from_error(kind: LlmErrorKind, message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let hint = match kind {
+        LlmErrorKind::InvalidSchema => strip_prefix_case_insensitive(trimmed, "schema check failed:")
+            .unwrap_or(trimmed)
+            .trim(),
+        LlmErrorKind::InvalidJson => {
+            let detail = strip_prefix_case_insensitive(
+                trimmed,
+                "failed to extract valid json from llm response:",
+            )
+            .unwrap_or(trimmed)
+            .trim();
+            return Some(compact_invalid_json_hint(detail, RETRY_HINT_MAX_CHARS));
+        }
+        LlmErrorKind::InvalidSemantic => trimmed,
+        _ => return None,
+    };
+
+    if hint.is_empty() {
+        None
+    } else {
+        Some(compact_hint(hint, RETRY_HINT_MAX_CHARS))
+    }
+}
+
+fn compact_invalid_json_hint(detail: &str, max_chars: usize) -> String {
+    let mut reasons: Vec<String> = Vec::new();
+    for part in detail.split('|') {
+        let mut item = part.trim();
+        if item.is_empty() {
+            continue;
+        }
+        if let Some((head, _)) = item.split_once("; near:") {
+            item = head.trim();
+        }
+        if let Some((head, _)) = item.split_once("; raw preview:") {
+            item = head.trim();
+        }
+        item = strip_prefix_case_insensitive(item, "candidate parse failed:")
+            .unwrap_or(item)
+            .trim();
+        item = strip_prefix_case_insensitive(item, "repaired candidate parse failed:")
+            .unwrap_or(item)
+            .trim();
+        if item.is_empty() {
+            continue;
+        }
+        let normalized = compact_hint(item, max_chars);
+        if !reasons.iter().any(|existing| existing.eq_ignore_ascii_case(&normalized)) {
+            reasons.push(normalized);
+        }
+    }
+
+    if reasons.is_empty() {
+        return compact_hint(detail, max_chars);
+    }
+    compact_hint(&reasons.join("; "), max_chars)
+}
+
+fn compact_hint(input: &str, max_chars: usize) -> String {
+    let normalized = input
+        .replace('\r', " ")
+        .replace('\n', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    truncate_chars(&normalized, max_chars)
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+    let mut out = String::new();
+    for (index, ch) in input.chars().enumerate() {
+        if index >= max_chars {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push_str("...");
+    out
+}
+
+fn strip_prefix_case_insensitive<'a>(input: &'a str, prefix: &str) -> Option<&'a str> {
+    if input.len() < prefix.len() {
+        return None;
+    }
+    let (head, tail) = input.split_at(prefix.len());
+    if head.eq_ignore_ascii_case(prefix) {
+        Some(tail)
+    } else {
+        None
+    }
+}
+
+fn augment_user_prompt_with_retry_feedback(
+    base_user_prompt: &str,
+    attempt: u32,
+    max_attempts: u32,
+    last_feedback: Option<&RetryFeedback>,
+) -> String {
+    if attempt <= 1 {
+        return base_user_prompt.to_string();
+    }
+
+    let Some(feedback) = last_feedback else {
+        return base_user_prompt.to_string();
+    };
+    let Some(hint) = feedback.retry_hint.as_ref() else {
+        return base_user_prompt.to_string();
+    };
+    if !feedback.retryable {
+        return base_user_prompt.to_string();
+    }
+
+    format!(
+        "{base_user_prompt}\n\n# Retry Constraint\nPrevious output validation failed ({attempt}/{max_attempts}): {hint}\nReturn a complete corrected JSON response only. Do not add any markdown, explanations, or extra text."
+    )
 }
 
 #[derive(Debug, Serialize)]
