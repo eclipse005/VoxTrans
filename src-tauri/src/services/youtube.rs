@@ -42,15 +42,15 @@ pub struct DownloadYoutubeResponse {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct YoutubeDownloadProgressEvent {
-    task_id: String,
-    phase: String,
-    progress_percent: u32,
-    title: String,
-    speed: String,
-    total_size: String,
-    downloaded_size: String,
-    eta: String,
-    message: String,
+    pub task_id: String,
+    pub phase: String,
+    pub progress_percent: u32,
+    pub title: String,
+    pub speed: String,
+    pub total_size: String,
+    pub downloaded_size: String,
+    pub eta: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

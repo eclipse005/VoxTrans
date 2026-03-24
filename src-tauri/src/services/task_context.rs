@@ -24,7 +24,6 @@ pub struct TaskContext {
     pub runtime: RuntimeState,
     pub stages: StageMap,
     pub artifacts: ArtifactMap,
-    pub projections: ProjectionState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,35 +107,6 @@ pub struct ArtifactMap {
     pub bilingual_target_first: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectionState {
-    pub queue: ProjectionQueueState,
-    pub editor: ProjectionEditorState,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectionQueueState {
-    pub transcribe_status: String,
-    pub phase: String,
-    #[serde(default)]
-    pub phase_detail: String,
-    pub progress_percent: u32,
-    pub transcribe_segment_current: u32,
-    pub transcribe_segment_total: u32,
-    pub transcribe_error: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectionEditorState {
-    pub subtitle_segments_json: String,
-    pub result_text: String,
-    pub result_srt: String,
-    pub translated_srt: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct TaskContextSeed {
     pub task_id: String,
@@ -183,23 +153,6 @@ impl TaskContext {
                 target_srt: Value::Null,
                 bilingual_source_first: Value::Null,
                 bilingual_target_first: Value::Null,
-            },
-            projections: ProjectionState {
-                queue: ProjectionQueueState {
-                    transcribe_status: "queued".to_string(),
-                    phase: String::new(),
-                    phase_detail: String::new(),
-                    progress_percent: 0,
-                    transcribe_segment_current: 0,
-                    transcribe_segment_total: 0,
-                    transcribe_error: String::new(),
-                },
-                editor: ProjectionEditorState {
-                    subtitle_segments_json: "[]".to_string(),
-                    result_text: String::new(),
-                    result_srt: String::new(),
-                    translated_srt: String::new(),
-                },
             },
         }
     }
@@ -253,43 +206,6 @@ impl TaskContext {
         self.runtime.progress_percent = 100;
         self.runtime.can_resume_from = String::new();
         self.task.updated_at = unix_now();
-    }
-
-    pub fn set_queue_projection(
-        &mut self,
-        status: &str,
-        phase: &str,
-        phase_detail: &str,
-        progress_percent: u32,
-        current: u32,
-        total: u32,
-        error: &str,
-    ) {
-        self.projections.queue = ProjectionQueueState {
-            transcribe_status: status.to_string(),
-            phase: phase.to_string(),
-            phase_detail: phase_detail.to_string(),
-            progress_percent,
-            transcribe_segment_current: current,
-            transcribe_segment_total: total,
-            transcribe_error: error.to_string(),
-        };
-        self.runtime.progress_percent = progress_percent.clamp(0, 100);
-    }
-
-    pub fn set_editor_projection(
-        &mut self,
-        subtitle_segments_json: String,
-        result_text: String,
-        result_srt: String,
-        translated_srt: String,
-    ) {
-        self.projections.editor = ProjectionEditorState {
-            subtitle_segments_json,
-            result_text,
-            result_srt,
-            translated_srt,
-        };
     }
 
     pub fn stage_status(&self, stage: &str) -> &str {

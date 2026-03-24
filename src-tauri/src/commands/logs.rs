@@ -1,22 +1,63 @@
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::services::logs::{self, AppendTaskLogRequest, ClearTaskLogsRequest, ReadTaskLogRequest};
+use crate::services::logs;
 use crate::services::task_usage;
 
-#[tauri::command]
-pub fn append_task_log(request: AppendTaskLogRequest) -> Result<(), String> {
-    logs::append_task_log(request)
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendTaskLogCommandRequest {
+    pub task_id: String,
+    #[serde(default)]
+    pub media_path: Option<String>,
+    pub channel: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadTaskLogCommandRequest {
+    pub task_id: String,
+    #[serde(default)]
+    pub media_path: Option<String>,
+    pub channel: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClearTaskLogsCommandRequest {
+    pub task_id: String,
+    #[serde(default)]
+    pub media_path: Option<String>,
+    pub channel: Option<String>,
 }
 
 #[tauri::command]
-pub fn read_task_log(request: ReadTaskLogRequest) -> Result<String, String> {
-    logs::read_task_log(request)
+pub fn append_task_log(request: AppendTaskLogCommandRequest) -> Result<(), String> {
+    logs::append_task_log(logs::AppendTaskLogRequest {
+        task_id: request.task_id,
+        media_path: request.media_path,
+        channel: request.channel,
+        message: request.message,
+    })
 }
 
 #[tauri::command]
-pub fn clear_task_logs(request: ClearTaskLogsRequest) -> Result<(), String> {
-    logs::clear_task_logs(request)
+pub fn read_task_log(request: ReadTaskLogCommandRequest) -> Result<String, String> {
+    logs::read_task_log(logs::ReadTaskLogRequest {
+        task_id: request.task_id,
+        media_path: request.media_path,
+        channel: request.channel,
+    })
+}
+
+#[tauri::command]
+pub fn clear_task_logs(request: ClearTaskLogsCommandRequest) -> Result<(), String> {
+    logs::clear_task_logs(logs::ClearTaskLogsRequest {
+        task_id: request.task_id,
+        media_path: request.media_path,
+        channel: request.channel,
+    })
 }
 
 #[tauri::command]

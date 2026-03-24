@@ -792,20 +792,8 @@ fn trim_edge_punctuation(raw: &str) -> &str {
     &raw[start..end_exclusive]
 }
 
-fn is_removable_edge_punctuation(ch: char, neighbor: Option<char>, is_leading: bool) -> bool {
-    if !matches!(ch, ',' | '，' | '.' | '。') {
-        return false;
-    }
-    match neighbor {
-        Some(next) => {
-            if is_leading {
-                is_cjk(next)
-            } else {
-                is_cjk(next)
-            }
-        }
-        None => false,
-    }
+fn is_removable_edge_punctuation(ch: char, _neighbor: Option<char>, _is_leading: bool) -> bool {
+    matches!(ch, ',' | '，' | '.' | '。')
 }
 
 fn replace_commas_with_space(raw: &str) -> String {

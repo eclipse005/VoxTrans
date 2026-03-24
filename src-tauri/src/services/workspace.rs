@@ -167,9 +167,9 @@ impl From<TaskQueueItemRow> for QueueItemRecord {
 fn map_status(raw: &str) -> String {
     match raw.trim().to_lowercase().as_str() {
         "queued" => "queued".to_string(),
-        "running" => "processing".to_string(),
-        "completed" => "done".to_string(),
-        "failed" => "error".to_string(),
+        "running" | "processing" => "processing".to_string(),
+        "completed" | "done" => "done".to_string(),
+        "failed" | "error" => "error".to_string(),
         "pending" => "pending".to_string(),
         _ => "pending".to_string(),
     }

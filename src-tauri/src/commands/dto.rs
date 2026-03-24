@@ -1,0 +1,95 @@
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRunCommandRecord {
+    pub id: String,
+    pub media_path: String,
+    pub name: String,
+    pub media_kind: String,
+    pub size_bytes: u64,
+    pub intent: String,
+    pub retry_count: u32,
+    pub max_retries: u32,
+    pub settings_policy_version: String,
+    pub settings_snapshot_json: String,
+    pub source_lang: String,
+    pub target_lang: String,
+    pub queued_at: i64,
+    pub started_at: Option<i64>,
+    pub finished_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub overall_status: String,
+    pub current_stage: String,
+    pub progress_percent: u32,
+    pub phase_detail: String,
+    pub segment_current: u32,
+    pub segment_total: u32,
+    pub error_message: String,
+    pub result_text: String,
+    pub result_srt: String,
+    pub subtitle_segments_json: String,
+    pub translated_srt: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct YoutubeDownloadProgressCommandEvent {
+    pub task_id: String,
+    pub phase: String,
+    pub progress_percent: u32,
+    pub title: String,
+    pub speed: String,
+    pub total_size: String,
+    pub downloaded_size: String,
+    pub eta: String,
+    pub message: String,
+}
+
+pub fn from_service_task_run(record: crate::services::task_engine::TaskRunRecord) -> TaskRunCommandRecord {
+    TaskRunCommandRecord {
+        id: record.id,
+        media_path: record.media_path,
+        name: record.name,
+        media_kind: record.media_kind,
+        size_bytes: record.size_bytes,
+        intent: record.intent,
+        retry_count: record.retry_count,
+        max_retries: record.max_retries,
+        settings_policy_version: record.settings_policy_version,
+        settings_snapshot_json: record.settings_snapshot_json,
+        source_lang: record.source_lang,
+        target_lang: record.target_lang,
+        queued_at: record.queued_at,
+        started_at: record.started_at,
+        finished_at: record.finished_at,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+        overall_status: record.overall_status,
+        current_stage: record.current_stage,
+        progress_percent: record.progress_percent,
+        phase_detail: record.phase_detail,
+        segment_current: record.segment_current,
+        segment_total: record.segment_total,
+        error_message: record.error_message,
+        result_text: record.result_text,
+        result_srt: record.result_srt,
+        subtitle_segments_json: record.subtitle_segments_json,
+        translated_srt: record.translated_srt,
+    }
+}
+
+pub fn from_service_youtube_progress(
+    event: crate::services::youtube::YoutubeDownloadProgressEvent,
+) -> YoutubeDownloadProgressCommandEvent {
+    YoutubeDownloadProgressCommandEvent {
+        task_id: event.task_id,
+        phase: event.phase,
+        progress_percent: event.progress_percent,
+        title: event.title,
+        speed: event.speed,
+        total_size: event.total_size,
+        downloaded_size: event.downloaded_size,
+        eta: event.eta,
+        message: event.message,
+    }
+}

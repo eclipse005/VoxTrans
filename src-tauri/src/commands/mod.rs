@@ -15,3 +15,4 @@ pub mod transcribe;
 pub mod transcription;
 pub mod workspace;
 pub mod youtube;
+pub(crate) mod dto;

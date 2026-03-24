@@ -5,9 +5,7 @@ use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 use tauri::async_runtime::spawn_blocking;
 use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
-use voxtrans_core::subtitle::alignment::align_text_to_timestamps;
 use voxtrans_core::subtitle::segmenter::WordToken;
-use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 
 use crate::app_state::TaskWorkerRuntime;
 use crate::services::file::save_srt;
@@ -17,6 +15,20 @@ use crate::services::final_subtitle::{
     final_subtitle_words_from_word_dtos, parse_final_subtitle_segments,
 };
 use crate::services::preferences::load_user_preferences;
+use crate::services::task_projection::TaskProjectionState;
+use crate::services::task_projection_store::{
+    TaskProjectionHydrationInput, hydrate_task_projection as hydrate_projection_from_store,
+    persist_task_projection,
+};
+use crate::services::task_subtitle_composer::{
+    WordTimingAnchor, apply_subtitle_beautify_to_segments,
+    build_bilingual_srt_from_translate_segments, build_srt_from_translate_segments,
+    realign_segments_with_words,
+};
+use crate::services::task_stage_store::{
+    TaskStageSnapshot, load_task_stage_snapshot_rows, persist_task_stage_snapshots,
+};
+use crate::services::task_stage_runner::run_stage;
 use crate::services::task_context::{
     STAGE_ASR, STAGE_COMPOSE, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEPARATE,
     STAGE_SUMMARIZE, STAGE_TRANSLATE, STAGE_QA, STAGE_QA_LAYOUT, STAGE_QA_QUALITY, TaskContext,
@@ -37,7 +49,6 @@ use crate::services::transcription::{
 use crate::services::translate::types::{
     TranslatePipelineRequest, TranslateTerminologyEntry, TranslateToken,
 };
-use crate::services::translate::pipeline::beautify_translated_text;
 use crate::services::translate::{run_translate_summarize, run_translate_with_theme};
 use crate::services::translate::segment_optimize::{
     SEGMENT_OPTIMIZE_LAYOUT_VERSION, SegmentOptimizeRequest, run_segment_optimize,
@@ -230,9 +241,20 @@ pub async fn execute_task_run(
     let settings_snapshot = serde_json::from_str::<serde_json::Value>(&task.settings_snapshot_json)
         .unwrap_or_else(|_| json!({}));
     let mut context = hydrate_task_context(pool, &task, settings_snapshot).await?;
+    let mut projection = hydrate_task_projection(&task);
     context.mark_stage_running(STAGE_INIT);
-    context.set_queue_projection("processing", "initializing", "", 0, 0, 0, "");
-    persist_task_context(pool, &task.id, &context).await?;
+    set_queue_projection(
+        &mut context,
+        &mut projection,
+        "processing",
+        "initializing",
+        "",
+        0,
+        0,
+        0,
+        "",
+    );
+    persist_task_context(pool, &task.id, &context, &projection).await?;
 
     let intent = request
         .intent
@@ -245,18 +267,18 @@ pub async fn execute_task_run(
     let with_translate = intent == "TRANSCRIBE_TRANSLATE";
     let run_result = if with_translate
         && load_segment_optimize_snapshot(&context).is_some()
-        && has_translated_segments_available(&context.projections.editor.subtitle_segments_json)
+        && has_translated_segments_available(&projection.editor.subtitle_segments_json)
     {
-        Ok(done_payload_from_context(&context))
+        Ok(done_payload_from_projection(&projection))
     } else if !with_translate
         && stage_is_done(context.stage_status(STAGE_SEGMENT))
-        && has_source_segments_available(&context.projections.editor.subtitle_segments_json)
+        && has_source_segments_available(&projection.editor.subtitle_segments_json)
     {
-        Ok(done_payload_from_context(&context))
+        Ok(done_payload_from_projection(&projection))
     } else if with_translate
-        && has_source_segments_available(&context.projections.editor.subtitle_segments_json)
+        && has_source_segments_available(&projection.editor.subtitle_segments_json)
     {
-        run_translate_from_existing_segments(pool, app.as_ref(), &task, &mut context).await
+        run_translate_from_existing_segments(pool, app.as_ref(), &task, &mut context, &mut projection).await
     } else if let Some(asr_snapshot) = load_asr_resume_snapshot(&context) {
         run_transcribe_and_maybe_translate(
             pool,
@@ -264,11 +286,21 @@ pub async fn execute_task_run(
             &task,
             with_translate,
             &mut context,
+            &mut projection,
             Some(asr_snapshot),
         )
         .await
     } else {
-        run_transcribe_and_maybe_translate(pool, app.as_ref(), &task, with_translate, &mut context, None).await
+        run_transcribe_and_maybe_translate(
+            pool,
+            app.as_ref(),
+            &task,
+            with_translate,
+            &mut context,
+            &mut projection,
+            None,
+        )
+        .await
     };
 
     match run_result {
@@ -281,7 +313,9 @@ pub async fn execute_task_run(
                 Value::Null,
             );
             context.mark_completed();
-            context.set_queue_projection(
+            set_queue_projection(
+                &mut context,
+                &mut projection,
                 "done",
                 "",
                 "",
@@ -290,13 +324,13 @@ pub async fn execute_task_run(
                 done.segment_total.max(0) as u32,
                 "",
             );
-            context.set_editor_projection(
+            projection.set_editor(
                 done.subtitle_segments_json.clone(),
                 done.result_text.clone(),
                 done.result_srt.clone(),
                 String::new(),
             );
-            persist_task_context(pool, &task.id, &context).await?;
+            persist_task_context(pool, &task.id, &context, &projection).await?;
             let src_path = crate::services::task_path::task_src_srt_output_path(
                 &task.id,
                 std::path::Path::new(&task.media_path),
@@ -365,8 +399,18 @@ pub async fn execute_task_run(
                 failed_stage.as_str()
             };
             context.mark_failed(stage, "TASK_FAILED", &err, true);
-            context.set_queue_projection("error", "", "", 0, 0, 0, &err);
-            persist_task_context(pool, &task.id, &context).await?;
+            set_queue_projection(
+                &mut context,
+                &mut projection,
+                "error",
+                "",
+                "",
+                0,
+                0,
+                0,
+                &err,
+            );
+            persist_task_context(pool, &task.id, &context, &projection).await?;
             TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
                 event::TRANSCRIBE_FAILED,
                 Some(&json!({
@@ -562,361 +606,6 @@ struct SegmentOptimizeSnapshot {
     trans_src_srt: String,
 }
 
-#[derive(Debug, Clone)]
-struct WordTimingAnchor {
-    start: f64,
-    end: f64,
-    word: String,
-}
-
-fn realign_segments_with_words(
-    segments: &mut [crate::services::translate::types::TranslateSegment],
-    word_timestamps: &[WordTimingAnchor],
-) -> Value {
-    if segments.is_empty() {
-        return json!({ "applied": false, "reason": "empty_segments" });
-    }
-    let words = word_timestamps
-        .iter()
-        .filter_map(|w| {
-            let word = w.word.trim().to_string();
-            if word.is_empty() {
-                return None;
-            }
-            Some(WordToken {
-                start: w.start,
-                end: w.end.max(w.start),
-                word,
-            })
-        })
-        .collect::<Vec<_>>();
-    if words.is_empty() {
-        return json!({ "applied": false, "reason": "empty_words" });
-    }
-    let groups = build_alignment_groups(segments);
-    if groups.is_empty() {
-        return json!({ "applied": false, "reason": "empty_source_text" });
-    }
-
-    if words.len() < groups.len() {
-        return json!({
-            "applied": false,
-            "reason": "insufficient_words",
-            "wordTotal": words.len(),
-            "segmentTotal": segments.len(),
-            "groupTotal": groups.len()
-        });
-    }
-
-    let source_full_text = groups
-        .iter()
-        .map(|g| g.source_text.as_str())
-        .filter(|v| !v.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    if source_full_text.is_empty() {
-        return json!({ "applied": false, "reason": "empty_source_text" });
-    }
-
-    let aligned_words = align_text_to_timestamps(&source_full_text, &words);
-    if aligned_words.is_empty() {
-        return json!({ "applied": false, "reason": "alignment_empty" });
-    }
-    if aligned_words.len() < groups.len() {
-        return json!({
-            "applied": false,
-            "reason": "alignment_insufficient_words",
-            "alignedWordTotal": aligned_words.len(),
-            "segmentTotal": segments.len(),
-            "groupTotal": groups.len()
-        });
-    }
-
-    let mut segment_token_owners: Vec<usize> = Vec::new();
-    let mut segment_token_stream: Vec<String> = Vec::new();
-    for (group_idx, group) in groups.iter().enumerate() {
-        for token in group.source_text.split_whitespace() {
-            let norm = normalize_alignment_token(token);
-            if norm.is_empty() {
-                continue;
-            }
-            segment_token_owners.push(group_idx);
-            segment_token_stream.push(norm);
-        }
-    }
-    let aligned_word_stream = aligned_words
-        .iter()
-        .map(|w| normalize_alignment_token(&w.word))
-        .filter(|t| !t.is_empty())
-        .collect::<Vec<_>>();
-    if segment_token_stream.is_empty() || aligned_word_stream.is_empty() {
-        return json!({
-            "applied": false,
-            "reason": "alignment_token_stream_empty",
-            "segmentTokenTotal": segment_token_stream.len(),
-            "alignedWordTokenTotal": aligned_word_stream.len()
-        });
-    }
-
-    let matched_pairs = lcs_match_pairs(&segment_token_stream, &aligned_word_stream);
-    let mut segment_boundaries: Vec<Option<(usize, usize)>> = vec![None; groups.len()];
-    for (segment_token_idx, aligned_word_idx) in matched_pairs {
-        let seg_idx = segment_token_owners[segment_token_idx];
-        match &mut segment_boundaries[seg_idx] {
-            Some((start, end)) => {
-                if aligned_word_idx < *start {
-                    *start = aligned_word_idx;
-                }
-                if aligned_word_idx > *end {
-                    *end = aligned_word_idx;
-                }
-            }
-            None => {
-                segment_boundaries[seg_idx] = Some((aligned_word_idx, aligned_word_idx));
-            }
-        }
-    }
-
-    let total_segments = groups.len();
-    let mut cursor_word = 0usize;
-    let mut changed = 0usize;
-    let mut fallback_segments = 0usize;
-    for (idx, group) in groups.iter().enumerate() {
-        if cursor_word >= aligned_words.len() {
-            break;
-        }
-        let (mut start_idx, mut end_idx) = match segment_boundaries[idx] {
-            Some(boundary) => boundary,
-            None => {
-                fallback_segments += 1;
-                let remaining = total_segments.saturating_sub(idx).max(1);
-                let remaining_words = aligned_words.len().saturating_sub(cursor_word).max(1);
-                let allocation = if idx + 1 == total_segments {
-                    remaining_words
-                } else {
-                    (remaining_words / remaining).max(1)
-                };
-                let start = cursor_word.min(aligned_words.len().saturating_sub(1));
-                let end = (start + allocation.saturating_sub(1)).min(aligned_words.len().saturating_sub(1));
-                (start, end)
-            }
-        };
-        if start_idx < cursor_word {
-            start_idx = cursor_word;
-        }
-        if end_idx < start_idx {
-            end_idx = start_idx;
-        }
-        end_idx = end_idx.min(aligned_words.len().saturating_sub(1));
-
-        let start_word = &aligned_words[start_idx];
-        let end_word = &aligned_words[end_idx];
-        let new_start_ms = (start_word.start.max(0.0) * 1000.0).round() as u64;
-        let new_end_ms = (end_word.end.max(start_word.start) * 1000.0).round() as u64;
-        changed += apply_group_timing(
-            segments,
-            group,
-            new_start_ms,
-            new_end_ms.max(new_start_ms),
-        );
-        cursor_word = end_idx.saturating_add(1);
-    }
-
-    json!({
-        "applied": true,
-        "segmentTotal": segments.len(),
-        "groupTotal": total_segments,
-        "wordTotal": words.len(),
-        "alignedWordTotal": aligned_words.len(),
-        "changedSegmentTotal": changed,
-        "fallbackSegmentTotal": fallback_segments
-    })
-}
-
-#[derive(Debug, Clone)]
-struct AlignmentGroup {
-    source_text: String,
-    segment_indexes: Vec<usize>,
-}
-
-fn build_alignment_groups(
-    segments: &[crate::services::translate::types::TranslateSegment],
-) -> Vec<AlignmentGroup> {
-    let mut groups: Vec<AlignmentGroup> = Vec::new();
-    for (idx, segment) in segments.iter().enumerate() {
-        let source_text = segment.source_text.trim().to_string();
-        if source_text.is_empty() {
-            continue;
-        }
-        if let Some(last) = groups.last_mut() {
-            if last.source_text == source_text {
-                last.segment_indexes.push(idx);
-                continue;
-            }
-        }
-        groups.push(AlignmentGroup {
-            source_text,
-            segment_indexes: vec![idx],
-        });
-    }
-    groups
-}
-
-fn apply_group_timing(
-    segments: &mut [crate::services::translate::types::TranslateSegment],
-    group: &AlignmentGroup,
-    group_start_ms: u64,
-    group_end_ms: u64,
-) -> usize {
-    if group.segment_indexes.is_empty() {
-        return 0;
-    }
-    if group.segment_indexes.len() == 1 {
-        let idx = group.segment_indexes[0];
-        let segment = &mut segments[idx];
-        let changed = usize::from(
-            segment.start_ms != group_start_ms || segment.end_ms != group_end_ms,
-        );
-        segment.start_ms = group_start_ms;
-        segment.end_ms = group_end_ms.max(group_start_ms);
-        return changed;
-    }
-
-    let total_duration = group_end_ms.saturating_sub(group_start_ms);
-    let weights = group
-        .segment_indexes
-        .iter()
-        .map(|idx| {
-            let segment = &segments[*idx];
-            segment.end_ms.saturating_sub(segment.start_ms).max(1)
-        })
-        .collect::<Vec<_>>();
-    let total_weight = weights.iter().copied().sum::<u64>().max(1);
-
-    let mut changed = 0usize;
-    let mut cursor = group_start_ms;
-    for (position, seg_idx) in group.segment_indexes.iter().enumerate() {
-        let segment = &mut segments[*seg_idx];
-        let next_end = if position + 1 == group.segment_indexes.len() {
-            group_end_ms
-        } else {
-            let weight = weights[position];
-            let slice = ((total_duration as f64) * (weight as f64 / total_weight as f64)).round() as u64;
-            (cursor + slice.max(1)).min(group_end_ms.saturating_sub(1).max(cursor + 1))
-        };
-        let final_end = next_end.max(cursor);
-        changed += usize::from(segment.start_ms != cursor || segment.end_ms != final_end);
-        segment.start_ms = cursor;
-        segment.end_ms = final_end;
-        cursor = final_end;
-    }
-    changed
-}
-
-fn normalize_alignment_token(token: &str) -> String {
-    token
-        .chars()
-        .filter(|ch| ch.is_alphanumeric())
-        .flat_map(|ch| ch.to_lowercase())
-        .collect::<String>()
-}
-
-fn lcs_match_pairs(left: &[String], right: &[String]) -> Vec<(usize, usize)> {
-    if left.is_empty() || right.is_empty() {
-        return Vec::new();
-    }
-    let n = left.len();
-    let m = right.len();
-    let mut dp = vec![vec![0usize; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            dp[i][j] = if left[i] == right[j] {
-                dp[i + 1][j + 1] + 1
-            } else {
-                dp[i + 1][j].max(dp[i][j + 1])
-            };
-        }
-    }
-    let mut pairs = Vec::new();
-    let (mut i, mut j) = (0usize, 0usize);
-    while i < n && j < m {
-        if left[i] == right[j] {
-            pairs.push((i, j));
-            i += 1;
-            j += 1;
-        } else if dp[i + 1][j] >= dp[i][j + 1] {
-            i += 1;
-        } else {
-            j += 1;
-        }
-    }
-    pairs
-}
-
-fn build_srt_from_translate_segments(
-    segments: &[crate::services::translate::types::TranslateSegment],
-    translated: bool,
-) -> String {
-    let cues = segments
-        .iter()
-        .enumerate()
-        .map(|(idx, segment)| SrtCue {
-            index: idx + 1,
-            start_ms: segment.start_ms,
-            end_ms: segment.end_ms.max(segment.start_ms),
-            text: if translated {
-                segment.translated_text.trim().to_string()
-            } else {
-                segment.source_text.trim().to_string()
-            },
-        })
-        .collect::<Vec<_>>();
-    to_srt_from_cues(&cues)
-}
-
-fn build_bilingual_srt_from_translate_segments(
-    segments: &[crate::services::translate::types::TranslateSegment],
-    source_first: bool,
-) -> String {
-    let cues = segments
-        .iter()
-        .enumerate()
-        .map(|(idx, segment)| {
-            let source = segment.source_text.trim();
-            let translated = segment.translated_text.trim();
-            let text = if source_first {
-                format!("{source}\n{translated}")
-            } else {
-                format!("{translated}\n{source}")
-            };
-            SrtCue {
-                index: idx + 1,
-                start_ms: segment.start_ms,
-                end_ms: segment.end_ms.max(segment.start_ms),
-                text,
-            }
-        })
-        .collect::<Vec<_>>();
-    to_srt_from_cues(&cues)
-}
-
-fn apply_subtitle_beautify_to_segments(
-    segments: &[crate::services::translate::types::TranslateSegment],
-    enabled: bool,
-) -> Vec<crate::services::translate::types::TranslateSegment> {
-    if !enabled {
-        return segments.to_vec();
-    }
-    segments
-        .iter()
-        .cloned()
-        .map(|mut seg| {
-            seg.translated_text = beautify_translated_text(&seg.translated_text);
-            seg
-        })
-        .collect()
-}
-
 fn save_translation_srt_set(
     task_id: &str,
     media_path: &str,
@@ -954,6 +643,7 @@ async fn run_transcribe_and_maybe_translate(
     task: &TaskRunExecRow,
     with_translate: bool,
     context: &mut TaskContext,
+    projection: &mut TaskProjectionState,
     _asr_resume: Option<AsrResumeSnapshot>,
 ) -> Result<DonePayload, String> {
     let settings_before_asr = load_user_preferences(pool).await?.settings;
@@ -961,6 +651,7 @@ async fn run_transcribe_and_maybe_translate(
         pool,
         &task.id,
         context,
+        projection,
         STAGE_ASR,
         |ctx| {
             load_asr_resume_snapshot(ctx).map(|snapshot| TranscribeResponse {
@@ -1061,6 +752,7 @@ async fn run_transcribe_and_maybe_translate(
                 "vadElapsedSec": value.vad_elapsed_sec,
             })
         },
+        persist_task_context_boxed,
     )
     .await?;
 
@@ -1071,6 +763,7 @@ async fn run_transcribe_and_maybe_translate(
         pool,
         &task.id,
         context,
+        projection,
         STAGE_PUNCTUATE,
         |ctx| load_stage_words(ctx, STAGE_PUNCTUATE),
         |value| !value.is_empty(),
@@ -1107,6 +800,7 @@ async fn run_transcribe_and_maybe_translate(
         },
         |value| json!({ "wordTotal": value.len(), "words": value }),
         |_| Value::Null,
+        persist_task_context_boxed,
     )
     .await?;
 
@@ -1114,6 +808,7 @@ async fn run_transcribe_and_maybe_translate(
         pool,
         &task.id,
         context,
+        projection,
         STAGE_SEGMENT,
         load_segment_snapshot,
         |value| !value.segments.is_empty() && !value.srt.trim().is_empty(),
@@ -1153,6 +848,7 @@ async fn run_transcribe_and_maybe_translate(
             })
         },
         |_| Value::Null,
+        persist_task_context_boxed,
     )
     .await?;
 
@@ -1178,7 +874,9 @@ async fn run_transcribe_and_maybe_translate(
     let source_segments_json = final_subtitle_segments_from_source_segments(&processed.segments);
     let source_segments_json =
         serde_json::to_string(&source_segments_json).map_err(|err| err.to_string())?;
-    context.set_queue_projection(
+    set_queue_projection(
+        context,
+        projection,
         "processing",
         "translate",
         "",
@@ -1187,13 +885,13 @@ async fn run_transcribe_and_maybe_translate(
         transcribed.segment_total as u32,
         "",
     );
-    context.set_editor_projection(
+    projection.set_editor(
         source_segments_json.clone(),
         processed.text.clone(),
         processed.srt.clone(),
         String::new(),
     );
-    persist_task_context(pool, &task.id, context).await?;
+    persist_task_context(pool, &task.id, context, projection).await?;
     let translate_request = TranslatePipelineRequest {
         task_id: task.id.clone(),
         media_path: task.media_path.clone(),
@@ -1223,6 +921,7 @@ async fn run_transcribe_and_maybe_translate(
         pool,
         &task.id,
         context,
+        projection,
         STAGE_SUMMARIZE,
         load_summarize_snapshot,
         |value| !value.theme.trim().is_empty(),
@@ -1259,6 +958,7 @@ async fn run_transcribe_and_maybe_translate(
             })
         },
         |_| Value::Null,
+        persist_task_context_boxed,
     )
     .await?;
     log_pipeline_stage(
@@ -1279,6 +979,7 @@ async fn run_transcribe_and_maybe_translate(
         pool,
         &task.id,
         context,
+        projection,
         STAGE_TRANSLATE,
         load_translate_snapshot,
         |value| !value.segments.is_empty(),
@@ -1337,6 +1038,7 @@ async fn run_transcribe_and_maybe_translate(
             })
         },
         |_| Value::Null,
+        persist_task_context_boxed,
     )
     .await?;
     log_pipeline_stage(
@@ -1353,6 +1055,7 @@ async fn run_transcribe_and_maybe_translate(
         pool,
         &task.id,
         context,
+        projection,
         STAGE_QA_LAYOUT,
         load_segment_optimize_snapshot,
         |value| !value.segments.is_empty(),
@@ -1408,6 +1111,7 @@ async fn run_transcribe_and_maybe_translate(
             })
         },
         |_| Value::Null,
+        persist_task_context_boxed,
     )
     .await?;
     let segment_optimize_snapshot = finalize_segment_optimize_timing(
@@ -1453,10 +1157,10 @@ async fn run_transcribe_and_maybe_translate(
         &final_trans_src_srt,
     )?;
 
-    let result_text = if context.projections.editor.result_text.trim().is_empty() {
+    let result_text = if projection.editor.result_text.trim().is_empty() {
         processed.text
     } else {
-        context.projections.editor.result_text.clone()
+        projection.editor.result_text.clone()
     };
 
     Ok(DonePayload {
@@ -1472,6 +1176,7 @@ async fn run_translate_from_existing_segments(
     app: Option<&tauri::AppHandle>,
     task: &TaskRunExecRow,
     context: &mut TaskContext,
+    projection: &mut TaskProjectionState,
 ) -> Result<DonePayload, String> {
     let settings = load_user_preferences(pool).await?.settings;
     let latest_words = if let words @ Some(_) = load_stage_words(context, STAGE_PUNCTUATE) {
@@ -1502,13 +1207,13 @@ async fn run_translate_from_existing_segments(
             .collect::<Vec<_>>();
         let source_segments_json =
             serde_json::to_string(&source_segments_json).map_err(|err| err.to_string())?;
-        context.set_editor_projection(
+        projection.set_editor(
             source_segments_json,
             built.text.clone(),
             built.srt.clone(),
             String::new(),
         );
-        persist_task_context(pool, &task.id, context).await?;
+        persist_task_context(pool, &task.id, context, projection).await?;
         emit_bridge_event(
             app,
             "workspace-sync-hint",
@@ -1526,7 +1231,7 @@ async fn run_translate_from_existing_segments(
             })
             .collect::<Vec<_>>()
     } else {
-        parse_tokens_from_segments(&context.projections.editor.subtitle_segments_json)
+        parse_tokens_from_segments(&projection.editor.subtitle_segments_json)
     };
 
     if tokens.is_empty() {
@@ -1561,6 +1266,7 @@ async fn run_translate_from_existing_segments(
         pool,
         &task.id,
         context,
+        projection,
         STAGE_SUMMARIZE,
         load_summarize_snapshot,
         |value| !value.theme.trim().is_empty(),
@@ -1597,6 +1303,7 @@ async fn run_translate_from_existing_segments(
             })
         },
         |_| Value::Null,
+        persist_task_context_boxed,
     )
     .await?;
     log_pipeline_stage(
@@ -1616,6 +1323,7 @@ async fn run_translate_from_existing_segments(
         pool,
         &task.id,
         context,
+        projection,
         STAGE_TRANSLATE,
         load_translate_snapshot,
         |value| !value.segments.is_empty(),
@@ -1673,6 +1381,7 @@ async fn run_translate_from_existing_segments(
             })
         },
         |_| Value::Null,
+        persist_task_context_boxed,
     )
     .await?;
     log_pipeline_stage(
@@ -1688,6 +1397,7 @@ async fn run_translate_from_existing_segments(
         pool,
         &task.id,
         context,
+        projection,
         STAGE_QA_LAYOUT,
         load_segment_optimize_snapshot,
         |value| !value.segments.is_empty(),
@@ -1743,6 +1453,7 @@ async fn run_translate_from_existing_segments(
             })
         },
         |_| Value::Null,
+        persist_task_context_boxed,
     )
     .await?;
     let segment_optimize_snapshot = finalize_segment_optimize_timing(
@@ -1787,14 +1498,24 @@ async fn run_translate_from_existing_segments(
         &final_src_trans_srt,
         &final_trans_src_srt,
     )?;
-    context.set_queue_projection("processing", "translate", "", 99, merged.len() as u32, merged.len() as u32, "");
-    persist_task_context(pool, &task.id, context).await?;
+    set_queue_projection(
+        context,
+        projection,
+        "processing",
+        "translate",
+        "",
+        99,
+        merged.len() as u32,
+        merged.len() as u32,
+        "",
+    );
+    persist_task_context(pool, &task.id, context, projection).await?;
 
     Ok(DonePayload {
-        result_text: if context.projections.editor.result_text.trim().is_empty() {
+        result_text: if projection.editor.result_text.trim().is_empty() {
             format!("translated with {}", settings.translate_model)
         } else {
-            context.projections.editor.result_text.clone()
+            projection.editor.result_text.clone()
         },
         result_srt: final_source_srt,
         subtitle_segments_json: serde_json::to_string(&merged).map_err(|err| err.to_string())?,
@@ -2054,62 +1775,34 @@ fn stage_is_done(status: &str) -> bool {
     status.trim().eq_ignore_ascii_case("done")
 }
 
-async fn run_stage<T, FLoad, FValid, FExec, Fut, FOutput, FMetrics>(
-    pool: &SqlitePool,
-    task_id: &str,
+fn set_queue_projection(
     context: &mut TaskContext,
-    stage: &str,
-    load_existing: FLoad,
-    validate: FValid,
-    exec: FExec,
-    output_of: FOutput,
-    metrics_of: FMetrics,
-) -> Result<T, String>
-where
-    FLoad: Fn(&TaskContext) -> Option<T>,
-    FValid: Fn(&T) -> bool,
-    FExec: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<T, String>>,
-    FOutput: Fn(&T) -> Value,
-    FMetrics: Fn(&T) -> Value,
-{
-    if stage_is_done(context.stage_status(stage)) {
-        if let Some(existing) = load_existing(context) {
-            if validate(&existing) {
-                return Ok(existing);
-            }
-        }
-    }
-
-    context.mark_stage_running(stage);
-    persist_task_context(pool, task_id, context).await?;
-
-    let value = match exec().await {
-        Ok(v) => v,
-        Err(err) => {
-            context.mark_failed(stage, "STAGE_FAILED", &err, true);
-            persist_task_context(pool, task_id, context).await?;
-            return Err(err);
-        }
-    };
-    if !validate(&value) {
-        let err = format!("{stage} failed: invalid output");
-        context.mark_failed(stage, "INVALID_OUTPUT", &err, false);
-        persist_task_context(pool, task_id, context).await?;
-        return Err(err);
-    }
-
-    context.mark_stage_done(stage, output_of(&value), metrics_of(&value));
-    persist_task_context(pool, task_id, context).await?;
-    Ok(value)
+    projection: &mut TaskProjectionState,
+    status: &str,
+    phase: &str,
+    phase_detail: &str,
+    progress_percent: u32,
+    current: u32,
+    total: u32,
+    error: &str,
+) {
+    context.runtime.progress_percent = projection.set_queue(
+        status,
+        phase,
+        phase_detail,
+        progress_percent,
+        current,
+        total,
+        error,
+    );
 }
 
-fn done_payload_from_context(context: &TaskContext) -> DonePayload {
-    let segment_total = count_segments_from_json(&context.projections.editor.subtitle_segments_json);
+fn done_payload_from_projection(projection: &TaskProjectionState) -> DonePayload {
+    let segment_total = count_segments_from_json(&projection.editor.subtitle_segments_json);
     DonePayload {
-        result_text: context.projections.editor.result_text.clone(),
-        result_srt: context.projections.editor.result_srt.clone(),
-        subtitle_segments_json: context.projections.editor.subtitle_segments_json.clone(),
+        result_text: projection.editor.result_text.clone(),
+        result_srt: projection.editor.result_srt.clone(),
+        subtitle_segments_json: projection.editor.subtitle_segments_json.clone(),
         segment_total,
     }
 }
@@ -2197,18 +1890,6 @@ fn map_terminology_entries(
         .collect()
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct TaskStageSnapshotRow {
-    stage: String,
-    status: String,
-    started_at: Option<i64>,
-    finished_at: Option<i64>,
-    output_json: String,
-    metrics_json: String,
-    error_code: String,
-    error_message: String,
-}
-
 async fn hydrate_task_context(
     pool: &SqlitePool,
     task: &TaskRunExecRow,
@@ -2229,31 +1910,8 @@ async fn hydrate_task_context(
     context.runtime.status = normalize_runtime_status(&task.overall_status);
     context.runtime.current_stage = task.current_stage.clone();
     context.runtime.progress_percent = task.progress_percent.clamp(0, 100) as u32;
-    context.set_queue_projection(
-        map_workspace_status(&task.overall_status),
-        map_workspace_phase(&task.current_stage).as_str(),
-        &task.phase_detail,
-        task.progress_percent.clamp(0, 100) as u32,
-        task.segment_current.max(0) as u32,
-        task.segment_total.max(0) as u32,
-        &task.error_message,
-    );
-    context.set_editor_projection(
-        task.subtitle_segments_json.clone(),
-        task.result_text.clone(),
-        task.result_srt.clone(),
-        task.translated_srt.clone(),
-    );
 
-    let rows = sqlx::query_as::<_, TaskStageSnapshotRow>(
-        "SELECT stage, status, started_at, finished_at, output_json, metrics_json, error_code, error_message
-         FROM task_stage_runs
-         WHERE task_id = ?",
-    )
-    .bind(&task.id)
-    .fetch_all(pool)
-    .await
-    .map_err(|err| err.to_string())?;
+    let rows = load_task_stage_snapshot_rows(pool, &task.id).await?;
 
     for row in rows {
         let output = serde_json::from_str::<Value>(&row.output_json).unwrap_or(Value::Null);
@@ -2273,62 +1931,36 @@ async fn hydrate_task_context(
     Ok(context)
 }
 
+fn hydrate_task_projection(task: &TaskRunExecRow) -> TaskProjectionState {
+    hydrate_projection_from_store(TaskProjectionHydrationInput {
+        overall_status: task.overall_status.clone(),
+        current_stage: task.current_stage.clone(),
+        progress_percent: task.progress_percent,
+        phase_detail: task.phase_detail.clone(),
+        segment_current: task.segment_current,
+        segment_total: task.segment_total,
+        error_message: task.error_message.clone(),
+        subtitle_segments_json: task.subtitle_segments_json.clone(),
+        result_text: task.result_text.clone(),
+        result_srt: task.result_srt.clone(),
+        translated_srt: task.translated_srt.clone(),
+    })
+}
+
 async fn persist_task_context(
     pool: &SqlitePool,
     task_id: &str,
     context: &TaskContext,
+    projection: &TaskProjectionState,
 ) -> Result<(), String> {
     let now = unix_now();
     let is_final = matches!(
         context.runtime.status.as_str(),
-        "failed" | "completed" | "cancelled"
+        "failed" | "completed"
     );
-    sqlx::query(
-        "UPDATE task_runs
-         SET overall_status = ?,
-             current_stage = ?,
-             progress_percent = ?,
-             phase_detail = ?,
-             segment_current = ?,
-             segment_total = ?,
-             error_message = ?,
-             result_text = ?,
-             result_srt = ?,
-             subtitle_segments_json = ?,
-             translated_srt = ?,
-             started_at = CASE
-                 WHEN started_at IS NULL AND ? = 'running' THEN ?
-                 ELSE started_at
-             END,
-             finished_at = CASE
-                 WHEN ? = 1 THEN ?
-                 ELSE NULL
-             END,
-             updated_at = ?
-         WHERE id = ?",
-    )
-    .bind(normalize_overall_status(&context.runtime.status))
-    .bind(&context.runtime.current_stage)
-    .bind(context.runtime.progress_percent as i64)
-    .bind(&context.projections.queue.phase_detail)
-    .bind(context.projections.queue.transcribe_segment_current as i64)
-    .bind(context.projections.queue.transcribe_segment_total as i64)
-    .bind(&context.projections.queue.transcribe_error)
-    .bind(&context.projections.editor.result_text)
-    .bind(&context.projections.editor.result_srt)
-    .bind(&context.projections.editor.subtitle_segments_json)
-    .bind(&context.projections.editor.translated_srt)
-    .bind(&context.runtime.status)
-    .bind(now)
-    .bind(if is_final { 1 } else { 0 })
-    .bind(now)
-    .bind(now)
-    .bind(task_id)
-    .execute(pool)
-    .await
-    .map_err(|err| err.to_string())?;
+    persist_task_projection(pool, task_id, &context.runtime, projection, now, is_final).await?;
 
-    for (stage, envelope) in [
+    let snapshots = [
         (STAGE_INIT, &context.stages.init),
         (STAGE_SEPARATE, &context.stages.separate),
         (STAGE_ASR, &context.stages.asr),
@@ -2340,54 +1972,31 @@ async fn persist_task_context(
         (STAGE_QA_LAYOUT, &context.stages.qa_layout),
         (STAGE_QA_QUALITY, &context.stages.qa_quality),
         (STAGE_COMPOSE, &context.stages.compose),
-    ] {
-        let output_json = serde_json::to_string(&envelope.output).unwrap_or_else(|_| "{}".to_string());
-        let metrics_json = serde_json::to_string(&envelope.metrics).unwrap_or_else(|_| "{}".to_string());
-        let error_code = envelope.error.as_ref().map(|e| e.code.clone()).unwrap_or_default();
-        let error_message = envelope.error.as_ref().map(|e| e.message.clone()).unwrap_or_default();
-        let duration_ms = match (envelope.started_at, envelope.finished_at) {
-            (Some(start), Some(end)) if end >= start => (end - start) * 1000,
-            _ => 0,
-        };
-        sqlx::query(
-            "INSERT INTO task_stage_runs (
-                task_id, stage, status, attempt, input_hash, output_json, metrics_json, error_code, error_message,
-                started_at, finished_at, duration_ms, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(task_id, stage) DO UPDATE SET
-                status = excluded.status,
-                attempt = CASE
-                    WHEN excluded.status = 'running' THEN task_stage_runs.attempt + 1
-                    ELSE task_stage_runs.attempt
-                END,
-                output_json = excluded.output_json,
-                metrics_json = excluded.metrics_json,
-                error_code = excluded.error_code,
-                error_message = excluded.error_message,
-                started_at = excluded.started_at,
-                finished_at = excluded.finished_at,
-                duration_ms = excluded.duration_ms,
-                updated_at = excluded.updated_at",
-        )
-        .bind(task_id)
-        .bind(stage)
-        .bind(&envelope.status)
-        .bind(if envelope.status == "running" { 1_i64 } else { 0_i64 })
-        .bind("")
-        .bind(output_json)
-        .bind(metrics_json)
-        .bind(error_code)
-        .bind(error_message)
-        .bind(envelope.started_at)
-        .bind(envelope.finished_at)
-        .bind(duration_ms)
-        .bind(now)
-        .execute(pool)
-        .await
-        .map_err(|err| err.to_string())?;
-    }
+    ]
+    .iter()
+    .map(|(stage, envelope)| TaskStageSnapshot {
+        stage: (*stage).to_string(),
+        status: envelope.status.clone(),
+        started_at: envelope.started_at,
+        finished_at: envelope.finished_at,
+        output: envelope.output.clone(),
+        metrics: envelope.metrics.clone(),
+        error_code: envelope.error.as_ref().map(|e| e.code.clone()).unwrap_or_default(),
+        error_message: envelope.error.as_ref().map(|e| e.message.clone()).unwrap_or_default(),
+    })
+    .collect::<Vec<_>>();
+    persist_task_stage_snapshots(pool, task_id, &snapshots, now).await?;
 
     Ok(())
+}
+
+fn persist_task_context_boxed<'a>(
+    pool: &'a SqlitePool,
+    task_id: &'a str,
+    context: &'a TaskContext,
+    projection: &'a TaskProjectionState,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + 'a>> {
+    Box::pin(persist_task_context(pool, task_id, context, projection))
 }
 
 fn unix_now() -> i64 {
@@ -2435,40 +2044,12 @@ async fn load_task_runtime_error(pool: &SqlitePool, task_id: &str) -> Option<Str
     .flatten()
 }
 
-fn normalize_overall_status(runtime_status: &str) -> &str {
-    match runtime_status {
-        "queued" => "queued",
-        "running" => "running",
-        "failed" => "failed",
-        "completed" => "completed",
-        _ => "pending",
-    }
-}
-
 fn normalize_runtime_status(overall_status: &str) -> String {
-    match overall_status {
+    match overall_status.trim().to_ascii_lowercase().as_str() {
         "queued" => "queued".to_string(),
         "running" => "running".to_string(),
         "failed" => "failed".to_string(),
         "completed" => "completed".to_string(),
         _ => "queued".to_string(),
-    }
-}
-
-fn map_workspace_status(overall_status: &str) -> &str {
-    match overall_status {
-        "queued" => "queued",
-        "running" => "processing",
-        "failed" => "error",
-        "completed" => "done",
-        _ => "pending",
-    }
-}
-
-fn map_workspace_phase(current_stage: &str) -> String {
-    match current_stage {
-        "separate" => "separating".to_string(),
-        "asr" => "recognizing".to_string(),
-        other => other.to_string(),
     }
 }
