@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { deleteTasks, enqueueTaskRun } from "../../api/workspace";
 import type { QueueItem, SavedSettings } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
@@ -39,6 +39,7 @@ export function useQueueScheduler({
     item.path.startsWith("youtube://")
   ), []);
   const runBatchInFlightRef = useRef(false);
+  const [scheduleTick, setScheduleTick] = useState(0);
   const hasProcessingTask = useMemo(
     () => queue.some((item) => item.transcribeStatus === "processing" && !isYoutubePlaceholder(item)),
     [isYoutubePlaceholder, queue],
@@ -102,8 +103,9 @@ export function useQueueScheduler({
       })
       .finally(() => {
         runBatchInFlightRef.current = false;
+        setScheduleTick((value) => value + 1);
       });
-  }, [hasProcessingTask, isYoutubePlaceholder, queue, runBatch, takeTaskMode, pushToast]);
+  }, [hasProcessingTask, isYoutubePlaceholder, queue, runBatch, takeTaskMode, pushToast, scheduleTick]);
 
   const processQueue = useCallback(async (mode: QueueBatchMode = "transcribe") => {
     const retryableItems = queue.filter((item) => (

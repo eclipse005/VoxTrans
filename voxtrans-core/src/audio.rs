@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::TARGET_SAMPLE_RATE;
-use crate::binary::resolve_bundled_or_path;
+use crate::binary::{configure_background_command, resolve_bundled_or_path};
 
 pub(crate) struct PreparedAudio {
     pub mono_samples: Vec<f32>,
@@ -83,7 +83,9 @@ fn convert_audio_to_wav_16k_mono(
 ) -> Result<TemporaryAudioFile, Box<dyn std::error::Error>> {
     let output_path = build_temp_wav_path("ffmpeg_input");
     let ffmpeg_bin = resolve_bundled_or_path("ffmpeg");
-    let output = Command::new(&ffmpeg_bin)
+    let mut command = Command::new(&ffmpeg_bin);
+    configure_background_command(&mut command);
+    let output = command
         .arg("-y")
         .arg("-i")
         .arg(input_path)

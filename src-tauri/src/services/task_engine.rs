@@ -163,10 +163,24 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
                  media_kind = ?,
                  size_bytes = ?,
                  intent = ?,
+                 retry_count = 0,
                  max_retries = ?,
                  settings_snapshot_json = ?,
                  source_lang = ?,
                  target_lang = ?,
+                 started_at = NULL,
+                 finished_at = NULL,
+                 overall_status = ?,
+                 current_stage = ?,
+                 progress_percent = 0,
+                 phase_detail = '',
+                 segment_current = 0,
+                 segment_total = 0,
+                 error_message = '',
+                 result_text = '',
+                 result_srt = '',
+                 subtitle_segments_json = '[]',
+                 translated_srt = '',
                  queued_at = ?,
                  updated_at = ?
              WHERE id = ?",
@@ -180,6 +194,8 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
         .bind(snapshot)
         .bind(source_lang)
         .bind(target_lang)
+        .bind(initial_overall_status("queued"))
+        .bind(initial_stage(&normalized_intent))
         .bind(now)
         .bind(now)
         .bind(&request.id)
@@ -215,9 +231,8 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
         .execute(pool)
         .await
         .map_err(|err| err.to_string())?;
-
-        reset_task_stages(pool, &request.id).await?;
     }
+    reset_task_stages(pool, &request.id).await?;
 
     get_task_run(pool, GetTaskRunRequest { task_id: request.id })
         .await?
