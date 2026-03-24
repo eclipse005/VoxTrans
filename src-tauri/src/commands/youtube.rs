@@ -1,9 +1,9 @@
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::commands::dto::{
-    TaskRunCommandRecord, YoutubeDownloadProgressCommandEvent, from_service_task_run,
-    from_service_youtube_progress,
+use crate::commands::dto::common::{TaskRunCommandRecord, from_service_task_run};
+use crate::commands::dto::youtube::{
+    YoutubeDownloadProgressCommandEvent, from_service_youtube_progress,
 };
 use crate::services::youtube::{
     self, download_youtube_to_task, get_youtube_download_progress as get_youtube_download_progress_service,

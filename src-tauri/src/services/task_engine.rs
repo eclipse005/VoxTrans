@@ -13,7 +13,7 @@ const TASK_STAGES: [&str; 9] = [
     "segment",
     "summarize",
     "translate",
-    "qa",
+    "segment_optimize",
     "compose",
 ];
 

@@ -31,20 +31,6 @@ pub struct TaskRunCommandRecord {
     pub translated_srt: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct YoutubeDownloadProgressCommandEvent {
-    pub task_id: String,
-    pub phase: String,
-    pub progress_percent: u32,
-    pub title: String,
-    pub speed: String,
-    pub total_size: String,
-    pub downloaded_size: String,
-    pub eta: String,
-    pub message: String,
-}
-
 pub fn from_service_task_run(record: crate::services::task_engine::TaskRunRecord) -> TaskRunCommandRecord {
     TaskRunCommandRecord {
         id: record.id,
@@ -75,21 +61,5 @@ pub fn from_service_task_run(record: crate::services::task_engine::TaskRunRecord
         result_srt: record.result_srt,
         subtitle_segments_json: record.subtitle_segments_json,
         translated_srt: record.translated_srt,
-    }
-}
-
-pub fn from_service_youtube_progress(
-    event: crate::services::youtube::YoutubeDownloadProgressEvent,
-) -> YoutubeDownloadProgressCommandEvent {
-    YoutubeDownloadProgressCommandEvent {
-        task_id: event.task_id,
-        phase: event.phase,
-        progress_percent: event.progress_percent,
-        title: event.title,
-        speed: event.speed,
-        total_size: event.total_size,
-        downloaded_size: event.downloaded_size,
-        eta: event.eta,
-        message: event.message,
     }
 }

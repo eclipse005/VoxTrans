@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::services::task_status::TaskRuntimeStatus;
+
 pub const STAGE_INIT: &str = "init";
 pub const STAGE_SEPARATE: &str = "separate";
 pub const STAGE_ASR: &str = "asr";
@@ -8,9 +10,7 @@ pub const STAGE_PUNCTUATE: &str = "punctuate";
 pub const STAGE_SEGMENT: &str = "segment";
 pub const STAGE_SUMMARIZE: &str = "summarize";
 pub const STAGE_TRANSLATE: &str = "translate";
-pub const STAGE_QA: &str = "qa";
-pub const STAGE_QA_LAYOUT: &str = "segment_optimize";
-pub const STAGE_QA_QUALITY: &str = "qa_quality";
+pub const STAGE_SEGMENT_OPTIMIZE: &str = "segment_optimize";
 pub const STAGE_COMPOSE: &str = "compose";
 pub const STAGE_PERSIST: &str = "persist";
 pub const STAGE_DONE: &str = "done";
@@ -50,7 +50,7 @@ pub struct InputSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeState {
     pub current_stage: String,
-    pub status: String,
+    pub status: TaskRuntimeStatus,
     pub progress_percent: u32,
     pub retry_count: u32,
     #[serde(default)]
@@ -67,11 +67,7 @@ pub struct StageMap {
     pub segment: StageEnvelope,
     pub summarize: StageEnvelope,
     pub translate: StageEnvelope,
-    pub qa: StageEnvelope,
-    #[serde(default)]
-    pub qa_layout: StageEnvelope,
-    #[serde(default)]
-    pub qa_quality: StageEnvelope,
+    pub segment_optimize: StageEnvelope,
     pub compose: StageEnvelope,
     pub persist: StageEnvelope,
 }
@@ -141,7 +137,7 @@ impl TaskContext {
             },
             runtime: RuntimeState {
                 current_stage: STAGE_INIT.to_string(),
-                status: "queued".to_string(),
+                status: TaskRuntimeStatus::Queued,
                 progress_percent: 0,
                 retry_count: 0,
                 can_resume_from: STAGE_INIT.to_string(),
@@ -160,7 +156,7 @@ impl TaskContext {
     pub fn mark_stage_running(&mut self, stage: &str) {
         let now = unix_now();
         self.runtime.current_stage = stage.to_string();
-        self.runtime.status = "running".to_string();
+        self.runtime.status = TaskRuntimeStatus::Running;
         self.runtime.can_resume_from = stage.to_string();
         self.task.updated_at = now;
         if let Some(s) = self.stage_mut(stage) {
@@ -185,7 +181,7 @@ impl TaskContext {
     pub fn mark_failed(&mut self, stage: &str, code: &str, message: &str, retriable: bool) {
         let now = unix_now();
         self.runtime.current_stage = stage.to_string();
-        self.runtime.status = "failed".to_string();
+        self.runtime.status = TaskRuntimeStatus::Failed;
         self.runtime.can_resume_from = stage.to_string();
         self.task.updated_at = now;
         if let Some(s) = self.stage_mut(stage) {
@@ -202,7 +198,7 @@ impl TaskContext {
 
     pub fn mark_completed(&mut self) {
         self.runtime.current_stage = STAGE_DONE.to_string();
-        self.runtime.status = "completed".to_string();
+        self.runtime.status = TaskRuntimeStatus::Completed;
         self.runtime.progress_percent = 100;
         self.runtime.can_resume_from = String::new();
         self.task.updated_at = unix_now();
@@ -253,9 +249,7 @@ impl TaskContext {
             STAGE_SEGMENT => Some(&mut self.stages.segment),
             STAGE_SUMMARIZE => Some(&mut self.stages.summarize),
             STAGE_TRANSLATE => Some(&mut self.stages.translate),
-            STAGE_QA => Some(&mut self.stages.qa),
-            STAGE_QA_LAYOUT => Some(&mut self.stages.qa_layout),
-            STAGE_QA_QUALITY => Some(&mut self.stages.qa_quality),
+            STAGE_SEGMENT_OPTIMIZE => Some(&mut self.stages.segment_optimize),
             STAGE_COMPOSE => Some(&mut self.stages.compose),
             STAGE_PERSIST => Some(&mut self.stages.persist),
             _ => None,
@@ -271,9 +265,7 @@ impl TaskContext {
             STAGE_SEGMENT => Some(&self.stages.segment),
             STAGE_SUMMARIZE => Some(&self.stages.summarize),
             STAGE_TRANSLATE => Some(&self.stages.translate),
-            STAGE_QA => Some(&self.stages.qa),
-            STAGE_QA_LAYOUT => Some(&self.stages.qa_layout),
-            STAGE_QA_QUALITY => Some(&self.stages.qa_quality),
+            STAGE_SEGMENT_OPTIMIZE => Some(&self.stages.segment_optimize),
             STAGE_COMPOSE => Some(&self.stages.compose),
             STAGE_PERSIST => Some(&self.stages.persist),
             _ => None,
@@ -291,9 +283,7 @@ impl StageMap {
             segment: StageEnvelope::new(),
             summarize: StageEnvelope::new(),
             translate: StageEnvelope::new(),
-            qa: StageEnvelope::new(),
-            qa_layout: StageEnvelope::new(),
-            qa_quality: StageEnvelope::new(),
+            segment_optimize: StageEnvelope::new(),
             compose: StageEnvelope::new(),
             persist: StageEnvelope::new(),
         }

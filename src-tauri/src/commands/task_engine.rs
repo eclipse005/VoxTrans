@@ -1,114 +1,27 @@
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::commands::dto::{TaskRunCommandRecord, from_service_task_run};
+use crate::commands::dto::common::{TaskRunCommandRecord, from_service_task_run};
+use crate::commands::dto::task_engine::{
+    DeleteTasksCommandRequest, EnqueueAndExecuteTaskBatchCommandRequest,
+    EnqueueTaskCommandRequest, ExecuteTaskBatchCommandRequest, ExecuteTaskBatchCommandResponse,
+    ExecuteTaskRunCommandRequest, GetTaskRunCommandRequest, ListTaskRunsCommandRequest,
+    RegisterTaskUploadCommandRequest, from_service_execute_batch_response, to_service_delete_tasks,
+    to_service_enqueue_and_execute_task_batch, to_service_enqueue_task, to_service_execute_task_batch,
+    to_service_execute_task_run, to_service_get_task_run, to_service_list_task_runs,
+    to_service_register_task_upload,
+};
 use crate::services::task_engine::{
     self, delete_tasks as delete_tasks_service, enqueue_task as enqueue_task_service,
     get_task_run as get_task_run_service, list_task_runs as list_task_runs_service,
     register_task_upload as register_task_upload_service,
 };
 use crate::services::task_executor::{
-    self, enqueue_and_execute_task_batch_via_worker as enqueue_and_execute_task_batch_service,
+    enqueue_and_execute_task_batch_via_worker as enqueue_and_execute_task_batch_service,
     execute_task_batch_via_worker as execute_task_batch_service,
     execute_task_run_via_worker as execute_task_run_service,
 };
 use crate::services::task_worker;
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EnqueueTaskCommandRequest {
-    pub id: String,
-    pub media_path: String,
-    pub name: String,
-    pub media_kind: String,
-    pub size_bytes: u64,
-    pub intent: String,
-    #[serde(default)]
-    pub source_lang: String,
-    #[serde(default)]
-    pub target_lang: String,
-    #[serde(default)]
-    pub max_retries: u32,
-    #[serde(default)]
-    pub settings_snapshot: serde_json::Value,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegisterTaskUploadCommandRequest {
-    pub id: String,
-    pub media_path: String,
-    pub name: String,
-    pub media_kind: String,
-    pub size_bytes: u64,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListTaskRunsCommandRequest {
-    pub intent: Option<String>,
-    pub limit: Option<u32>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTaskRunCommandRequest {
-    pub task_id: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeleteTasksCommandRequest {
-    pub media_path: Option<String>,
-    pub task_id: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecuteTaskRunCommandRequest {
-    pub task_id: String,
-    #[serde(default)]
-    pub intent: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecuteTaskBatchItemCommand {
-    pub task_id: String,
-    #[serde(default)]
-    pub intent: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecuteTaskBatchCommandRequest {
-    pub items: Vec<ExecuteTaskBatchItemCommand>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EnqueueAndExecuteTaskBatchItemCommand {
-    pub id: String,
-    pub media_path: String,
-    pub name: String,
-    pub media_kind: String,
-    pub size_bytes: u64,
-    pub intent: String,
-    #[serde(default)]
-    pub source_lang: String,
-    #[serde(default)]
-    pub target_lang: String,
-    #[serde(default)]
-    pub max_retries: u32,
-    #[serde(default)]
-    pub settings_snapshot: serde_json::Value,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EnqueueAndExecuteTaskBatchCommandRequest {
-    pub items: Vec<EnqueueAndExecuteTaskBatchItemCommand>,
-}
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,40 +65,13 @@ pub struct TaskRunDetailCommand {
     pub artifacts: Vec<TaskArtifactCommandRecord>,
 }
 
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecuteTaskBatchFailureCommand {
-    pub task_id: String,
-    pub error: String,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecuteTaskBatchCommandResponse {
-    pub succeeded_task_ids: Vec<String>,
-    pub failed: Vec<ExecuteTaskBatchFailureCommand>,
-}
 
 #[tauri::command]
 pub async fn enqueue_task_run(
     state: State<'_, AppState>,
     request: EnqueueTaskCommandRequest,
 ) -> Result<TaskRunCommandRecord, String> {
-    enqueue_task_service(
-        &state.pool,
-        task_engine::EnqueueTaskRequest {
-            id: request.id,
-            media_path: request.media_path,
-            name: request.name,
-            media_kind: request.media_kind,
-            size_bytes: request.size_bytes,
-            intent: request.intent,
-            source_lang: request.source_lang,
-            target_lang: request.target_lang,
-            max_retries: request.max_retries,
-            settings_snapshot: request.settings_snapshot,
-        },
-    )
+    enqueue_task_service(&state.pool, to_service_enqueue_task(request))
     .await
     .map(from_service_task_run)
 }
@@ -195,16 +81,7 @@ pub async fn register_task_upload(
     state: State<'_, AppState>,
     request: RegisterTaskUploadCommandRequest,
 ) -> Result<TaskRunCommandRecord, String> {
-    register_task_upload_service(
-        &state.pool,
-        task_engine::RegisterTaskUploadRequest {
-            id: request.id,
-            media_path: request.media_path,
-            name: request.name,
-            media_kind: request.media_kind,
-            size_bytes: request.size_bytes,
-        },
-    )
+    register_task_upload_service(&state.pool, to_service_register_task_upload(request))
     .await
     .map(from_service_task_run)
 }
@@ -214,13 +91,7 @@ pub async fn list_task_runs(
     state: State<'_, AppState>,
     request: ListTaskRunsCommandRequest,
 ) -> Result<Vec<TaskRunCommandRecord>, String> {
-    list_task_runs_service(
-        &state.pool,
-        task_engine::ListTaskRunsRequest {
-            intent: request.intent,
-            limit: request.limit,
-        },
-    )
+    list_task_runs_service(&state.pool, to_service_list_task_runs(request))
     .await
     .map(|items| items.into_iter().map(from_service_task_run).collect())
 }
@@ -230,12 +101,7 @@ pub async fn get_task_run(
     state: State<'_, AppState>,
     request: GetTaskRunCommandRequest,
 ) -> Result<TaskRunDetailCommand, String> {
-    get_task_run_service(
-        &state.pool,
-        task_engine::GetTaskRunRequest {
-            task_id: request.task_id,
-        },
-    )
+    get_task_run_service(&state.pool, to_service_get_task_run(request))
     .await
     .map(from_service_task_detail)
 }
@@ -250,10 +116,7 @@ pub async fn execute_task_run(
         &state.pool,
         &state.task_worker_runtime,
         app,
-        task_executor::ExecuteTaskRunRequest {
-            task_id: request.task_id,
-            intent: request.intent,
-        },
+        to_service_execute_task_run(request),
     )
     .await
 }
@@ -268,16 +131,7 @@ pub async fn execute_task_batch(
         &state.pool,
         &state.task_worker_runtime,
         app,
-        task_executor::ExecuteTaskBatchRequest {
-            items: request
-                .items
-                .into_iter()
-                .map(|item| task_executor::ExecuteTaskBatchItem {
-                    task_id: item.task_id,
-                    intent: item.intent,
-                })
-                .collect(),
-        },
+        to_service_execute_task_batch(request),
     )
     .await
     .map(from_service_execute_batch_response)
@@ -293,24 +147,7 @@ pub async fn enqueue_and_execute_task_batch(
         &state.pool,
         &state.task_worker_runtime,
         app,
-        task_executor::EnqueueAndExecuteTaskBatchRequest {
-            items: request
-                .items
-                .into_iter()
-                .map(|item| task_executor::EnqueueAndExecuteTaskBatchItem {
-                    id: item.id,
-                    media_path: item.media_path,
-                    name: item.name,
-                    media_kind: item.media_kind,
-                    size_bytes: item.size_bytes,
-                    intent: item.intent,
-                    source_lang: item.source_lang,
-                    target_lang: item.target_lang,
-                    max_retries: item.max_retries,
-                    settings_snapshot: item.settings_snapshot,
-                })
-                .collect(),
-        },
+        to_service_enqueue_and_execute_task_batch(request),
     )
     .await
     .map(from_service_execute_batch_response)
@@ -324,13 +161,7 @@ pub async fn delete_tasks(
     if let Some(task_id) = request.task_id.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
         let _ = task_worker::kill_worker_if_running(&state.task_worker_runtime, task_id);
     }
-    delete_tasks_service(
-        &state.pool,
-        task_engine::DeleteTasksRequest {
-            media_path: request.media_path,
-            task_id: request.task_id,
-        },
-    )
+    delete_tasks_service(&state.pool, to_service_delete_tasks(request))
     .await
 }
 
@@ -371,22 +202,6 @@ fn from_service_task_detail(detail: task_engine::TaskRunDetail) -> TaskRunDetail
                 metadata_json: artifact.metadata_json,
                 created_at: artifact.created_at,
                 updated_at: artifact.updated_at,
-            })
-            .collect(),
-    }
-}
-
-fn from_service_execute_batch_response(
-    response: task_executor::ExecuteTaskBatchResponse,
-) -> ExecuteTaskBatchCommandResponse {
-    ExecuteTaskBatchCommandResponse {
-        succeeded_task_ids: response.succeeded_task_ids,
-        failed: response
-            .failed
-            .into_iter()
-            .map(|item| ExecuteTaskBatchFailureCommand {
-                task_id: item.task_id,
-                error: item.error,
             })
             .collect(),
     }

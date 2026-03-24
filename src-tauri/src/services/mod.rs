@@ -19,6 +19,8 @@ pub mod task_usage;
 pub mod task_context;
 pub mod task_projection;
 pub mod task_projection_store;
+pub mod task_status;
+pub mod task_stage_handlers;
 pub mod task_subtitle_composer;
 pub mod task_stage_runner;
 pub mod task_stage_store;
