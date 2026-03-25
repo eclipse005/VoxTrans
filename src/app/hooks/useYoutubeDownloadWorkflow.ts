@@ -6,7 +6,7 @@ import type { QueueRunMode } from "./queue/useQueueRunner";
 import type { YoutubeDownloadProgressResponse } from "../api/youtube";
 import { cancelYoutubeDownload, downloadYoutubeTask } from "../api/youtube";
 import { addQueueItems, patchQueueItem, removeQueueItem } from "../state/queueDomainActions";
-import { deleteTasks, registerTaskUpload } from "../api/workspace";
+import { deleteTasks } from "../api/workspace";
 import { toUserErrorMessage } from "../utils/errors";
 
 type DispatchState = (action: AppAction) => void;
@@ -156,25 +156,15 @@ export function useYoutubeDownloadWorkflow({
       if (!downloadingLike || !hasMetadata) return;
       const sourceUrl = youtubeTaskUrlRef.current.get(payload.taskId) || "";
       const placeholderPath = encodeYoutubePlaceholderPath(payload.taskId, sourceUrl);
-      void registerTaskUpload({
-        id: payload.taskId,
-        mediaPath: placeholderPath,
-        name: normalizedTitle,
-        mediaKind: "video",
-        sizeBytes: totalBytes,
-      })
-        .then(() => {
-          addQueueItems(dispatch, [
-            createYoutubePlaceholderTask(
-              payload.taskId,
-              placeholderPath,
-              normalizedTitle,
-              totalBytes,
-              progress,
-            ),
-          ]);
-        })
-        .catch(() => {});
+      addQueueItems(dispatch, [
+        createYoutubePlaceholderTask(
+          payload.taskId,
+          placeholderPath,
+          normalizedTitle,
+          totalBytes,
+          progress,
+        ),
+      ]);
       return;
     }
 
