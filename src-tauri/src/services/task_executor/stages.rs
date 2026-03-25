@@ -1,12 +1,11 @@
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
-use tauri::Emitter;
 use tauri::async_runtime::spawn_blocking;
 use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
 
 use crate::services::preferences::SavedSettings;
 use crate::services::task_context::{
-    STAGE_ASR, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEGMENT_OPTIMIZE, STAGE_SUMMARIZE,
+    STAGE_ASR, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEGMENT_OPTIMIZE, STAGE_SEPARATE, STAGE_SUMMARIZE,
     STAGE_TRANSLATE, TaskContext,
 };
 use crate::services::task_projection::TaskProjectionState;
@@ -44,6 +43,7 @@ pub(super) async fn run_asr_stage(
     task: &TaskRunExecRow,
     context: &mut TaskContext,
     projection: &TaskProjectionState,
+    transcribe_audio_path: String,
     settings: &SavedSettings,
 ) -> Result<TranscribeResponse, String> {
     StageHandlers::new(
@@ -69,52 +69,21 @@ pub(super) async fn run_asr_stage(
         |value| !value.words.is_empty(),
         || {
             let task_id = task.id.clone();
-            let media_path = task.media_path.clone();
             let app_opt = app.cloned();
             let settings = settings.clone();
+            let transcribe_audio_path = transcribe_audio_path.clone();
             async move {
-                let mut transcribe_audio_path = media_path.clone();
-                if !settings.enable_vocal_separation {
-                    transcribe_audio_path =
-                        crate::services::demucs::prepare_audio_for_asr(&task_id, &media_path)?;
-                }
-                if settings.enable_vocal_separation {
-                    if let Some(app_handle) = app_opt.as_ref() {
-                        let _ = app_handle.emit(
-                            "transcribe-phase",
-                            &TranscribePhaseEvent {
-                                task_id: task_id.clone(),
-                                phase: "separating".to_string(),
-                                phase_detail: None,
-                            },
-                        );
-                    }
-                    let app_handle = app_opt.clone();
-                    let req = crate::services::demucs::SeparateVocalsRequest {
-                        task_id: task_id.clone(),
-                        audio_path: media_path.clone(),
-                        model: settings.demucs_model.clone(),
-                    };
-                    let progress_task_id = task_id.clone();
-                    let separated = spawn_blocking(move || {
-                        crate::services::demucs::separate_vocals_blocking(req, |percent| {
-                            emit_bridge_event(
-                                app_handle.as_ref(),
-                                "separate-progress",
-                                &SeparateProgressEvent {
-                                    task_id: progress_task_id.clone(),
-                                    percent,
-                                },
-                            );
-                        })
-                    })
-                    .await
-                    .map_err(|err| err.to_string())??;
-                    transcribe_audio_path = separated.vocals_path;
-                }
-
                 let app_handle = app_opt.clone();
                 let progress_task_id = task_id.clone();
+                emit_bridge_event(
+                    app_opt.as_ref(),
+                    "transcribe-phase",
+                    &TranscribePhaseEvent {
+                        task_id: task_id.clone(),
+                        phase: "recognizing".to_string(),
+                        phase_detail: None,
+                    },
+                );
                 let transcribe_req = TranscribeRequest {
                     task_id: task_id.clone(),
                     audio_path: transcribe_audio_path,
@@ -158,6 +127,81 @@ pub(super) async fn run_asr_stage(
     .await
 }
 
+pub(super) async fn run_separate_stage(
+    pool: &SqlitePool,
+    app: Option<&tauri::AppHandle>,
+    task: &TaskRunExecRow,
+    context: &mut TaskContext,
+    projection: &TaskProjectionState,
+    settings: &SavedSettings,
+) -> Result<String, String> {
+    StageHandlers::new(
+        pool,
+        &task.id,
+        context,
+        projection,
+        persist_task_context_boxed,
+    )
+    .run(
+        STAGE_SEPARATE,
+        |ctx| {
+            ctx.stages
+                .separate
+                .output
+                .get("vocalsPath")
+                .and_then(Value::as_str)
+                .map(|v| v.to_string())
+        },
+        |value| !value.trim().is_empty(),
+        || {
+            let task_id = task.id.clone();
+            let media_path = task.media_path.clone();
+            let app_opt = app.cloned();
+            let settings = settings.clone();
+            async move {
+                if !settings.enable_vocal_separation {
+                    return crate::services::demucs::prepare_audio_for_asr(&task_id, &media_path);
+                }
+                emit_bridge_event(
+                    app_opt.as_ref(),
+                    "transcribe-phase",
+                    &TranscribePhaseEvent {
+                        task_id: task_id.clone(),
+                        phase: "separating".to_string(),
+                        phase_detail: None,
+                    },
+                );
+
+                let app_handle = app_opt.clone();
+                let req = crate::services::demucs::SeparateVocalsRequest {
+                    task_id: task_id.clone(),
+                    audio_path: media_path.clone(),
+                    model: settings.demucs_model.clone(),
+                };
+                let progress_task_id = task_id.clone();
+                let separated = spawn_blocking(move || {
+                    crate::services::demucs::separate_vocals_blocking(req, |percent| {
+                        emit_bridge_event(
+                            app_handle.as_ref(),
+                            "separate-progress",
+                            &SeparateProgressEvent {
+                                task_id: progress_task_id.clone(),
+                                percent,
+                            },
+                        );
+                    })
+                })
+                .await
+                .map_err(|err| err.to_string())??;
+                Ok(separated.vocals_path)
+            }
+        },
+        |value| json!({ "vocalsPath": value }),
+        |_| Value::Null,
+    )
+    .await
+}
+
 pub(super) async fn run_punctuate_stage(
     pool: &SqlitePool,
     app: Option<&tauri::AppHandle>,
@@ -167,6 +211,9 @@ pub(super) async fn run_punctuate_stage(
     words: &[WordTokenDto],
     settings: &SavedSettings,
 ) -> Result<Vec<WordTokenDto>, String> {
+    if !settings.enable_punctuation_optimization {
+        return Ok(words.to_vec());
+    }
     StageHandlers::new(
         pool,
         &task.id,

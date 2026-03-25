@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0B1020"/>
+      <stop offset="0.5" stop-color="#1B2A44"/>
+      <stop offset="1" stop-color="#0A1428"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(260 140) rotate(25) scale(420 240)">
+      <stop offset="0" stop-color="#38BDF8" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#38BDF8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(980 560) rotate(-20) scale(520 260)">
+      <stop offset="0" stop-color="#22D3EE" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="haze" x1="0" y1="420" x2="1280" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0F172A" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#0F172A" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#0F172A" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <ellipse cx="260" cy="140" rx="420" ry="240" fill="url(#glowA)"/>
+  <ellipse cx="980" cy="560" rx="520" ry="260" fill="url(#glowB)"/>
+  <rect x="0" y="420" width="1280" height="220" fill="url(#haze)"/>
+
+  <circle cx="180" cy="84" r="2" fill="#E2E8F0" fill-opacity="0.55"/>
+  <circle cx="1140" cy="120" r="1.5" fill="#E2E8F0" fill-opacity="0.45"/>
+  <circle cx="930" cy="68" r="1.2" fill="#E2E8F0" fill-opacity="0.4"/>
+  <circle cx="320" cy="210" r="1" fill="#E2E8F0" fill-opacity="0.35"/>
+</svg>

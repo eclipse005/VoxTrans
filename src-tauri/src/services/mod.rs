@@ -13,6 +13,7 @@ pub mod model;
 pub mod output;
 pub mod preferences;
 pub mod subtitle;
+pub mod subtitle_render;
 pub mod system;
 pub mod task_log;
 pub mod task_usage;

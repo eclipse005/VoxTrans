@@ -103,6 +103,7 @@ fn map_workspace_phase(stage: &str) -> String {
         "summarize" => "summarize".to_string(),
         "translate" => "translate".to_string(),
         "segment_optimize" => "segment_optimize".to_string(),
+        "burning" => "burning".to_string(),
         "compose" => "compose".to_string(),
         "done" => "done".to_string(),
         _ => String::new(),

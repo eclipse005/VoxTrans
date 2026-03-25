@@ -11,6 +11,40 @@ import type { AppAction } from "./appReducer";
 
 type DispatchState = (action: AppAction) => void;
 
+function phaseOrder(phase: string | undefined): number {
+  switch (phase ?? "") {
+    case "downloading":
+      return 0;
+    case "initializing":
+      return 10;
+    case "separating":
+      return 20;
+    case "recognizing":
+      return 30;
+    case "punctuate":
+      return 40;
+    case "segment":
+      return 50;
+    case "summarize":
+      return 60;
+    case "translate":
+      return 70;
+    case "segment_optimize":
+      return 80;
+    case "burning":
+      return 90;
+    default:
+      return -1;
+  }
+}
+
+function canAdvanceOrStayPhase(current: string | undefined, incoming: string | undefined): boolean {
+  const currentOrder = phaseOrder(current);
+  const incomingOrder = phaseOrder(incoming);
+  if (incomingOrder < 0 || currentOrder < 0) return true;
+  return incomingOrder >= currentOrder;
+}
+
 export function addQueueItems(dispatch: DispatchState, items: QueueItem[]): void {
   dispatch({ type: "add_queue_items", items });
 }
@@ -121,23 +155,30 @@ export function applyTranscribeProgress(
     totalSegments: number;
   },
 ): void {
-  patchQueueItem(dispatch, params.taskId, (item) => ({
-    ...item,
-    transcribeSegmentCurrent: Math.max(0, params.currentSegment || 0),
-    transcribeSegmentTotal: Math.max(0, params.totalSegments || 0),
-    transcribePhase: "recognizing",
-    transcribePhaseDetail:
-      params.totalSegments > 0
-        ? `${Math.max(0, params.currentSegment || 0)}/${params.totalSegments}`
-        : "",
-    transcribeProgress:
-      params.totalSegments > 0
-        ? Math.min(
-          99,
-          Math.round((Math.max(0, params.currentSegment || 0) / params.totalSegments) * 100),
-        )
-        : item.transcribeProgress,
-  }));
+  patchQueueItem(dispatch, params.taskId, (item) => {
+    // Stage switching is owned by transcribe-phase events.
+    // Progress events only update details while already in recognizing.
+    if (item.transcribePhase !== "recognizing") {
+      return item;
+    }
+    return {
+      ...item,
+      transcribeStatus: "processing",
+      transcribeSegmentCurrent: Math.max(0, params.currentSegment || 0),
+      transcribeSegmentTotal: Math.max(0, params.totalSegments || 0),
+      transcribePhaseDetail:
+        params.totalSegments > 0
+          ? `${Math.max(0, params.currentSegment || 0)}/${params.totalSegments}`
+          : "",
+      transcribeProgress:
+        params.totalSegments > 0
+          ? Math.min(
+            99,
+            Math.round((Math.max(0, params.currentSegment || 0) / params.totalSegments) * 100),
+          )
+          : item.transcribeProgress,
+    };
+  });
 }
 
 export function applySeparationProgress(
@@ -148,9 +189,13 @@ export function applySeparationProgress(
   },
 ): void {
   patchQueueItem(dispatch, params.taskId, (item) => {
+    if (!canAdvanceOrStayPhase(item.transcribePhase, "separating")) {
+      return item;
+    }
     const percent = Math.max(0, Math.min(100, Math.round(params.percent || 0)));
     return {
       ...item,
+      transcribeStatus: "processing",
       transcribeSegmentCurrent: percent,
       transcribeSegmentTotal: 100,
       transcribePhase: "separating",
@@ -170,21 +215,29 @@ export function applyTranscribePhase(
 ): void {
   patchQueueItem(dispatch, params.taskId, (item) => {
     const nextPhase = params.phase || item.transcribePhase;
+    if (!canAdvanceOrStayPhase(item.transcribePhase, nextPhase)) {
+      return item;
+    }
     const phaseChanged = nextPhase !== item.transcribePhase;
-    const nextPhaseDetail = typeof params.phaseDetail === "string" ? params.phaseDetail : "";
+    const hasIncomingDetail = typeof params.phaseDetail === "string";
+    const incomingDetail: string = typeof params.phaseDetail === "string"
+      ? params.phaseDetail
+      : "";
     if (phaseChanged) {
       return {
         ...item,
+        transcribeStatus: "processing",
         transcribePhase: nextPhase,
-        transcribePhaseDetail: nextPhaseDetail,
+        transcribePhaseDetail: incomingDetail,
         transcribeSegmentCurrent: 0,
         transcribeSegmentTotal: 0,
       };
     }
     return {
       ...item,
+      transcribeStatus: "processing",
       transcribePhase: nextPhase,
-      transcribePhaseDetail: nextPhaseDetail,
+      transcribePhaseDetail: hasIncomingDetail ? incomingDetail : item.transcribePhaseDetail,
     };
   });
 }
@@ -198,10 +251,14 @@ export function applyTranslateProgress(
   },
 ): void {
   patchQueueItem(dispatch, params.taskId, (item) => {
+    if (!canAdvanceOrStayPhase(item.transcribePhase, "translate")) {
+      return item;
+    }
     const total = Math.max(0, Math.round(params.totalBatches || 0));
     const current = Math.max(0, Math.min(total, Math.round(params.currentBatch || 0)));
     return {
       ...item,
+      transcribeStatus: "processing",
       transcribePhase: "translate",
       transcribePhaseDetail: total > 0 ? `${current}/${total}` : "",
       transcribeSegmentCurrent: current,

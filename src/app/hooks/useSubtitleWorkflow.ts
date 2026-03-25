@@ -113,14 +113,6 @@ export function useSubtitleWorkflow({
           ...taskDetail,
         };
         dispatch({
-          type: "patch_queue_item",
-          id: taskId,
-          updater: (prev) => ({
-            ...prev,
-            ...taskDetail,
-          }),
-        });
-        dispatch({
           type: "set_subtitle",
           payload: {
             subtitleTaskId: enrichedItem.id,

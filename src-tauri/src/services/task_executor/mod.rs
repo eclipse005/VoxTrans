@@ -19,9 +19,9 @@ use crate::services::task_projection::TaskProjectionState;
 use crate::services::task_subtitle_composer::{
     WordTimingAnchor, apply_subtitle_beautify_to_segments,
 };
-use self::events::{WorkspaceSyncHintEvent, emit_bridge_event};
+use self::events::{TranscribePhaseEvent, WorkspaceSyncHintEvent, emit_bridge_event};
 use self::stages::{
-    run_asr_stage, run_punctuate_stage, run_segment_optimize_stage, run_segment_stage,
+    run_asr_stage, run_punctuate_stage, run_segment_optimize_stage, run_segment_stage, run_separate_stage,
     run_summarize_stage, run_translate_stage,
 };
 use self::runtime::{
@@ -34,11 +34,12 @@ use self::state::{
     load_stage_words, parse_tokens_from_segments,
 };
 use crate::services::task_context::{
-    STAGE_ASR, STAGE_COMPOSE, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT, TaskContext,
+    STAGE_ASR, STAGE_BURNING, STAGE_COMPOSE, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT, TaskContext,
 };
 use crate::services::task_engine::{EnqueueTaskRequest, enqueue_task};
 use crate::services::task_log::{TaskLogger, event};
 use crate::services::task_worker;
+use crate::services::subtitle_render;
 use crate::services::transcribe::{
     BuildSegmentsRequest, build_segments_from_words,
 };
@@ -234,18 +235,6 @@ pub async fn execute_task_run(
                 }),
                 Value::Null,
             );
-            context.mark_completed();
-            set_queue_projection(
-                &mut context,
-                &mut projection,
-                "done",
-                "",
-                "",
-                100,
-                done.segment_total.max(0) as u32,
-                done.segment_total.max(0) as u32,
-                "",
-            );
             projection.set_editor(
                 done.subtitle_segments_json.clone(),
                 done.result_text.clone(),
@@ -305,6 +294,48 @@ pub async fn execute_task_run(
                     "outputs": outputs,
                 })),
             );
+            match maybe_auto_burn_hard_subtitle(
+                pool,
+                app.as_ref(),
+                &task,
+                &done.subtitle_segments_json,
+                done.segment_total.max(0) as u32,
+                &mut context,
+                &mut projection,
+            )
+            .await
+            {
+                Ok(Some(burned_output_path)) => {
+                    TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
+                        "subtitle.burn.completed",
+                        Some(&json!({
+                            "outputPath": burned_output_path,
+                        })),
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
+                        "subtitle.burn.failed",
+                        Some(&json!({
+                            "error": error,
+                        })),
+                    );
+                }
+            }
+            context.mark_completed();
+            set_queue_projection(
+                &mut context,
+                &mut projection,
+                "done",
+                "",
+                "",
+                100,
+                done.segment_total.max(0) as u32,
+                done.segment_total.max(0) as u32,
+                "",
+            );
+            persist_task_context(pool, &task.id, &context, &projection).await?;
             TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
                 event::TRANSCRIBE_COMPLETED,
                 Some(&json!({
@@ -475,6 +506,61 @@ fn normalize_intent(raw: &str) -> String {
     }
 }
 
+async fn maybe_auto_burn_hard_subtitle(
+    pool: &SqlitePool,
+    app: Option<&tauri::AppHandle>,
+    task: &TaskRunExecRow,
+    subtitle_segments_json: &str,
+    segment_total: u32,
+    context: &mut TaskContext,
+    projection: &mut TaskProjectionState,
+) -> Result<Option<String>, String> {
+    if !task.media_kind.trim().eq_ignore_ascii_case("video") {
+        return Ok(None);
+    }
+    if subtitle_segments_json.trim().is_empty() || subtitle_segments_json.trim() == "[]" {
+        return Ok(None);
+    }
+
+    let settings = load_user_preferences(pool).await?.settings;
+    if !settings.auto_burn_hard_subtitle {
+        return Ok(None);
+    }
+
+    context.mark_stage_running(STAGE_BURNING);
+    set_queue_projection(
+        context,
+        projection,
+        "processing",
+        "burning",
+        "",
+        99,
+        segment_total,
+        segment_total,
+        "",
+    );
+    persist_task_context(pool, &task.id, context, projection).await?;
+
+    emit_bridge_event(
+        app,
+        "transcribe-phase",
+        &TranscribePhaseEvent {
+            task_id: task.id.clone(),
+            phase: "burning".to_string(),
+            phase_detail: None,
+        },
+    );
+
+    let response = subtitle_render::burn_hard_subtitle(subtitle_render::BurnHardSubtitleRequest {
+        task_id: task.id.clone(),
+        media_path: task.media_path.clone(),
+        subtitle_segments_json: subtitle_segments_json.to_string(),
+        burn_mode: settings.subtitle_burn_mode,
+        style: settings.subtitle_render_style,
+    })?;
+    Ok(Some(response.output_path))
+}
+
 struct DonePayload {
     result_text: String,
     result_srt: String,
@@ -520,15 +606,29 @@ async fn run_transcribe_and_maybe_translate(
     with_translate: bool,
     context: &mut TaskContext,
     projection: &mut TaskProjectionState,
-    _asr_resume: Option<AsrResumeSnapshot>,
+    asr_resume: Option<AsrResumeSnapshot>,
 ) -> Result<DonePayload, String> {
     let settings_before_asr = load_user_preferences(pool).await?.settings;
+    let transcribe_audio_path = if asr_resume.is_some() {
+        task.media_path.clone()
+    } else {
+        run_separate_stage(
+            pool,
+            app,
+            task,
+            context,
+            projection,
+            &settings_before_asr,
+        )
+        .await?
+    };
     let transcribed = run_asr_stage(
         pool,
         app,
         task,
         context,
         projection,
+        transcribe_audio_path,
         &settings_before_asr,
     )
     .await?;

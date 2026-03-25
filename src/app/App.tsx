@@ -76,6 +76,9 @@ function App() {
     draftEnableTerminology,
     draftEnablePunctuationOptimization,
     draftEnableSubtitleBeautify,
+    draftAutoBurnHardSubtitle,
+    draftSubtitleBurnMode,
+    draftSubtitleRenderStyle,
     youtubeUrl,
     toast,
     subtitleTaskId,
@@ -190,6 +193,9 @@ function App() {
     draftEnableTerminology,
     draftEnablePunctuationOptimization,
     draftEnableSubtitleBeautify,
+    draftAutoBurnHardSubtitle,
+    draftSubtitleBurnMode,
+    draftSubtitleRenderStyle,
     dispatch,
     pushToast,
     refreshModelStatus,
@@ -301,6 +307,9 @@ function App() {
         draftEnableTerminology={draftEnableTerminology}
         draftEnablePunctuationOptimization={draftEnablePunctuationOptimization}
         draftEnableSubtitleBeautify={draftEnableSubtitleBeautify}
+        draftAutoBurnHardSubtitle={draftAutoBurnHardSubtitle}
+        draftSubtitleBurnMode={draftSubtitleBurnMode}
+        draftSubtitleRenderStyle={draftSubtitleRenderStyle}
         asrStatus={asrStatus}
         demucsStatus={demucsStatus}
         onClose={() => dispatch({ type: "set_ui", payload: { showSettings: false } })}
@@ -319,6 +328,9 @@ function App() {
         onDraftEnableTerminologyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableTerminology: value } })}
         onDraftEnablePunctuationOptimizationChange={(value) => dispatch({ type: "set_draft", payload: { draftEnablePunctuationOptimization: value } })}
         onDraftEnableSubtitleBeautifyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableSubtitleBeautify: value } })}
+        onDraftAutoBurnHardSubtitleChange={(value) => dispatch({ type: "set_draft", payload: { draftAutoBurnHardSubtitle: value } })}
+        onDraftSubtitleBurnModeChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleBurnMode: value } })}
+        onDraftSubtitleRenderStyleChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleRenderStyle: value } })}
         onTestTranslateConnection={testTranslateConnection}
         onOpenModelDir={openModelDir}
         onStartModelDownload={startModelDownload}

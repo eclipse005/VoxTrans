@@ -32,3 +32,7 @@ export async function openModelDir(target: ModelTarget): Promise<void> {
     request: { target },
   });
 }
+
+export async function listSystemFonts(): Promise<string[]> {
+  return invoke<string[]>("list_system_fonts");
+}

@@ -17,6 +17,36 @@ export type TerminologyGroup = {
   terms: TerminologyTerm[];
 };
 
+export type SubtitleBurnMode =
+  | "source"
+  | "target"
+  | "bilingualSourceFirst"
+  | "bilingualTargetFirst";
+
+export type SubtitleLineStyle = {
+  fontFamily: string;
+  fontSize: number;
+  primaryColor: string;
+  outlineColor: string;
+  backColor: string;
+  outline: number;
+  shadow: number;
+  borderStyle: "outline" | "box";
+  borderOpacity: number;
+};
+
+export type SubtitleLayoutStyle = {
+  marginV: number;
+  alignment: 1 | 2 | 3;
+  bilingualLineGap: number;
+};
+
+export type SubtitleRenderStyle = {
+  source: SubtitleLineStyle;
+  target: SubtitleLineStyle;
+  layout: SubtitleLayoutStyle;
+};
+
 export type SavedSettings = {
   provider: Provider;
   chunkTargetSeconds: number;
@@ -33,6 +63,9 @@ export type SavedSettings = {
   enableTerminology: boolean;
   enablePunctuationOptimization: boolean;
   enableSubtitleBeautify: boolean;
+  autoBurnHardSubtitle: boolean;
+  subtitleBurnMode: SubtitleBurnMode;
+  subtitleRenderStyle: SubtitleRenderStyle;
 };
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
@@ -46,7 +79,8 @@ export type TranscribePhase =
   | "segment"
   | "summarize"
   | "translate"
-  | "segment_optimize";
+  | "segment_optimize"
+  | "burning";
 
 export type SubtitleCue = {
   id: string;

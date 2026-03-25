@@ -47,6 +47,7 @@ fn main() {
             commands::system::open_output_dir,
             commands::system::open_task_output_dir,
             commands::system::open_task_log_dir,
+            commands::system::list_system_fonts,
             commands::model::open_model_dir,
             commands::model::get_model_status,
             commands::model::start_model_download,

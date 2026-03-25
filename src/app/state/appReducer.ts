@@ -1,4 +1,10 @@
-import type { QueueItem, SavedSettings, SubtitleCue } from "../../features/media/types";
+import type {
+  QueueItem,
+  SavedSettings,
+  SubtitleBurnMode,
+  SubtitleCue,
+  SubtitleRenderStyle,
+} from "../../features/media/types";
 import { normalizeProvider } from "../../features/media/provider";
 import type { ToastState, UploadTab } from "../types";
 import { reduceQueueState } from "./queueReducer";
@@ -29,6 +35,9 @@ export type AppState = {
   draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
   draftEnableSubtitleBeautify: boolean;
+  draftAutoBurnHardSubtitle: boolean;
+  draftSubtitleBurnMode: SubtitleBurnMode;
+  draftSubtitleRenderStyle: SubtitleRenderStyle;
   youtubeUrl: string;
   youtubeQuality: string;
   toast: ToastState | null;
@@ -103,6 +112,9 @@ export type SettingsAction =
           | "draftEnableTerminology"
           | "draftEnablePunctuationOptimization"
           | "draftEnableSubtitleBeautify"
+          | "draftAutoBurnHardSubtitle"
+          | "draftSubtitleBurnMode"
+          | "draftSubtitleRenderStyle"
         >
       >;
     }
@@ -126,6 +138,37 @@ export const defaultSettings: SavedSettings = {
   enableTerminology: true,
   enablePunctuationOptimization: false,
   enableSubtitleBeautify: true,
+  autoBurnHardSubtitle: false,
+  subtitleBurnMode: "bilingualSourceFirst",
+  subtitleRenderStyle: {
+    source: {
+      fontFamily: "Arial",
+      fontSize: 44,
+      primaryColor: "#FFFFFF",
+      outlineColor: "#101010",
+      backColor: "#000000",
+      outline: 2.5,
+      shadow: 1,
+      borderStyle: "outline",
+      borderOpacity: 88,
+    },
+    target: {
+      fontFamily: "Microsoft YaHei",
+      fontSize: 40,
+      primaryColor: "#EAF6FF",
+      outlineColor: "#101010",
+      backColor: "#000000",
+      outline: 2.5,
+      shadow: 1,
+      borderStyle: "outline",
+      borderOpacity: 88,
+    },
+    layout: {
+      marginV: 40,
+      alignment: 2,
+      bilingualLineGap: 10,
+    },
+  },
 };
 
 export const initialAppState: AppState = {
@@ -151,6 +194,9 @@ export const initialAppState: AppState = {
   draftEnableTerminology: defaultSettings.enableTerminology,
   draftEnablePunctuationOptimization: defaultSettings.enablePunctuationOptimization,
   draftEnableSubtitleBeautify: defaultSettings.enableSubtitleBeautify,
+  draftAutoBurnHardSubtitle: defaultSettings.autoBurnHardSubtitle,
+  draftSubtitleBurnMode: defaultSettings.subtitleBurnMode,
+  draftSubtitleRenderStyle: defaultSettings.subtitleRenderStyle,
   youtubeUrl: "",
   youtubeQuality: "",
   toast: null,

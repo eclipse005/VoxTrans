@@ -78,6 +78,9 @@ function getTranscribeProcessingText(item: QueueItem): string {
   if (item.transcribePhase === "segment_optimize") {
     return detail ? `断句优化中 ${detail}` : "断句优化中";
   }
+  if (item.transcribePhase === "burning") {
+    return detail ? `压制字幕中 ${detail}` : "压制字幕中";
+  }
   if (detail) return detail;
   return "处理中";
 }

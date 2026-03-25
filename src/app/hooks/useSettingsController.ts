@@ -32,6 +32,9 @@ type UseSettingsControllerArgs = {
   draftEnableTerminology: boolean;
   draftEnablePunctuationOptimization: boolean;
   draftEnableSubtitleBeautify: boolean;
+  draftAutoBurnHardSubtitle: boolean;
+  draftSubtitleBurnMode: SavedSettings["subtitleBurnMode"];
+  draftSubtitleRenderStyle: SavedSettings["subtitleRenderStyle"];
   dispatch: DispatchState;
   pushToast: PushToast;
   refreshModelStatus: () => Promise<void>;
@@ -54,6 +57,9 @@ export function useSettingsController({
   draftEnableTerminology,
   draftEnablePunctuationOptimization,
   draftEnableSubtitleBeautify,
+  draftAutoBurnHardSubtitle,
+  draftSubtitleBurnMode,
+  draftSubtitleRenderStyle,
   dispatch,
   pushToast,
   refreshModelStatus,
@@ -78,6 +84,9 @@ export function useSettingsController({
         draftEnableTerminology: settings.enableTerminology,
         draftEnablePunctuationOptimization: settings.enablePunctuationOptimization,
         draftEnableSubtitleBeautify: settings.enableSubtitleBeautify,
+        draftAutoBurnHardSubtitle: settings.autoBurnHardSubtitle,
+        draftSubtitleBurnMode: settings.subtitleBurnMode,
+        draftSubtitleRenderStyle: settings.subtitleRenderStyle,
       },
     });
     dispatch({ type: "set_ui", payload: { showSettings: true } });
@@ -99,6 +108,9 @@ export function useSettingsController({
     settings.terminologyGroups,
     settings.enableTerminology,
     settings.enableSubtitleBeautify,
+    settings.autoBurnHardSubtitle,
+    settings.subtitleBurnMode,
+    settings.subtitleRenderStyle,
   ]);
 
   const saveSettings = useCallback(async () => {
@@ -144,6 +156,37 @@ export function useSettingsController({
       enableTerminology: draftEnableTerminology,
       enablePunctuationOptimization: draftEnablePunctuationOptimization,
       enableSubtitleBeautify: draftEnableSubtitleBeautify,
+      autoBurnHardSubtitle: draftAutoBurnHardSubtitle,
+      subtitleBurnMode: draftSubtitleBurnMode,
+      subtitleRenderStyle: {
+        source: normalizeSubtitleLineStyle(draftSubtitleRenderStyle.source, {
+          fontFamily: "Arial",
+          fontSize: 44,
+          primaryColor: "#FFFFFF",
+          outlineColor: "#101010",
+          backColor: "#000000",
+          outline: 2.5,
+          shadow: 1,
+          borderStyle: "outline",
+          borderOpacity: 88,
+        }),
+        target: normalizeSubtitleLineStyle(draftSubtitleRenderStyle.target, {
+          fontFamily: "Microsoft YaHei",
+          fontSize: 40,
+          primaryColor: "#EAF6FF",
+          outlineColor: "#101010",
+          backColor: "#000000",
+          outline: 2.5,
+          shadow: 1,
+          borderStyle: "outline",
+          borderOpacity: 88,
+        }),
+        layout: {
+          marginV: Math.max(0, Math.min(200, Math.round(draftSubtitleRenderStyle.layout.marginV))),
+          alignment: draftSubtitleRenderStyle.layout.alignment,
+          bilingualLineGap: Math.max(0, Math.min(140, Math.round(draftSubtitleRenderStyle.layout.bilingualLineGap))),
+        },
+      },
     } satisfies SavedSettings;
 
     dispatch({
@@ -167,6 +210,9 @@ export function useSettingsController({
         draftEnableTerminology: nextSettings.enableTerminology,
         draftEnablePunctuationOptimization,
         draftEnableSubtitleBeautify,
+        draftAutoBurnHardSubtitle: nextSettings.autoBurnHardSubtitle,
+        draftSubtitleBurnMode: nextSettings.subtitleBurnMode,
+        draftSubtitleRenderStyle: nextSettings.subtitleRenderStyle,
       },
     });
 
@@ -193,6 +239,9 @@ export function useSettingsController({
     draftLlmConcurrencyInput,
     draftTerminologyGroups,
     draftEnableTerminology,
+    draftAutoBurnHardSubtitle,
+    draftSubtitleBurnMode,
+    draftSubtitleRenderStyle,
     pushToast,
     draftEnableSubtitleBeautify,
   ]);
@@ -242,5 +291,30 @@ export function useSettingsController({
         pushToast(message, "error", { id: toastId, durationMs: 3000 });
       }
     },
+  };
+}
+
+function normalizeHexColor(raw: string, fallback: string): string {
+  const value = String(raw ?? "").trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+    return value.toUpperCase();
+  }
+  return fallback;
+}
+
+function normalizeSubtitleLineStyle(
+  style: SavedSettings["subtitleRenderStyle"]["source"],
+  fallback: SavedSettings["subtitleRenderStyle"]["source"],
+): SavedSettings["subtitleRenderStyle"]["source"] {
+  return {
+    fontFamily: style.fontFamily.trim() || fallback.fontFamily,
+    fontSize: Math.max(16, Math.min(96, Math.round(style.fontSize))),
+    primaryColor: normalizeHexColor(style.primaryColor, fallback.primaryColor),
+    outlineColor: normalizeHexColor(style.outlineColor, fallback.outlineColor),
+    backColor: normalizeHexColor(style.backColor, fallback.backColor),
+    outline: Math.max(0, Math.min(8, style.outline)),
+    shadow: Math.max(0, Math.min(8, style.shadow)),
+    borderStyle: style.borderStyle === "box" ? "box" : "outline",
+    borderOpacity: Math.max(0, Math.min(100, Math.round(style.borderOpacity))),
   };
 }

@@ -50,7 +50,10 @@ export function useQueueScheduler({
   );
   const queueBusy = hasProcessingTask || hasQueuedTask;
 
-  const enqueueForMode = useCallback(async (item: QueueItem, mode: QueueRunMode): Promise<boolean> => {
+  const enqueueForMode = useCallback(async (
+    item: QueueItem,
+    mode: QueueRunMode,
+  ): Promise<boolean> => {
     try {
       await enqueueTaskRun({
         id: item.id,
@@ -137,22 +140,36 @@ export function useQueueScheduler({
   const processSingle = useCallback(async (item: QueueItem) => {
     if (isYoutubePlaceholder(item)) return;
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
-    const ok = await enqueueForMode(item, "transcribe");
-    if (!ok) return;
+    const mode: QueueRunMode = "transcribe";
     if (queueBusy) {
+      const ok = await enqueueForMode(item, mode);
+      if (!ok) return;
       pushToast(`已加入排队：${item.name}`, "info");
+      return;
     }
-  }, [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy]);
+    try {
+      await runBatch([{ item, mode }]);
+    } catch {
+      pushToast("任务执行失败，请重试", "error");
+    }
+  }, [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy, runBatch]);
 
   const processSingleTranscribeTranslate = useCallback(async (item: QueueItem) => {
     if (isYoutubePlaceholder(item)) return;
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
-    const ok = await enqueueForMode(item, "transcribe_translate");
-    if (!ok) return;
+    const mode: QueueRunMode = "transcribe_translate";
     if (queueBusy) {
+      const ok = await enqueueForMode(item, mode);
+      if (!ok) return;
       pushToast(`已加入排队：${item.name}`, "info");
+      return;
     }
-  }, [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy]);
+    try {
+      await runBatch([{ item, mode }]);
+    } catch {
+      pushToast("任务执行失败，请重试", "error");
+    }
+  }, [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy, runBatch]);
 
   const clearQueue = useCallback(async () => {
     if (queueBusy) {

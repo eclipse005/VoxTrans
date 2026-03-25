@@ -11,6 +11,7 @@ pub const STAGE_SEGMENT: &str = "segment";
 pub const STAGE_SUMMARIZE: &str = "summarize";
 pub const STAGE_TRANSLATE: &str = "translate";
 pub const STAGE_SEGMENT_OPTIMIZE: &str = "segment_optimize";
+pub const STAGE_BURNING: &str = "burning";
 pub const STAGE_COMPOSE: &str = "compose";
 pub const STAGE_PERSIST: &str = "persist";
 pub const STAGE_DONE: &str = "done";

@@ -18,6 +18,9 @@ const KEY_TERMINOLOGY_GROUPS: &str = "settings.terminologyGroups";
 const KEY_ENABLE_TERMINOLOGY: &str = "settings.enableTerminology";
 const KEY_ENABLE_PUNCTUATION_OPTIMIZATION: &str = "settings.enablePunctuationOptimization";
 const KEY_ENABLE_SUBTITLE_BEAUTIFY: &str = "settings.enableSubtitleBeautify";
+const KEY_AUTO_BURN_HARD_SUBTITLE: &str = "settings.autoBurnHardSubtitle";
+const KEY_SUBTITLE_BURN_MODE: &str = "settings.subtitleBurnMode";
+const KEY_SUBTITLE_RENDER_STYLE: &str = "settings.subtitleRenderStyle";
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +39,70 @@ pub struct TerminologyGroup {
     pub name: String,
     #[serde(default)]
     pub terms: Vec<TerminologyTerm>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubtitleLineStyle {
+    pub font_family: String,
+    pub font_size: u32,
+    pub primary_color: String,
+    pub outline_color: String,
+    pub back_color: String,
+    pub outline: f64,
+    pub shadow: f64,
+    pub border_style: String,
+    pub border_opacity: u8,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubtitleLayoutStyle {
+    pub margin_v: u32,
+    pub alignment: u8,
+    pub bilingual_line_gap: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubtitleRenderStyle {
+    pub source: SubtitleLineStyle,
+    pub target: SubtitleLineStyle,
+    pub layout: SubtitleLayoutStyle,
+}
+
+impl Default for SubtitleRenderStyle {
+    fn default() -> Self {
+        Self {
+            source: SubtitleLineStyle {
+                font_family: "Arial".to_string(),
+                font_size: 44,
+                primary_color: "#FFFFFF".to_string(),
+                outline_color: "#101010".to_string(),
+                back_color: "#000000".to_string(),
+                outline: 2.5,
+                shadow: 1.0,
+                border_style: "outline".to_string(),
+                border_opacity: 88,
+            },
+            target: SubtitleLineStyle {
+                font_family: "Microsoft YaHei".to_string(),
+                font_size: 40,
+                primary_color: "#EAF6FF".to_string(),
+                outline_color: "#101010".to_string(),
+                back_color: "#000000".to_string(),
+                outline: 2.5,
+                shadow: 1.0,
+                border_style: "outline".to_string(),
+                border_opacity: 88,
+            },
+            layout: SubtitleLayoutStyle {
+                margin_v: 40,
+                alignment: 2,
+                bilingual_line_gap: 10,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -59,6 +126,12 @@ pub struct SavedSettings {
     pub enable_punctuation_optimization: bool,
     #[serde(default = "default_true")]
     pub enable_subtitle_beautify: bool,
+    #[serde(default)]
+    pub auto_burn_hard_subtitle: bool,
+    #[serde(default = "default_subtitle_burn_mode")]
+    pub subtitle_burn_mode: String,
+    #[serde(default)]
+    pub subtitle_render_style: SubtitleRenderStyle,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -151,8 +224,7 @@ pub async fn save_app_settings(
     )
     .await?;
     let terminology_groups = normalize_terminology_groups(request.settings.terminology_groups.clone());
-    let terminology_json = serde_json::to_string(&terminology_groups)
-        .map_err(|err| err.to_string())?;
+    let terminology_json = serde_json::to_string(&terminology_groups).map_err(|err| err.to_string())?;
     set_setting(&mut tx, KEY_TERMINOLOGY_GROUPS, &terminology_json).await?;
     set_setting(
         &mut tx,
@@ -184,6 +256,25 @@ pub async fn save_app_settings(
         },
     )
     .await?;
+    set_setting(
+        &mut tx,
+        KEY_AUTO_BURN_HARD_SUBTITLE,
+        if request.settings.auto_burn_hard_subtitle {
+            "1"
+        } else {
+            "0"
+        },
+    )
+    .await?;
+    set_setting(
+        &mut tx,
+        KEY_SUBTITLE_BURN_MODE,
+        normalize_subtitle_burn_mode(&request.settings.subtitle_burn_mode),
+    )
+    .await?;
+    let subtitle_render_style = normalize_subtitle_render_style(request.settings.subtitle_render_style.clone());
+    let subtitle_render_style_json = serde_json::to_string(&subtitle_render_style).map_err(|err| err.to_string())?;
+    set_setting(&mut tx, KEY_SUBTITLE_RENDER_STYLE, &subtitle_render_style_json).await?;
     tx.commit().await.map_err(|e| e.to_string())
 }
 
@@ -250,6 +341,20 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         .await?
         .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
         .unwrap_or(true);
+    let auto_burn_hard_subtitle = get_setting(pool, KEY_AUTO_BURN_HARD_SUBTITLE)
+        .await?
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
+        .unwrap_or(false);
+    let subtitle_burn_mode = get_setting(pool, KEY_SUBTITLE_BURN_MODE)
+        .await?
+        .map(|v| normalize_subtitle_burn_mode(&v).to_string())
+        .unwrap_or_else(default_subtitle_burn_mode);
+    let subtitle_render_style = get_setting(pool, KEY_SUBTITLE_RENDER_STYLE)
+        .await?
+        .and_then(|v| serde_json::from_str::<SubtitleRenderStyle>(&v).ok())
+        .map(normalize_subtitle_render_style)
+        .unwrap_or_default();
+
     Ok(SavedSettings {
         provider,
         chunk_target_seconds,
@@ -266,11 +371,106 @@ async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
         enable_terminology,
         enable_punctuation_optimization,
         enable_subtitle_beautify,
+        auto_burn_hard_subtitle,
+        subtitle_burn_mode,
+        subtitle_render_style,
     })
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_subtitle_burn_mode() -> String {
+    "bilingualSourceFirst".to_string()
+}
+
+fn normalize_subtitle_burn_mode(value: &str) -> &str {
+    match value.trim() {
+        "source" | "target" | "bilingualSourceFirst" | "bilingualTargetFirst" => value.trim(),
+        _ => "bilingualSourceFirst",
+    }
+}
+
+fn normalize_subtitle_render_style(style: SubtitleRenderStyle) -> SubtitleRenderStyle {
+    SubtitleRenderStyle {
+        source: normalize_subtitle_line_style(
+            style.source,
+            SubtitleLineStyle {
+                font_family: "Arial".to_string(),
+                font_size: 44,
+                primary_color: "#FFFFFF".to_string(),
+                outline_color: "#101010".to_string(),
+                back_color: "#000000".to_string(),
+                outline: 2.5,
+                shadow: 1.0,
+                border_style: "outline".to_string(),
+                border_opacity: 88,
+            },
+        ),
+        target: normalize_subtitle_line_style(
+            style.target,
+            SubtitleLineStyle {
+                font_family: "Microsoft YaHei".to_string(),
+                font_size: 40,
+                primary_color: "#EAF6FF".to_string(),
+                outline_color: "#101010".to_string(),
+                back_color: "#000000".to_string(),
+                outline: 2.5,
+                shadow: 1.0,
+                border_style: "outline".to_string(),
+                border_opacity: 88,
+            },
+        ),
+        layout: SubtitleLayoutStyle {
+            margin_v: style.layout.margin_v.clamp(0, 200),
+            alignment: match style.layout.alignment {
+                1..=3 => style.layout.alignment,
+                _ => 2,
+            },
+            bilingual_line_gap: style.layout.bilingual_line_gap.clamp(0, 140),
+        },
+    }
+}
+
+fn normalize_subtitle_line_style(style: SubtitleLineStyle, fallback: SubtitleLineStyle) -> SubtitleLineStyle {
+    SubtitleLineStyle {
+        font_family: {
+            let value = style.font_family.trim();
+            if value.is_empty() {
+                fallback.font_family
+            } else {
+                value.to_string()
+            }
+        },
+        font_size: style.font_size.clamp(16, 96),
+        primary_color: normalize_hex_color(&style.primary_color, &fallback.primary_color),
+        outline_color: normalize_hex_color(&style.outline_color, &fallback.outline_color),
+        back_color: normalize_hex_color(&style.back_color, &fallback.back_color),
+        outline: style.outline.clamp(0.0, 8.0),
+        shadow: style.shadow.clamp(0.0, 8.0),
+        border_style: normalize_border_style(&style.border_style).to_string(),
+        border_opacity: style.border_opacity.clamp(0, 100),
+    }
+}
+
+fn normalize_border_style(value: &str) -> &str {
+    match value.trim() {
+        "box" => "box",
+        _ => "outline",
+    }
+}
+
+fn normalize_hex_color(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    let is_hex = trimmed.len() == 7
+        && trimmed.starts_with('#')
+        && trimmed.chars().skip(1).all(|c| c.is_ascii_hexdigit());
+    if is_hex {
+        trimmed.to_ascii_uppercase()
+    } else {
+        fallback.to_string()
+    }
 }
 
 fn normalize_terminology_groups(groups: Vec<TerminologyGroup>) -> Vec<TerminologyGroup> {
@@ -368,8 +568,7 @@ async fn set_setting(
     value: &str,
 ) -> Result<(), String> {
     sqlx::query(
-        "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))\n         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
     )
     .bind(key)
     .bind(value)

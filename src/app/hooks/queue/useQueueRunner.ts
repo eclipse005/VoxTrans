@@ -16,10 +16,7 @@ import {
   applyTranscribeProgress,
   applySeparationProgress,
   patchQueueItem,
-  setErrorState,
   applyTranslateProgress,
-  setQueuedState,
-  setProcessingState,
 } from "../../state/queueDomainActions";
 import { reportError, toUserErrorMessage } from "../../utils/errors";
 
@@ -218,10 +215,6 @@ export function useQueueRunner({
 
   const runTask = useCallback(async (item: QueueItem, mode: QueueRunMode) => {
     if (!isTaskPresent(item.id)) return;
-    setQueuedState(dispatch, item.id);
-    if (!isTaskPresent(item.id)) return;
-    setProcessingState(dispatch, item.id);
-    if (!isTaskPresent(item.id)) return;
 
     try {
       const response = await enqueueAndExecuteTaskBatch({
@@ -232,8 +225,6 @@ export function useQueueRunner({
 
       const failed = response.failed.find((entry) => entry.taskId === item.id);
       if (failed) {
-        if (!isTaskPresent(item.id)) return;
-        setErrorState(dispatch, item.id, failed.error || "任务执行失败");
         pushToast(`失败：${item.name}，${failed.error}`, "error");
         return;
       }
@@ -248,7 +239,6 @@ export function useQueueRunner({
       reportError(err, "runTask");
       const fallback = mode === "transcribe" ? "转录失败，请检查模型和运行时配置" : "转译失败，请检查翻译配置";
       const errorMessage = toUserErrorMessage(err, fallback);
-      setErrorState(dispatch, item.id, errorMessage);
       pushToast(`失败：${item.name}，${errorMessage}`, "error");
     }
   }, [
@@ -279,10 +269,6 @@ function useRunBatch(
   return useCallback(async (tasks: BatchTask[]) => {
     const items = tasks.filter((task) => isTaskPresent(task.item.id));
     if (!items.length) return;
-    for (const task of items) {
-      if (!isTaskPresent(task.item.id)) continue;
-      setProcessingState(dispatch, task.item.id);
-    }
 
     const response = await enqueueAndExecuteTaskBatch({
       items: items.map((task) => toEnqueuePayload(task.item, task.mode, settings)),
@@ -294,7 +280,8 @@ function useRunBatch(
 
     for (const failure of response.failed) {
       if (!isTaskPresent(failure.taskId)) continue;
-      setErrorState(dispatch, failure.taskId, failure.error || "任务执行失败");
+      const workspace = await loadWorkspaceState();
+      syncQueueItem(dispatch, isTaskPresent, workspace, failure.taskId);
     }
 
     if (response.failed.length > 0) {

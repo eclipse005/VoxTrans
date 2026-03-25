@@ -59,3 +59,14 @@ pub fn open_task_log_dir(request: OpenTaskLogDirRequest) -> Result<(), String> {
     std::fs::create_dir_all(&log_dir).map_err(|err| err.to_string())?;
     crate::services::system::open_path(&log_dir)
 }
+
+#[tauri::command]
+pub fn list_system_fonts() -> Result<Vec<String>, String> {
+    let source = font_kit::source::SystemSource::new();
+    let mut families = source
+        .all_families()
+        .map_err(|err| format!("读取系统字体失败: {err}"))?;
+    families.sort();
+    families.dedup();
+    Ok(families)
+}

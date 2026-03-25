@@ -38,8 +38,8 @@ Current architecture:
 - `src-tauri/src/commands/`: Tauri command entrypoints
 - `src-tauri/src/db/`: SQLite setup and migration wiring
 - `src-tauri/src/services/`: desktop-side business logic
-- `src-tauri/src/services/task_engine.rs`: task lifecycle query/enqueue services (register upload / enqueue / list / get)
-- `src-tauri/src/services/task_executor.rs`: task execution orchestration (single/batch enqueue+execute)
+- `src-tauri/src/services/task_engine.rs`: task lifecycle query/enqueue services (register upload / enqueue / list / get / delete)
+- `src-tauri/src/services/task_executor/`: task execution orchestration modules (`events.rs`, `runtime.rs`, `stages.rs`, `state.rs`)
 - `src-tauri/src/services/task_worker.rs`: worker-process runtime management (spawn/wait/kill)
 - `src-tauri/src/services/youtube.rs`: YouTube 下载、进度事件、取消、`yt-dlp` 版本与更新
 - `src-tauri/src/services/transcription/`: post-ASR punctuation/hotword/transcription pipeline
@@ -55,11 +55,11 @@ Current architecture:
 ## Tech Stack
 
 - Rust 2024 edition (workspace)
-- Tauri `2.10.x`
-- React `19.2.x`
-- TypeScript `5.9.x`
-- Vite `7.3.x`
-- ESLint `9.39.x`
+- Tauri `2.10.3` (desktop runtime) / `2.10.1` (JS CLI/API)
+- React `19.2.0`
+- TypeScript `5.9.3`
+- Vite `7.3.1`
+- ESLint `9.39.1`
 - `parakeet-rs` for ASR
 - OpenAI-compatible HTTP API + JSON guard + bounded concurrency for LLM calls
 
@@ -85,7 +85,7 @@ Run commands from the repository root.
 - Preserve the current single-repo structure.
 - Prefer reusing existing components/utilities before adding new abstractions.
 - Task lifecycle is command-driven:
-  - Frontend sends commands only (`register_task_upload`, `enqueue_task_run`, `enqueue_and_execute_task_batch`, `delete_task_summaries`, `download_youtube_to_task_run`)
+  - Frontend sends commands only (`register_task_upload`, `enqueue_task_run`, `execute_task_run`, `execute_task_batch`, `enqueue_and_execute_task_batch`, `delete_tasks`, `download_youtube_to_task_run`)
   - Backend (`task_runs`) is the source of truth and single writer for task lifecycle state
   - Frontend is a projection/read model; do not re-introduce frontend-owned queue lifecycle persistence
 - When changing Tauri command payloads, update both:
