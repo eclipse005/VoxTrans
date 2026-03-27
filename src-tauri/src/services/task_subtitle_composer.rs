@@ -254,8 +254,14 @@ fn build_alignment_groups(segments: &[TranslateSegment]) -> Vec<AlignmentGroup> 
         }
         if let Some(last) = groups.last_mut() {
             if last.source_text == source_text {
-                last.segment_indexes.push(idx);
-                continue;
+                if let Some(&last_idx) = last.segment_indexes.last() {
+                    let last_segment = &segments[last_idx];
+                    let gap_ms = segment.start_ms.saturating_sub(last_segment.end_ms);
+                    if gap_ms <= 100 {
+                        last.segment_indexes.push(idx);
+                        continue;
+                    }
+                }
             }
         }
         groups.push(AlignmentGroup {
