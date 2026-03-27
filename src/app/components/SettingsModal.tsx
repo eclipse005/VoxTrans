@@ -419,7 +419,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                       />
                       <div className="toggle-label">
                         <span className="toggle-title">美化字幕</span>
-                        <span className="toggle-desc">去首尾标点与空格优化</span>
+                        <span className="toggle-desc">去首尾标点与观感优化</span>
                       </div>
                       <span className="toggle-switch" />
                     </label>

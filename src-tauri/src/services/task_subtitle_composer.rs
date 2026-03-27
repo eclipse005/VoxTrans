@@ -229,14 +229,39 @@ pub fn apply_subtitle_beautify_to_segments(
     if !enabled {
         return segments.to_vec();
     }
-    segments
+    let mut result: Vec<TranslateSegment> = segments
         .iter()
         .cloned()
         .map(|mut seg| {
             seg.translated_text = beautify_translated_text(&seg.translated_text);
             seg
         })
-        .collect()
+        .collect();
+    fill_subtitle_gaps(&mut result, 200);
+    result
+}
+
+fn fill_subtitle_gaps(segments: &mut [TranslateSegment], max_gap_ms: u64) {
+    if segments.len() < 2 {
+        return;
+    }
+    for i in 0..segments.len().saturating_sub(1) {
+        let current_end = segments[i].end_ms;
+        let next_start = segments[i + 1].start_ms;
+        if next_start <= current_end {
+            continue;
+        }
+        let gap = next_start.saturating_sub(current_end);
+        if gap <= max_gap_ms {
+            let current_duration = current_end.saturating_sub(segments[i].start_ms);
+            let next_duration = segments[i + 1].end_ms.saturating_sub(next_start);
+            if current_duration <= next_duration {
+                segments[i].end_ms = next_start;
+            } else {
+                segments[i + 1].start_ms = current_end;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -246,30 +271,20 @@ struct AlignmentGroup {
 }
 
 fn build_alignment_groups(segments: &[TranslateSegment]) -> Vec<AlignmentGroup> {
-    let mut groups: Vec<AlignmentGroup> = Vec::new();
-    for (idx, segment) in segments.iter().enumerate() {
-        let source_text = segment.source_text.trim().to_string();
-        if source_text.is_empty() {
-            continue;
-        }
-        if let Some(last) = groups.last_mut() {
-            if last.source_text == source_text {
-                if let Some(&last_idx) = last.segment_indexes.last() {
-                    let last_segment = &segments[last_idx];
-                    let gap_ms = segment.start_ms.saturating_sub(last_segment.end_ms);
-                    if gap_ms <= 100 {
-                        last.segment_indexes.push(idx);
-                        continue;
-                    }
-                }
+    segments
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, segment)| {
+            let source_text = segment.source_text.trim().to_string();
+            if source_text.is_empty() {
+                return None;
             }
-        }
-        groups.push(AlignmentGroup {
-            source_text,
-            segment_indexes: vec![idx],
-        });
-    }
-    groups
+            Some(AlignmentGroup {
+                source_text,
+                segment_indexes: vec![idx],
+            })
+        })
+        .collect()
 }
 
 fn apply_group_timing(
