@@ -172,7 +172,6 @@ pub async fn test_translate_llm(
     ))
     .map_err(|err| err.message)?;
 
-    let system_prompt = "你是连通性测试助手。只返回 JSON。";
     let user_prompt = "返回 JSON：{\"ok\":true,\"message\":\"pong\"}";
     let validator = JsonResponseValidator::with_required_keys(&["ok", "message"]);
     let context = LlmCallContext {
@@ -185,7 +184,6 @@ pub async fn test_translate_llm(
         .call_json(
             &context,
             &llm_id,
-            system_prompt,
             user_prompt,
             Some(&validator),
         )

@@ -6,6 +6,7 @@ use tokio::time::sleep;
 use crate::services::task_log::TaskLogger;
 use crate::services::task_usage::{LlmTokenUsage as TaskUsage, record_llm_usage_best_effort};
 
+use super::cache::{append_cache_entry, read_cache_hit};
 use super::error::{LlmError, LlmErrorKind};
 use super::json_guard::{JsonResponseValidator, extract_and_repair_json};
 use super::port::{LlmCallContext, LlmConfig, LlmJsonResult, LlmPort, LlmTokenUsage};
@@ -55,21 +56,14 @@ impl OpenAiCompatLlmClient {
 
     async fn call_once(
         &self,
-        system_prompt: &str,
         user_prompt: &str,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
         let request = ChatCompletionsRequest {
             model: self.config.model.clone(),
-            messages: vec![
-                ChatMessageRequest {
-                    role: "system".to_string(),
-                    content: system_prompt.to_string(),
-                },
-                ChatMessageRequest {
-                    role: "user".to_string(),
-                    content: user_prompt.to_string(),
-                },
-            ],
+            messages: vec![ChatMessageRequest {
+                role: "user".to_string(),
+                content: user_prompt.to_string(),
+            }],
             temperature: 0.2,
             stream: false,
         };
@@ -118,7 +112,6 @@ impl OpenAiCompatLlmClient {
         &self,
         context: &LlmCallContext,
         request_id: &str,
-        system_prompt: &str,
         user_prompt: &str,
         response_validator: Option<&JsonResponseValidator>,
         semantic_validate: F,
@@ -132,6 +125,71 @@ impl OpenAiCompatLlmClient {
             }
             _ => TaskLogger::llm(context.task_id.clone()),
         };
+
+        if let Some(cache_hit) = read_cache_hit(
+            context,
+            &self.config,
+            "",
+            user_prompt,
+            response_validator,
+        ) {
+            if let Some(validator) = response_validator {
+                if let Err(err) = validator.validate(&cache_hit.json) {
+                    logger.event(
+                        "llm.call",
+                        Some(&json!({
+                            "status": "cache_invalid_schema",
+                            "error": err.message,
+                            "phase": context.phase,
+                            "llmId": request_id,
+                        })),
+                    );
+                } else {
+                    match semantic_validate(cache_hit.json.clone()) {
+                        Ok(value) => {
+                            logger.event(
+                                "llm.call",
+                                Some(&json!({
+                                    "status": "cache_hit",
+                                    "model": self.config.model,
+                                    "baseUrl": normalize_base_url(&self.config.base_url),
+                                    "provider": LLM_PROVIDER,
+                                    "transport": LLM_TRANSPORT,
+                                    "phase": context.phase,
+                                    "llmId": request_id,
+                                })),
+                            );
+                            return Ok(LlmValidatedJsonResult { value });
+                        }
+                        Err(LlmSemanticValidationError::Retryable(message)) => {
+                            logger.event(
+                                "llm.call",
+                                Some(&json!({
+                                    "status": "cache_invalid_semantic",
+                                    "error": message,
+                                    "phase": context.phase,
+                                    "llmId": request_id,
+                                })),
+                            );
+                        }
+                    }
+                }
+            } else if let Ok(value) = semantic_validate(cache_hit.json.clone()) {
+                logger.event(
+                    "llm.call",
+                    Some(&json!({
+                        "status": "cache_hit",
+                        "model": self.config.model,
+                        "baseUrl": normalize_base_url(&self.config.base_url),
+                        "provider": LLM_PROVIDER,
+                        "transport": LLM_TRANSPORT,
+                        "phase": context.phase,
+                        "llmId": request_id,
+                    })),
+                );
+                return Ok(LlmValidatedJsonResult { value });
+            }
+        }
 
         let max_attempts = self.config.max_retries.saturating_add(1).max(1);
         let started = std::time::Instant::now();
@@ -151,12 +209,11 @@ impl OpenAiCompatLlmClient {
                 "phase": context.phase,
                 "llmId": request_id,
                 "request": {
-                    "systemPrompt": system_prompt,
                     "userPrompt": effective_user_prompt.clone(),
                 }
             });
 
-            match self.call_once(system_prompt, &effective_user_prompt).await {
+            match self.call_once(&effective_user_prompt).await {
                 Ok((raw_text, usage)) => {
                     let parsed = match extract_and_repair_json(&raw_text) {
                         Ok(v) => v,
@@ -227,8 +284,18 @@ impl OpenAiCompatLlmClient {
                         }
                     }
 
-                    match semantic_validate(parsed) {
+                    match semantic_validate(parsed.clone()) {
                         Ok(value) => {
+                            append_cache_entry(
+                                context,
+                                &self.config,
+                                "",
+                                user_prompt,
+                                response_validator,
+                                &raw_text,
+                                &parsed,
+                                &usage,
+                            );
                             let elapsed_ms = started.elapsed().as_millis();
                             logger.event(
                                 "llm.call",
@@ -369,7 +436,6 @@ impl LlmPort for OpenAiCompatLlmClient {
         &self,
         context: &LlmCallContext,
         request_id: &str,
-        system_prompt: &str,
         user_prompt: &str,
         response_validator: Option<&JsonResponseValidator>,
     ) -> Result<LlmJsonResult, LlmError> {
@@ -377,7 +443,6 @@ impl LlmPort for OpenAiCompatLlmClient {
             .call_json_validated(
                 context,
                 request_id,
-                system_prompt,
                 user_prompt,
                 response_validator,
                 Ok::<Value, LlmSemanticValidationError>,
@@ -387,7 +452,6 @@ impl LlmPort for OpenAiCompatLlmClient {
             json: result.value,
         })
     }
-
 }
 
 fn retry_backoff_ms(attempt: u32, max_attempts: u32) -> Option<u64> {

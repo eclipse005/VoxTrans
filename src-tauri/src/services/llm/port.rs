@@ -44,7 +44,6 @@ pub struct LlmCallContext {
 pub struct LlmJsonTask {
     pub id: usize,
     pub request_id: String,
-    pub system_prompt: String,
     pub user_prompt: String,
     pub response_validator: Option<JsonResponseValidator>,
 }
@@ -68,7 +67,6 @@ pub trait LlmPort {
         &self,
         context: &LlmCallContext,
         request_id: &str,
-        system_prompt: &str,
         user_prompt: &str,
         response_validator: Option<&JsonResponseValidator>,
     ) -> Result<LlmJsonResult, LlmError>;

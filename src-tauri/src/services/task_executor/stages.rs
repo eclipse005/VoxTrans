@@ -521,6 +521,8 @@ pub(super) async fn run_segment_optimize_stage(
                 let segment_optimize_result = run_segment_optimize(SegmentOptimizeRequest {
                     task_id: task_id.clone(),
                     media_path: media_path.clone(),
+                    source_lang: task.source_lang.clone(),
+                    target_lang: task.target_lang.clone(),
                     translate_api_key: settings.translate_api_key.clone(),
                     translate_base_url: settings.translate_base_url.clone(),
                     translate_model: settings.translate_model.clone(),

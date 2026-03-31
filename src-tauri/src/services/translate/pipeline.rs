@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,9 +11,8 @@ use crate::services::llm::batch::run_indexed_concurrent;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 
 use super::prompt::{
-    TranslatePromptInput, TranslatePromptSegmentInput, TranslateSummaryPromptInput,
-    TranslateTerminologyPromptEntry, build_translate_summary_system_prompt,
-    build_translate_summary_user_prompt, build_translate_system_prompt, build_translate_user_prompt,
+    TranslatePromptInput, TranslateSummaryPromptInput,
+    TranslateTerminologyPromptEntry, build_translate_summary_user_prompt, build_translate_user_prompt,
 };
 use super::types::{
     TranslatePipelineRequest, TranslatePipelineResponse, TranslateSegment, TranslateTerminologyEntry,
@@ -22,7 +21,7 @@ use super::types::{
 use super::validation::{validate_llm_segments, validate_request};
 
 const MAX_SEGMENTS_PER_BATCH: usize = 20;
-const MAX_WORDS_PER_BATCH: usize = 600;
+const MAX_CHARS_PER_BATCH: usize = 1500;
 const STYLE_CONTEXT_WORDS: usize = 1000;
 const DEFAULT_THEME: &str = "内容围绕一个明确主题展开。关键信息以解释和示例为主。";
 
@@ -44,8 +43,6 @@ struct SummaryProfile {
 
 #[derive(Debug, Clone)]
 struct SegmentBatch {
-    start_idx: usize,
-    end_idx: usize,
     segments: Vec<SourceSegment>,
 }
 
@@ -55,25 +52,16 @@ struct SummaryExtraction {
     #[serde(default, deserialize_with = "deserialize_string_or_empty")]
     theme: String,
     #[serde(default)]
-    primary_terminology_entries: Vec<TranslateTerminologyPromptEntry>,
+    #[serde(alias = "primaryTerminologyEntries")]
+    primary_terms: Vec<TranslateTerminologyPromptEntry>,
     #[serde(default)]
-    supporting_terminology_entries: Vec<TranslateTerminologyPromptEntry>,
+    #[serde(alias = "supportingTerminologyEntries")]
+    supporting_terms: Vec<TranslateTerminologyPromptEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 struct TranslationBatchExtraction {
-    segments: Vec<TranslationBatchItem>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct TranslationBatchItem {
-    index: usize,
-    #[serde(alias = "translatedText")]
-    #[serde(alias = "translated_text")]
-    #[serde(rename = "translation")]
-    translated_text: String,
+    translated_by_index: HashMap<usize, String>,
 }
 
 pub async fn run_translate_pipeline<F, G>(
@@ -153,12 +141,10 @@ async fn translate_from_theme<G>(
 where
     G: FnMut(usize, usize),
 {
-    let batches = split_batches(segments, MAX_SEGMENTS_PER_BATCH, MAX_WORDS_PER_BATCH);
+    let batches = split_batches(segments, MAX_SEGMENTS_PER_BATCH, MAX_CHARS_PER_BATCH);
     let extracted_batches = run_batch_translate_pipeline(
         request,
-        segments,
         &batches,
-        &summary_profile.terminology_entries,
         summary_profile,
         llm_client,
         on_batch_progress,
@@ -170,10 +156,7 @@ where
         let batch = batches
             .get(batch_id)
             .ok_or_else(|| format!("internal error: unknown batch id {batch_id}"))?;
-        let expected = (1..=batch.segments.len()).collect::<Vec<_>>();
-        let extracted_json = serde_json::to_value(extracted).map_err(|err| err.to_string())?;
-        let mut translated_local = validate_llm_segments(&extracted_json, &expected)
-            .map_err(|err| format!("translate batch {} invalid: {err}", batch_id + 1))?;
+        let mut translated_local = extracted.translated_by_index;
         for (offset, segment) in batch.segments.iter().enumerate() {
             let local_index = offset + 1;
             let translated_text = translated_local.remove(&local_index).ok_or_else(|| {
@@ -242,12 +225,7 @@ async fn build_global_summary_profile(
         context_tail: tail,
         terminology_entries: terminology_entries.to_vec(),
     });
-    let summary_system_prompt = build_translate_summary_system_prompt();
-    let validator = JsonResponseValidator::with_required_keys(&[
-        "theme",
-        "primaryTerminologyEntries",
-        "supportingTerminologyEntries",
-    ]);
+    let validator = JsonResponseValidator::with_required_keys(&["theme"]);
     let context = LlmCallContext {
         task_id: request.task_id.clone(),
         media_path: Some(request.media_path.clone()),
@@ -258,7 +236,6 @@ async fn build_global_summary_profile(
         .call_json_validated(
             &context,
             &llm_id,
-            &summary_system_prompt,
             &summary_prompt,
             Some(&validator),
             |value| {
@@ -272,11 +249,11 @@ async fn build_global_summary_profile(
     let summary = summary_result.value;
     let theme = normalize_theme(summary.theme.as_str());
     let primary_terms = filter_selected_terminology_entries(
-        &summary.primary_terminology_entries,
+        &summary.primary_terms,
         terminology_entries,
     );
     let supporting_terms = filter_selected_terminology_entries(
-        &summary.supporting_terminology_entries,
+        &summary.supporting_terms,
         terminology_entries,
     );
     let selected_terms = merge_selected_terms(&primary_terms, &supporting_terms, terminology_entries);
@@ -312,9 +289,7 @@ where
 
 async fn run_batch_translate_pipeline<G>(
     request: &TranslatePipelineRequest,
-    segments: &[SourceSegment],
     batches: &[SegmentBatch],
-    terminology_entries: &[TranslateTerminologyPromptEntry],
     summary_profile: &SummaryProfile,
     llm_client: &OpenAiCompatLlmClient,
     on_batch_progress: &mut G,
@@ -324,25 +299,47 @@ where
 {
     let prompts = batches
         .iter()
-        .map(|batch| {
-            let prev = context_before(segments, batch.start_idx, 2);
-            let next = context_after(segments, batch.end_idx, 2);
+        .enumerate()
+        .map(|(batch_index, batch)| {
+            let current_lines = batch
+                .segments
+                .iter()
+                .map(|segment| segment.source_text.clone())
+                .collect::<Vec<_>>();
+            let previous_lines = previous_lines_from_batches(batches, batch_index);
+            let next_lines = next_lines_from_batches(batches, batch_index);
+            let focus_terms = extract_focus_terms(
+                &current_lines,
+                &summary_profile
+                    .primary_terminology_entries
+                    .iter()
+                    .chain(summary_profile.supporting_terminology_entries.iter())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                8,
+            );
+            let jit_supporting_terms = extract_jit_supporting_terms(
+                &current_lines,
+                &summary_profile.supporting_terminology_entries,
+                &focus_terms,
+                6,
+            );
+            let shared_prompt = build_shared_translation_prompt(
+                request,
+                summary_profile,
+                batch_index + 1,
+                batches.len(),
+                &previous_lines,
+                &next_lines,
+                &current_lines,
+                &focus_terms,
+                &jit_supporting_terms,
+            );
             let prompt = TranslatePromptInput {
                 source_lang: request.source_lang.clone(),
                 target_lang: request.target_lang.clone(),
-                previous_context: prev,
-                next_context: next,
-                theme: summary_profile.theme.clone(),
-                terminology_entries: terminology_entries.to_vec(),
-                segments: batch
-                    .segments
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, segment)| TranslatePromptSegmentInput {
-                        index: idx + 1,
-                        source_text: segment.source_text.clone(),
-                    })
-                    .collect(),
+                lines: current_lines,
+                shared_prompt,
             };
             build_translate_user_prompt(&prompt)
         })
@@ -354,16 +351,14 @@ where
     }
 
     let concurrency = request.llm_concurrency.clamp(1, 16) as usize;
-    let validator = JsonResponseValidator::with_required_keys(&["segments"]);
     let tasks = prompts
         .into_iter()
         .enumerate()
         .map(|(index, user_prompt)| LlmJsonTask {
             id: index,
             request_id: next_llm_request_id(),
-            system_prompt: build_translate_system_prompt(),
             user_prompt,
-            response_validator: Some(validator.clone()),
+            response_validator: None,
         })
         .collect::<Vec<_>>();
     let context = LlmCallContext {
@@ -397,15 +392,11 @@ where
                         .call_json_validated(
                             &context,
                             &llm_id,
-                            &task.system_prompt,
                             &task.user_prompt,
                             task.response_validator.as_ref(),
                             |value| {
-                                let extraction = serde_json::from_value::<TranslationBatchExtraction>(value)
-                                    .map_err(|err| LlmSemanticValidationError::retryable(format!("translate parse failed: {err}")))?;
-                                validate_translation_batch_extraction(&extraction, &expected)
-                                    .map_err(LlmSemanticValidationError::retryable)?;
-                                Ok(extraction)
+                                parse_translation_batch_extraction(value, &expected)
+                                    .map_err(LlmSemanticValidationError::retryable)
                             },
                         )
                         .await;
@@ -443,14 +434,6 @@ where
         .enumerate()
         .map(|(index, item)| item.ok_or_else(|| format!("missing translated batch at index {index}")))
         .collect()
-}
-
-fn validate_translation_batch_extraction(
-    extraction: &TranslationBatchExtraction,
-    expected_indexes: &[usize],
-) -> Result<(), String> {
-    let value = serde_json::to_value(extraction).map_err(|err| err.to_string())?;
-    validate_llm_segments(&value, expected_indexes).map(|_| ())
 }
 
 fn normalize_terminology_entries(
@@ -573,80 +556,366 @@ fn sample_global_contexts(
 fn split_batches(
     segments: &[SourceSegment],
     max_segments_per_batch: usize,
-    max_words_per_batch: usize,
+    max_chars_per_batch: usize,
 ) -> Vec<SegmentBatch> {
     let mut out = Vec::new();
-    let mut batch_start_idx: usize = 0;
     let mut current_segments: Vec<SourceSegment> = Vec::new();
-    let mut current_word_total: usize = 0;
+    let mut current_char_total: usize = 0;
 
-    for (index, segment) in segments.iter().enumerate() {
-        let segment_words = count_words(&segment.source_text);
-        let would_exceed_words = !current_segments.is_empty()
-            && current_word_total.saturating_add(segment_words) > max_words_per_batch;
+    for segment in segments {
+        let segment_chars = segment.source_text.chars().count().saturating_add(1);
+        let would_exceed_chars = !current_segments.is_empty()
+            && current_char_total.saturating_add(segment_chars) > max_chars_per_batch;
         let would_exceed_segments = current_segments.len() >= max_segments_per_batch;
 
-        if would_exceed_words || would_exceed_segments {
-            let end_idx = batch_start_idx + current_segments.len() - 1;
+        if would_exceed_chars || would_exceed_segments {
             out.push(SegmentBatch {
-                start_idx: batch_start_idx,
-                end_idx,
                 segments: std::mem::take(&mut current_segments),
             });
-            batch_start_idx = index;
-            current_word_total = 0;
+            current_char_total = 0;
         }
 
-        current_word_total = current_word_total.saturating_add(segment_words);
+        current_char_total = current_char_total.saturating_add(segment_chars);
         current_segments.push(segment.clone());
     }
 
     if !current_segments.is_empty() {
-        let end_idx = batch_start_idx + current_segments.len() - 1;
-        out.push(SegmentBatch {
-            start_idx: batch_start_idx,
-            end_idx,
-            segments: current_segments,
-        });
+        out.push(SegmentBatch { segments: current_segments });
     }
 
     out
 }
 
-fn count_words(text: &str) -> usize {
-    text.split_whitespace()
-        .map(|part| {
-            part.trim_matches(|ch: char| {
-                !ch.is_ascii_alphanumeric() && ch != '\'' && ch != '-'
-            })
+fn previous_lines_from_batches(batches: &[SegmentBatch], batch_index: usize) -> Vec<String> {
+    if batch_index == 0 {
+        return Vec::new();
+    }
+    let prev = &batches[batch_index - 1];
+    let lines = prev
+        .segments
+        .iter()
+        .map(|segment| segment.source_text.clone())
+        .collect::<Vec<_>>();
+    if lines.len() <= 3 {
+        lines
+    } else {
+        lines[lines.len() - 3..].to_vec()
+    }
+}
+
+fn next_lines_from_batches(batches: &[SegmentBatch], batch_index: usize) -> Vec<String> {
+    if batch_index + 1 >= batches.len() {
+        return Vec::new();
+    }
+    let next = &batches[batch_index + 1];
+    let lines = next
+        .segments
+        .iter()
+        .map(|segment| segment.source_text.clone())
+        .collect::<Vec<_>>();
+    if lines.len() <= 2 {
+        lines
+    } else {
+        lines[..2].to_vec()
+    }
+}
+
+fn build_shared_translation_prompt(
+    request: &TranslatePipelineRequest,
+    summary_profile: &SummaryProfile,
+    batch_index: usize,
+    total_batches: usize,
+    previous_lines: &[String],
+    next_lines: &[String],
+    current_lines: &[String],
+    focus_terms: &[TranslateTerminologyPromptEntry],
+    jit_supporting_terms: &[TranslateTerminologyPromptEntry],
+) -> String {
+    let stable_payload = serde_json::json!({
+        "source_language": request.source_lang,
+        "target_language": request.target_lang,
+        "theme": summary_profile.theme,
+        "primary_terms": summary_profile
+            .primary_terminology_entries
+            .iter()
+            .map(|term| serde_json::json!({
+                "src": term.source,
+                "tgt": term.target,
+            }))
+            .collect::<Vec<_>>(),
+        "constraints": {
+            "strict_term_compliance": true,
+            "term_notes_are_reference_only": true,
+            "preserve_line_semantic_ownership": true,
+            "keep_line_count_unchanged": true
+        }
+    });
+    let batch_payload = serde_json::json!({
+        "batch_index": batch_index,
+        "total_batches": total_batches,
+        "previous_lines": previous_lines,
+        "next_lines": next_lines,
+        "focus_terms": focus_terms.iter().map(|term| serde_json::json!({
+            "src": term.source,
+            "tgt": term.target,
+        })).collect::<Vec<_>>(),
+        "jit_supporting_terms": jit_supporting_terms.iter().map(|term| serde_json::json!({
+            "src": term.source,
+            "tgt": term.target,
+        })).collect::<Vec<_>>(),
+        "current_line_count": current_lines.len(),
+    });
+    let stable = serde_json::to_string_pretty(&stable_payload).unwrap_or_else(|_| "{}".to_string());
+    let dynamic = serde_json::to_string_pretty(&batch_payload).unwrap_or_else(|_| "{}".to_string());
+    format!(
+        "### Stable Video Context\n```json\n{stable}\n```\n\n### Dynamic Batch Context\n```json\n{dynamic}\n```"
+    )
+}
+
+fn extract_focus_terms(
+    local_lines: &[String],
+    terms: &[TranslateTerminologyPromptEntry],
+    limit: usize,
+) -> Vec<TranslateTerminologyPromptEntry> {
+    if local_lines.is_empty() || terms.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let local_text = local_lines.join("\n");
+    let mut out = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    for term in terms {
+        let key = (
+            term.source.trim().to_ascii_lowercase(),
+            term.target.trim().to_ascii_lowercase(),
+        );
+        if key.0.is_empty() || key.1.is_empty() || seen.contains(&key) {
+            continue;
+        }
+        if exact_term_match(&local_text, &term.source) {
+            out.push(term.clone());
+            seen.insert(key);
+            if out.len() >= limit {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn extract_jit_supporting_terms(
+    local_lines: &[String],
+    supporting_terms: &[TranslateTerminologyPromptEntry],
+    exact_hits: &[TranslateTerminologyPromptEntry],
+    limit: usize,
+) -> Vec<TranslateTerminologyPromptEntry> {
+    if local_lines.is_empty() || supporting_terms.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let local_text = local_lines.join("\n");
+    let local_text_lower = local_text.to_lowercase();
+    let local_tokens = extract_signal_tokens(&local_text);
+    if local_tokens.is_empty() {
+        return Vec::new();
+    }
+
+    let exact_keys: HashSet<(String, String)> = exact_hits
+        .iter()
+        .map(|term| {
+            (
+                term.source.trim().to_ascii_lowercase(),
+                term.target.trim().to_ascii_lowercase(),
+            )
         })
-        .filter(|part| !part.is_empty())
-        .count()
+        .collect();
+    let mut ranked_terms: Vec<(usize, TranslateTerminologyPromptEntry)> = Vec::new();
+
+    for term in supporting_terms {
+        let key = (
+            term.source.trim().to_ascii_lowercase(),
+            term.target.trim().to_ascii_lowercase(),
+        );
+        if exact_keys.contains(&key) {
+            continue;
+        }
+        let src = term.source.trim();
+        if src.is_empty() {
+            continue;
+        }
+        if local_text_lower.contains(&src.to_lowercase()) {
+            continue;
+        }
+        let term_tokens = split_wordish_tokens(src)
+            .into_iter()
+            .map(|t| t.to_lowercase())
+            .filter(|t| t.chars().count() >= 3)
+            .collect::<Vec<_>>();
+        if term_tokens.len() < 2 {
+            continue;
+        }
+        let overlap = term_tokens
+            .iter()
+            .filter(|token| local_tokens.contains(*token))
+            .cloned()
+            .collect::<Vec<_>>();
+        if overlap.len() >= 2 {
+            let score = overlap.len() * 10 + term_tokens.len();
+            ranked_terms.push((score, term.clone()));
+        } else if term_tokens.len() == 2
+            && overlap.len() == 1
+            && overlap[0].chars().count() >= 6
+        {
+            let score = 5 + overlap[0].chars().count();
+            ranked_terms.push((score, term.clone()));
+        }
+    }
+
+    ranked_terms.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.source.to_ascii_lowercase().cmp(&b.1.source.to_ascii_lowercase()))
+    });
+
+    let mut out = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    for (_, term) in ranked_terms {
+        let key = (
+            term.source.trim().to_ascii_lowercase(),
+            term.target.trim().to_ascii_lowercase(),
+        );
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.insert(key);
+        out.push(term);
+        if out.len() >= limit {
+            break;
+        }
+    }
+    out
 }
 
-fn context_before(segments: &[SourceSegment], start_idx: usize, count: usize) -> String {
-    if start_idx == 0 {
-        return String::new();
+fn parse_translation_batch_extraction(
+    value: serde_json::Value,
+    expected_indexes: &[usize],
+) -> Result<TranslationBatchExtraction, String> {
+    if value.get("segments").is_some() {
+        let map = validate_llm_segments(&value, expected_indexes)?;
+        return Ok(TranslationBatchExtraction {
+            translated_by_index: map,
+        });
     }
-    let begin = start_idx.saturating_sub(count);
-    segments[begin..start_idx]
-        .iter()
-        .map(|segment| segment.source_text.clone())
-        .collect::<Vec<_>>()
-        .join(" ")
+
+    let Some(obj) = value.as_object() else {
+        return Err("translate parse failed: root must be object".to_string());
+    };
+    let mut translated_by_index: HashMap<usize, String> = HashMap::new();
+    for (key, item) in obj {
+        let index = key
+            .parse::<usize>()
+            .map_err(|_| format!("translate parse failed: invalid index key `{key}`"))?;
+        let Some(item_obj) = item.as_object() else {
+            return Err(format!("translate parse failed: index `{key}` must map to object"));
+        };
+        let translated_text = item_obj
+            .get("translation")
+            .or_else(|| item_obj.get("translatedText"))
+            .or_else(|| item_obj.get("translated_text"))
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| format!("translate parse failed: empty translation for index `{key}`"))?;
+        if translated_by_index.insert(index, translated_text).is_some() {
+            return Err(format!("translate parse failed: duplicate index `{index}`"));
+        }
+    }
+
+    if translated_by_index.len() != expected_indexes.len() {
+        return Err(format!(
+            "translate parse failed: expected {} lines, got {}",
+            expected_indexes.len(),
+            translated_by_index.len()
+        ));
+    }
+    for index in expected_indexes {
+        if !translated_by_index.contains_key(index) {
+            return Err(format!("translate parse failed: missing index `{index}`"));
+        }
+    }
+    Ok(TranslationBatchExtraction { translated_by_index })
 }
 
-fn context_after(segments: &[SourceSegment], end_idx: usize, count: usize) -> String {
-    if end_idx + 1 >= segments.len() {
-        return String::new();
+fn exact_term_match(text: &str, term_src: &str) -> bool {
+    let term = term_src.trim();
+    if term.is_empty() {
+        return false;
     }
-    let start = end_idx + 1;
-    let end_exclusive = (start + count).min(segments.len());
-    segments[start..end_exclusive]
-        .iter()
-        .map(|segment| segment.source_text.clone())
-        .collect::<Vec<_>>()
-        .join(" ")
+    if term.chars().any(|ch| ch.is_whitespace()) {
+        return text.to_lowercase().contains(&term.to_lowercase());
+    }
+
+    let text_lower = text.to_lowercase();
+    let term_lower = term.to_lowercase();
+    let mut search_start = 0usize;
+    while let Some(found) = text_lower[search_start..].find(&term_lower) {
+        let start = search_start + found;
+        let end = start + term_lower.len();
+        let left = text_lower[..start].chars().next_back();
+        let right = text_lower[end..].chars().next();
+        let left_ok = left.map(|ch| !is_token_char(ch)).unwrap_or(true);
+        let right_ok = right.map(|ch| !is_token_char(ch)).unwrap_or(true);
+        if left_ok && right_ok {
+            return true;
+        }
+        search_start = end;
+    }
+    false
+}
+
+fn extract_signal_tokens(text: &str) -> HashSet<String> {
+    let normalized = text.to_lowercase();
+    if normalized.trim().is_empty() {
+        return HashSet::new();
+    }
+    let mut out: HashSet<String> = HashSet::new();
+    for token in split_wordish_tokens(&normalized) {
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.chars().any(is_cjk) {
+            let chars = trimmed.chars().collect::<Vec<_>>();
+            let max_size = chars.len().min(4);
+            for size in 2..=max_size {
+                for i in 0..=chars.len().saturating_sub(size) {
+                    let gram = chars[i..i + size].iter().collect::<String>();
+                    out.insert(gram);
+                }
+            }
+        } else if trimmed.chars().count() >= 3 {
+            out.insert(trimmed.to_string());
+        }
+    }
+    out
+}
+
+fn split_wordish_tokens(text: &str) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_alphanumeric() || is_cjk(ch) || ch == '_' {
+            current.push(ch);
+        } else if !current.is_empty() {
+            tokens.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn is_token_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
 }
 
 fn build_source_segments(tokens: &[TranslateToken]) -> Vec<SourceSegment> {

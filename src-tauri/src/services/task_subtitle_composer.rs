@@ -271,20 +271,24 @@ struct AlignmentGroup {
 }
 
 fn build_alignment_groups(segments: &[TranslateSegment]) -> Vec<AlignmentGroup> {
-    segments
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, segment)| {
-            let source_text = segment.source_text.trim().to_string();
-            if source_text.is_empty() {
-                return None;
+    let mut groups: Vec<AlignmentGroup> = Vec::new();
+    for (idx, segment) in segments.iter().enumerate() {
+        let source_text = segment.source_text.trim().to_string();
+        if source_text.is_empty() {
+            continue;
+        }
+        if let Some(last_group) = groups.last_mut() {
+            if last_group.source_text == source_text {
+                last_group.segment_indexes.push(idx);
+                continue;
             }
-            Some(AlignmentGroup {
-                source_text,
-                segment_indexes: vec![idx],
-            })
-        })
-        .collect()
+        }
+        groups.push(AlignmentGroup {
+            source_text,
+            segment_indexes: vec![idx],
+        });
+    }
+    groups
 }
 
 fn apply_group_timing(

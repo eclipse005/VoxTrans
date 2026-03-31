@@ -13,7 +13,7 @@ use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::error::{LlmError, LlmErrorKind};
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 use crate::services::translate::prompt::{
-    PunctuationPromptInput, build_punctuation_system_prompt, build_punctuation_user_prompt,
+    PunctuationPromptInput, build_punctuation_user_prompt,
 };
 
 const SENTENCE_GAP_SEC: f64 = 2.0;
@@ -118,7 +118,6 @@ pub async fn optimize_words_with_llm(
             return Err(format!("punctuation failed: {}", err));
         }
     };
-    let system_prompt = build_punctuation_system_prompt();
     let concurrency = config.llm_concurrency.clamp(1, 16) as usize;
     let mut prompt_tasks: Vec<(usize, String)> = Vec::new();
     for span_idx in suspicious_indexes.iter().copied() {
@@ -148,7 +147,6 @@ pub async fn optimize_words_with_llm(
         .map(|(idx, (_, user_prompt))| LlmJsonTask {
             id: idx,
             request_id: next_llm_request_id(),
-            system_prompt: system_prompt.clone(),
             user_prompt: user_prompt.clone(),
             response_validator: Some(validator.clone()),
         })
@@ -169,7 +167,6 @@ pub async fn optimize_words_with_llm(
                     .call_json_validated(
                         &context,
                         &task.request_id,
-                        &task.system_prompt,
                         &task.user_prompt,
                         task.response_validator.as_ref(),
                         |json| {
