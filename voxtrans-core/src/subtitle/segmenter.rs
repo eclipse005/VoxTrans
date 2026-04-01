@@ -45,6 +45,7 @@ pub fn normalize_word_tokens(raw_words: Vec<WordToken>) -> Vec<WordToken> {
         if is_standalone_punctuation_token(&text) && !is_numeric_prefix_symbol(&text) {
             if let Some(prev) = out.last_mut() {
                 prev.word.push_str(&text);
+                prev.end = prev.end.max(token.end);
                 continue;
             }
         }
@@ -716,5 +717,27 @@ mod tests {
         assert_eq!(normalized[0].word, "2.5%");
         assert_eq!(normalized[0].start, 0.0);
         assert_eq!(normalized[0].end, 0.2);
+    }
+
+    #[test]
+    fn standalone_punctuation_extends_previous_end_timestamp() {
+        let words = vec![
+            WordToken {
+                start: 0.0,
+                end: 0.3,
+                word: "trades".to_string(),
+            },
+            WordToken {
+                start: 0.3,
+                end: 0.35,
+                word: ".".to_string(),
+            },
+        ];
+
+        let normalized = normalize_word_tokens(words);
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0].word, "trades.");
+        assert_eq!(normalized[0].start, 0.0);
+        assert_eq!(normalized[0].end, 0.35);
     }
 }
