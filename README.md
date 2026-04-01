@@ -4,12 +4,12 @@ VoxTrans 是一个 Windows 英文转录翻译工具，翻译需配置 LLM 相关
 
 ## 下载地址
 
-- 下载: https://wwbxg.lanzouq.com/iFvfC3lh738f
-- 密码: f8cu
+- 下载: https://wwbxg.lanzouq.com/b00jf5bdch
+- 密码: h3oe
 
 ## 功能介绍
 
-- 音视频一键转字幕
+- 音视频一键转字幕（仅支持英文音视频）
 - 支持字幕翻译（英译中）
 - 自动优化标点与断句，减少手动整理时间
 - 支持导入 YouTube 链接或本地文件

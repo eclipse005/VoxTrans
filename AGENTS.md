@@ -95,6 +95,12 @@ Run commands from the repository root.
   - `task_engine` / `task_executor`
   - `workspace` loader/projection
   - frontend queue normalization/recovery logic
+- When bumping release version, keep version fields in sync across packaging sources:
+  - `package.json` -> `version`
+  - `src-tauri/Cargo.toml` -> `[package].version`
+  - `src-tauri/tauri.conf.json` -> `version`
+  - `Cargo.lock` -> `voxtrans` package version entry (regenerate via `cargo check -p voxtrans` if needed)
+  - Verify bundled filename matches the target version (for example `target/release/bundle/nsis/VoxTrans_<version>_x64-setup.exe`)
 
 ## Rules
 
