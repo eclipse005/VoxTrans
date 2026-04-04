@@ -115,11 +115,11 @@ export default function TerminologyModal({ visible, groups, onClose, onChange, o
         <div className="terms-body">
           <div className="settings-section">
             <div className="terms-groups-row">
-              <div className="hotword-groups-tabs">
+              <div className="terminology-groups-tabs">
                 {groups.map((group) => (
                   <div
                     key={group.id}
-                    className={`hotword-group-tab ${selectedGroup?.id === group.id ? "active" : ""}`}
+                    className={`terminology-group-tab ${selectedGroup?.id === group.id ? "active" : ""}`}
                     role="button"
                     tabIndex={0}
                     onClick={() => setSelectedGroupId(group.id)}
@@ -214,7 +214,7 @@ export default function TerminologyModal({ visible, groups, onClose, onChange, o
               </div>
               <button
                 type="button"
-                className="nav-button hotword-group-add-btn"
+                className="nav-button terminology-group-add-btn"
                 onClick={addGroup}
                 title="新建分组"
                 aria-label="新建分组"

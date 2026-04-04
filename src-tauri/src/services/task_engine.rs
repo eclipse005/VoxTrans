@@ -146,6 +146,7 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
     let source_lang = non_empty_or_default(&request.source_lang, "auto");
     let target_lang = non_empty_or_default(&request.target_lang, "zh-CN");
     let normalized_intent = normalize_intent(&request.intent);
+    let preserve_source_outputs = normalized_intent == INTENT_TRANSCRIBE_TRANSLATE;
     let snapshot = serde_json::to_string(&request.settings_snapshot).map_err(|err| err.to_string())?;
     let now = unix_now();
     let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM task_runs WHERE id = ?")
@@ -177,9 +178,9 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
                  segment_current = 0,
                  segment_total = 0,
                  error_message = '',
-                 result_text = '',
-                 result_srt = '',
-                 subtitle_segments_json = '[]',
+                 result_text = CASE WHEN ? = 1 THEN result_text ELSE '' END,
+                 result_srt = CASE WHEN ? = 1 THEN result_srt ELSE '' END,
+                 subtitle_segments_json = CASE WHEN ? = 1 THEN subtitle_segments_json ELSE '[]' END,
                  translated_srt = '',
                  queued_at = ?,
                  updated_at = ?
@@ -196,6 +197,9 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
         .bind(target_lang)
         .bind(initial_overall_status("queued"))
         .bind(initial_stage(&normalized_intent))
+        .bind(if preserve_source_outputs { 1 } else { 0 })
+        .bind(if preserve_source_outputs { 1 } else { 0 })
+        .bind(if preserve_source_outputs { 1 } else { 0 })
         .bind(now)
         .bind(now)
         .bind(&request.id)

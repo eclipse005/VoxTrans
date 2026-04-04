@@ -123,6 +123,7 @@ pub(super) fn load_stage_words(context: &TaskContext, stage: &str) -> Option<Vec
         return None;
     }
     let output = match stage {
+        STAGE_ASR => &context.stages.asr.output,
         STAGE_PUNCTUATE => &context.stages.punctuate.output,
         _ => return None,
     };

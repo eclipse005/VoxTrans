@@ -378,22 +378,22 @@
   transform: translateX(20px);
 }
 
-.hotwords-config {
+.terminology-config {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.hotwords-add {
+.terminology-add {
   display: flex;
   gap: 12px;
 }
 
-.hotwords-add .apple-input {
+.terminology-add .apple-input {
   flex: 1;
 }
 
-.hotwords-list {
+.terminology-list {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -402,7 +402,7 @@
   max-height: 260px;
 }
 
-.hotword-item {
+.terminology-item {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -417,29 +417,29 @@
   position: relative;
 }
 
-.hotword-item:hover {
+.terminology-item:hover {
   background-color: #e5e5e7;
   border-color: var(--apple-blue);
 }
 
-.hotword-item.selected {
+.terminology-item.selected {
   background-color: #fee2e2;
   border-color: #dc2626;
 }
 
-.hotword-content {
+.terminology-content {
   display: flex;
   align-items: center;
   gap: 8px;
   transition: opacity var(--apple-transition-fast);
 }
 
-.hotword-item.selected .hotword-content {
+.terminology-item.selected .terminology-content {
   visibility: hidden;
   opacity: 0;
 }
 
-.hotword-actions {
+.terminology-actions {
   display: none;
   position: absolute;
   top: 50%;
@@ -456,36 +456,36 @@
   line-height: 1;
 }
 
-.hotword-item.selected .hotword-actions {
+.terminology-item.selected .terminology-actions {
   display: flex;
 }
 
-.hotword-text,
-.hotword-original {
+.terminology-text,
+.terminology-original {
   font-size: 14px;
   font-weight: 500;
   color: var(--apple-text-primary);
 }
 
-.hotword-arrow {
+.terminology-arrow {
   color: var(--apple-text-tertiary);
   font-size: 14px;
 }
 
-.hotword-translation {
+.terminology-translation {
   font-size: 14px;
   color: var(--apple-blue);
   font-weight: 600;
 }
 
-.hotword-groups-tabs {
+.terminology-groups-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   padding: 12px 0;
 }
 
-.hotword-group-tab {
+.terminology-group-tab {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -501,16 +501,16 @@
   border: none;
 }
 
-.hotword-group-tab.active {
+.terminology-group-tab.active {
   background-color: #e8f4fd;
   color: #007aff;
 }
 
-.hotword-group-tab:hover {
+.terminology-group-tab:hover {
   background-color: #e8e8ed;
 }
 
-.hotword-group-tab.active:hover {
+.terminology-group-tab.active:hover {
   background-color: #d4e8f7;
 }
 
@@ -576,11 +576,11 @@
   pointer-events: none;
 }
 
-.hotword-group-tab.active .group-action-btn:hover {
+.terminology-group-tab.active .group-action-btn:hover {
   background-color: rgba(0, 122, 255, 0.1);
 }
 
-.hotword-group-add-btn {
+.terminology-group-add-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -668,7 +668,7 @@
   margin-bottom: 10px;
 }
 
-.terms-groups-row .hotword-groups-tabs {
+.terms-groups-row .terminology-groups-tabs {
   flex: 1;
   padding: 0;
   max-height: 88px;
