@@ -1,2 +1,29 @@
 # VoxTrans
-VoxTrans is a desktop app for transcription, translation, and subtitle editing.
+
+VoxTrans 是一款桌面端音视频处理工具，聚焦于转录、翻译和字幕编辑。
+
+它可以帮助你：
+
+- 将音频/视频转录为带时间轴的字幕
+- 通过 OpenAI 兼容接口进行字幕翻译
+- 高效编辑并导出字幕文件
+- 在同一流程中处理本地媒体与 YouTube 来源
+
+## 当前状态
+
+项目仍在持续迭代中，后续会逐步补充更完整的文档与模块说明。
+
+## 下载
+
+桌面安装包请前往 [Releases](../../releases)。
+
+## 规划路线
+
+- 完善更新与发布流程
+- 增强字幕编辑能力
+- 优化模型与运行时管理
+- 持续提升稳定性与性能
+
+## 许可证
+
+待定（TBD）
