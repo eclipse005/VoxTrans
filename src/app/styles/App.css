@@ -24,6 +24,7 @@
 .apple-navbar .app-version {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   margin-left: 8px;
   padding: 1px 7px;
   border-radius: 999px;
@@ -33,6 +34,116 @@
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
+}
+
+.apple-navbar .app-version.has-update {
+  border-color: #f1b84b;
+  color: #8a4a00;
+  background: #fff7e6;
+}
+
+.apple-navbar .app-version-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #f97316;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.18);
+}
+
+.apple-navbar .app-version-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0 0 0 8px;
+  cursor: pointer;
+}
+
+.modal-content-update {
+  width: 480px;
+  height: 680px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.update-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.update-header .apple-heading-medium {
+  margin: 0;
+}
+
+.update-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.app-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid #dbe3f0;
+  background: #f8fbff;
+  color: #4f46e5;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.update-published {
+  font-size: 12px;
+  color: var(--apple-text-secondary);
+  white-space: nowrap;
+}
+
+.update-notes {
+  border: 1px solid var(--apple-border-lighter);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fbfcff;
+  flex: 1;
+  min-height: 200px;
+  max-height: 500px;
+  overflow: auto;
+  position: relative;
+}
+
+.update-notes-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.settings-footer {
+  margin-top: auto;
+}
+
+.update-release-link {
+  margin-top: -4px;
+}
+
+.update-release-link a {
+  font-size: 13px;
+  color: #007aff;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.update-release-link a:hover {
+  text-decoration: underline;
+}
+
+.update-progress-text {
+  font-size: 12px;
+  color: var(--apple-text-secondary);
 }
 
 .apple-navbar .app-author-link {

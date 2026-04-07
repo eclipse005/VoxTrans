@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:release": "powershell -ExecutionPolicy Bypass -File .\\build-release.ps1",
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri"

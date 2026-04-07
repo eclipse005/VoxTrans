@@ -37,6 +37,14 @@ pub fn extract_and_repair_json(raw: &str) -> Result<Value, LlmError> {
     if !trimmed.is_empty() {
         candidates.push(trimmed.to_string());
     }
+
+    // 剔除 <thought> 标签后重试
+    if let Some(stripped) = strip_thought_blocks(trimmed) {
+        if !stripped.is_empty() {
+            candidates.push(stripped);
+        }
+    }
+
     if let Some(fenced) = extract_fenced_json(trimmed) {
         candidates.push(fenced);
     }
@@ -248,4 +256,36 @@ fn repair_common_json_issues(input: &str) -> String {
     }
 
     out.trim().to_string()
+}
+
+/// 移除 <thought>...</thought> 块，避免思考过程干扰 JSON 提取
+fn strip_thought_blocks(text: &str) -> Option<String> {
+    let mut result = String::new();
+    let mut remaining = text;
+    let mut found_any = false;
+
+    while let Some(start) = remaining.find("<thought>") {
+        found_any = true;
+        // 添加 <thought> 之前的内容
+        result.push_str(&remaining[..start]);
+
+        // 查找 </thought> 结束标签
+        if let Some(end) = remaining[start..].find("</thought>") {
+            // 跳过整个 <thought>...</thought> 块
+            remaining = &remaining[start + end + 10..];
+        } else {
+            // 没有闭合标签，移除从 <thought> 开始的所有内容
+            remaining = "";
+            break;
+        }
+    }
+
+    // 添加剩余部分
+    result.push_str(remaining);
+
+    if found_any {
+        Some(result.trim().to_string())
+    } else {
+        None
+    }
 }

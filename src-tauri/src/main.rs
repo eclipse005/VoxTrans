@@ -74,6 +74,10 @@ fn main() {
             commands::logs::read_task_log,
             commands::logs::clear_task_logs,
             commands::logs::get_task_total_tokens,
+            commands::updater::check_update,
+            commands::updater::download_update,
+            commands::updater::cancel_update,
+            commands::updater::open_external_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running voxtrans desktop");

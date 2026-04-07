@@ -5,9 +5,16 @@ import { getVersion } from "@tauri-apps/api/app";
 type NavbarProps = {
   onOpenSettings: () => void;
   onOpenTerminology: () => void;
+  hasAvailableUpdate: boolean;
+  onOpenUpdateDialog: () => void;
 };
 
-export default function Navbar({ onOpenSettings, onOpenTerminology }: NavbarProps) {
+export default function Navbar({
+  onOpenSettings,
+  onOpenTerminology,
+  hasAvailableUpdate,
+  onOpenUpdateDialog,
+}: NavbarProps) {
   const [version, setVersion] = useState(import.meta.env.VITE_APP_VERSION ?? "0.0.0");
 
   useEffect(() => {
@@ -36,7 +43,21 @@ export default function Navbar({ onOpenSettings, onOpenTerminology }: NavbarProp
       <div className="apple-navbar-content">
         <h1 className="apple-heading-small">
           VoxTrans
-          <span className="app-version">v{version}</span>
+          {hasAvailableUpdate ? (
+            <button
+              type="button"
+              className="app-version-btn"
+              onClick={onOpenUpdateDialog}
+              title="发现新版本，点击查看详情"
+            >
+              <span className="app-version has-update">
+                v{version}
+                <span className="app-version-dot" aria-hidden="true" />
+              </span>
+            </button>
+          ) : (
+            <span className="app-version">v{version}</span>
+          )}
         </h1>
         <div className="nav-buttons">
           <button className="nav-button" onClick={onOpenTerminology}>

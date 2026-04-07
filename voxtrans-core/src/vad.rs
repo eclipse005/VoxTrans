@@ -80,7 +80,7 @@ pub(crate) fn build_segments_from_vad(
 }
 
 fn detect_speech_with_fireredvad(audio_path: &Path) -> Result<VadOutput, Box<dyn std::error::Error>> {
-    let output = fireredvad_command().arg("--wav").arg(audio_path).output()?;
+    let output = fireredvad_command().arg(audio_path).output()?;
     if !output.status.success() {
         return Err(format!(
             "fireredvad failed for {}: {}",

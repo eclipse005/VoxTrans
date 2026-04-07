@@ -8,9 +8,11 @@ import SubtitleExportModal from "./components/SubtitleExportModal";
 import SubtitleEditorModal from "./components/SubtitleEditorModal";
 import TerminologyModal from "./components/TerminologyModal";
 import Toast from "./components/Toast";
+import UpdateModal from "./components/UpdateModal";
 import UploadPanel from "./components/UploadPanel";
 import { openTaskOutputDir } from "./api/system";
 import { useAppPersistence } from "./hooks/useAppPersistence";
+import { useAutoUpdateCheck } from "./hooks/useAutoUpdateCheck";
 import { useModelManager } from "./hooks/useModelManager";
 import { useQueueWorkflow } from "./hooks/useQueueWorkflow";
 import { useSettingsController } from "./hooks/useSettingsController";
@@ -91,6 +93,17 @@ function App() {
   } = state;
 
   const { pushToast } = useToast(dispatch);
+  const {
+    hasAvailableUpdate,
+    availableUpdate,
+    showUpdateDialog,
+    installing,
+    installProgress,
+    openUpdateDialog,
+    closeUpdateDialog,
+    installUpdate,
+    cancelInstall,
+  } = useAutoUpdateCheck();
 
   useAppPersistence(dispatch);
   const { workspaceHydrated } = useWorkspacePersistence({
@@ -222,6 +235,8 @@ function App() {
       <Navbar
         onOpenSettings={openSettings}
         onOpenTerminology={() => setShowTerminologyModal(true)}
+        hasAvailableUpdate={hasAvailableUpdate}
+        onOpenUpdateDialog={openUpdateDialog}
       />
 
       <main className="apple-container apple-section">
@@ -374,6 +389,16 @@ function App() {
           }}
         />
       ) : null}
+
+      <UpdateModal
+        visible={showUpdateDialog}
+        update={availableUpdate}
+        installing={installing}
+        installProgress={installProgress}
+        onClose={closeUpdateDialog}
+        onInstall={installUpdate}
+        onCancelInstall={cancelInstall}
+      />
 
       <Toast toast={toast} />
     </div>

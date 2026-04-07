@@ -34,3 +34,5 @@ pub mod transcribe;
 pub mod transcription;
 pub mod workspace;
 pub mod youtube;
+pub mod updater;
+pub mod file_download;

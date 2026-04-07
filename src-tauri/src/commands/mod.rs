@@ -15,4 +15,5 @@ pub mod transcribe;
 pub mod transcription;
 pub mod workspace;
 pub mod youtube;
+pub mod updater;
 pub(crate) mod dto;
