@@ -25,10 +25,10 @@ use super::state::{
 };
 use super::events::{
     SeparateProgressEvent, TranscribePhaseEvent, TranscribeProgressEvent, TranslateProgressEvent,
-    emit_bridge_event,
+    emit_bridge_event, emit_task_state_changed,
 };
 use super::{
-    log_pipeline_stage,
+    build_task_state_changed_event, log_pipeline_stage,
 };
 use super::runtime::{TaskRunExecRow, persist_task_context_boxed};
 use crate::services::transcribe::{
@@ -388,6 +388,7 @@ pub(super) async fn run_summarize_stage(
             "terminologyOutputTotal": summarize_snapshot.terminology_entries.len(),
         }),
     );
+    emit_task_state_changed(app, &build_task_state_changed_event(task, projection));
     Ok(summarize_snapshot)
 }
 
@@ -477,6 +478,7 @@ pub(super) async fn run_translate_stage(
             "translatedSegmentTotal": translate_snapshot.segments.len(),
         }),
     );
+    emit_task_state_changed(app, &build_task_state_changed_event(task, projection));
     Ok(translate_snapshot)
 }
 
@@ -568,6 +570,7 @@ pub(super) async fn run_segment_optimize_stage(
             "segmentTotal": snapshot.segments.len(),
         }),
     );
+    emit_task_state_changed(app, &build_task_state_changed_event(task, projection));
     Ok(snapshot)
 }
 

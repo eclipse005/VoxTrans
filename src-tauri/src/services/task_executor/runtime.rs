@@ -15,9 +15,12 @@ use crate::services::task_stage_store::{
 };
 use crate::services::task_status::{TaskRuntimeStatus, runtime_status_from_db};
 
-#[derive(Debug, sqlx::FromRow)]
+use super::events::TaskStateChangedEvent;
+
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub(super) struct TaskRunExecRow {
     pub id: String,
+    pub name: String,
     pub media_path: String,
     pub media_kind: String,
     pub size_bytes: i64,
@@ -116,6 +119,30 @@ pub(super) fn hydrate_task_projection(task: &TaskRunExecRow) -> TaskProjectionSt
         result_srt: task.result_srt.clone(),
         translated_srt: task.translated_srt.clone(),
     })
+}
+
+/// Build a TaskStateChangedEvent from task data and projection.
+pub(super) fn build_task_state_changed_event(
+    task: &TaskRunExecRow,
+    projection: &TaskProjectionState,
+) -> TaskStateChangedEvent {
+    TaskStateChangedEvent {
+        id: task.id.clone(),
+        path: task.media_path.clone(),
+        name: task.name.clone(),
+        media_kind: task.media_kind.clone(),
+        size_bytes: task.size_bytes.max(0) as u64,
+        transcribe_status: projection.queue.transcribe_status.clone(),
+        transcribe_progress: projection.queue.progress_percent,
+        transcribe_segment_current: projection.queue.transcribe_segment_current,
+        transcribe_segment_total: projection.queue.transcribe_segment_total,
+        transcribe_phase: projection.queue.phase.clone(),
+        transcribe_phase_detail: projection.queue.phase_detail.clone(),
+        transcribe_error: projection.queue.transcribe_error.clone(),
+        result_text: projection.editor.result_text.clone(),
+        result_srt: projection.editor.result_srt.clone(),
+        subtitle_segments_json: projection.editor.subtitle_segments_json.clone(),
+    }
 }
 
 pub(super) async fn persist_task_context(

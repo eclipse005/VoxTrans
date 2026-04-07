@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
 mod events;
+pub use events::TaskStateChangedEvent;
 mod runtime;
 mod stages;
 mod state;
@@ -19,14 +20,14 @@ use crate::services::task_projection::TaskProjectionState;
 use crate::services::task_subtitle_composer::{
     WordTimingAnchor, apply_subtitle_beautify_to_segments,
 };
-use self::events::{TranscribePhaseEvent, WorkspaceSyncHintEvent, emit_bridge_event};
+use self::events::{TranscribePhaseEvent, WorkspaceSyncHintEvent, emit_bridge_event, emit_task_state_changed};
 use self::stages::{
     run_asr_stage, run_punctuate_stage, run_segment_optimize_stage, run_segment_stage, run_separate_stage,
     run_summarize_stage, run_translate_stage,
 };
 use self::runtime::{
-    TaskRunExecRow, hydrate_task_context, hydrate_task_projection, load_task_runtime_error,
-    persist_task_context, set_queue_projection,
+    TaskRunExecRow, build_task_state_changed_event, hydrate_task_context, hydrate_task_projection,
+    load_task_runtime_error, persist_task_context, set_queue_projection,
 };
 use self::state::{
     AsrResumeSnapshot, count_segments_from_json, has_source_segments_available,
@@ -126,7 +127,7 @@ pub async fn execute_task_run(
     let execute_logger = TaskLogger::main(request.task_id.trim().to_string());
 
     let task = sqlx::query_as::<_, TaskRunExecRow>(
-        "SELECT id, media_path, media_kind, size_bytes, intent, source_lang, target_lang,
+        "SELECT id, name, media_path, media_kind, size_bytes, intent, source_lang, target_lang,
                 settings_snapshot_json, created_at, overall_status, current_stage, progress_percent,
                 phase_detail, segment_current, segment_total, error_message, result_text, result_srt,
                 subtitle_segments_json, translated_srt
@@ -178,6 +179,7 @@ pub async fn execute_task_run(
         "",
     );
     persist_task_context(pool, &task.id, &context, &projection).await?;
+    emit_task_state_changed(app.as_ref(), &build_task_state_changed_event(&task, &projection));
 
     let intent = request
         .intent
@@ -336,6 +338,7 @@ pub async fn execute_task_run(
                 "",
             );
             persist_task_context(pool, &task.id, &context, &projection).await?;
+            emit_task_state_changed(app.as_ref(), &build_task_state_changed_event(&task, &projection));
             TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
                 event::TRANSCRIBE_COMPLETED,
                 Some(&json!({
@@ -364,6 +367,7 @@ pub async fn execute_task_run(
                 &err,
             );
             persist_task_context(pool, &task.id, &context, &projection).await?;
+            emit_task_state_changed(app.as_ref(), &build_task_state_changed_event(&task, &projection));
             TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
                 event::TRANSCRIBE_FAILED,
                 Some(&json!({

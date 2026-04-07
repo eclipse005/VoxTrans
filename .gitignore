@@ -23,6 +23,12 @@ dist-ssr
 *.sln
 *.sw?
 
+# Trellis (personal workspace)
+.trellis/
+
+# Claude Code
+.claude/
+
 # Rust / local assets
 target/
 src-tauri/target/
@@ -31,3 +37,4 @@ model/
 runtime/
 output/
 src-tauri/output/
+build-release.ps1

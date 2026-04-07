@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::app_state::AppState;
 use crate::commands::dto::common::{TaskRunCommandRecord, from_service_task_run};
@@ -19,7 +19,7 @@ use crate::services::task_engine::{
 use crate::services::task_executor::{
     enqueue_and_execute_task_batch_via_worker as enqueue_and_execute_task_batch_service,
     execute_task_batch_via_worker as execute_task_batch_service,
-    execute_task_run_via_worker as execute_task_run_service,
+    execute_task_run_via_worker as execute_task_run_service, TaskStateChangedEvent,
 };
 use crate::services::task_worker;
 
@@ -65,15 +65,61 @@ pub struct TaskRunDetailCommand {
     pub artifacts: Vec<TaskArtifactCommandRecord>,
 }
 
+/// Build a TaskStateChangedEvent from a TaskRunCommandRecord (used for enqueue events).
+fn build_task_state_changed_event(record: &TaskRunCommandRecord) -> TaskStateChangedEvent {
+    TaskStateChangedEvent {
+        id: record.id.clone(),
+        path: record.media_path.clone(),
+        name: record.name.clone(),
+        media_kind: record.media_kind.clone(),
+        size_bytes: record.size_bytes,
+        transcribe_status: map_queue_status(&record.overall_status),
+        transcribe_progress: record.progress_percent,
+        transcribe_segment_current: record.segment_current,
+        transcribe_segment_total: record.segment_total,
+        transcribe_phase: map_queue_phase(&record.current_stage),
+        transcribe_phase_detail: record.phase_detail.clone(),
+        transcribe_error: record.error_message.clone(),
+        result_text: record.result_text.clone(),
+        result_srt: record.result_srt.clone(),
+        subtitle_segments_json: record.subtitle_segments_json.clone(),
+    }
+}
+
+/// Map backend overall_status to frontend transcribe_status.
+fn map_queue_status(status: &str) -> String {
+    match status.trim().to_lowercase().as_str() {
+        "queued" => "queued".to_string(),
+        "running" | "processing" => "processing".to_string(),
+        "completed" | "done" => "done".to_string(),
+        "failed" | "error" => "error".to_string(),
+        _ => "pending".to_string(),
+    }
+}
+
+/// Map backend current_stage to frontend transcribe_phase.
+fn map_queue_phase(stage: &str) -> String {
+    match stage.trim().to_lowercase().as_str() {
+        "separate" => "separating".to_string(),
+        "asr" => "recognizing".to_string(),
+        "init" | "" => String::new(),
+        other => other.to_string(),
+    }
+}
 
 #[tauri::command]
 pub async fn enqueue_task_run(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     request: EnqueueTaskCommandRequest,
 ) -> Result<TaskRunCommandRecord, String> {
-    enqueue_task_service(&state.pool, to_service_enqueue_task(request))
-    .await
-    .map(from_service_task_run)
+    let record = enqueue_task_service(&state.pool, to_service_enqueue_task(request))
+        .await
+        .map(from_service_task_run)?;
+    // Emit task-state-changed event so frontend can update queue
+    let event = build_task_state_changed_event(&record);
+    let _ = app.emit("task-state-changed", &event);
+    Ok(record)
 }
 
 #[tauri::command]

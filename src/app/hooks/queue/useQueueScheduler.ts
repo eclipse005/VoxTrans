@@ -7,7 +7,6 @@ import {
   clearQueueItems,
   patchQueueItem,
   removeQueueItem,
-  setQueuedState,
 } from "../../state/queueDomainActions";
 import { reportError, toUserErrorMessage } from "../../utils/errors";
 
@@ -70,7 +69,7 @@ export function useQueueScheduler({
         settingsSnapshot: buildSettingsSnapshot(settings),
       });
       setTaskMode(item.id, mode);
-      setQueuedState(dispatch, item.id);
+      // State is updated via task-state-changed event from backend
       return true;
     } catch (error) {
       reportError(error, "enqueueTaskRun");

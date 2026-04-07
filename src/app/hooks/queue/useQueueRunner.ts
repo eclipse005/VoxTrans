@@ -2,52 +2,46 @@ import { useCallback, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   enqueueAndExecuteTaskBatch,
-  loadWorkspaceState,
 } from "../../api/workspace";
 import type {
   QueueItem,
   SavedSettings,
   TranscribePhase,
-  WorkspaceStateResponse,
 } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
 import {
   applyTranscribePhase,
-  applyTranscribeProgress,
-  applySeparationProgress,
   patchQueueItem,
-  applyTranslateProgress,
 } from "../../state/queueDomainActions";
 import { reportError, toUserErrorMessage } from "../../utils/errors";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
 
-type TranscribeProgressEvent = {
-  taskId: string;
-  currentSegment: number;
-  totalSegments: number;
+// Task state changed event from backend - full state replacement
+type TaskStateChangedEvent = {
+  id: string;
+  path: string;
+  name: string;
+  mediaKind: string;
+  sizeBytes: number;
+  transcribeStatus: string;
+  transcribeProgress: number;
+  transcribeSegmentCurrent: number;
+  transcribeSegmentTotal: number;
+  transcribePhase: string;
+  transcribePhaseDetail: string;
+  transcribeError: string;
+  resultText: string;
+  resultSrt: string;
+  subtitleSegmentsJson: string;
 };
 
+// Transcribe phase event for stage transitions
 type TranscribePhaseEvent = {
   taskId: string;
   phase: TranscribePhase;
   phaseDetail?: string;
-};
-
-type WorkspaceSyncHintEvent = {
-  taskId: string;
-};
-
-type SeparateProgressEvent = {
-  taskId: string;
-  percent: number;
-};
-
-type TranslateProgressEvent = {
-  taskId: string;
-  currentBatch: number;
-  totalBatches: number;
 };
 
 export type QueueRunMode = "transcribe" | "transcribe_translate";
@@ -65,84 +59,64 @@ export function useQueueRunner({
   isTaskPresent,
   settings,
 }: UseQueueRunnerArgs) {
+  // Listen for task-state-changed events from backend (single source of truth)
   useEffect(() => {
     let disposed = false;
-    let unlistenProgress: undefined | (() => void);
+    let unlistenTaskStateChanged: undefined | (() => void);
 
-    listen<TranscribeProgressEvent>("transcribe-progress", (event) => {
+    listen<TaskStateChangedEvent>("task-state-changed", (event) => {
       const payload = event.payload;
-      if (!payload?.taskId) return;
-      applyTranscribeProgress(dispatch, {
-        taskId: payload.taskId,
-        currentSegment: payload.currentSegment,
-        totalSegments: payload.totalSegments,
-      });
+      if (!payload?.id) return;
+      if (!isTaskPresent(payload.id)) return;
+      // Backend is the single source of truth - replace local state directly
+      patchQueueItem(dispatch, payload.id, () => ({
+        id: payload.id,
+        path: payload.path,
+        name: payload.name,
+        mediaKind: payload.mediaKind as "audio" | "video",
+        sizeBytes: payload.sizeBytes,
+        transcribeStatus: payload.transcribeStatus as QueueItem["transcribeStatus"],
+        transcribeProgress: payload.transcribeProgress,
+        transcribeSegmentCurrent: payload.transcribeSegmentCurrent,
+        transcribeSegmentTotal: payload.transcribeSegmentTotal,
+        transcribePhase: (payload.transcribePhase || "") as TranscribePhase | "",
+        transcribePhaseDetail: payload.transcribePhaseDetail || "",
+        transcribeError: payload.transcribeError || "",
+        resultText: payload.resultText || "",
+        resultSrt: payload.resultSrt || "",
+        subtitleSegmentsJson: payload.subtitleSegmentsJson || "",
+      }));
     })
       .then((fn) => {
         if (disposed) {
           fn();
           return;
         }
-        unlistenProgress = fn;
+        unlistenTaskStateChanged = fn;
       })
       .catch(() => {});
 
     return () => {
       disposed = true;
-      if (unlistenProgress) unlistenProgress();
+      if (unlistenTaskStateChanged) unlistenTaskStateChanged();
     };
-  }, [dispatch]);
+  }, [dispatch, isTaskPresent]);
 
-  useEffect(() => {
-    let disposed = false;
-    let unlistenSeparation: undefined | (() => void);
-    listen<SeparateProgressEvent>("separate-progress", (event) => {
-      const payload = event.payload;
-      if (!payload?.taskId) return;
-      applySeparationProgress(dispatch, {
-        taskId: payload.taskId,
-        percent: payload.percent,
-      });
-    })
-      .then((fn) => {
-        if (disposed) {
-          fn();
-          return;
-        }
-        unlistenSeparation = fn;
-      })
-      .catch(() => {});
-    return () => {
-      disposed = true;
-      if (unlistenSeparation) unlistenSeparation();
-    };
-  }, [dispatch]);
-
+  // Listen for transcribe-phase events for stage transitions
   useEffect(() => {
     let disposed = false;
     let unlistenPhase: undefined | (() => void);
+
     listen<TranscribePhaseEvent>("transcribe-phase", (event) => {
       const payload = event.payload;
       if (!payload?.taskId) return;
+      if (!isTaskPresent(payload.taskId)) return;
+      // Update phase display - full state comes via task-state-changed
       applyTranscribePhase(dispatch, {
         taskId: payload.taskId,
         phase: payload.phase,
         phaseDetail: payload.phaseDetail,
       });
-      if (
-        payload.phase === "summarize"
-        || payload.phase === "translate"
-        || payload.phase === "segment_optimize"
-      ) {
-        void (async () => {
-          try {
-            const workspace = await loadWorkspaceState();
-            syncQueueItem(dispatch, isTaskPresent, workspace, payload.taskId);
-          } catch {
-            // Ignore sync error during phase update; task flow continues.
-          }
-        })();
-      }
     })
       .then((fn) => {
         if (disposed) {
@@ -158,61 +132,6 @@ export function useQueueRunner({
     };
   }, [dispatch, isTaskPresent]);
 
-  useEffect(() => {
-    let disposed = false;
-    let unlistenWorkspaceSyncHint: undefined | (() => void);
-    listen<WorkspaceSyncHintEvent>("workspace-sync-hint", (event) => {
-      const payload = event.payload;
-      if (!payload?.taskId) return;
-      void (async () => {
-        try {
-          const workspace = await loadWorkspaceState();
-          syncQueueItem(dispatch, isTaskPresent, workspace, payload.taskId);
-        } catch {
-          // Ignore sync error; task flow continues.
-        }
-      })();
-    })
-      .then((fn) => {
-        if (disposed) {
-          fn();
-          return;
-        }
-        unlistenWorkspaceSyncHint = fn;
-      })
-      .catch(() => {});
-    return () => {
-      disposed = true;
-      if (unlistenWorkspaceSyncHint) unlistenWorkspaceSyncHint();
-    };
-  }, [dispatch, isTaskPresent]);
-
-  useEffect(() => {
-    let disposed = false;
-    let unlistenTranslateProgress: undefined | (() => void);
-    listen<TranslateProgressEvent>("translate-progress", (event) => {
-      const payload = event.payload;
-      if (!payload?.taskId) return;
-      applyTranslateProgress(dispatch, {
-        taskId: payload.taskId,
-        currentBatch: payload.currentBatch,
-        totalBatches: payload.totalBatches,
-      });
-    })
-      .then((fn) => {
-        if (disposed) {
-          fn();
-          return;
-        }
-        unlistenTranslateProgress = fn;
-      })
-      .catch(() => {});
-    return () => {
-      disposed = true;
-      if (unlistenTranslateProgress) unlistenTranslateProgress();
-    };
-  }, [dispatch]);
-
   const runTask = useCallback(async (item: QueueItem, mode: QueueRunMode) => {
     if (!isTaskPresent(item.id)) return;
 
@@ -220,8 +139,7 @@ export function useQueueRunner({
       const response = await enqueueAndExecuteTaskBatch({
         items: [toEnqueuePayload(item, mode, settings)],
       });
-      const workspace = await loadWorkspaceState();
-      syncQueueItem(dispatch, isTaskPresent, workspace, item.id);
+      // State is updated via task-state-changed event from backend
 
       const failed = response.failed.find((entry) => entry.taskId === item.id);
       if (failed) {
@@ -242,12 +160,11 @@ export function useQueueRunner({
       pushToast(`失败：${item.name}，${errorMessage}`, "error");
     }
   }, [
-    dispatch,
     isTaskPresent,
     pushToast,
     settings,
   ]);
-  const runBatch = useRunBatch(dispatch, pushToast, isTaskPresent, settings);
+  const runBatch = useRunBatch(pushToast, isTaskPresent, settings);
 
   return {
     runTask,
@@ -261,7 +178,6 @@ type BatchTask = {
 };
 
 function useRunBatch(
-  dispatch: DispatchState,
   pushToast: PushToast,
   isTaskPresent: (taskId: string) => boolean,
   settings: SavedSettings,
@@ -273,22 +189,13 @@ function useRunBatch(
     const response = await enqueueAndExecuteTaskBatch({
       items: items.map((task) => toEnqueuePayload(task.item, task.mode, settings)),
     });
-    const workspace = await loadWorkspaceState();
-    for (const item of items) {
-      syncQueueItem(dispatch, isTaskPresent, workspace, item.item.id);
-    }
-
-    for (const failure of response.failed) {
-      if (!isTaskPresent(failure.taskId)) continue;
-      const workspace = await loadWorkspaceState();
-      syncQueueItem(dispatch, isTaskPresent, workspace, failure.taskId);
-    }
+    // State is updated via task-state-changed event from backend
 
     if (response.failed.length > 0) {
       const first = response.failed[0];
       pushToast(`部分任务失败：${first.taskId}，${first.error}`, "error");
     }
-  }, [dispatch, isTaskPresent, pushToast, settings]);
+  }, [pushToast, isTaskPresent, settings]);
 }
 
 function toEnqueuePayload(
@@ -321,38 +228,9 @@ function toEnqueuePayload(
   };
 }
 
-function syncQueueItem(
-  dispatch: DispatchState,
-  isTaskPresent: (taskId: string) => boolean,
-  workspace: WorkspaceStateResponse,
-  taskId: string,
-): void {
-  if (!isTaskPresent(taskId)) return;
-  const synced = findQueueItem(workspace, taskId);
-  if (!synced) return;
-  patchQueueItem(dispatch, taskId, (prev) => ({
-    ...prev,
-    transcribeStatus: synced.transcribeStatus,
-    transcribeProgress: synced.transcribeProgress,
-    transcribeSegmentCurrent: synced.transcribeSegmentCurrent,
-    transcribeSegmentTotal: synced.transcribeSegmentTotal,
-    transcribePhase: synced.transcribePhase,
-    transcribePhaseDetail: synced.transcribePhaseDetail,
-    transcribeError: synced.transcribeError,
-  }));
-}
-
 function toIntent(mode: QueueRunMode): "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" {
   if (mode === "transcribe_translate") return "TRANSCRIBE_TRANSLATE";
   return "TRANSCRIBE";
-}
-
-function findQueueItem(
-  workspace: WorkspaceStateResponse,
-  taskId: string,
-): QueueItem | null {
-  const queue = Array.isArray(workspace.queue) ? workspace.queue : [];
-  return queue.find((item) => item.id === taskId) ?? null;
 }
 
 function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown> {
