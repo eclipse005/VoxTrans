@@ -5,7 +5,5 @@
 mod pipeline;
 mod punctuation;
 
-pub use pipeline::{
-    RunPostAsrPipelineRequest, run_post_asr_pipeline,
-};
+pub use pipeline::{RunPostAsrPipelineRequest, run_post_asr_pipeline};
 pub use punctuation::{PunctuationConfig, optimize_words_with_llm};

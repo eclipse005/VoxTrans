@@ -1,5 +1,5 @@
-use tauri::State;
 use serde::Deserialize;
+use tauri::State;
 
 use crate::app_state::AppState;
 

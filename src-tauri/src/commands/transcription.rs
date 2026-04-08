@@ -73,9 +73,8 @@ pub async fn run_post_asr_pipeline(
         llm_concurrency: request.llm_concurrency,
     };
 
-    let response = crate::services::transcription::run_post_asr_pipeline(
-        service_request,
-        move |phase| {
+    let response =
+        crate::services::transcription::run_post_asr_pipeline(service_request, move |phase| {
             let _ = app.emit(
                 "transcribe-phase",
                 TranscribePhaseEvent {
@@ -83,9 +82,8 @@ pub async fn run_post_asr_pipeline(
                     phase: phase.to_string(),
                 },
             );
-        },
-    )
-    .await?;
+        })
+        .await?;
 
     Ok(RunPostAsrPipelineCommandResponse {
         text: response.text,

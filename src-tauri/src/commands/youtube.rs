@@ -6,7 +6,8 @@ use crate::commands::dto::youtube::{
     YoutubeDownloadProgressCommandEvent, from_service_youtube_progress,
 };
 use crate::services::youtube::{
-    self, download_youtube_to_task, get_youtube_download_progress as get_youtube_download_progress_service,
+    self, download_youtube_to_task,
+    get_youtube_download_progress as get_youtube_download_progress_service,
     get_yt_dlp_version as get_yt_dlp_version_service,
     list_youtube_download_progress as list_youtube_download_progress_service,
     request_cancel_youtube_download as request_cancel_youtube_download_service,
@@ -76,7 +77,9 @@ pub async fn download_youtube_to_task_run(
 pub fn get_youtube_download_progress(
     request: GetYoutubeDownloadProgressRequest,
 ) -> YoutubeDownloadProgressCommandEvent {
-    from_service_youtube_progress(get_youtube_download_progress_service(request.task_id.trim()))
+    from_service_youtube_progress(get_youtube_download_progress_service(
+        request.task_id.trim(),
+    ))
 }
 
 #[tauri::command]

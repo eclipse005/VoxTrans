@@ -50,14 +50,16 @@ impl OpenAiCompatLlmClient {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
             .build()
-            .map_err(|err| LlmError::new(LlmErrorKind::Config, format!("failed to create http client: {err}")))?;
+            .map_err(|err| {
+                LlmError::new(
+                    LlmErrorKind::Config,
+                    format!("failed to create http client: {err}"),
+                )
+            })?;
         Ok(Self { config, http })
     }
 
-    async fn call_once(
-        &self,
-        user_prompt: &str,
-    ) -> Result<(String, LlmTokenUsage), LlmError> {
+    async fn call_once(&self, user_prompt: &str) -> Result<(String, LlmTokenUsage), LlmError> {
         let request = ChatCompletionsRequest {
             model: self.config.model.clone(),
             messages: vec![ChatMessageRequest {
@@ -75,12 +77,16 @@ impl OpenAiCompatLlmClient {
             .json(&request)
             .send()
             .await
-            .map_err(|err| LlmError::new(LlmErrorKind::Http, format!("http request failed: {err}")))?;
+            .map_err(|err| {
+                LlmError::new(LlmErrorKind::Http, format!("http request failed: {err}"))
+            })?;
         let status = response.status();
-        let text = response
-            .text()
-            .await
-            .map_err(|err| LlmError::new(LlmErrorKind::Http, format!("http response read failed: {err}")))?;
+        let text = response.text().await.map_err(|err| {
+            LlmError::new(
+                LlmErrorKind::Http,
+                format!("http response read failed: {err}"),
+            )
+        })?;
         if !status.is_success() {
             return Err(LlmError::new(
                 LlmErrorKind::Http,
@@ -99,10 +105,19 @@ impl OpenAiCompatLlmClient {
             .and_then(|choice| extract_text_content(&choice.message.content))
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| LlmError::new(LlmErrorKind::Http, "response missing assistant text content"))?;
+            .ok_or_else(|| {
+                LlmError::new(
+                    LlmErrorKind::Http,
+                    "response missing assistant text content",
+                )
+            })?;
         let usage = LlmTokenUsage {
             prompt_tokens: parsed.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0),
-            completion_tokens: parsed.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0),
+            completion_tokens: parsed
+                .usage
+                .as_ref()
+                .map(|u| u.completion_tokens)
+                .unwrap_or(0),
             total_tokens: parsed.usage.as_ref().map(|u| u.total_tokens).unwrap_or(0),
         };
         Ok((content, usage))
@@ -126,13 +141,9 @@ impl OpenAiCompatLlmClient {
             _ => TaskLogger::llm(context.task_id.clone()),
         };
 
-        if let Some(cache_hit) = read_cache_hit(
-            context,
-            &self.config,
-            "",
-            user_prompt,
-            response_validator,
-        ) {
+        if let Some(cache_hit) =
+            read_cache_hit(context, &self.config, "", user_prompt, response_validator)
+        {
             if let Some(validator) = response_validator {
                 if let Err(err) = validator.validate(&cache_hit.json) {
                     logger.event(
@@ -197,8 +208,12 @@ impl OpenAiCompatLlmClient {
         let mut last_feedback: Option<RetryFeedback> = None;
 
         for attempt in 1..=max_attempts {
-            let effective_user_prompt =
-                augment_user_prompt_with_retry_feedback(user_prompt, attempt, max_attempts, last_feedback.as_ref());
+            let effective_user_prompt = augment_user_prompt_with_retry_feedback(
+                user_prompt,
+                attempt,
+                max_attempts,
+                last_feedback.as_ref(),
+            );
             let base_payload = json!({
                 "attempt": attempt,
                 "maxAttempts": max_attempts,
@@ -329,9 +344,7 @@ impl OpenAiCompatLlmClient {
                                 },
                             );
 
-                            return Ok(LlmValidatedJsonResult {
-                                value,
-                            });
+                            return Ok(LlmValidatedJsonResult { value });
                         }
                         Err(LlmSemanticValidationError::Retryable(message)) => {
                             let feedback = feedback_for_semantic(message);
@@ -423,9 +436,7 @@ impl OpenAiCompatLlmClient {
             LlmErrorKind::InvalidSemantic,
             format!(
                 "llm call failed after {} attempts: kind={}{}",
-                max_attempts,
-                exhausted_feedback.error_kind,
-                retry_hint_suffix
+                max_attempts, exhausted_feedback.error_kind, retry_hint_suffix
             ),
         ))
     }
@@ -448,9 +459,7 @@ impl LlmPort for OpenAiCompatLlmClient {
                 Ok::<Value, LlmSemanticValidationError>,
             )
             .await?;
-        Ok(LlmJsonResult {
-            json: result.value,
-        })
+        Ok(LlmJsonResult { json: result.value })
     }
 }
 
@@ -507,9 +516,11 @@ fn retry_hint_from_error(kind: LlmErrorKind, message: &str) -> Option<String> {
     }
 
     let hint = match kind {
-        LlmErrorKind::InvalidSchema => strip_prefix_case_insensitive(trimmed, "schema check failed:")
-            .unwrap_or(trimmed)
-            .trim(),
+        LlmErrorKind::InvalidSchema => {
+            strip_prefix_case_insensitive(trimmed, "schema check failed:")
+                .unwrap_or(trimmed)
+                .trim()
+        }
         LlmErrorKind::InvalidJson => {
             let detail = strip_prefix_case_insensitive(
                 trimmed,
@@ -553,7 +564,10 @@ fn compact_invalid_json_hint(detail: &str, max_chars: usize) -> String {
             continue;
         }
         let normalized = compact_hint(item, max_chars);
-        if !reasons.iter().any(|existing| existing.eq_ignore_ascii_case(&normalized)) {
+        if !reasons
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(&normalized))
+        {
             reasons.push(normalized);
         }
     }
@@ -670,7 +684,10 @@ fn extract_text_content(content: &serde_json::Value) -> Option<String> {
     let arr = content.as_array()?;
     let mut out = String::new();
     for part in arr {
-        let maybe_text = part.get("text").and_then(|v| v.as_str()).unwrap_or_default();
+        let maybe_text = part
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
         if maybe_text.trim().is_empty() {
             continue;
         }

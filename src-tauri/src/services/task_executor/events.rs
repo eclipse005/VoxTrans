@@ -1,43 +1,12 @@
+use std::io::Write;
 use tauri::Emitter;
 
 const WORKER_EVENT_PREFIX: &str = "VOXTRANS_EVENT:";
 
 #[derive(Debug, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct TranscribeProgressEvent {
-    pub task_id: String,
-    pub current_segment: usize,
-    pub total_segments: usize,
-}
-
-#[derive(Debug, serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct SeparateProgressEvent {
-    pub task_id: String,
-    pub percent: u32,
-}
-
-#[derive(Debug, serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct TranscribePhaseEvent {
-    pub task_id: String,
-    pub phase: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub phase_detail: Option<String>,
-}
-
-#[derive(Debug, serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub(super) struct WorkspaceSyncHintEvent {
     pub task_id: String,
-}
-
-#[derive(Debug, serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct TranslateProgressEvent {
-    pub task_id: String,
-    pub current_batch: usize,
-    pub total_batches: usize,
 }
 
 /// Event sent when a task's state changes.
@@ -79,6 +48,7 @@ pub(super) fn emit_bridge_event<T: serde::Serialize>(
     }
     if let Ok(envelope) = serde_json::to_string(&WorkerEventEnvelope { event, payload }) {
         println!("{WORKER_EVENT_PREFIX}{envelope}");
+        let _ = std::io::stdout().flush();
     }
 }
 

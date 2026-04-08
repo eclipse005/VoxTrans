@@ -179,10 +179,12 @@ pub fn to_service_execute_task_batch(
         items: request
             .items
             .into_iter()
-            .map(|item| crate::services::task_executor::ExecuteTaskBatchItem {
-                task_id: item.task_id,
-                intent: item.intent,
-            })
+            .map(
+                |item| crate::services::task_executor::ExecuteTaskBatchItem {
+                    task_id: item.task_id,
+                    intent: item.intent,
+                },
+            )
             .collect(),
     }
 }
@@ -194,18 +196,20 @@ pub fn to_service_enqueue_and_execute_task_batch(
         items: request
             .items
             .into_iter()
-            .map(|item| crate::services::task_executor::EnqueueAndExecuteTaskBatchItem {
-                id: item.id,
-                media_path: item.media_path,
-                name: item.name,
-                media_kind: item.media_kind,
-                size_bytes: item.size_bytes,
-                intent: item.intent,
-                source_lang: item.source_lang,
-                target_lang: item.target_lang,
-                max_retries: item.max_retries,
-                settings_snapshot: item.settings_snapshot,
-            })
+            .map(
+                |item| crate::services::task_executor::EnqueueAndExecuteTaskBatchItem {
+                    id: item.id,
+                    media_path: item.media_path,
+                    name: item.name,
+                    media_kind: item.media_kind,
+                    size_bytes: item.size_bytes,
+                    intent: item.intent,
+                    source_lang: item.source_lang,
+                    target_lang: item.target_lang,
+                    max_retries: item.max_retries,
+                    settings_snapshot: item.settings_snapshot,
+                },
+            )
             .collect(),
     }
 }

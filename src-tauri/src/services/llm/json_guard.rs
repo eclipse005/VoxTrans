@@ -16,7 +16,10 @@ impl JsonResponseValidator {
 
     pub fn validate(&self, value: &Value) -> Result<(), LlmError> {
         let obj = value.as_object().ok_or_else(|| {
-            LlmError::new(LlmErrorKind::InvalidSchema, "schema check failed: root JSON is not object")
+            LlmError::new(
+                LlmErrorKind::InvalidSchema,
+                "schema check failed: root JSON is not object",
+            )
         })?;
         for key in &self.required_top_level_keys {
             if !obj.contains_key(key) {

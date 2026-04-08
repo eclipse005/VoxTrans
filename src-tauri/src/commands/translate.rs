@@ -1,9 +1,7 @@
-use crate::services::translate::{
-    run_translate_pipeline as run_translate_pipeline_service,
-};
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort, next_llm_request_id};
+use crate::services::translate::run_translate_pipeline as run_translate_pipeline_service;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -86,34 +84,38 @@ pub async fn run_translate_pipeline(
         return Err("tokens is required".to_string());
     }
 
-    let response = run_translate_pipeline_service(crate::services::translate::types::TranslatePipelineRequest {
-        task_id: request.task_id,
-        media_path: request.media_path,
-        source_lang: request.source_lang,
-        target_lang: request.target_lang,
-        tokens: request
-            .tokens
-            .into_iter()
-            .map(|token| crate::services::translate::types::TranslateToken {
-                start: token.start,
-                end: token.end,
-                word: token.word,
-            })
-            .collect(),
-        translate_api_key: request.translate_api_key,
-        translate_base_url: request.translate_base_url,
-        translate_model: request.translate_model,
-        llm_concurrency: request.llm_concurrency,
-        terminology_entries: request
-            .terminology_entries
-            .into_iter()
-            .map(|term| crate::services::translate::types::TranslateTerminologyEntry {
-                source: term.source,
-                target: term.target,
-                note: term.note,
-            })
-            .collect(),
-    })
+    let response = run_translate_pipeline_service(
+        crate::services::translate::types::TranslatePipelineRequest {
+            task_id: request.task_id,
+            media_path: request.media_path,
+            source_lang: request.source_lang,
+            target_lang: request.target_lang,
+            tokens: request
+                .tokens
+                .into_iter()
+                .map(|token| crate::services::translate::types::TranslateToken {
+                    start: token.start,
+                    end: token.end,
+                    word: token.word,
+                })
+                .collect(),
+            translate_api_key: request.translate_api_key,
+            translate_base_url: request.translate_base_url,
+            translate_model: request.translate_model,
+            llm_concurrency: request.llm_concurrency,
+            terminology_entries: request
+                .terminology_entries
+                .into_iter()
+                .map(
+                    |term| crate::services::translate::types::TranslateTerminologyEntry {
+                        source: term.source,
+                        target: term.target,
+                        note: term.note,
+                    },
+                )
+                .collect(),
+        },
+    )
     .await?;
 
     Ok(TranslatePipelineCommandResponse {
@@ -181,12 +183,7 @@ pub async fn test_translate_llm(
     };
     let llm_id = next_llm_request_id();
     let result = client
-        .call_json(
-            &context,
-            &llm_id,
-            user_prompt,
-            Some(&validator),
-        )
+        .call_json(&context, &llm_id, user_prompt, Some(&validator))
         .await
         .map_err(|err| err.message)?;
     let ok = result

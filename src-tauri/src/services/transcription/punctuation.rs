@@ -1,20 +1,18 @@
-use serde_json::json;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use voxtrans_core::subtitle::segmenter::WordToken;
 use voxtrans_core::subtitle::text_rules::{
     has_break_terminal_punctuation, should_split_after_terminal_token, strip_trailing_closers,
 };
 
-use crate::services::task_log::TaskLogger;
 use crate::services::llm::batch::run_indexed_concurrent;
 use crate::services::llm::client::{LlmSemanticValidationError, OpenAiCompatLlmClient};
-use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::error::{LlmError, LlmErrorKind};
+use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
-use crate::services::translate::prompt::{
-    PunctuationPromptInput, build_punctuation_user_prompt,
-};
+use crate::services::task_log::TaskLogger;
+use crate::services::translate::prompt::{PunctuationPromptInput, build_punctuation_user_prompt};
 
 const SENTENCE_GAP_SEC: f64 = 2.0;
 const MIN_WORDS_TO_OPTIMIZE: usize = 3;
@@ -65,17 +63,26 @@ pub async fn optimize_words_with_llm(
     }
     if config.api_key.trim().is_empty() {
         let message = "punctuation failed: missing API key".to_string();
-        logger.event("transcribe.punctuation.error", Some(&json!({ "reason": "missing_api_key" })));
+        logger.event(
+            "transcribe.punctuation.error",
+            Some(&json!({ "reason": "missing_api_key" })),
+        );
         return Err(message);
     }
     if config.model.trim().is_empty() {
         let message = "punctuation failed: missing model".to_string();
-        logger.event("transcribe.punctuation.error", Some(&json!({ "reason": "missing_model" })));
+        logger.event(
+            "transcribe.punctuation.error",
+            Some(&json!({ "reason": "missing_model" })),
+        );
         return Err(message);
     }
     if config.base_url.trim().is_empty() {
         let message = "punctuation failed: missing base URL".to_string();
-        logger.event("transcribe.punctuation.error", Some(&json!({ "reason": "missing_base_url" })));
+        logger.event(
+            "transcribe.punctuation.error",
+            Some(&json!({ "reason": "missing_base_url" })),
+        );
         return Err(message);
     }
 
@@ -214,11 +221,8 @@ pub async fn optimize_words_with_llm(
             None => continue,
         };
         if let Some(slice) = optimized.get_mut(span.start_idx..=span.end_idx) {
-            changed_tokens += apply_style_from_suggestion(
-                slice,
-                &punctuated,
-                span.allow_leading_case_change,
-            );
+            changed_tokens +=
+                apply_style_from_suggestion(slice, &punctuated, span.allow_leading_case_change);
             applied_total += 1;
         }
     }
@@ -299,7 +303,7 @@ fn split_overlong_span(
                 start_idx,
                 end_idx,
                 allow_leading_case_change,
-            )]
+            )];
         }
     };
 
@@ -493,7 +497,8 @@ fn first_alpha_is_lowercase(text: &str) -> bool {
 }
 
 fn has_any_uppercase_alpha(text: &str) -> bool {
-    text.chars().any(|ch| ch.is_alphabetic() && ch.is_uppercase())
+    text.chars()
+        .any(|ch| ch.is_alphabetic() && ch.is_uppercase())
 }
 
 fn should_split_after_word(words: &[WordToken], idx: usize) -> bool {
@@ -576,7 +581,10 @@ fn apply_style_from_suggestion(
     changed
 }
 
-fn align_token_indexes(original_norms: &[String], suggested_norms: &[String]) -> Vec<Option<usize>> {
+fn align_token_indexes(
+    original_norms: &[String],
+    suggested_norms: &[String],
+) -> Vec<Option<usize>> {
     let original_nonempty: Vec<(usize, &str)> = original_norms
         .iter()
         .enumerate()

@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use super::punctuation::{PunctuationConfig, optimize_words_with_llm};
 use crate::services::task_log::{TaskLogger, event};
 use crate::services::transcribe::{
     BuildSegmentsRequest, SegmentWithWordsDto, WordTokenDto, build_segments_from_words,
 };
 use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
 use voxtrans_core::subtitle::segmenter::WordToken;
-use super::punctuation::{PunctuationConfig, optimize_words_with_llm};
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

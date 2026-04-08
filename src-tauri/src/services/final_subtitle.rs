@@ -238,4 +238,3 @@ fn locate_word_segment(
     }
     segments.len().checked_sub(1)
 }
-

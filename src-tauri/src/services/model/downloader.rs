@@ -60,8 +60,13 @@ pub fn start_model_download(
     let model_for_thread = model.clone();
     tauri::async_runtime::spawn(async move {
         match tauri::async_runtime::spawn_blocking(move || {
-            download_model_files(&app_for_thread, &runtime_for_thread, target, &model_for_thread)
-                .map_err(|err| format!("{} (model: {})", err, model_for_thread))
+            download_model_files(
+                &app_for_thread,
+                &runtime_for_thread,
+                target,
+                &model_for_thread,
+            )
+            .map_err(|err| format!("{} (model: {})", err, model_for_thread))
         })
         .await
         {
@@ -122,7 +127,13 @@ fn initial_bytes_for_target(target: ModelTarget, model_dir: &Path, model: &str) 
             let file_name = format!("{}.safetensors", model);
             let expected = DEMUCS_MODEL_DOWNLOAD_FILES
                 .iter()
-                .find_map(|(name, _, size)| if *name == file_name { Some(*size) } else { None })
+                .find_map(|(name, _, size)| {
+                    if *name == file_name {
+                        Some(*size)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(0);
             let target = model_dir.join(&file_name);
             let part = model_dir.join(format!("{}.part", file_name));
@@ -510,7 +521,8 @@ fn download_demucs_model_files(
             .send()
             .map_err(|err| err.to_string())?;
     }
-    if !(response.status().is_success() || response.status() == reqwest::StatusCode::PARTIAL_CONTENT)
+    if !(response.status().is_success()
+        || response.status() == reqwest::StatusCode::PARTIAL_CONTENT)
     {
         return Err(format!(
             "download failed: {} -> {}",
@@ -551,8 +563,9 @@ fn download_demucs_model_files(
         downloaded_bytes = downloaded_bytes.saturating_add(read as u64);
         let elapsed = last_speed_mark.elapsed().as_secs_f64();
         if elapsed >= 0.3 {
-            speed_bytes_per_sec =
-                ((downloaded_bytes.saturating_sub(last_speed_bytes)) as f64 / elapsed).round() as u64;
+            speed_bytes_per_sec = ((downloaded_bytes.saturating_sub(last_speed_bytes)) as f64
+                / elapsed)
+                .round() as u64;
             last_speed_mark = Instant::now();
             last_speed_bytes = downloaded_bytes;
             set_model_download_snapshot(
@@ -571,7 +584,9 @@ fn download_demucs_model_files(
     }
 
     std::fs::rename(&part_path, &target).map_err(|err| err.to_string())?;
-    downloaded_bytes = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(downloaded_bytes);
+    downloaded_bytes = std::fs::metadata(&target)
+        .map(|m| m.len())
+        .unwrap_or(downloaded_bytes);
     total_bytes = total_bytes.max(downloaded_bytes);
     let marker_path = model_dir.join(format!("{}_{}", DEMUCS_READY_MARKER, model));
     std::fs::write(marker_path, b"ready").map_err(|err| err.to_string())?;

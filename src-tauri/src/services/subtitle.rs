@@ -41,7 +41,9 @@ pub async fn save_subtitle_editor(
         .as_deref()
         .and_then(normalize_final_subtitle_segments_json)
         .map(Ok)
-        .unwrap_or_else(|| build_final_subtitle_segments_json(&normalized, &row.subtitle_segments_json))?;
+        .unwrap_or_else(|| {
+            build_final_subtitle_segments_json(&normalized, &row.subtitle_segments_json)
+        })?;
 
     let now = unix_now();
     sqlx::query(

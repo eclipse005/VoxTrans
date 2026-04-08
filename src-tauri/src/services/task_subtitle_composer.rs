@@ -141,8 +141,8 @@ pub fn realign_segments_with_words(
                     (remaining_words / remaining).max(1)
                 };
                 let start = cursor_word.min(aligned_words.len().saturating_sub(1));
-                let end =
-                    (start + allocation.saturating_sub(1)).min(aligned_words.len().saturating_sub(1));
+                let end = (start + allocation.saturating_sub(1))
+                    .min(aligned_words.len().saturating_sub(1));
                 (start, end)
             }
         };
@@ -158,12 +158,7 @@ pub fn realign_segments_with_words(
         let end_word = &aligned_words[end_idx];
         let new_start_ms = (start_word.start.max(0.0) * 1000.0).round() as u64;
         let new_end_ms = (end_word.end.max(start_word.start) * 1000.0).round() as u64;
-        changed += apply_group_timing(
-            segments,
-            group,
-            new_start_ms,
-            new_end_ms.max(new_start_ms),
-        );
+        changed += apply_group_timing(segments, group, new_start_ms, new_end_ms.max(new_start_ms));
         cursor_word = end_idx.saturating_add(1);
     }
 
@@ -178,7 +173,10 @@ pub fn realign_segments_with_words(
     })
 }
 
-pub fn build_srt_from_translate_segments(segments: &[TranslateSegment], translated: bool) -> String {
+pub fn build_srt_from_translate_segments(
+    segments: &[TranslateSegment],
+    translated: bool,
+) -> String {
     let cues = segments
         .iter()
         .enumerate()
@@ -303,7 +301,8 @@ fn apply_group_timing(
     if group.segment_indexes.len() == 1 {
         let idx = group.segment_indexes[0];
         let segment = &mut segments[idx];
-        let changed = usize::from(segment.start_ms != group_start_ms || segment.end_ms != group_end_ms);
+        let changed =
+            usize::from(segment.start_ms != group_start_ms || segment.end_ms != group_end_ms);
         segment.start_ms = group_start_ms;
         segment.end_ms = group_end_ms.max(group_start_ms);
         return changed;
@@ -328,7 +327,8 @@ fn apply_group_timing(
             group_end_ms
         } else {
             let weight = weights[position];
-            let slice = ((total_duration as f64) * (weight as f64 / total_weight as f64)).round() as u64;
+            let slice =
+                ((total_duration as f64) * (weight as f64 / total_weight as f64)).round() as u64;
             (cursor + slice.max(1)).min(group_end_ms.saturating_sub(1).max(cursor + 1))
         };
         let final_end = next_end.max(cursor);

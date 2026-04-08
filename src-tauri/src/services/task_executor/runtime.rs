@@ -177,8 +177,16 @@ pub(super) async fn persist_task_context(
         finished_at: envelope.finished_at,
         output: envelope.output.clone(),
         metrics: envelope.metrics.clone(),
-        error_code: envelope.error.as_ref().map(|e| e.code.clone()).unwrap_or_default(),
-        error_message: envelope.error.as_ref().map(|e| e.message.clone()).unwrap_or_default(),
+        error_code: envelope
+            .error
+            .as_ref()
+            .map(|e| e.code.clone())
+            .unwrap_or_default(),
+        error_message: envelope
+            .error
+            .as_ref()
+            .map(|e| e.message.clone())
+            .unwrap_or_default(),
     })
     .collect::<Vec<_>>();
     persist_task_stage_snapshots(pool, task_id, &snapshots, now).await?;
@@ -196,12 +204,13 @@ pub(super) fn persist_task_context_boxed<'a>(
 }
 
 pub(super) async fn load_task_runtime_error(pool: &SqlitePool, task_id: &str) -> Option<String> {
-    let task_error = sqlx::query_scalar::<_, String>("SELECT error_message FROM task_runs WHERE id = ?")
-        .bind(task_id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()?;
+    let task_error =
+        sqlx::query_scalar::<_, String>("SELECT error_message FROM task_runs WHERE id = ?")
+            .bind(task_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()?;
     if !task_error.trim().is_empty() {
         return Some(task_error);
     }

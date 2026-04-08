@@ -62,13 +62,11 @@ pub(crate) const ASR_MODEL_DOWNLOAD_FILES: [(&str, &str, u64); 5] = [
     ),
 ];
 
-pub(crate) const DEMUCS_MODEL_DOWNLOAD_FILES: [(&str, &str, u64); 1] = [
-    (
-        "htdemucs_ft.safetensors",
-        "https://modelscope.cn/models/eclipse005/htdemucs/resolve/master/htdemucs_ft.safetensors",
-        349_312_000,
-    ),
-];
+pub(crate) const DEMUCS_MODEL_DOWNLOAD_FILES: [(&str, &str, u64); 1] = [(
+    "htdemucs_ft.safetensors",
+    "https://modelscope.cn/models/eclipse005/htdemucs/resolve/master/htdemucs_ft.safetensors",
+    349_312_000,
+)];
 
 pub(crate) fn compute_asr_download_bytes(model_dir: &Path) -> (u64, u64) {
     let mut downloaded_bytes: u64 = 0;

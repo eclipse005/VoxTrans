@@ -6,11 +6,9 @@ import {
 import type {
   QueueItem,
   SavedSettings,
-  TranscribePhase,
 } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
 import {
-  applyTranscribePhase,
   patchQueueItem,
 } from "../../state/queueDomainActions";
 import { reportError, toUserErrorMessage } from "../../utils/errors";
@@ -37,12 +35,47 @@ type TaskStateChangedEvent = {
   subtitleSegmentsJson: string;
 };
 
-// Transcribe phase event for stage transitions
-type TranscribePhaseEvent = {
-  taskId: string;
-  phase: TranscribePhase;
-  phaseDetail?: string;
-};
+function phaseOrder(phase: string | undefined): number {
+  switch (phase ?? "") {
+    case "downloading":
+      return 0;
+    case "initializing":
+      return 10;
+    case "separating":
+      return 20;
+    case "recognizing":
+      return 30;
+    case "punctuate":
+      return 40;
+    case "segment":
+      return 50;
+    case "summarize":
+      return 60;
+    case "translate":
+      return 70;
+    case "segment_optimize":
+      return 80;
+    case "burning":
+      return 90;
+    default:
+      return -1;
+  }
+}
+
+function shouldKeepCurrentProcessingPhase(
+  current: QueueItem,
+  incoming: TaskStateChangedEvent,
+): boolean {
+  if (current.transcribeStatus !== "processing" || incoming.transcribeStatus !== "processing") {
+    return false;
+  }
+  const currentOrder = phaseOrder(current.transcribePhase);
+  const incomingOrder = phaseOrder(incoming.transcribePhase);
+  if (currentOrder < 0 || incomingOrder < 0) {
+    return false;
+  }
+  return incomingOrder < currentOrder;
+}
 
 export type QueueRunMode = "transcribe" | "transcribe_translate";
 
@@ -69,23 +102,34 @@ export function useQueueRunner({
       if (!payload?.id) return;
       if (!isTaskPresent(payload.id)) return;
       // Backend is the single source of truth - replace local state directly
-      patchQueueItem(dispatch, payload.id, () => ({
-        id: payload.id,
-        path: payload.path,
-        name: payload.name,
-        mediaKind: payload.mediaKind as "audio" | "video",
-        sizeBytes: payload.sizeBytes,
-        transcribeStatus: payload.transcribeStatus as QueueItem["transcribeStatus"],
-        transcribeProgress: payload.transcribeProgress,
-        transcribeSegmentCurrent: payload.transcribeSegmentCurrent,
-        transcribeSegmentTotal: payload.transcribeSegmentTotal,
-        transcribePhase: (payload.transcribePhase || "") as TranscribePhase | "",
-        transcribePhaseDetail: payload.transcribePhaseDetail || "",
-        transcribeError: payload.transcribeError || "",
-        resultText: payload.resultText || "",
-        resultSrt: payload.resultSrt || "",
-        subtitleSegmentsJson: payload.subtitleSegmentsJson || "",
-      }));
+      patchQueueItem(dispatch, payload.id, (current) => {
+        const keepCurrentPhase = shouldKeepCurrentProcessingPhase(current, payload);
+        return {
+          id: payload.id,
+          path: payload.path,
+          name: payload.name,
+          mediaKind: payload.mediaKind as "audio" | "video",
+          sizeBytes: payload.sizeBytes,
+          transcribeStatus: payload.transcribeStatus as QueueItem["transcribeStatus"],
+          transcribeProgress: keepCurrentPhase ? current.transcribeProgress : payload.transcribeProgress,
+          transcribeSegmentCurrent: keepCurrentPhase
+            ? current.transcribeSegmentCurrent
+            : payload.transcribeSegmentCurrent,
+          transcribeSegmentTotal: keepCurrentPhase
+            ? current.transcribeSegmentTotal
+            : payload.transcribeSegmentTotal,
+          transcribePhase: keepCurrentPhase
+            ? current.transcribePhase
+            : (payload.transcribePhase || "") as QueueItem["transcribePhase"],
+          transcribePhaseDetail: keepCurrentPhase
+            ? current.transcribePhaseDetail
+            : payload.transcribePhaseDetail || "",
+          transcribeError: payload.transcribeError || "",
+          resultText: payload.resultText || "",
+          resultSrt: payload.resultSrt || "",
+          subtitleSegmentsJson: payload.subtitleSegmentsJson || "",
+        };
+      });
     })
       .then((fn) => {
         if (disposed) {
@@ -99,36 +143,6 @@ export function useQueueRunner({
     return () => {
       disposed = true;
       if (unlistenTaskStateChanged) unlistenTaskStateChanged();
-    };
-  }, [dispatch, isTaskPresent]);
-
-  // Listen for transcribe-phase events for stage transitions
-  useEffect(() => {
-    let disposed = false;
-    let unlistenPhase: undefined | (() => void);
-
-    listen<TranscribePhaseEvent>("transcribe-phase", (event) => {
-      const payload = event.payload;
-      if (!payload?.taskId) return;
-      if (!isTaskPresent(payload.taskId)) return;
-      // Update phase display - full state comes via task-state-changed
-      applyTranscribePhase(dispatch, {
-        taskId: payload.taskId,
-        phase: payload.phase,
-        phaseDetail: payload.phaseDetail,
-      });
-    })
-      .then((fn) => {
-        if (disposed) {
-          fn();
-          return;
-        }
-        unlistenPhase = fn;
-      })
-      .catch(() => {});
-    return () => {
-      disposed = true;
-      if (unlistenPhase) unlistenPhase();
     };
   }, [dispatch, isTaskPresent]);
 

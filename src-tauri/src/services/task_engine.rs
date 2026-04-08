@@ -141,13 +141,17 @@ pub struct TaskRunDetail {
     pub artifacts: Vec<TaskArtifactRecord>,
 }
 
-pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Result<TaskRunRecord, String> {
+pub async fn enqueue_task(
+    pool: &SqlitePool,
+    request: EnqueueTaskRequest,
+) -> Result<TaskRunRecord, String> {
     validate_enqueue_request(&request)?;
     let source_lang = non_empty_or_default(&request.source_lang, "auto");
     let target_lang = non_empty_or_default(&request.target_lang, "zh-CN");
     let normalized_intent = normalize_intent(&request.intent);
     let preserve_source_outputs = normalized_intent == INTENT_TRANSCRIBE_TRANSLATE;
-    let snapshot = serde_json::to_string(&request.settings_snapshot).map_err(|err| err.to_string())?;
+    let snapshot =
+        serde_json::to_string(&request.settings_snapshot).map_err(|err| err.to_string())?;
     let now = unix_now();
     let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM task_runs WHERE id = ?")
         .bind(&request.id)
@@ -238,10 +242,15 @@ pub async fn enqueue_task(pool: &SqlitePool, request: EnqueueTaskRequest) -> Res
     }
     reset_task_stages(pool, &request.id).await?;
 
-    get_task_run(pool, GetTaskRunRequest { task_id: request.id })
-        .await?
-        .run
-        .pipe(Ok)
+    get_task_run(
+        pool,
+        GetTaskRunRequest {
+            task_id: request.id,
+        },
+    )
+    .await?
+    .run
+    .pipe(Ok)
 }
 
 pub async fn register_task_upload(
@@ -303,13 +312,21 @@ pub async fn register_task_upload(
 
     reset_task_stages(pool, &request.id).await?;
 
-    get_task_run(pool, GetTaskRunRequest { task_id: request.id })
-        .await?
-        .run
-        .pipe(Ok)
+    get_task_run(
+        pool,
+        GetTaskRunRequest {
+            task_id: request.id,
+        },
+    )
+    .await?
+    .run
+    .pipe(Ok)
 }
 
-pub async fn list_task_runs(pool: &SqlitePool, request: ListTaskRunsRequest) -> Result<Vec<TaskRunRecord>, String> {
+pub async fn list_task_runs(
+    pool: &SqlitePool,
+    request: ListTaskRunsRequest,
+) -> Result<Vec<TaskRunRecord>, String> {
     let limit = request.limit.unwrap_or(200).clamp(1, 2000) as i64;
     let rows = match request.intent {
         Some(intent) => {
@@ -350,7 +367,10 @@ pub async fn list_task_runs(pool: &SqlitePool, request: ListTaskRunsRequest) -> 
     Ok(rows.into_iter().map(TaskRunRecord::from).collect())
 }
 
-pub async fn get_task_run(pool: &SqlitePool, request: GetTaskRunRequest) -> Result<TaskRunDetail, String> {
+pub async fn get_task_run(
+    pool: &SqlitePool,
+    request: GetTaskRunRequest,
+) -> Result<TaskRunDetail, String> {
     if request.task_id.trim().is_empty() {
         return Err("taskId is required".to_string());
     }
@@ -431,7 +451,10 @@ pub async fn delete_tasks(pool: &SqlitePool, request: DeleteTasksRequest) -> Res
                 .map_err(|e| e.to_string())?;
         }
         (None, None) => {
-            sqlx::query("DELETE FROM task_runs").execute(pool).await.map_err(|e| e.to_string())?;
+            sqlx::query("DELETE FROM task_runs")
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
         }
     }
     Ok(())
@@ -628,7 +651,10 @@ fn validate_enqueue_request(request: &EnqueueTaskRequest) -> Result<(), String> 
         return Err("mediaKind is required".to_string());
     }
     let intent = request.intent.trim().to_uppercase();
-    if !matches!(intent.as_str(), INTENT_TRANSCRIBE | INTENT_TRANSCRIBE_TRANSLATE) {
+    if !matches!(
+        intent.as_str(),
+        INTENT_TRANSCRIBE | INTENT_TRANSCRIBE_TRANSLATE
+    ) {
         return Err("intent is invalid".to_string());
     }
     Ok(())

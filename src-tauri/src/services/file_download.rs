@@ -1,12 +1,11 @@
 /// 通用文件下载器，支持断点续传、进度回调、取消控制。
 ///
 /// 下载过程中文件保存为 `<target>.part`，完成后自动重命名。
-
 use reqwest::header;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 pub struct DownloadOptions {
@@ -53,7 +52,9 @@ pub fn download_file<F: DownloadCallback>(
     ));
 
     let existing_len = if opts.target.exists() {
-        std::fs::metadata(&opts.target).map(|m| m.len()).unwrap_or(0)
+        std::fs::metadata(&opts.target)
+            .map(|m| m.len())
+            .unwrap_or(0)
     } else if part_path.exists() {
         std::fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0)
     } else {
@@ -129,9 +130,7 @@ pub fn download_file<F: DownloadCallback>(
     loop {
         if cancel_flag.load(Ordering::Relaxed) {
             callback.on_message("下载已取消");
-            return Ok(DownloadResult {
-                path: part_path,
-            });
+            return Ok(DownloadResult { path: part_path });
         }
 
         let read = response.read(&mut buf).map_err(|e| e.to_string())?;
@@ -146,7 +145,8 @@ pub fn download_file<F: DownloadCallback>(
         let elapsed = last_speed_mark.elapsed().as_secs_f64();
         if elapsed >= 0.5 {
             let speed = if elapsed > 0.0 {
-                ((downloaded_bytes.saturating_sub(last_speed_bytes)) as f64 / elapsed).round() as u64
+                ((downloaded_bytes.saturating_sub(last_speed_bytes)) as f64 / elapsed).round()
+                    as u64
             } else {
                 0
             };
@@ -172,8 +172,7 @@ pub fn download_file<F: DownloadCallback>(
     }
 
     // 重命名完成
-    std::fs::rename(&part_path, &opts.target)
-        .map_err(|e| format!("重命名文件失败: {}", e))?;
+    std::fs::rename(&part_path, &opts.target).map_err(|e| format!("重命名文件失败: {}", e))?;
 
     callback.on_message("下载完成");
 

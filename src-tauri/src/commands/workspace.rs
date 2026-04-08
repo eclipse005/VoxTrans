@@ -49,7 +49,11 @@ pub async fn load_workspace_state(
 ) -> Result<WorkspaceStateCommandResponse, String> {
     let response = workspace::load_workspace_state(&state.pool).await?;
     Ok(WorkspaceStateCommandResponse {
-        queue: response.queue.into_iter().map(from_service_queue_item).collect(),
+        queue: response
+            .queue
+            .into_iter()
+            .map(from_service_queue_item)
+            .collect(),
     })
 }
 

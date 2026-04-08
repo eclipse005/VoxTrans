@@ -151,7 +151,9 @@ pub async fn save_app_settings(
     .await
 }
 
-fn to_service_settings(settings: SavedSettingsCommand) -> crate::services::preferences::SavedSettings {
+fn to_service_settings(
+    settings: SavedSettingsCommand,
+) -> crate::services::preferences::SavedSettings {
     crate::services::preferences::SavedSettings {
         provider: settings.provider,
         chunk_target_seconds: settings.chunk_target_seconds,

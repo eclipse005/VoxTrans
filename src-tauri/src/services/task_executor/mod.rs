@@ -8,6 +8,20 @@ mod runtime;
 mod stages;
 mod state;
 
+use self::events::{WorkspaceSyncHintEvent, emit_bridge_event, emit_task_state_changed};
+use self::runtime::{
+    TaskRunExecRow, build_task_state_changed_event, hydrate_task_context, hydrate_task_projection,
+    load_task_runtime_error, persist_task_context, set_queue_projection,
+};
+use self::stages::{
+    run_asr_stage, run_punctuate_stage, run_segment_optimize_stage, run_segment_stage,
+    run_separate_stage, run_summarize_stage, run_translate_stage,
+};
+use self::state::{
+    AsrResumeSnapshot, count_segments_from_json, has_source_segments_available,
+    has_translated_segments_available, load_asr_resume_snapshot, load_segment_optimize_snapshot,
+    load_stage_words, parse_tokens_from_segments,
+};
 use crate::app_state::TaskWorkerRuntime;
 use crate::services::file::save_srt;
 use crate::services::final_subtitle::{
@@ -16,34 +30,19 @@ use crate::services::final_subtitle::{
     final_subtitle_words_from_word_dtos,
 };
 use crate::services::preferences::load_user_preferences;
+use crate::services::subtitle_render;
+use crate::services::task_context::{
+    STAGE_ASR, STAGE_BURNING, STAGE_COMPOSE, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT,
+    TaskContext,
+};
+use crate::services::task_engine::{EnqueueTaskRequest, enqueue_task};
+use crate::services::task_log::{TaskLogger, event};
 use crate::services::task_projection::TaskProjectionState;
 use crate::services::task_subtitle_composer::{
     WordTimingAnchor, apply_subtitle_beautify_to_segments,
 };
-use self::events::{TranscribePhaseEvent, WorkspaceSyncHintEvent, emit_bridge_event, emit_task_state_changed};
-use self::stages::{
-    run_asr_stage, run_punctuate_stage, run_segment_optimize_stage, run_segment_stage, run_separate_stage,
-    run_summarize_stage, run_translate_stage,
-};
-use self::runtime::{
-    TaskRunExecRow, build_task_state_changed_event, hydrate_task_context, hydrate_task_projection,
-    load_task_runtime_error, persist_task_context, set_queue_projection,
-};
-use self::state::{
-    AsrResumeSnapshot, count_segments_from_json, has_source_segments_available,
-    has_translated_segments_available, load_asr_resume_snapshot, load_segment_optimize_snapshot,
-    load_stage_words, parse_tokens_from_segments,
-};
-use crate::services::task_context::{
-    STAGE_ASR, STAGE_BURNING, STAGE_COMPOSE, STAGE_INIT, STAGE_PUNCTUATE, STAGE_SEGMENT, TaskContext,
-};
-use crate::services::task_engine::{EnqueueTaskRequest, enqueue_task};
-use crate::services::task_log::{TaskLogger, event};
 use crate::services::task_worker;
-use crate::services::subtitle_render;
-use crate::services::transcribe::{
-    BuildSegmentsRequest, build_segments_from_words,
-};
+use crate::services::transcribe::{BuildSegmentsRequest, build_segments_from_words};
 use crate::services::translate::types::{
     TranslatePipelineRequest, TranslateTerminologyEntry, TranslateToken,
 };
@@ -154,12 +153,14 @@ pub async fn execute_task_run(
         .map(|v| v.trim().to_uppercase())
         .filter(|v| !v.is_empty())
     {
-        sqlx::query("UPDATE task_runs SET intent = ?, updated_at = strftime('%s','now') WHERE id = ?")
-            .bind(intent_override)
-            .bind(&task.id)
-            .execute(pool)
-            .await
-            .map_err(|err| err.to_string())?;
+        sqlx::query(
+            "UPDATE task_runs SET intent = ?, updated_at = strftime('%s','now') WHERE id = ?",
+        )
+        .bind(intent_override)
+        .bind(&task.id)
+        .execute(pool)
+        .await
+        .map_err(|err| err.to_string())?;
     }
 
     let settings_snapshot = serde_json::from_str::<serde_json::Value>(&task.settings_snapshot_json)
@@ -179,7 +180,10 @@ pub async fn execute_task_run(
         "",
     );
     persist_task_context(pool, &task.id, &context, &projection).await?;
-    emit_task_state_changed(app.as_ref(), &build_task_state_changed_event(&task, &projection));
+    emit_task_state_changed(
+        app.as_ref(),
+        &build_task_state_changed_event(&task, &projection),
+    );
 
     let intent = request
         .intent
@@ -203,7 +207,14 @@ pub async fn execute_task_run(
     } else if with_translate
         && has_source_segments_available(&projection.editor.subtitle_segments_json)
     {
-        run_translate_from_existing_segments(pool, app.as_ref(), &task, &mut context, &mut projection).await
+        run_translate_from_existing_segments(
+            pool,
+            app.as_ref(),
+            &task,
+            &mut context,
+            &mut projection,
+        )
+        .await
     } else if let Some(asr_snapshot) = load_asr_resume_snapshot(&context) {
         run_transcribe_and_maybe_translate(
             pool,
@@ -338,7 +349,10 @@ pub async fn execute_task_run(
                 "",
             );
             persist_task_context(pool, &task.id, &context, &projection).await?;
-            emit_task_state_changed(app.as_ref(), &build_task_state_changed_event(&task, &projection));
+            emit_task_state_changed(
+                app.as_ref(),
+                &build_task_state_changed_event(&task, &projection),
+            );
             TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
                 event::TRANSCRIBE_COMPLETED,
                 Some(&json!({
@@ -367,7 +381,10 @@ pub async fn execute_task_run(
                 &err,
             );
             persist_task_context(pool, &task.id, &context, &projection).await?;
-            emit_task_state_changed(app.as_ref(), &build_task_state_changed_event(&task, &projection));
+            emit_task_state_changed(
+                app.as_ref(),
+                &build_task_state_changed_event(&task, &projection),
+            );
             TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
                 event::TRANSCRIBE_FAILED,
                 Some(&json!({
@@ -387,16 +404,88 @@ pub async fn execute_task_run_via_worker(
     request: ExecuteTaskRunRequest,
 ) -> Result<(), String> {
     let db_path = task_worker::resolve_db_path(pool).await?;
-    task_worker::spawn_worker(runtime, &db_path, &request, Some(app))?;
+    task_worker::spawn_worker(runtime, &db_path, &request, Some(app.clone()))?;
     match task_worker::wait_worker_finish(runtime, request.task_id.trim()).await {
         Ok(()) => Ok(()),
         Err(worker_err) => {
             if let Some(real_err) = load_task_runtime_error(pool, request.task_id.trim()).await {
                 return Err(real_err);
             }
-            Err(worker_err)
+            let fallback_error = finalize_worker_exit_failure(
+                pool,
+                app.clone(),
+                request.task_id.trim(),
+                &worker_err,
+            )
+            .await?;
+            Err(fallback_error.unwrap_or(worker_err))
         }
     }
+}
+
+async fn finalize_worker_exit_failure(
+    pool: &SqlitePool,
+    app: tauri::AppHandle,
+    task_id: &str,
+    worker_err: &str,
+) -> Result<Option<String>, String> {
+    let Some(task) = sqlx::query_as::<_, TaskRunExecRow>(
+        "SELECT id, name, media_path, media_kind, size_bytes, intent, source_lang, target_lang,
+                settings_snapshot_json, created_at, overall_status, current_stage, progress_percent,
+                phase_detail, segment_current, segment_total, error_message, result_text, result_srt,
+                subtitle_segments_json, translated_srt
+         FROM task_runs WHERE id = ?",
+    )
+    .bind(task_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| err.to_string())?
+    else {
+        return Ok(None);
+    };
+
+    if task.overall_status.trim().eq_ignore_ascii_case("failed")
+        || task.overall_status.trim().eq_ignore_ascii_case("completed")
+    {
+        return Ok(Some(worker_err.to_string()));
+    }
+
+    let settings_snapshot = serde_json::from_str::<serde_json::Value>(&task.settings_snapshot_json)
+        .unwrap_or_else(|_| json!({}));
+    let mut context = hydrate_task_context(pool, &task, settings_snapshot).await?;
+    let mut projection = hydrate_task_projection(&task);
+    let failed_stage = context.runtime.current_stage.trim().to_string();
+    let stage = if failed_stage.is_empty() {
+        STAGE_INIT
+    } else {
+        failed_stage.as_str()
+    };
+
+    context.mark_failed(stage, "WORKER_EXIT", worker_err, true);
+    set_queue_projection(
+        &mut context,
+        &mut projection,
+        "error",
+        "",
+        "",
+        0,
+        0,
+        0,
+        worker_err,
+    );
+    persist_task_context(pool, &task.id, &context, &projection).await?;
+    emit_task_state_changed(
+        Some(&app),
+        &build_task_state_changed_event(&task, &projection),
+    );
+    TaskLogger::main_with_media(task.id.clone(), task.media_path.clone()).event(
+        event::TRANSCRIBE_FAILED,
+        Some(&json!({
+            "stage": "worker_exit",
+            "error": worker_err,
+        })),
+    );
+    Ok(Some(worker_err.to_string()))
 }
 
 pub async fn execute_task_batch_via_worker(
@@ -544,16 +633,7 @@ async fn maybe_auto_burn_hard_subtitle(
         "",
     );
     persist_task_context(pool, &task.id, context, projection).await?;
-
-    emit_bridge_event(
-        app,
-        "transcribe-phase",
-        &TranscribePhaseEvent {
-            task_id: task.id.clone(),
-            phase: "burning".to_string(),
-            phase_detail: None,
-        },
-    );
+    emit_task_state_changed(app, &build_task_state_changed_event(task, projection));
 
     let response = subtitle_render::burn_hard_subtitle(subtitle_render::BurnHardSubtitleRequest {
         task_id: task.id.clone(),
@@ -581,8 +661,10 @@ fn save_translation_srt_set(
     trans_src_srt: &str,
 ) -> Result<(), String> {
     let media_path_obj = std::path::Path::new(media_path);
-    let src_output_path = crate::services::task_path::task_src_srt_output_path(task_id, media_path_obj);
-    let trans_output_path = crate::services::task_path::task_trans_srt_output_path(task_id, media_path_obj);
+    let src_output_path =
+        crate::services::task_path::task_src_srt_output_path(task_id, media_path_obj);
+    let trans_output_path =
+        crate::services::task_path::task_trans_srt_output_path(task_id, media_path_obj);
     let src_trans_output_path =
         crate::services::task_path::task_src_trans_srt_output_path(task_id, media_path_obj);
     let trans_src_output_path =
@@ -616,15 +698,7 @@ async fn run_transcribe_and_maybe_translate(
     let transcribe_audio_path = if asr_resume.is_some() {
         task.media_path.clone()
     } else {
-        run_separate_stage(
-            pool,
-            app,
-            task,
-            context,
-            projection,
-            &settings_before_asr,
-        )
-        .await?
+        run_separate_stage(pool, app, task, context, projection, &settings_before_asr).await?
     };
     let transcribed = run_asr_stage(
         pool,
@@ -651,6 +725,7 @@ async fn run_transcribe_and_maybe_translate(
 
     let processed = run_segment_stage(
         pool,
+        app,
         task,
         context,
         projection,
@@ -724,15 +799,8 @@ async fn run_transcribe_and_maybe_translate(
             Vec::new()
         },
     };
-    let summarize_snapshot = run_summarize_stage(
-        pool,
-        app,
-        task,
-        context,
-        projection,
-        &translate_request,
-    )
-    .await?;
+    let summarize_snapshot =
+        run_summarize_stage(pool, app, task, context, projection, &translate_request).await?;
     let translate_snapshot = run_translate_stage(
         pool,
         app,
@@ -768,7 +836,8 @@ async fn run_transcribe_and_maybe_translate(
         settings_before_post.enable_subtitle_beautify,
     );
     let final_source_words = final_subtitle_words_from_word_dtos(&words);
-    let merged = final_subtitle_segments_from_translate_segments(&final_segments, &final_source_words);
+    let merged =
+        final_subtitle_segments_from_translate_segments(&final_segments, &final_source_words);
     let final_source_srt = final_subtitle_segments_to_srt(&merged, FinalSubtitleTrack::Source);
     let final_target_srt = final_subtitle_segments_to_srt(&merged, FinalSubtitleTrack::Target);
     let final_src_trans_srt =
@@ -889,15 +958,8 @@ async fn run_translate_from_existing_segments(
             Vec::new()
         },
     };
-    let summarize_snapshot = run_summarize_stage(
-        pool,
-        app,
-        task,
-        context,
-        projection,
-        &translate_request,
-    )
-    .await?;
+    let summarize_snapshot =
+        run_summarize_stage(pool, app, task, context, projection, &translate_request).await?;
     let translate_snapshot = run_translate_stage(
         pool,
         app,

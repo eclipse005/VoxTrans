@@ -97,27 +97,23 @@ where
                 request.provider,
                 Provider::supported_ids().join(", ")
             );
-            append_transcribe_log(
-                &logger,
-                event::TRANSCRIBE_FAILED,
-                json!({ "error": err }),
-            );
+            append_transcribe_log(&logger, event::TRANSCRIBE_FAILED, json!({ "error": err }));
             return Err(err);
         }
     };
     options.timestamp_mode = TimestampKind::Words;
     options.chunk_target_seconds = request.chunk_target_seconds.clamp(30, 300) as f64;
-    options.model_dir = crate::services::model::resolve_engine_model_dir(
-        crate::services::model::ModelTarget::Asr,
-    );
+    options.model_dir =
+        crate::services::model::resolve_engine_model_dir(crate::services::model::ModelTarget::Asr);
 
     if let Some(model_dir) = request.model_dir.as_ref() {
         options.model_dir = PathBuf::from(model_dir);
     }
 
-    let output = voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
-        on_progress(current, total);
-    });
+    let output =
+        voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
+            on_progress(current, total);
+        });
     let output = match output {
         Ok(v) => v,
         Err(raw_err) => {
@@ -127,11 +123,8 @@ where
                 options.audio_path.display(),
                 options.model_dir.display()
             );
-            let user_message = map_transcribe_error(
-                &technical,
-                &request.provider,
-                request.chunk_target_seconds,
-            );
+            let user_message =
+                map_transcribe_error(&technical, &request.provider, request.chunk_target_seconds);
             append_transcribe_log(
                 &logger,
                 event::TRANSCRIBE_FAILED,
@@ -268,13 +261,12 @@ fn calculate_rtf_x(audio_duration_sec: f64, transcribe_elapsed_sec: f64) -> f64 
 
 fn map_transcribe_error(raw: &str, provider: &str, chunk_target_seconds: u32) -> String {
     let lowered = raw.to_lowercase();
-    let directml_oom =
-        lowered.contains("887a0006")
-            || lowered.contains("dmlexecutionprovider")
-            || lowered.contains("onnx runtime error")
-                && lowered.contains("gpu")
-                && lowered.contains("invalid")
-            || lowered.contains("lstm node");
+    let directml_oom = lowered.contains("887a0006")
+        || lowered.contains("dmlexecutionprovider")
+        || lowered.contains("onnx runtime error")
+            && lowered.contains("gpu")
+            && lowered.contains("invalid")
+        || lowered.contains("lstm node");
 
     if directml_oom {
         return format!(

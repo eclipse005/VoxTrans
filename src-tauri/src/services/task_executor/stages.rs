@@ -1,39 +1,37 @@
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
+use tauri::async_runtime::JoinHandle;
 use tauri::async_runtime::spawn_blocking;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
 
 use crate::services::preferences::SavedSettings;
 use crate::services::task_context::{
-    STAGE_ASR, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEGMENT_OPTIMIZE, STAGE_SEPARATE, STAGE_SUMMARIZE,
-    STAGE_TRANSLATE, TaskContext,
+    STAGE_ASR, STAGE_PUNCTUATE, STAGE_SEGMENT, STAGE_SEGMENT_OPTIMIZE, STAGE_SEPARATE,
+    STAGE_SUMMARIZE, STAGE_TRANSLATE, TaskContext,
 };
-use crate::services::task_projection::TaskProjectionState;
+use crate::services::task_projection::{TaskProjectionEditorState, TaskProjectionState};
 use crate::services::task_stage_handlers::StageHandlers;
 use crate::services::task_subtitle_composer::{
-    WordTimingAnchor, build_bilingual_srt_from_translate_segments, build_srt_from_translate_segments,
-    realign_segments_with_words,
+    WordTimingAnchor, build_bilingual_srt_from_translate_segments,
+    build_srt_from_translate_segments, realign_segments_with_words,
 };
 use crate::services::translate::segment_optimize::{SegmentOptimizeRequest, run_segment_optimize};
 use crate::services::translate::types::TranslatePipelineRequest;
 use crate::services::translate::{run_translate_summarize, run_translate_with_theme};
 
+use super::events::emit_task_state_changed;
+use super::log_pipeline_stage;
+use super::runtime::{TaskRunExecRow, persist_task_context_boxed};
 use super::state::{
     SegmentOptimizeSnapshot, SegmentResumeSnapshot, SummarizeSnapshot, TranslateSnapshot,
-    from_core_words, load_asr_resume_snapshot, load_segment_optimize_snapshot, load_segment_snapshot,
-    load_stage_words, load_summarize_snapshot, load_translate_snapshot, to_core_words,
+    from_core_words, load_asr_resume_snapshot, load_segment_optimize_snapshot,
+    load_segment_snapshot, load_stage_words, load_summarize_snapshot, load_translate_snapshot,
+    to_core_words,
 };
-use super::events::{
-    SeparateProgressEvent, TranscribePhaseEvent, TranscribeProgressEvent, TranslateProgressEvent,
-    emit_bridge_event, emit_task_state_changed,
-};
-use super::{
-    build_task_state_changed_event, log_pipeline_stage,
-};
-use super::runtime::{TaskRunExecRow, persist_task_context_boxed};
 use crate::services::transcribe::{
-    BuildSegmentsRequest, TranscribeRequest, TranscribeResponse, WordTokenDto, build_segments_from_words,
-    transcribe_blocking,
+    BuildSegmentsRequest, TranscribeRequest, TranscribeResponse, WordTokenDto,
+    build_segments_from_words, transcribe_blocking,
 };
 use crate::services::transcription::{PunctuationConfig, optimize_words_with_llm};
 
@@ -46,6 +44,7 @@ pub(super) async fn run_asr_stage(
     transcribe_audio_path: String,
     settings: &SavedSettings,
 ) -> Result<TranscribeResponse, String> {
+    let editor_snapshot = projection.editor.clone();
     StageHandlers::new(
         pool,
         &task.id,
@@ -69,21 +68,13 @@ pub(super) async fn run_asr_stage(
         |value| !value.words.is_empty(),
         || {
             let task_id = task.id.clone();
+            let task_snapshot = task.clone();
             let app_opt = app.cloned();
+            let pool = pool.clone();
             let settings = settings.clone();
             let transcribe_audio_path = transcribe_audio_path.clone();
+            let editor_snapshot = editor_snapshot.clone();
             async move {
-                let app_handle = app_opt.clone();
-                let progress_task_id = task_id.clone();
-                emit_bridge_event(
-                    app_opt.as_ref(),
-                    "transcribe-phase",
-                    &TranscribePhaseEvent {
-                        task_id: task_id.clone(),
-                        phase: "recognizing".to_string(),
-                        phase_detail: None,
-                    },
-                );
                 let transcribe_req = TranscribeRequest {
                     task_id: task_id.clone(),
                     audio_path: transcribe_audio_path,
@@ -91,21 +82,32 @@ pub(super) async fn run_asr_stage(
                     chunk_target_seconds: settings.chunk_target_seconds,
                     model_dir: None,
                 };
+                let progress = StageProgressReporter::new(
+                    pool.clone(),
+                    app_opt.clone(),
+                    task_snapshot.clone(),
+                    editor_snapshot.clone(),
+                );
+                let progress_tx = progress.sender();
                 let transcribed = spawn_blocking(move || {
                     transcribe_blocking(transcribe_req, |current, total| {
-                        emit_bridge_event(
-                            app_handle.as_ref(),
-                            "transcribe-progress",
-                            &TranscribeProgressEvent {
-                                task_id: progress_task_id.clone(),
-                                current_segment: current,
-                                total_segments: total,
-                            },
-                        );
+                        let display_current = current.max(1);
+                        let display_total = total.max(display_current);
+                        let progress_percent =
+                            percent_from_position(display_current as u32, display_total as u32);
+                        progress_tx.publish(StageProgressSnapshot {
+                            current_stage: STAGE_ASR,
+                            queue_phase: "recognizing",
+                            phase_detail: format!("{display_current}/{display_total}"),
+                            progress_percent,
+                            current: display_current as u32,
+                            total: display_total as u32,
+                        });
                     })
                 })
-                .await
-                .map_err(|err| err.to_string())??;
+                .await;
+                progress.finish().await?;
+                let transcribed = transcribed.map_err(|err| err.to_string())??;
                 Ok(transcribed)
             }
         },
@@ -135,6 +137,7 @@ pub(super) async fn run_separate_stage(
     projection: &TaskProjectionState,
     settings: &SavedSettings,
 ) -> Result<String, String> {
+    let editor_snapshot = projection.editor.clone();
     StageHandlers::new(
         pool,
         &task.id,
@@ -155,44 +158,56 @@ pub(super) async fn run_separate_stage(
         |value| !value.trim().is_empty(),
         || {
             let task_id = task.id.clone();
+            let task_snapshot = task.clone();
             let media_path = task.media_path.clone();
             let app_opt = app.cloned();
+            let pool = pool.clone();
             let settings = settings.clone();
+            let editor_snapshot = editor_snapshot.clone();
             async move {
                 if !settings.enable_vocal_separation {
                     return crate::services::demucs::prepare_audio_for_asr(&task_id, &media_path);
                 }
-                emit_bridge_event(
+                publish_processing_snapshot(
+                    &pool,
                     app_opt.as_ref(),
-                    "transcribe-phase",
-                    &TranscribePhaseEvent {
-                        task_id: task_id.clone(),
-                        phase: "separating".to_string(),
-                        phase_detail: None,
-                    },
+                    &task_snapshot,
+                    STAGE_SEPARATE,
+                    "separating",
+                    "",
+                    0,
+                    0,
+                    0,
+                    &editor_snapshot,
+                )
+                .await?;
+                let progress = StageProgressReporter::new(
+                    pool.clone(),
+                    app_opt.clone(),
+                    task_snapshot.clone(),
+                    editor_snapshot.clone(),
                 );
-
-                let app_handle = app_opt.clone();
+                let progress_tx = progress.sender();
                 let req = crate::services::demucs::SeparateVocalsRequest {
                     task_id: task_id.clone(),
                     audio_path: media_path.clone(),
                     model: settings.demucs_model.clone(),
                 };
-                let progress_task_id = task_id.clone();
                 let separated = spawn_blocking(move || {
                     crate::services::demucs::separate_vocals_blocking(req, |percent| {
-                        emit_bridge_event(
-                            app_handle.as_ref(),
-                            "separate-progress",
-                            &SeparateProgressEvent {
-                                task_id: progress_task_id.clone(),
-                                percent,
-                            },
-                        );
+                        progress_tx.publish(StageProgressSnapshot {
+                            current_stage: STAGE_SEPARATE,
+                            queue_phase: "separating",
+                            phase_detail: format!("{percent}%"),
+                            progress_percent: percent,
+                            current: percent,
+                            total: 100,
+                        });
                     })
                 })
-                .await
-                .map_err(|err| err.to_string())??;
+                .await;
+                progress.finish().await?;
+                let separated = separated.map_err(|err| err.to_string())??;
                 Ok(separated.vocals_path)
             }
         },
@@ -214,6 +229,7 @@ pub(super) async fn run_punctuate_stage(
     if !settings.enable_punctuation_optimization {
         return Ok(words.to_vec());
     }
+    let editor_snapshot = projection.editor.clone();
     StageHandlers::new(
         pool,
         &task.id,
@@ -226,20 +242,25 @@ pub(super) async fn run_punctuate_stage(
         |ctx| load_stage_words(ctx, STAGE_PUNCTUATE),
         |value| !value.is_empty(),
         || {
-            emit_bridge_event(
-                app,
-                "transcribe-phase",
-                &TranscribePhaseEvent {
-                    task_id: task.id.clone(),
-                    phase: "punctuate".to_string(),
-                    phase_detail: None,
-                },
-            );
             let words_for_exec = words.to_vec();
             let media_path = task.media_path.clone();
             let task_id = task.id.clone();
             let settings = settings.clone();
+            let editor_snapshot = editor_snapshot.clone();
             async move {
+                publish_processing_snapshot(
+                    pool,
+                    app,
+                    task,
+                    STAGE_PUNCTUATE,
+                    "punctuate",
+                    "",
+                    99,
+                    0,
+                    0,
+                    &editor_snapshot,
+                )
+                .await?;
                 let optimized_words = optimize_words_with_llm(
                     &task_id,
                     &media_path,
@@ -264,6 +285,7 @@ pub(super) async fn run_punctuate_stage(
 
 pub(super) async fn run_segment_stage(
     pool: &SqlitePool,
+    app: Option<&tauri::AppHandle>,
     task: &TaskRunExecRow,
     context: &mut TaskContext,
     projection: &TaskProjectionState,
@@ -271,6 +293,7 @@ pub(super) async fn run_segment_stage(
     subtitle_max_words_per_segment: u32,
     with_translate: bool,
 ) -> Result<SegmentResumeSnapshot, String> {
+    let editor_snapshot = projection.editor.clone();
     StageHandlers::new(
         pool,
         &task.id,
@@ -286,7 +309,21 @@ pub(super) async fn run_segment_stage(
             let task_id = task.id.clone();
             let media_path = task.media_path.clone();
             let words_for_exec = words.to_vec();
+            let editor_snapshot = editor_snapshot.clone();
             async move {
+                publish_processing_snapshot(
+                    pool,
+                    app,
+                    task,
+                    STAGE_SEGMENT,
+                    "segment",
+                    "",
+                    99,
+                    0,
+                    0,
+                    &editor_snapshot,
+                )
+                .await?;
                 let built = build_segments_from_words(BuildSegmentsRequest {
                     task_id,
                     audio_path: media_path,
@@ -330,6 +367,7 @@ pub(super) async fn run_summarize_stage(
     translate_request: &TranslatePipelineRequest,
 ) -> Result<SummarizeSnapshot, String> {
     log_pipeline_stage(task, "summarize", "started", Value::Null);
+    let editor_snapshot = projection.editor.clone();
     let summarize_snapshot = StageHandlers::new(
         pool,
         &task.id,
@@ -343,18 +381,24 @@ pub(super) async fn run_summarize_stage(
         |value| !value.theme.trim().is_empty(),
         || {
             let request = translate_request.clone();
-            let task_id = task.id.clone();
+            let task_snapshot = task.clone();
             let app_handle = app.cloned();
+            let pool = pool.clone();
+            let editor_snapshot = editor_snapshot.clone();
             async move {
-                emit_bridge_event(
+                publish_processing_snapshot(
+                    &pool,
                     app_handle.as_ref(),
-                    "transcribe-phase",
-                    &TranscribePhaseEvent {
-                        task_id,
-                        phase: "summarize".to_string(),
-                        phase_detail: None,
-                    },
-                );
+                    &task_snapshot,
+                    STAGE_SUMMARIZE,
+                    "summarize",
+                    "",
+                    99,
+                    0,
+                    0,
+                    &editor_snapshot,
+                )
+                .await?;
                 let (theme, terminology_entries, primary_total, supporting_total) =
                     run_translate_summarize(&request).await?;
                 Ok(SummarizeSnapshot {
@@ -388,7 +432,6 @@ pub(super) async fn run_summarize_stage(
             "terminologyOutputTotal": summarize_snapshot.terminology_entries.len(),
         }),
     );
-    emit_task_state_changed(app, &build_task_state_changed_event(task, projection));
     Ok(summarize_snapshot)
 }
 
@@ -402,6 +445,7 @@ pub(super) async fn run_translate_stage(
     summarize_snapshot: &SummarizeSnapshot,
 ) -> Result<TranslateSnapshot, String> {
     log_pipeline_stage(task, "translate", "started", Value::Null);
+    let editor_snapshot = projection.editor.clone();
     let translate_snapshot = StageHandlers::new(
         pool,
         &task.id,
@@ -416,29 +460,40 @@ pub(super) async fn run_translate_stage(
         || {
             let request = translate_request.clone();
             let summarize = summarize_snapshot.clone();
-            let task_id = task.id.clone();
+            let task_snapshot = task.clone();
             let phase_app = app.cloned();
-            let progress_app = app.cloned();
+            let pool = pool.clone();
+            let editor_snapshot = editor_snapshot.clone();
             async move {
-                emit_bridge_event(
-                    phase_app.as_ref(),
-                    "transcribe-phase",
-                    &TranscribePhaseEvent {
-                        task_id: task_id.clone(),
-                        phase: "translate".to_string(),
-                        phase_detail: None,
-                    },
+                let progress = StageProgressReporter::new(
+                    pool.clone(),
+                    phase_app.clone(),
+                    task_snapshot.clone(),
+                    editor_snapshot.clone(),
                 );
+                progress.publish(StageProgressSnapshot {
+                    current_stage: STAGE_TRANSLATE,
+                    queue_phase: "translate",
+                    phase_detail: String::new(),
+                    progress_percent: 99,
+                    current: 0,
+                    total: 0,
+                });
+                let progress_tx = progress.sender();
                 let mut on_progress = move |current_batch: usize, total_batches: usize| {
-                    emit_bridge_event(
-                        progress_app.as_ref(),
-                        "translate-progress",
-                        &TranslateProgressEvent {
-                            task_id: task_id.clone(),
-                            current_batch,
-                            total_batches,
-                        },
-                    );
+                    let display_current = current_batch.max(1);
+                    let display_total = total_batches.max(display_current);
+                    progress_tx.publish(StageProgressSnapshot {
+                        current_stage: STAGE_TRANSLATE,
+                        queue_phase: "translate",
+                        phase_detail: format!("{display_current}/{display_total}"),
+                        progress_percent: percent_from_position(
+                            display_current as u32,
+                            display_total as u32,
+                        ),
+                        current: display_current as u32,
+                        total: display_total as u32,
+                    });
                 };
                 let translated = run_translate_with_theme(
                     request,
@@ -446,7 +501,10 @@ pub(super) async fn run_translate_stage(
                     summarize.terminology_entries,
                     &mut on_progress,
                 )
-                .await?;
+                .await;
+                drop(on_progress);
+                progress.finish().await?;
+                let translated = translated?;
                 Ok(TranslateSnapshot {
                     source_srt: translated.source_srt,
                     target_srt: translated.target_srt,
@@ -478,7 +536,6 @@ pub(super) async fn run_translate_stage(
             "translatedSegmentTotal": translate_snapshot.segments.len(),
         }),
     );
-    emit_task_state_changed(app, &build_task_state_changed_event(task, projection));
     Ok(translate_snapshot)
 }
 
@@ -493,6 +550,7 @@ pub(super) async fn run_segment_optimize_stage(
     word_timestamps: &[WordTimingAnchor],
 ) -> Result<SegmentOptimizeSnapshot, String> {
     log_pipeline_stage(task, "segment_optimize", "started", Value::Null);
+    let editor_snapshot = projection.editor.clone();
     let mut snapshot = StageHandlers::new(
         pool,
         &task.id,
@@ -506,20 +564,27 @@ pub(super) async fn run_segment_optimize_stage(
         |value| !value.segments.is_empty(),
         || {
             let task_id = task.id.clone();
+            let task_snapshot = task.clone();
             let media_path = task.media_path.clone();
             let settings = settings.clone();
             let input_segments = segments.clone();
             let app_handle = app.cloned();
+            let pool = pool.clone();
+            let editor_snapshot = editor_snapshot.clone();
             async move {
-                emit_bridge_event(
+                publish_processing_snapshot(
+                    &pool,
                     app_handle.as_ref(),
-                    "transcribe-phase",
-                    &TranscribePhaseEvent {
-                        task_id: task_id.clone(),
-                        phase: "segment_optimize".to_string(),
-                        phase_detail: None,
-                    },
-                );
+                    &task_snapshot,
+                    STAGE_SEGMENT_OPTIMIZE,
+                    "segment_optimize",
+                    "",
+                    99,
+                    0,
+                    0,
+                    &editor_snapshot,
+                )
+                .await?;
                 let segment_optimize_result = run_segment_optimize(SegmentOptimizeRequest {
                     task_id: task_id.clone(),
                     media_path: media_path.clone(),
@@ -570,8 +635,198 @@ pub(super) async fn run_segment_optimize_stage(
             "segmentTotal": snapshot.segments.len(),
         }),
     );
-    emit_task_state_changed(app, &build_task_state_changed_event(task, projection));
     Ok(snapshot)
+}
+
+#[derive(Debug)]
+struct StageProgressSnapshot {
+    current_stage: &'static str,
+    queue_phase: &'static str,
+    phase_detail: String,
+    progress_percent: u32,
+    current: u32,
+    total: u32,
+}
+
+#[derive(Debug)]
+enum StageProgressMessage {
+    Snapshot(StageProgressSnapshot),
+    Close,
+}
+
+#[derive(Clone)]
+struct StageProgressSender {
+    tx: UnboundedSender<StageProgressMessage>,
+}
+
+impl StageProgressSender {
+    fn publish(&self, snapshot: StageProgressSnapshot) {
+        let _ = self.tx.send(StageProgressMessage::Snapshot(snapshot));
+    }
+}
+
+struct StageProgressReporter {
+    tx: UnboundedSender<StageProgressMessage>,
+    drain_task: JoinHandle<Result<(), String>>,
+}
+
+impl StageProgressReporter {
+    fn new(
+        pool: SqlitePool,
+        app: Option<tauri::AppHandle>,
+        task: TaskRunExecRow,
+        editor: TaskProjectionEditorState,
+    ) -> Self {
+        let (tx, rx) = unbounded_channel();
+        let drain_task = tauri::async_runtime::spawn(async move {
+            drain_progress_snapshots(pool, app, task, editor, rx).await
+        });
+        Self { tx, drain_task }
+    }
+
+    fn sender(&self) -> StageProgressSender {
+        StageProgressSender {
+            tx: self.tx.clone(),
+        }
+    }
+
+    fn publish(&self, snapshot: StageProgressSnapshot) {
+        self.sender().publish(snapshot);
+    }
+
+    async fn finish(self) -> Result<(), String> {
+        let _ = self.tx.send(StageProgressMessage::Close);
+        self.drain_task.await.map_err(|err| err.to_string())?
+    }
+}
+
+async fn publish_processing_snapshot(
+    pool: &SqlitePool,
+    app: Option<&tauri::AppHandle>,
+    task: &TaskRunExecRow,
+    current_stage: &str,
+    queue_phase: &str,
+    phase_detail: &str,
+    progress_percent: u32,
+    current: u32,
+    total: u32,
+    editor: &TaskProjectionEditorState,
+) -> Result<(), String> {
+    let now = unix_now();
+    let persisted_progress = progress_percent.clamp(0, 100);
+    let result = sqlx::query(
+        "UPDATE task_runs
+         SET overall_status = 'running',
+             current_stage = ?,
+             progress_percent = ?,
+             phase_detail = ?,
+             segment_current = ?,
+             segment_total = ?,
+             error_message = '',
+             started_at = COALESCE(started_at, ?),
+             updated_at = ?
+         WHERE id = ?
+           AND overall_status NOT IN ('failed', 'completed')",
+    )
+    .bind(current_stage)
+    .bind(persisted_progress as i64)
+    .bind(phase_detail)
+    .bind(current as i64)
+    .bind(total as i64)
+    .bind(now)
+    .bind(now)
+    .bind(&task.id)
+    .execute(pool)
+    .await
+    .map_err(|err| err.to_string())?;
+    if result.rows_affected() == 0 {
+        return Ok(());
+    }
+    emit_task_state_changed(
+        app,
+        &build_progress_state_changed_event(
+            task,
+            queue_phase,
+            phase_detail,
+            persisted_progress,
+            current,
+            total,
+            editor,
+        ),
+    );
+    Ok(())
+}
+
+async fn drain_progress_snapshots(
+    pool: SqlitePool,
+    app: Option<tauri::AppHandle>,
+    task: TaskRunExecRow,
+    editor: TaskProjectionEditorState,
+    mut rx: UnboundedReceiver<StageProgressMessage>,
+) -> Result<(), String> {
+    while let Some(message) = rx.recv().await {
+        match message {
+            StageProgressMessage::Snapshot(snapshot) => {
+                publish_processing_snapshot(
+                    &pool,
+                    app.as_ref(),
+                    &task,
+                    snapshot.current_stage,
+                    snapshot.queue_phase,
+                    &snapshot.phase_detail,
+                    snapshot.progress_percent,
+                    snapshot.current,
+                    snapshot.total,
+                    &editor,
+                )
+                .await?;
+            }
+            StageProgressMessage::Close => break,
+        }
+    }
+    Ok(())
+}
+
+fn build_progress_state_changed_event(
+    task: &TaskRunExecRow,
+    queue_phase: &str,
+    phase_detail: &str,
+    progress_percent: u32,
+    current: u32,
+    total: u32,
+    editor: &TaskProjectionEditorState,
+) -> super::events::TaskStateChangedEvent {
+    super::events::TaskStateChangedEvent {
+        id: task.id.clone(),
+        path: task.media_path.clone(),
+        name: task.name.clone(),
+        media_kind: task.media_kind.clone(),
+        size_bytes: task.size_bytes.max(0) as u64,
+        transcribe_status: "processing".to_string(),
+        transcribe_progress: progress_percent,
+        transcribe_segment_current: current,
+        transcribe_segment_total: total,
+        transcribe_phase: queue_phase.to_string(),
+        transcribe_phase_detail: phase_detail.to_string(),
+        transcribe_error: String::new(),
+        result_text: editor.result_text.clone(),
+        result_srt: editor.result_srt.clone(),
+        subtitle_segments_json: editor.subtitle_segments_json.clone(),
+    }
+}
+
+fn percent_from_position(current: u32, total: u32) -> u32 {
+    if total == 0 {
+        return 0;
+    }
+    ((current.min(total) * 100) / total).clamp(0, 100)
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn finalize_segment_optimize_timing(

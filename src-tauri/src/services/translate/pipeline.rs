@@ -1,22 +1,22 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::services::llm::batch::run_indexed_concurrent;
+use crate::services::llm::client::LlmSemanticValidationError;
+use crate::services::llm::client::OpenAiCompatLlmClient;
+use crate::services::llm::json_guard::JsonResponseValidator;
+use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 use voxtrans_core::subtitle::text_rules::has_break_terminal_punctuation;
-use crate::services::llm::client::OpenAiCompatLlmClient;
-use crate::services::llm::client::LlmSemanticValidationError;
-use crate::services::llm::json_guard::JsonResponseValidator;
-use crate::services::llm::batch::run_indexed_concurrent;
-use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 
 use super::prompt::{
-    TranslatePromptInput, TranslateSummaryPromptInput,
-    TranslateTerminologyPromptEntry, build_translate_summary_user_prompt, build_translate_user_prompt,
+    TranslatePromptInput, TranslateSummaryPromptInput, TranslateTerminologyPromptEntry,
+    build_translate_summary_user_prompt, build_translate_user_prompt,
 };
 use super::types::{
-    TranslatePipelineRequest, TranslatePipelineResponse, TranslateSegment, TranslateTerminologyEntry,
-    TranslateToken,
+    TranslatePipelineRequest, TranslatePipelineResponse, TranslateSegment,
+    TranslateTerminologyEntry, TranslateToken,
 };
 use super::validation::{validate_llm_segments, validate_request};
 
@@ -239,24 +239,22 @@ async fn build_global_summary_profile(
             &summary_prompt,
             Some(&validator),
             |value| {
-                serde_json::from_value::<SummaryExtraction>(value)
-                    .map_err(|err| LlmSemanticValidationError::retryable(format!("summarize parse failed: {err}")))
+                serde_json::from_value::<SummaryExtraction>(value).map_err(|err| {
+                    LlmSemanticValidationError::retryable(format!("summarize parse failed: {err}"))
+                })
             },
         )
         .await;
-    let summary_result = result
-        .map_err(|err| format!("summarize failed (llmId={}): {}", llm_id, err.message))?;
+    let summary_result =
+        result.map_err(|err| format!("summarize failed (llmId={}): {}", llm_id, err.message))?;
     let summary = summary_result.value;
     let theme = normalize_theme(summary.theme.as_str());
-    let primary_terms = filter_selected_terminology_entries(
-        &summary.primary_terms,
-        terminology_entries,
-    );
-    let supporting_terms = filter_selected_terminology_entries(
-        &summary.supporting_terms,
-        terminology_entries,
-    );
-    let selected_terms = merge_selected_terms(&primary_terms, &supporting_terms, terminology_entries);
+    let primary_terms =
+        filter_selected_terminology_entries(&summary.primary_terms, terminology_entries);
+    let supporting_terms =
+        filter_selected_terminology_entries(&summary.supporting_terms, terminology_entries);
+    let selected_terms =
+        merge_selected_terms(&primary_terms, &supporting_terms, terminology_entries);
     Ok(SummaryProfile {
         theme,
         primary_terminology_entries: primary_terms,
@@ -432,7 +430,9 @@ where
 
     out.into_iter()
         .enumerate()
-        .map(|(index, item)| item.ok_or_else(|| format!("missing translated batch at index {index}")))
+        .map(|(index, item)| {
+            item.ok_or_else(|| format!("missing translated batch at index {index}"))
+        })
         .collect()
 }
 
@@ -580,7 +580,9 @@ fn split_batches(
     }
 
     if !current_segments.is_empty() {
-        out.push(SegmentBatch { segments: current_segments });
+        out.push(SegmentBatch {
+            segments: current_segments,
+        });
     }
 
     out
@@ -761,18 +763,18 @@ fn extract_jit_supporting_terms(
         if overlap.len() >= 2 {
             let score = overlap.len() * 10 + term_tokens.len();
             ranked_terms.push((score, term.clone()));
-        } else if term_tokens.len() == 2
-            && overlap.len() == 1
-            && overlap[0].chars().count() >= 6
-        {
+        } else if term_tokens.len() == 2 && overlap.len() == 1 && overlap[0].chars().count() >= 6 {
             let score = 5 + overlap[0].chars().count();
             ranked_terms.push((score, term.clone()));
         }
     }
 
     ranked_terms.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| a.1.source.to_ascii_lowercase().cmp(&b.1.source.to_ascii_lowercase()))
+        b.0.cmp(&a.0).then_with(|| {
+            a.1.source
+                .to_ascii_lowercase()
+                .cmp(&b.1.source.to_ascii_lowercase())
+        })
     });
 
     let mut out = Vec::new();
@@ -814,7 +816,9 @@ fn parse_translation_batch_extraction(
             .parse::<usize>()
             .map_err(|_| format!("translate parse failed: invalid index key `{key}`"))?;
         let Some(item_obj) = item.as_object() else {
-            return Err(format!("translate parse failed: index `{key}` must map to object"));
+            return Err(format!(
+                "translate parse failed: index `{key}` must map to object"
+            ));
         };
         let translated_text = item_obj
             .get("translation")
@@ -823,7 +827,9 @@ fn parse_translation_batch_extraction(
             .and_then(|v| v.as_str())
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
-            .ok_or_else(|| format!("translate parse failed: empty translation for index `{key}`"))?;
+            .ok_or_else(|| {
+                format!("translate parse failed: empty translation for index `{key}`")
+            })?;
         if translated_by_index.insert(index, translated_text).is_some() {
             return Err(format!("translate parse failed: duplicate index `{index}`"));
         }
@@ -841,7 +847,9 @@ fn parse_translation_batch_extraction(
             return Err(format!("translate parse failed: missing index `{index}`"));
         }
     }
-    Ok(TranslationBatchExtraction { translated_by_index })
+    Ok(TranslationBatchExtraction {
+        translated_by_index,
+    })
 }
 
 fn exact_term_match(text: &str, term_src: &str) -> bool {

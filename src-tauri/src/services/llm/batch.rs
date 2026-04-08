@@ -33,7 +33,12 @@ where
             let permit = semaphore.acquire_owned().await;
             let _permit = match permit {
                 Ok(v) => v,
-                Err(err) => return (index, Err(join_error(format!("semaphore acquire failed: {err}")))),
+                Err(err) => {
+                    return (
+                        index,
+                        Err(join_error(format!("semaphore acquire failed: {err}"))),
+                    );
+                }
             };
             (index, worker(item).await)
         });
@@ -43,7 +48,10 @@ where
     while let Some(joined) = join_set.join_next().await {
         match joined {
             Ok(v) => out.push(v),
-            Err(err) => out.push((usize::MAX, Err(join_error(format!("task join error: {err}"))))),
+            Err(err) => out.push((
+                usize::MAX,
+                Err(join_error(format!("task join error: {err}"))),
+            )),
         }
     }
     out.sort_by_key(|(index, _)| *index);

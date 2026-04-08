@@ -1,11 +1,10 @@
 /// 更新服务：检测更新、下载并安装。
-
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
-use std::sync::OnceLock;
 use tauri::Emitter;
 
 use super::file_download::{DownloadCallback, DownloadOptions, DownloadProgress};
@@ -81,7 +80,12 @@ fn installer_filename_from_url(download_url: &str) -> &str {
 }
 
 pub fn request_cancel(task_id: &str) -> bool {
-    if let Some(flags) = cancel_flags().lock().ok().as_deref().and_then(|m| m.get(task_id)) {
+    if let Some(flags) = cancel_flags()
+        .lock()
+        .ok()
+        .as_deref()
+        .and_then(|m| m.get(task_id))
+    {
         flags.store(true, Ordering::SeqCst);
         true
     } else {
@@ -148,8 +152,8 @@ async fn try_check(current_version: &str) -> Result<UpdateInfo, String> {
         return Err("GitHub API 返回空响应".to_string());
     }
 
-    let release: GitHubReleaseInfo = serde_json::from_str(&body)
-        .map_err(|e| format!("解析失败: {}", e))?;
+    let release: GitHubReleaseInfo =
+        serde_json::from_str(&body).map_err(|e| format!("解析失败: {}", e))?;
 
     let latest_version = release.tag_name.trim_start_matches('v').to_string();
     let has_update = latest_version != current_version;
@@ -186,8 +190,7 @@ pub fn download_and_install(
         .insert(task_id.clone(), cancel.clone());
 
     let temp_dir = std::env::temp_dir().join("voxtrans_update");
-    std::fs::create_dir_all(&temp_dir)
-        .map_err(|e| format!("创建临时目录失败: {}", e))?;
+    std::fs::create_dir_all(&temp_dir).map_err(|e| format!("创建临时目录失败: {}", e))?;
 
     let installer_name = installer_filename_from_url(&download_url);
     let installer_path = temp_dir.join(Path::new(installer_name));
@@ -213,7 +216,9 @@ pub fn download_and_install(
             if let Ok(mut m) = progress_snapshots().lock() {
                 m.insert(self.task_id.clone(), prog.clone());
             }
-            let _ = self.app.emit("update-download-progress", &(self.task_id.clone(), prog));
+            let _ = self
+                .app
+                .emit("update-download-progress", &(self.task_id.clone(), prog));
         }
 
         fn on_message(&mut self, _: &str) {}

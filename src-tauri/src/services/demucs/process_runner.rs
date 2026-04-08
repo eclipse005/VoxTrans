@@ -2,8 +2,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::services::binary::{configure_background_command, resolve_bundled_or_path};
 use super::progress_parse::parse_progress_percent;
+use crate::services::binary::{configure_background_command, resolve_bundled_or_path};
 
 pub(super) fn run_demucs_with_progress<F>(
     model: &str,

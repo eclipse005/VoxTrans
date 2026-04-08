@@ -1,8 +1,11 @@
+use crate::services::binary::{configure_background_command, resolve_bundled_or_path};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use crate::services::binary::{configure_background_command, resolve_bundled_or_path};
 
-pub(super) fn prepare_demucs_input(input_path: &Path, output_root: &Path) -> Result<PathBuf, String> {
+pub(super) fn prepare_demucs_input(
+    input_path: &Path,
+    output_root: &Path,
+) -> Result<PathBuf, String> {
     let is_wav = input_path
         .extension()
         .and_then(|s| s.to_str())

@@ -84,9 +84,7 @@ fn to_service_target(target: &str) -> Result<model::ModelTarget, String> {
     }
 }
 
-fn from_service_model_status(
-    response: model::ModelStatusResponse,
-) -> ModelStatusCommandResponse {
+fn from_service_model_status(response: model::ModelStatusResponse) -> ModelStatusCommandResponse {
     ModelStatusCommandResponse {
         target: match response.target {
             model::ModelTarget::Asr => "asr".to_string(),

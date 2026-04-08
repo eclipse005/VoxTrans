@@ -117,8 +117,8 @@ where
 
 pub fn prepare_audio_for_asr(task_id: &str, media_path: &str) -> Result<String, String> {
     let input_path = PathBuf::from(media_path);
-    let output_root = crate::services::task_path::task_output_dir(task_id, &input_path)
-        .join("asr_input");
+    let output_root =
+        crate::services::task_path::task_output_dir(task_id, &input_path).join("asr_input");
     std::fs::create_dir_all(&output_root).map_err(|err| err.to_string())?;
     let prepared = prepare_demucs_input(&input_path, &output_root)?;
     Ok(prepared.display().to_string())

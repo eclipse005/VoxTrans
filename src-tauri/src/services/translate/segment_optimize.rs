@@ -2,15 +2,13 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 
-use crate::services::llm::client::OpenAiCompatLlmClient;
-use crate::services::llm::client::LlmSemanticValidationError;
 use crate::services::llm::batch::run_indexed_concurrent;
+use crate::services::llm::client::LlmSemanticValidationError;
+use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 use crate::services::task_log::TaskLogger;
-use crate::services::translate::prompt::{
-    build_align_prompt, build_subtitle_split_prompt,
-};
+use crate::services::translate::prompt::{build_align_prompt, build_subtitle_split_prompt};
 use crate::services::translate::types::TranslateSegment;
 
 pub const SEGMENT_OPTIMIZE_LAYOUT_VERSION: u32 = 3;
@@ -228,7 +226,8 @@ async fn optimize_layout(
         }
 
         let mut proposals =
-            review_split_proposals(_request, llm_client.as_ref(), segments, decision_groups).await?;
+            review_split_proposals(_request, llm_client.as_ref(), segments, decision_groups)
+                .await?;
         if proposals.is_empty() {
             break;
         }
@@ -255,12 +254,14 @@ async fn optimize_layout(
                 .iter()
                 .zip(proposal.target_segments.iter())
                 .zip(timings.into_iter())
-                .map(|((source_text, translated_text), (start_ms, end_ms))| TranslateSegment {
-                    start_ms,
-                    end_ms,
-                    source_text: source_text.clone(),
-                    translated_text: translated_text.clone(),
-                })
+                .map(
+                    |((source_text, translated_text), (start_ms, end_ms))| TranslateSegment {
+                        start_ms,
+                        end_ms,
+                        source_text: source_text.clone(),
+                        translated_text: translated_text.clone(),
+                    },
+                )
                 .collect::<Vec<_>>();
             // 由于 proposals 按 index 降序排序，从后往前处理可避免索引偏移
             let after_segments = new_segments
@@ -366,19 +367,23 @@ async fn review_split_proposals(
                 let align_validator = align_validator.clone();
                 async move {
                     let Some(group) = decision_groups.get(task.id).cloned() else {
-                        return Err("segment optimize internal error: missing decision group".to_string());
+                        return Err(
+                            "segment optimize internal error: missing decision group".to_string()
+                        );
                     };
-                    let current = segments_for_eval
-                        .get(group.index)
-                        .cloned()
-                        .unwrap_or_else(|| TranslateSegment {
-                            start_ms: 0,
-                            end_ms: 0,
-                            source_text: String::new(),
-                            translated_text: String::new(),
-                        });
+                    let current =
+                        segments_for_eval
+                            .get(group.index)
+                            .cloned()
+                            .unwrap_or_else(|| TranslateSegment {
+                                start_ms: 0,
+                                end_ms: 0,
+                                source_text: String::new(),
+                                translated_text: String::new(),
+                            });
 
-                    let (split_language, split_text, split_word_limit, max_parts) = match group.mode {
+                    let (split_language, split_text, split_word_limit, max_parts) = match group.mode
+                    {
                         LayoutMode::DualSplitAlign | LayoutMode::SourceOnlySplit => (
                             source_lang.as_str(),
                             current.source_text.as_str(),
@@ -417,10 +422,8 @@ async fn review_split_proposals(
                         Err(err) => {
                             return Err(format!(
                                 "segment optimize split failed for index {} (llmId={}): {}",
-                                group.index,
-                                split_llm_id,
-                                err.message
-                            ))
+                                group.index, split_llm_id, err.message
+                            ));
                         }
                     };
 
@@ -454,7 +457,8 @@ async fn review_split_proposals(
                             ))
                         }
                         LayoutMode::TargetOnlySplit => {
-                            let source_segments = vec![current.source_text.clone(); split_parts.len()];
+                            let source_segments =
+                                vec![current.source_text.clone(); split_parts.len()];
                             let target_segments = split_parts.clone();
                             validate_mode_output(group.mode, &source_segments, &target_segments)?;
                             Ok((
@@ -504,7 +508,11 @@ async fn review_split_proposals(
                                     let target_parts = validated.value;
                                     let source_segments = split_parts.clone();
                                     let target_segments = target_parts;
-                                    validate_mode_output(group.mode, &source_segments, &target_segments)?;
+                                    validate_mode_output(
+                                        group.mode,
+                                        &source_segments,
+                                        &target_segments,
+                                    )?;
                                     Ok((
                                         task.id,
                                         Some(SplitProposal {
@@ -526,9 +534,7 @@ async fn review_split_proposals(
                                 }
                                 Err(err) => Err(format!(
                                     "segment optimize align failed for index {} (llmId={}): {}",
-                                    group.index,
-                                    align_llm_id,
-                                    err.message
+                                    group.index, align_llm_id, err.message
                                 )),
                             }
                         }
@@ -560,7 +566,11 @@ async fn review_split_proposals(
     Ok(reviewed)
 }
 
-fn parse_split_parts(value: Value, original_text: &str, max_parts: usize) -> Result<Vec<String>, String> {
+fn parse_split_parts(
+    value: Value,
+    original_text: &str,
+    max_parts: usize,
+) -> Result<Vec<String>, String> {
     let keep_original = value
         .get("keep_original")
         .and_then(Value::as_bool)
@@ -633,7 +643,9 @@ fn recompute_split_ratio(
             }
             LayoutMode::TargetOnlySplit => segment_ratios_from_texts(target_segments, false),
         },
-        TimingStrategy::TargetLengthProportional => segment_ratios_from_texts(target_segments, false),
+        TimingStrategy::TargetLengthProportional => {
+            segment_ratios_from_texts(target_segments, false)
+        }
     }
 }
 
@@ -664,7 +676,10 @@ fn validate_mode_output(
     match mode {
         LayoutMode::DualSplitAlign => {
             if all_same(source_segments) || all_same(target_segments) {
-                return Err("dual_split_align requires both source and target to actually split".to_string());
+                return Err(
+                    "dual_split_align requires both source and target to actually split"
+                        .to_string(),
+                );
             }
         }
         LayoutMode::SourceOnlySplit => {
@@ -681,19 +696,12 @@ fn validate_mode_output(
     Ok(())
 }
 
-fn decide_target_segment_count(
-    segment: &TranslateSegment,
-    candidate: &LayoutCandidate,
-) -> usize {
+fn decide_target_segment_count(segment: &TranslateSegment, candidate: &LayoutCandidate) -> usize {
     let source_units = source_word_count_metric(&segment.source_text);
     let target_units = target_char_count_metric(&segment.translated_text);
     let severe_source = candidate.source_overlong && source_units >= 28;
     let severe_target = candidate.target_overlong && target_units >= 42;
-    if severe_source || severe_target {
-        3
-    } else {
-        2
-    }
+    if severe_source || severe_target { 3 } else { 2 }
 }
 
 fn all_same(segments: &[String]) -> bool {
@@ -722,7 +730,8 @@ fn segment_ratios_from_texts(segments: &[String], is_source: bool) -> Option<Vec
         return None;
     }
     Some(
-        units.into_iter()
+        units
+            .into_iter()
             .map(|unit| unit as f64 / total as f64)
             .collect(),
     )
@@ -778,7 +787,9 @@ fn split_segment_timing_multi(
     let mut cursor = start_ms;
     for (idx, cut) in cuts.into_iter().enumerate() {
         let min_end = cursor + 1;
-        let max_end = end_ms.saturating_sub((segment_count - idx - 1) as u64).max(min_end);
+        let max_end = end_ms
+            .saturating_sub((segment_count - idx - 1) as u64)
+            .max(min_end);
         let bounded_cut = cut.clamp(min_end, max_end);
         windows.push((cursor, bounded_cut));
         cursor = bounded_cut;

@@ -3,13 +3,13 @@ use tauri::{Emitter, State};
 use crate::app_state::AppState;
 use crate::commands::dto::common::{TaskRunCommandRecord, from_service_task_run};
 use crate::commands::dto::task_engine::{
-    DeleteTasksCommandRequest, EnqueueAndExecuteTaskBatchCommandRequest,
-    EnqueueTaskCommandRequest, ExecuteTaskBatchCommandRequest, ExecuteTaskBatchCommandResponse,
-    ExecuteTaskRunCommandRequest, GetTaskRunCommandRequest, ListTaskRunsCommandRequest,
-    RegisterTaskUploadCommandRequest, from_service_execute_batch_response, to_service_delete_tasks,
-    to_service_enqueue_and_execute_task_batch, to_service_enqueue_task, to_service_execute_task_batch,
-    to_service_execute_task_run, to_service_get_task_run, to_service_list_task_runs,
-    to_service_register_task_upload,
+    DeleteTasksCommandRequest, EnqueueAndExecuteTaskBatchCommandRequest, EnqueueTaskCommandRequest,
+    ExecuteTaskBatchCommandRequest, ExecuteTaskBatchCommandResponse, ExecuteTaskRunCommandRequest,
+    GetTaskRunCommandRequest, ListTaskRunsCommandRequest, RegisterTaskUploadCommandRequest,
+    from_service_execute_batch_response, to_service_delete_tasks,
+    to_service_enqueue_and_execute_task_batch, to_service_enqueue_task,
+    to_service_execute_task_batch, to_service_execute_task_run, to_service_get_task_run,
+    to_service_list_task_runs, to_service_register_task_upload,
 };
 use crate::services::task_engine::{
     self, delete_tasks as delete_tasks_service, enqueue_task as enqueue_task_service,
@@ -17,9 +17,10 @@ use crate::services::task_engine::{
     register_task_upload as register_task_upload_service,
 };
 use crate::services::task_executor::{
+    TaskStateChangedEvent,
     enqueue_and_execute_task_batch_via_worker as enqueue_and_execute_task_batch_service,
     execute_task_batch_via_worker as execute_task_batch_service,
-    execute_task_run_via_worker as execute_task_run_service, TaskStateChangedEvent,
+    execute_task_run_via_worker as execute_task_run_service,
 };
 use crate::services::task_worker;
 
@@ -128,8 +129,8 @@ pub async fn register_task_upload(
     request: RegisterTaskUploadCommandRequest,
 ) -> Result<TaskRunCommandRecord, String> {
     register_task_upload_service(&state.pool, to_service_register_task_upload(request))
-    .await
-    .map(from_service_task_run)
+        .await
+        .map(from_service_task_run)
 }
 
 #[tauri::command]
@@ -138,8 +139,8 @@ pub async fn list_task_runs(
     request: ListTaskRunsCommandRequest,
 ) -> Result<Vec<TaskRunCommandRecord>, String> {
     list_task_runs_service(&state.pool, to_service_list_task_runs(request))
-    .await
-    .map(|items| items.into_iter().map(from_service_task_run).collect())
+        .await
+        .map(|items| items.into_iter().map(from_service_task_run).collect())
 }
 
 #[tauri::command]
@@ -148,8 +149,8 @@ pub async fn get_task_run(
     request: GetTaskRunCommandRequest,
 ) -> Result<TaskRunDetailCommand, String> {
     get_task_run_service(&state.pool, to_service_get_task_run(request))
-    .await
-    .map(from_service_task_detail)
+        .await
+        .map(from_service_task_detail)
 }
 
 #[tauri::command]
@@ -204,11 +205,15 @@ pub async fn delete_tasks(
     state: State<'_, AppState>,
     request: DeleteTasksCommandRequest,
 ) -> Result<(), String> {
-    if let Some(task_id) = request.task_id.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(task_id) = request
+        .task_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         let _ = task_worker::kill_worker_if_running(&state.task_worker_runtime, task_id);
     }
-    delete_tasks_service(&state.pool, to_service_delete_tasks(request))
-    .await
+    delete_tasks_service(&state.pool, to_service_delete_tasks(request)).await
 }
 
 fn from_service_task_detail(detail: task_engine::TaskRunDetail) -> TaskRunDetailCommand {

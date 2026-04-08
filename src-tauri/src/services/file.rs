@@ -63,7 +63,10 @@ pub fn save_srt(request: SaveSrtRequest) -> Result<(), String> {
         (Some(task_id), Some(media_path))
             if !task_id.trim().is_empty() && !media_path.trim().is_empty() =>
         {
-            Some(TaskLogger::main_with_media(task_id.clone(), media_path.clone()))
+            Some(TaskLogger::main_with_media(
+                task_id.clone(),
+                media_path.clone(),
+            ))
         }
         (Some(task_id), _) if !task_id.trim().is_empty() => Some(TaskLogger::main(task_id.clone())),
         _ => None,
@@ -225,14 +228,12 @@ pub async fn export_task_srts(
             ExportSrtItem::Target => {
                 final_subtitle_segments_to_srt(&segments, FinalSubtitleTrack::Target)
             }
-            ExportSrtItem::BilingualSourceFirst => final_subtitle_segments_to_srt(
-                &segments,
-                FinalSubtitleTrack::BilingualSourceFirst,
-            ),
-            ExportSrtItem::BilingualTargetFirst => final_subtitle_segments_to_srt(
-                &segments,
-                FinalSubtitleTrack::BilingualTargetFirst,
-            ),
+            ExportSrtItem::BilingualSourceFirst => {
+                final_subtitle_segments_to_srt(&segments, FinalSubtitleTrack::BilingualSourceFirst)
+            }
+            ExportSrtItem::BilingualTargetFirst => {
+                final_subtitle_segments_to_srt(&segments, FinalSubtitleTrack::BilingualTargetFirst)
+            }
         };
         if content.trim().is_empty() {
             return Err("所选导出项为空，无法导出".to_string());

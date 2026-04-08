@@ -1,12 +1,12 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
-use std::collections::HashMap;
-use std::sync::mpsc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,12 +15,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::Emitter;
 
-use crate::services::task_engine::{
-    RegisterTaskUploadRequest,
-    TaskRunRecord,
-    register_task_upload,
-};
 use crate::services::binary::{configure_background_command, resolve_bundled_or_path};
+use crate::services::task_engine::{
+    RegisterTaskUploadRequest, TaskRunRecord, register_task_upload,
+};
 use crate::services::task_path::sanitize_filename_component;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -62,8 +60,11 @@ pub struct UpdateYtDlpResponse {
     pub output: String,
 }
 
-static YOUTUBE_PROGRESS_SNAPSHOTS: OnceLock<std::sync::Mutex<HashMap<String, YoutubeDownloadProgressEvent>>> = OnceLock::new();
-static YOUTUBE_CANCEL_FLAGS: OnceLock<std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+static YOUTUBE_PROGRESS_SNAPSHOTS: OnceLock<
+    std::sync::Mutex<HashMap<String, YoutubeDownloadProgressEvent>>,
+> = OnceLock::new();
+static YOUTUBE_CANCEL_FLAGS: OnceLock<std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>> =
+    OnceLock::new();
 
 pub async fn download_youtube_to_task(
     pool: &SqlitePool,
@@ -369,7 +370,8 @@ pub fn list_youtube_download_progress() -> Vec<YoutubeDownloadProgressEvent> {
     items
 }
 
-fn youtube_progress_snapshots_mutex() -> &'static std::sync::Mutex<HashMap<String, YoutubeDownloadProgressEvent>> {
+fn youtube_progress_snapshots_mutex()
+-> &'static std::sync::Mutex<HashMap<String, YoutubeDownloadProgressEvent>> {
     YOUTUBE_PROGRESS_SNAPSHOTS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
@@ -411,13 +413,20 @@ fn update_progress_from_line(progress: &mut YoutubeDownloadProgressEvent, raw: &
         if !total.is_empty() && !total.eq_ignore_ascii_case("NA") {
             progress.total_size = total;
         }
-        if !speed.is_empty() && !speed.eq_ignore_ascii_case("NA") && !speed.eq_ignore_ascii_case("Unknown B/s") {
+        if !speed.is_empty()
+            && !speed.eq_ignore_ascii_case("NA")
+            && !speed.eq_ignore_ascii_case("Unknown B/s")
+        {
             progress.speed = speed;
         }
-        if !eta.is_empty() && !eta.eq_ignore_ascii_case("NA") && !eta.eq_ignore_ascii_case("Unknown") {
+        if !eta.is_empty()
+            && !eta.eq_ignore_ascii_case("NA")
+            && !eta.eq_ignore_ascii_case("Unknown")
+        {
             progress.eta = eta;
         }
-        progress.downloaded_size = estimate_downloaded_size(progress.progress_percent, &progress.total_size);
+        progress.downloaded_size =
+            estimate_downloaded_size(progress.progress_percent, &progress.total_size);
         progress.message = if progress.progress_percent >= 100 {
             "下载完成，处理文件中".to_string()
         } else {
@@ -439,7 +448,6 @@ fn update_progress_from_line(progress: &mut YoutubeDownloadProgressEvent, raw: &
         progress.message = "合并音视频".to_string();
         return;
     }
-
 }
 
 fn parse_pipe_progress_line(line: &str) -> Option<(u32, String, String, String)> {
@@ -636,7 +644,11 @@ fn resolve_yt_dlp_binary() -> Result<PathBuf, String> {
 }
 
 fn detect_downloaded_file_path(stdout: &str, output_dir: &Path) -> Option<PathBuf> {
-    for line in stdout.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
         if let Some(path) = parse_merged_output_path(line) {
             if path.is_file() && is_media_file(&path) {
                 return Some(path);
@@ -644,8 +656,15 @@ fn detect_downloaded_file_path(stdout: &str, output_dir: &Path) -> Option<PathBu
         }
     }
 
-    for line in stdout.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        if let Some(path) = line.strip_prefix("[download] Destination: ").map(|v| PathBuf::from(v.trim())) {
+    for line in stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if let Some(path) = line
+            .strip_prefix("[download] Destination: ")
+            .map(|v| PathBuf::from(v.trim()))
+        {
             if path.is_file() && is_media_file(&path) {
                 return Some(path);
             }
@@ -667,12 +686,8 @@ fn detect_downloaded_file_path(stdout: &str, output_dir: &Path) -> Option<PathBu
         if a_size != b_size {
             return a_size.cmp(&b_size);
         }
-        let a_time = a_meta
-            .and_then(|m| m.modified().ok())
-            .unwrap_or(UNIX_EPOCH);
-        let b_time = b_meta
-            .and_then(|m| m.modified().ok())
-            .unwrap_or(UNIX_EPOCH);
+        let a_time = a_meta.and_then(|m| m.modified().ok()).unwrap_or(UNIX_EPOCH);
+        let b_time = b_meta.and_then(|m| m.modified().ok()).unwrap_or(UNIX_EPOCH);
         a_time.cmp(&b_time)
     });
 

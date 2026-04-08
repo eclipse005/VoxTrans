@@ -9,7 +9,15 @@ pub async fn run_translate_pipeline(
 
 pub async fn run_translate_summarize(
     request: &TranslatePipelineRequest,
-) -> Result<(String, Vec<super::types::TranslateTerminologyEntry>, usize, usize), String> {
+) -> Result<
+    (
+        String,
+        Vec<super::types::TranslateTerminologyEntry>,
+        usize,
+        usize,
+    ),
+    String,
+> {
     pipeline::summarize_translate_theme(request).await
 }
 

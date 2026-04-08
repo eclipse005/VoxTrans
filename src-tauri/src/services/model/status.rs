@@ -74,7 +74,8 @@ pub fn get_model_status(
                 })
                 .unwrap_or(0);
             let file_size = std::fs::metadata(&weights).map(|m| m.len()).unwrap_or(0);
-            let downloading_this_model = snapshot_in_memory.phase == ModelDownloadPhase::Downloading
+            let downloading_this_model = snapshot_in_memory.phase
+                == ModelDownloadPhase::Downloading
                 && active_model.as_deref() == Some(model.as_str());
             let downloaded_bytes = if ready {
                 file_size.max(expected_size)
@@ -86,11 +87,20 @@ pub fn get_model_status(
             let total_bytes = if ready {
                 file_size.max(expected_size)
             } else if downloading_this_model {
-                snapshot_in_memory.total_bytes.max(expected_size).max(downloaded_bytes)
+                snapshot_in_memory
+                    .total_bytes
+                    .max(expected_size)
+                    .max(downloaded_bytes)
             } else {
                 expected_size
             };
-            (required_files, missing_files, ready, downloaded_bytes, total_bytes)
+            (
+                required_files,
+                missing_files,
+                ready,
+                downloaded_bytes,
+                total_bytes,
+            )
         }
     };
 

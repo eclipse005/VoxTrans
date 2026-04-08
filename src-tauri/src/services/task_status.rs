@@ -38,4 +38,3 @@ pub fn workspace_status_from_db(status: &str) -> &'static str {
         _ => "queued",
     }
 }
-

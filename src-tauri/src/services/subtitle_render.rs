@@ -18,7 +18,9 @@ pub struct BurnHardSubtitleResponse {
     pub output_path: String,
 }
 
-pub fn burn_hard_subtitle(request: BurnHardSubtitleRequest) -> Result<BurnHardSubtitleResponse, String> {
+pub fn burn_hard_subtitle(
+    request: BurnHardSubtitleRequest,
+) -> Result<BurnHardSubtitleResponse, String> {
     let media_path = Path::new(request.media_path.as_str());
     let segments = parse_final_subtitle_segments(&request.subtitle_segments_json);
     if segments.is_empty() {
@@ -157,8 +159,10 @@ fn build_ass_text(style: &SubtitleRenderStyle, lines: &[AssDialogueLine]) -> Str
         _ => 2,
     };
 
-    let source_style = build_ass_style_line("Source", &style.source, alignment, style.layout.margin_v);
-    let target_style = build_ass_style_line("Target", &style.target, alignment, style.layout.margin_v);
+    let source_style =
+        build_ass_style_line("Source", &style.source, alignment, style.layout.margin_v);
+    let target_style =
+        build_ass_style_line("Target", &style.target, alignment, style.layout.margin_v);
 
     let mut output = String::new();
     output.push_str("[Script Info]\n");
@@ -171,7 +175,9 @@ fn build_ass_text(style: &SubtitleRenderStyle, lines: &[AssDialogueLine]) -> Str
     output.push_str(&source_style);
     output.push_str(&target_style);
     output.push_str("\n[Events]\n");
-    output.push_str("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
+    output.push_str(
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
+    );
     for line in lines {
         output.push_str(&format!(
             "Dialogue: {},{},{},{},,0,0,{},,{}\n",
@@ -186,13 +192,26 @@ fn build_ass_text(style: &SubtitleRenderStyle, lines: &[AssDialogueLine]) -> Str
     output
 }
 
-fn build_ass_style_line(name: &str, style: &SubtitleLineStyle, alignment: u8, margin_v: u32) -> String {
+fn build_ass_style_line(
+    name: &str,
+    style: &SubtitleLineStyle,
+    alignment: u8,
+    margin_v: u32,
+) -> String {
     let font_name = style.font_family.trim();
-    let font_name = if font_name.is_empty() { "Arial" } else { font_name };
+    let font_name = if font_name.is_empty() {
+        "Arial"
+    } else {
+        font_name
+    };
     let font_size = style.font_size.clamp(16, 96);
     let outline = style.outline.clamp(0.0, 8.0);
     let shadow = style.shadow.clamp(0.0, 8.0);
-    let border_style = if style.border_style.trim() == "box" { 3 } else { 1 };
+    let border_style = if style.border_style.trim() == "box" {
+        3
+    } else {
+        1
+    };
     let border_opacity = style.border_opacity.clamp(0, 100);
     let primary_color = hex_to_ass_color(&style.primary_color);
     let outline_color = hex_to_ass_color_with_opacity(&style.outline_color, border_opacity);
@@ -218,17 +237,15 @@ fn run_ffmpeg_burn(media_path: &Path, ass_path: &Path, output_path: &Path) -> Re
         true,
     ) {
         Ok(()) => Ok(()),
-        Err(copy_err) => {
-            execute_ffmpeg_burn(
-                media_path,
-                ass_path,
-                output_path,
-                ass_name,
-                target_video_bitrate_kbps,
-                false,
-            )
-            .map_err(|aac_err| format!("{copy_err}; 回退 AAC 后仍失败: {aac_err}"))
-        }
+        Err(copy_err) => execute_ffmpeg_burn(
+            media_path,
+            ass_path,
+            output_path,
+            ass_name,
+            target_video_bitrate_kbps,
+            false,
+        )
+        .map_err(|aac_err| format!("{copy_err}; 回退 AAC 后仍失败: {aac_err}")),
     }
 }
 
@@ -313,9 +330,16 @@ fn probe_source_video_bitrate_kbps(media_path: &Path) -> Option<u32> {
     let streams = value.get("streams")?.as_array()?;
     let raw_bps = streams
         .iter()
-        .find(|stream| stream.get("codec_type").and_then(serde_json::Value::as_str) == Some("video"))
+        .find(|stream| {
+            stream.get("codec_type").and_then(serde_json::Value::as_str) == Some("video")
+        })
         .and_then(|stream| stream.get("bit_rate"))
-        .and_then(|bit_rate| bit_rate.as_str().and_then(|v| v.parse::<u64>().ok()).or_else(|| bit_rate.as_u64()))?;
+        .and_then(|bit_rate| {
+            bit_rate
+                .as_str()
+                .and_then(|v| v.parse::<u64>().ok())
+                .or_else(|| bit_rate.as_u64())
+        })?;
     if raw_bps < 1_000 {
         return None;
     }

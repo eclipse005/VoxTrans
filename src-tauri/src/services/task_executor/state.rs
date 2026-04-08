@@ -197,10 +197,11 @@ pub(super) fn load_translate_snapshot(context: &TaskContext) -> Option<Translate
     let target_srt = output.get("targetSrt")?.as_str()?.to_string();
     let bilingual_srt_source_first = output.get("bilingualSrtSourceFirst")?.as_str()?.to_string();
     let bilingual_srt_target_first = output.get("bilingualSrtTargetFirst")?.as_str()?.to_string();
-    let segments = serde_json::from_value::<Vec<crate::services::translate::types::TranslateSegment>>(
-        output.get("segments")?.clone(),
-    )
-    .ok()?;
+    let segments =
+        serde_json::from_value::<Vec<crate::services::translate::types::TranslateSegment>>(
+            output.get("segments")?.clone(),
+        )
+        .ok()?;
     if segments.is_empty() {
         return None;
     }
@@ -213,7 +214,9 @@ pub(super) fn load_translate_snapshot(context: &TaskContext) -> Option<Translate
     })
 }
 
-pub(super) fn load_segment_optimize_snapshot(context: &TaskContext) -> Option<SegmentOptimizeSnapshot> {
+pub(super) fn load_segment_optimize_snapshot(
+    context: &TaskContext,
+) -> Option<SegmentOptimizeSnapshot> {
     load_segment_optimize_stage_snapshot(context, STAGE_SEGMENT_OPTIMIZE)
 }
 
@@ -237,10 +240,7 @@ pub(super) fn count_segments_from_json(raw: &str) -> i64 {
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(raw) else {
         return 0;
     };
-    parsed
-        .as_array()
-        .map(|arr| arr.len() as i64)
-        .unwrap_or(0)
+    parsed.as_array().map(|arr| arr.len() as i64).unwrap_or(0)
 }
 
 pub(super) fn parse_tokens_from_segments(raw: &str) -> Vec<TranslateToken> {
@@ -311,10 +311,11 @@ fn load_segment_optimize_stage_snapshot(
         return None;
     }
     let output = &context.stages.segment_optimize.output;
-    let segments = serde_json::from_value::<Vec<crate::services::translate::types::TranslateSegment>>(
-        output.get("segments")?.clone(),
-    )
-    .ok()?;
+    let segments =
+        serde_json::from_value::<Vec<crate::services::translate::types::TranslateSegment>>(
+            output.get("segments")?.clone(),
+        )
+        .ok()?;
     if segments.is_empty() {
         return None;
     }

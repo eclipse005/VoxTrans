@@ -223,8 +223,10 @@ pub async fn save_app_settings(
         &request.settings.llm_concurrency.clamp(1, 16).to_string(),
     )
     .await?;
-    let terminology_groups = normalize_terminology_groups(request.settings.terminology_groups.clone());
-    let terminology_json = serde_json::to_string(&terminology_groups).map_err(|err| err.to_string())?;
+    let terminology_groups =
+        normalize_terminology_groups(request.settings.terminology_groups.clone());
+    let terminology_json =
+        serde_json::to_string(&terminology_groups).map_err(|err| err.to_string())?;
     set_setting(&mut tx, KEY_TERMINOLOGY_GROUPS, &terminology_json).await?;
     set_setting(
         &mut tx,
@@ -272,9 +274,16 @@ pub async fn save_app_settings(
         normalize_subtitle_burn_mode(&request.settings.subtitle_burn_mode),
     )
     .await?;
-    let subtitle_render_style = normalize_subtitle_render_style(request.settings.subtitle_render_style.clone());
-    let subtitle_render_style_json = serde_json::to_string(&subtitle_render_style).map_err(|err| err.to_string())?;
-    set_setting(&mut tx, KEY_SUBTITLE_RENDER_STYLE, &subtitle_render_style_json).await?;
+    let subtitle_render_style =
+        normalize_subtitle_render_style(request.settings.subtitle_render_style.clone());
+    let subtitle_render_style_json =
+        serde_json::to_string(&subtitle_render_style).map_err(|err| err.to_string())?;
+    set_setting(
+        &mut tx,
+        KEY_SUBTITLE_RENDER_STYLE,
+        &subtitle_render_style_json,
+    )
+    .await?;
     tx.commit().await.map_err(|e| e.to_string())
 }
 
@@ -433,7 +442,10 @@ fn normalize_subtitle_render_style(style: SubtitleRenderStyle) -> SubtitleRender
     }
 }
 
-fn normalize_subtitle_line_style(style: SubtitleLineStyle, fallback: SubtitleLineStyle) -> SubtitleLineStyle {
+fn normalize_subtitle_line_style(
+    style: SubtitleLineStyle,
+    fallback: SubtitleLineStyle,
+) -> SubtitleLineStyle {
     SubtitleLineStyle {
         font_family: {
             let value = style.font_family.trim();
@@ -509,7 +521,10 @@ fn normalize_terminology_groups(groups: Vec<TerminologyGroup>) -> Vec<Terminolog
     normalized
 }
 
-fn normalize_terminology_terms(terms: Vec<TerminologyTerm>, group_idx: usize) -> Vec<TerminologyTerm> {
+fn normalize_terminology_terms(
+    terms: Vec<TerminologyTerm>,
+    group_idx: usize,
+) -> Vec<TerminologyTerm> {
     let mut normalized = Vec::new();
     let mut seen_term_ids = HashSet::new();
 

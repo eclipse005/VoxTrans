@@ -14,7 +14,11 @@ pub fn init_task_usage_pool(pool: SqlitePool) {
     let _ = TASK_USAGE_POOL.set(pool);
 }
 
-pub async fn record_llm_usage(task_id: &str, phase: &str, usage: LlmTokenUsage) -> Result<(), String> {
+pub async fn record_llm_usage(
+    task_id: &str,
+    phase: &str,
+    usage: LlmTokenUsage,
+) -> Result<(), String> {
     if task_id.trim().is_empty() {
         return Ok(());
     }
@@ -64,9 +68,9 @@ pub async fn get_task_total_tokens(task_id: &str) -> Result<u64, String> {
     let total = match sqlx::query_scalar::<_, i64>(
         "SELECT COALESCE(SUM(total_tokens), 0) FROM task_llm_usage_phase WHERE task_id = ?",
     )
-        .bind(task_id)
-        .fetch_optional(pool)
-        .await
+    .bind(task_id)
+    .fetch_optional(pool)
+    .await
     {
         Ok(v) => v.unwrap_or(0),
         Err(_) => 0,

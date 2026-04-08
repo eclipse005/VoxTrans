@@ -78,11 +78,7 @@ pub fn clear_task_logs(request: ClearTaskLogsRequest) -> Result<(), String> {
     };
 
     for channel in channels {
-        let log_path = task_log_path(
-            &request.task_id,
-            request.media_path.as_deref(),
-            &channel,
-        )?;
+        let log_path = task_log_path(&request.task_id, request.media_path.as_deref(), &channel)?;
         if let Some(parent) = log_path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
@@ -92,7 +88,11 @@ pub fn clear_task_logs(request: ClearTaskLogsRequest) -> Result<(), String> {
     Ok(())
 }
 
-fn task_log_path(task_id: &str, media_path: Option<&str>, channel: &str) -> Result<PathBuf, String> {
+fn task_log_path(
+    task_id: &str,
+    media_path: Option<&str>,
+    channel: &str,
+) -> Result<PathBuf, String> {
     if task_id.trim().is_empty() {
         return Err("taskId is required".to_string());
     }

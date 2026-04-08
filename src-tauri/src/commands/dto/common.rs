@@ -31,7 +31,9 @@ pub struct TaskRunCommandRecord {
     pub translated_srt: String,
 }
 
-pub fn from_service_task_run(record: crate::services::task_engine::TaskRunRecord) -> TaskRunCommandRecord {
+pub fn from_service_task_run(
+    record: crate::services::task_engine::TaskRunRecord,
+) -> TaskRunCommandRecord {
     TaskRunCommandRecord {
         id: record.id,
         media_path: record.media_path,

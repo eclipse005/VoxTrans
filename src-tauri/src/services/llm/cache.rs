@@ -1,5 +1,5 @@
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::fs::OpenOptions;
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
@@ -147,10 +147,9 @@ pub fn append_cache_entry(
     if append_entry_line(&path, &entry).is_err() {
         return;
     }
-    state.by_validator_key.insert(
-        (cache_key, validator_cache_key),
-        entry,
-    );
+    state
+        .by_validator_key
+        .insert((cache_key, validator_cache_key), entry);
     prune_if_needed(&path, &mut state);
     store_cache_state(path, state);
 }
@@ -218,7 +217,9 @@ fn cache_state_map() -> &'static Mutex<HashMap<PathBuf, CacheFileState>> {
 }
 
 fn load_or_get_cache_state(path: &Path) -> Result<CacheFileState, String> {
-    let mut guard = cache_state_map().lock().map_err(|_| "cache state lock poisoned".to_string())?;
+    let mut guard = cache_state_map()
+        .lock()
+        .map_err(|_| "cache state lock poisoned".to_string())?;
     if let Some(state) = guard.get(path) {
         if state.loaded {
             return Ok(state.clone());
@@ -308,11 +309,7 @@ fn prune_if_needed(path: &Path, state: &mut CacheFileState) {
     if state.by_validator_key.len() <= MAX_CACHE_ENTRIES {
         return;
     }
-    let mut entries = state
-        .by_validator_key
-        .values()
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut entries = state.by_validator_key.values().cloned().collect::<Vec<_>>();
     entries.sort_by_key(|entry| entry.created_at_unix_sec);
     if entries.len() > MAX_CACHE_ENTRIES {
         let keep_from = entries.len().saturating_sub(MAX_CACHE_ENTRIES);
