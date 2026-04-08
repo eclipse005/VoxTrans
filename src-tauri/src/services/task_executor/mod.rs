@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
+use tauri::async_runtime::spawn_blocking;
 mod events;
 pub use events::TaskStateChangedEvent;
 mod runtime;
@@ -635,13 +636,16 @@ async fn maybe_auto_burn_hard_subtitle(
     persist_task_context(pool, &task.id, context, projection).await?;
     emit_task_state_changed(app, &build_task_state_changed_event(task, projection));
 
-    let response = subtitle_render::burn_hard_subtitle(subtitle_render::BurnHardSubtitleRequest {
+    let request = subtitle_render::BurnHardSubtitleRequest {
         task_id: task.id.clone(),
         media_path: task.media_path.clone(),
         subtitle_segments_json: subtitle_segments_json.to_string(),
         burn_mode: settings.subtitle_burn_mode,
         style: settings.subtitle_render_style,
-    })?;
+    };
+    let response = spawn_blocking(move || subtitle_render::burn_hard_subtitle(request))
+        .await
+        .map_err(|err| err.to_string())??;
     Ok(Some(response.output_path))
 }
 

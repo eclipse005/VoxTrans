@@ -166,7 +166,11 @@ pub(super) async fn run_separate_stage(
             let editor_snapshot = editor_snapshot.clone();
             async move {
                 if !settings.enable_vocal_separation {
-                    return crate::services::demucs::prepare_audio_for_asr(&task_id, &media_path);
+                    return spawn_blocking(move || {
+                        crate::services::demucs::prepare_audio_for_asr(&task_id, &media_path)
+                    })
+                    .await
+                    .map_err(|err| err.to_string())?;
                 }
                 publish_processing_snapshot(
                     &pool,
@@ -757,6 +761,9 @@ async fn publish_processing_snapshot(
     Ok(())
 }
 
+/// Minimum interval between progress updates to avoid DB write flooding
+const MIN_PROGRESS_INTERVAL_MS: u64 = 500;
+
 async fn drain_progress_snapshots(
     pool: SqlitePool,
     app: Option<tauri::AppHandle>,
@@ -764,24 +771,56 @@ async fn drain_progress_snapshots(
     editor: TaskProjectionEditorState,
     mut rx: UnboundedReceiver<StageProgressMessage>,
 ) -> Result<(), String> {
+    let mut last_publish_ms: u64 = 0;
+    let mut pending_snapshot: Option<StageProgressSnapshot> = None;
+
     while let Some(message) = rx.recv().await {
         match message {
             StageProgressMessage::Snapshot(snapshot) => {
-                publish_processing_snapshot(
-                    &pool,
-                    app.as_ref(),
-                    &task,
-                    snapshot.current_stage,
-                    snapshot.queue_phase,
-                    &snapshot.phase_detail,
-                    snapshot.progress_percent,
-                    snapshot.current,
-                    snapshot.total,
-                    &editor,
-                )
-                .await?;
+                // Throttle: only publish at most once per MIN_PROGRESS_INTERVAL_MS
+                let now_ms = (unix_now() as u64).saturating_mul(1000); // convert to milliseconds
+                let elapsed = now_ms.saturating_sub(last_publish_ms);
+
+                if elapsed >= MIN_PROGRESS_INTERVAL_MS {
+                    // Enough time has passed, publish immediately
+                    last_publish_ms = now_ms;
+                    publish_processing_snapshot(
+                        &pool,
+                        app.as_ref(),
+                        &task,
+                        snapshot.current_stage,
+                        snapshot.queue_phase,
+                        &snapshot.phase_detail,
+                        snapshot.progress_percent,
+                        snapshot.current,
+                        snapshot.total,
+                        &editor,
+                    )
+                    .await?;
+                } else {
+                    // Too soon, buffer the latest snapshot
+                    pending_snapshot = Some(snapshot);
+                }
             }
-            StageProgressMessage::Close => break,
+            StageProgressMessage::Close => {
+                // On close, publish any pending snapshot
+                if let Some(snapshot) = pending_snapshot.take() {
+                    publish_processing_snapshot(
+                        &pool,
+                        app.as_ref(),
+                        &task,
+                        snapshot.current_stage,
+                        snapshot.queue_phase,
+                        &snapshot.phase_detail,
+                        snapshot.progress_percent,
+                        snapshot.current,
+                        snapshot.total,
+                        &editor,
+                    )
+                    .await?;
+                }
+                break;
+            }
         }
     }
     Ok(())

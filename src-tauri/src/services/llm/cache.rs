@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -18,8 +18,8 @@ const CACHE_FILE_NAME: &str = "gpt.log";
 const CACHE_VERSION: u32 = 1;
 const MAX_CACHE_ENTRIES: usize = 4000;
 
-static CACHE_FILE_LOCK: Mutex<()> = Mutex::new(());
-static CACHE_FILE_STATE: OnceLock<Mutex<HashMap<PathBuf, CacheFileState>>> = OnceLock::new();
+/// Use RwLock for better concurrent read access
+static CACHE_FILE_STATE: OnceLock<RwLock<HashMap<PathBuf, Arc<CacheFileState>>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,8 +88,8 @@ pub fn read_cache_hit(
     user_prompt: &str,
     response_validator: Option<&JsonResponseValidator>,
 ) -> Option<CacheHit> {
-    let _guard = CACHE_FILE_LOCK.lock().ok()?;
     let path = cache_file_path(context)?;
+    // load_or_get_cache_state uses read lock internally
     let state = load_or_get_cache_state(&path).ok()?;
     let required_keys = normalized_required_keys(response_validator);
     let cache_key = compute_cache_key(context, config, system_prompt, user_prompt);
@@ -114,15 +114,15 @@ pub fn append_cache_entry(
     let Some(path) = cache_file_path(context) else {
         return;
     };
-    let _guard = match CACHE_FILE_LOCK.lock() {
+
+    // Acquire write lock for the entire operation
+    let mut guard = match cache_state_map().write() {
         Ok(v) => v,
         Err(_) => return,
     };
 
-    let mut state = match load_or_get_cache_state(&path) {
-        Ok(state) => state,
-        Err(_) => CacheFileState::default(),
-    };
+    // Get or create state with write lock held
+    let state = guard.entry(path.clone()).or_insert_with(|| Arc::new(CacheFileState::default()));
     let required_keys = normalized_required_keys(response_validator);
     let cache_key = compute_cache_key(context, config, system_prompt, user_prompt);
     let validator_cache_key = validator_key(&required_keys);
@@ -147,11 +147,14 @@ pub fn append_cache_entry(
     if append_entry_line(&path, &entry).is_err() {
         return;
     }
-    state
+
+    // Clone to get mutable reference since we can't mutate Arc directly
+    let mut state_inner = (**state).clone();
+    state_inner
         .by_validator_key
         .insert((cache_key, validator_cache_key), entry);
-    prune_if_needed(&path, &mut state);
-    store_cache_state(path, state);
+    prune_if_needed(&path, &mut state_inner);
+    *state = Arc::new(state_inner);
 }
 
 fn cache_file_path(context: &LlmCallContext) -> Option<std::path::PathBuf> {
@@ -212,17 +215,32 @@ fn unix_now_sec() -> u64 {
         .unwrap_or(0)
 }
 
-fn cache_state_map() -> &'static Mutex<HashMap<PathBuf, CacheFileState>> {
-    CACHE_FILE_STATE.get_or_init(|| Mutex::new(HashMap::new()))
+fn cache_state_map() -> &'static RwLock<HashMap<PathBuf, Arc<CacheFileState>>> {
+    CACHE_FILE_STATE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-fn load_or_get_cache_state(path: &Path) -> Result<CacheFileState, String> {
+fn load_or_get_cache_state(path: &Path) -> Result<Arc<CacheFileState>, String> {
+    // First try with read lock
+    {
+        let guard = cache_state_map()
+            .read()
+            .map_err(|_| "cache state lock poisoned".to_string())?;
+        if let Some(state) = guard.get(path) {
+            if state.loaded {
+                return Ok(Arc::clone(state));
+            }
+        }
+    }
+
+    // Not in cache or not loaded, need to write
     let mut guard = cache_state_map()
-        .lock()
+        .write()
         .map_err(|_| "cache state lock poisoned".to_string())?;
+
+    // Double-check after acquiring write lock
     if let Some(state) = guard.get(path) {
         if state.loaded {
-            return Ok(state.clone());
+            return Ok(Arc::clone(state));
         }
     }
 
@@ -232,21 +250,15 @@ fn load_or_get_cache_state(path: &Path) -> Result<CacheFileState, String> {
         entries = entries.split_off(keep_from);
     }
     let migrated = rewrite_entries_as_ndjson(path, &entries).is_ok();
-    let state = CacheFileState {
+    let state = Arc::new(CacheFileState {
         loaded: true,
         by_validator_key: build_entry_index(entries),
-    };
-    guard.insert(path.to_path_buf(), state.clone());
+    });
+    guard.insert(path.to_path_buf(), Arc::clone(&state));
     if !migrated && path.exists() {
         // Keep serving from memory even if rewrite failed.
     }
     Ok(state)
-}
-
-fn store_cache_state(path: PathBuf, state: CacheFileState) {
-    if let Ok(mut guard) = cache_state_map().lock() {
-        guard.insert(path, state);
-    }
 }
 
 fn build_entry_index(entries: Vec<CacheEntry>) -> HashMap<(String, String), CacheEntry> {
