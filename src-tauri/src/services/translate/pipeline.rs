@@ -623,21 +623,19 @@ fn next_lines_from_batches(batches: &[SegmentBatch], batch_index: usize) -> Vec<
 }
 
 fn build_shared_translation_prompt(
-    request: &TranslatePipelineRequest,
+    _request: &TranslatePipelineRequest,
     summary_profile: &SummaryProfile,
-    batch_index: usize,
-    total_batches: usize,
+    _batch_index: usize,
+    _total_batches: usize,
     previous_lines: &[String],
     next_lines: &[String],
-    current_lines: &[String],
+    _current_lines: &[String],
     focus_terms: &[TranslateTerminologyPromptEntry],
     jit_supporting_terms: &[TranslateTerminologyPromptEntry],
 ) -> String {
     let stable_payload = serde_json::json!({
-        "source_language": request.source_lang,
-        "target_language": request.target_lang,
         "theme": summary_profile.theme,
-        "primary_terms": summary_profile
+        "terms": summary_profile
             .primary_terminology_entries
             .iter()
             .map(|term| serde_json::json!({
@@ -645,32 +643,23 @@ fn build_shared_translation_prompt(
                 "tgt": term.target,
             }))
             .collect::<Vec<_>>(),
-        "constraints": {
-            "strict_term_compliance": true,
-            "term_notes_are_reference_only": true,
-            "preserve_line_semantic_ownership": true,
-            "keep_line_count_unchanged": true
-        }
     });
     let batch_payload = serde_json::json!({
-        "batch_index": batch_index,
-        "total_batches": total_batches,
-        "previous_lines": previous_lines,
-        "next_lines": next_lines,
-        "focus_terms": focus_terms.iter().map(|term| serde_json::json!({
+        "prev": previous_lines,
+        "next": next_lines,
+        "focus": focus_terms.iter().map(|term| serde_json::json!({
             "src": term.source,
             "tgt": term.target,
         })).collect::<Vec<_>>(),
-        "jit_supporting_terms": jit_supporting_terms.iter().map(|term| serde_json::json!({
+        "support": jit_supporting_terms.iter().map(|term| serde_json::json!({
             "src": term.source,
             "tgt": term.target,
         })).collect::<Vec<_>>(),
-        "current_line_count": current_lines.len(),
     });
     let stable = serde_json::to_string_pretty(&stable_payload).unwrap_or_else(|_| "{}".to_string());
     let dynamic = serde_json::to_string_pretty(&batch_payload).unwrap_or_else(|_| "{}".to_string());
     format!(
-        "### Stable Video Context\n```json\n{stable}\n```\n\n### Dynamic Batch Context\n```json\n{dynamic}\n```"
+        "### Video Context\n```json\n{stable}\n```\n\n### Local Context\n```json\n{dynamic}\n```"
     )
 }
 

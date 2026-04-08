@@ -171,7 +171,7 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
                 (i + 1).to_string(),
                 serde_json::json!({
                     "origin": line,
-                    "translation": format!("{} translation {}.", input.target_lang, i + 1),
+                    "translation": "",
                 }),
             )
         })
@@ -181,39 +181,27 @@ pub fn build_translate_user_prompt(input: &TranslatePromptInput) -> String {
 
     format!(
         r#"## Role
-You are a professional Netflix subtitle translator, fluent in both {source_lang} and {target_lang}, as well as their respective cultures.
-Your expertise lies in producing high-quality translations that are:
-- Accurate and faithful to original meaning (?)
-- Natural and fluent in target language expression (?)
-- Appropriate in style and tone for content (?)
+You are a professional subtitle translator ({source_lang} → {target_lang}).
 
 ## Task
-Translate the following {source_lang} subtitles into {target_lang} line by line.
+Translate subtitles accurately. Keep exact line count. Output valid JSON only.
 
 {shared_prompt}
 
-## Translation Principles
-1. Accurately convey original meaning without arbitrary additions or omissions
-2. Use idiomatic {target_lang} that flows naturally
-3. Treat Stable Video Context as the global source of truth for theme and high-priority terminology
-4. If a `primary_term` is relevant, use its exact `tgt` form consistently; do not paraphrase or normalize it
-5. `focus_terms` are exact local term hits in the current batch and should be prioritized strongly
-6. `jit_supporting_terms` are on-demand supplementary hints; use them only when they clearly match the source meaning
-7. Use Dynamic Batch Context only to resolve local ambiguity from nearby lines
-8. Translate each current input line only; you may reorder within a line for natural expression, but never move meaning across lines
-9. Keep the number of output lines exactly the same as the number of input lines
+## Core Rules
+- Preserve meaning, no additions or omissions
+- Use idiomatic {target_lang}
+- Reorder within line for natural expression is OK; never move meaning across lines
 
 ## Input
-<subtitles>
 {lines}
-</subtitles>
 
-## Output in only JSON format and no other text
+## Output
 ```json
 {json_format}
 ```
 
-Note: Start your answer with ```json and end with ```, do not add any other text."#,
+Start with ```json and end with ```."#,
         source_lang = input.source_lang,
         target_lang = input.target_lang,
         shared_prompt = input.shared_prompt,

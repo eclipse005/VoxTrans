@@ -1,5 +1,4 @@
 use parakeet_rs::TimedToken;
-use crate::subtitle::text_rules::strip_trailing_closers;
 
 use super::srt::SubtitleSegment;
 
@@ -86,22 +85,17 @@ pub fn split_english_segments(
 
 pub fn split_translate_segments(
     words: &[WordToken],
-    subtitle_max_words_per_segment: usize,
+    _subtitle_max_words_per_segment: usize,
 ) -> Vec<SubtitleSegment> {
     if words.is_empty() {
         return Vec::new();
     }
 
-    let base_words = subtitle_max_words_per_segment.max(1);
-    let overlong_threshold = base_words.saturating_mul(2).clamp(30, 300);
+    // 翻译断句：只按停顿(>2s)和结束符号断句，保持完整句子
+    // 不做逗号/连接词再分割，保留完整上下文供翻译
     let semantic_segments = split_by_semantic_boundary(words, 2000.0);
-    let mut out_groups: Vec<Vec<WordToken>> = Vec::new();
 
-    for segment in semantic_segments {
-        out_groups.extend(split_overlong_translate_segment(&segment, overlong_threshold));
-    }
-
-    out_groups
+    semantic_segments
         .into_iter()
         .filter(|group| !group.is_empty())
         .map(|group| segment_from_words(&group))
@@ -110,112 +104,6 @@ pub fn split_translate_segments(
 
 pub fn plain_text_from_segments(segments: &[SubtitleSegment]) -> String {
     assemble_plain_text(segments)
-}
-
-fn split_overlong_translate_segment(words: &[WordToken], threshold: usize) -> Vec<Vec<WordToken>> {
-    if words.len() <= threshold || words.len() < 2 {
-        return vec![words.to_vec()];
-    }
-
-    let split_idx = find_split_index_by_comma(words).or_else(|| find_split_index_before_connector(words));
-    let Some(split_idx) = split_idx else {
-        // If no comma/connector boundary exists, keep whole sentence for downstream LLM refinement.
-        return vec![words.to_vec()];
-    };
-
-    if split_idx + 1 >= words.len() {
-        return vec![words.to_vec()];
-    }
-
-    let left = &words[..=split_idx];
-    let right = &words[split_idx + 1..];
-    if left.is_empty() || right.is_empty() {
-        return vec![words.to_vec()];
-    }
-
-    let mut out = split_overlong_translate_segment(left, threshold);
-    out.extend(split_overlong_translate_segment(right, threshold));
-    out
-}
-
-fn find_split_index_by_comma(words: &[WordToken]) -> Option<usize> {
-    let min_side = 3usize;
-    let mut candidates: Vec<usize> = Vec::new();
-    for i in 0..words.len().saturating_sub(1) {
-        let left_size = i + 1;
-        let right_size = words.len().saturating_sub(left_size);
-        if left_size < min_side || right_size < min_side {
-            continue;
-        }
-        if ends_with_comma(&words[i].word) {
-            candidates.push(i);
-        }
-    }
-    choose_nearest_to_center(candidates, words.len())
-}
-
-fn find_split_index_before_connector(words: &[WordToken]) -> Option<usize> {
-    let min_side = 3usize;
-    let mut candidates: Vec<usize> = Vec::new();
-    for i in 1..words.len() {
-        let left_size = i;
-        let right_size = words.len().saturating_sub(i);
-        if left_size < min_side || right_size < min_side {
-            continue;
-        }
-        if is_english_connector(&words[i].word) {
-            candidates.push(i - 1);
-        }
-    }
-    choose_nearest_to_center(candidates, words.len())
-}
-
-fn choose_nearest_to_center(candidates: Vec<usize>, len: usize) -> Option<usize> {
-    if candidates.is_empty() || len < 2 {
-        return None;
-    }
-    let center = len / 2;
-    candidates.into_iter().min_by_key(|idx| idx.abs_diff(center))
-}
-
-fn ends_with_comma(word: &str) -> bool {
-    strip_trailing_closers(word.trim())
-        .chars()
-        .last()
-        .map(|c| matches!(c, ',' | '，' | '、'))
-        .unwrap_or(false)
-}
-
-fn is_english_connector(word: &str) -> bool {
-    const CONNECTORS: &[&str] = &[
-        "and",
-        "or",
-        "but",
-        "yet",
-        "however",
-        "because",
-        "if",
-        "when",
-        "where",
-        "while",
-        "although",
-        "though",
-        "therefore",
-        "consequently",
-        "so",
-        "then",
-        "also",
-        "meanwhile",
-    ];
-    let normalized = strip_trailing_closers(word.trim())
-        .trim_matches(|c: char| {
-            matches!(
-                c,
-                '.' | ',' | '!' | '?' | ':' | ';' | '。' | '，' | '！' | '？' | '：' | '；' | '、'
-            )
-        })
-        .to_ascii_lowercase();
-    CONNECTORS.contains(&normalized.as_str())
 }
 
 fn is_standalone_punctuation_token(token: &str) -> bool {

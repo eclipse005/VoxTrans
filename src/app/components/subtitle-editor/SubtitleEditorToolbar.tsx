@@ -58,7 +58,6 @@ export default function SubtitleEditorToolbar({
               value={findText}
               onChange={(e) => onFindTextChange(e.target.value)}
               placeholder="查找文本"
-              disabled={!canEdit}
             />
             <input
               className="apple-input subtitle-find-input"
@@ -72,7 +71,7 @@ export default function SubtitleEditorToolbar({
                 className="subtitle-find-nav-btn"
                 type="button"
                 onClick={onPrevMatch}
-                disabled={!canEdit || !findKeyword || matchCount === 0}
+                disabled={!findKeyword || matchCount === 0}
                 aria-label="上一条匹配"
                 title="上一条匹配"
               >
@@ -83,7 +82,7 @@ export default function SubtitleEditorToolbar({
                 className="subtitle-find-nav-btn"
                 type="button"
                 onClick={onNextMatch}
-                disabled={!canEdit || !findKeyword || matchCount === 0}
+                disabled={!findKeyword || matchCount === 0}
                 aria-label="下一条匹配"
                 title="下一条匹配"
               >
