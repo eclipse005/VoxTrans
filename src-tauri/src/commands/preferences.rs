@@ -1,7 +1,5 @@
-use tauri::State;
-
-use crate::app_state::AppState;
 use crate::services::preferences::{self};
+use tauri::AppHandle;
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -129,9 +127,9 @@ pub struct SaveAppSettingsCommandRequest {
 
 #[tauri::command]
 pub async fn load_user_preferences(
-    state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<UserPreferencesCommandResponse, String> {
-    let response = preferences::load_user_preferences(&state.pool).await?;
+    let response = preferences::load_user_preferences(&app).await?;
     Ok(UserPreferencesCommandResponse {
         settings: from_service_settings(response.settings),
     })
@@ -139,11 +137,11 @@ pub async fn load_user_preferences(
 
 #[tauri::command]
 pub async fn save_app_settings(
-    state: State<'_, AppState>,
+    app: AppHandle,
     request: SaveAppSettingsCommandRequest,
 ) -> Result<(), String> {
     preferences::save_app_settings(
-        &state.pool,
+        &app,
         &crate::services::preferences::SaveAppSettingsRequest {
             settings: to_service_settings(request.settings),
         },

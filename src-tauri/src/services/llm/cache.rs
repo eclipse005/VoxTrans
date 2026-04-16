@@ -122,7 +122,9 @@ pub fn append_cache_entry(
     };
 
     // Get or create state with write lock held
-    let state = guard.entry(path.clone()).or_insert_with(|| Arc::new(CacheFileState::default()));
+    let state = guard
+        .entry(path.clone())
+        .or_insert_with(|| Arc::new(CacheFileState::default()));
     let required_keys = normalized_required_keys(response_validator);
     let cache_key = compute_cache_key(context, config, system_prompt, user_prompt);
     let validator_cache_key = validator_key(&required_keys);

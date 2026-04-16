@@ -25,14 +25,8 @@ function phaseOrder(phase: string | undefined): number {
       return 40;
     case "segment":
       return 50;
-    case "summarize":
-      return 60;
     case "translate":
-      return 70;
-    case "segment_optimize":
-      return 80;
-    case "burning":
-      return 90;
+      return 60;
     default:
       return -1;
   }

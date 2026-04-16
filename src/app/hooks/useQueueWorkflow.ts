@@ -6,7 +6,6 @@ import { useYoutubeDownloadWorkflow } from "./useYoutubeDownloadWorkflow";
 import { useYtDlpManager } from "./useYtDlpManager";
 import type { QueueItem, SavedSettings } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
-import type { QueueRunMode } from "./queue/useQueueRunner";
 import type { QueueBatchMode } from "./queue/useQueueScheduler";
 
 type DispatchState = (action: AppAction) => void;
@@ -26,7 +25,6 @@ export function useQueueWorkflow({
   pushToast,
 }: UseQueueWorkflowArgs) {
   const queueRef = useRef(queue);
-  const taskModeRef = useRef<Map<string, QueueRunMode>>(new Map());
 
   useEffect(() => {
     queueRef.current = queue;
@@ -41,22 +39,12 @@ export function useQueueWorkflow({
     pushToast,
   });
 
-  const { runBatch } = useQueueRunner({
+  const { runBatch, runQueuedByTaskIds } = useQueueRunner({
     dispatch,
     pushToast,
     isTaskPresent,
     settings,
   });
-
-  const setTaskMode = useCallback((taskId: string, mode: QueueRunMode) => {
-    taskModeRef.current.set(taskId, mode);
-  }, []);
-
-  const takeTaskMode = useCallback((taskId: string): QueueRunMode => {
-    const mode = taskModeRef.current.get(taskId) ?? "transcribe";
-    taskModeRef.current.delete(taskId);
-    return mode;
-  }, []);
 
   const {
     queueCount,
@@ -72,8 +60,7 @@ export function useQueueWorkflow({
     dispatch,
     pushToast,
     runBatch,
-    setTaskMode,
-    takeTaskMode,
+    runQueuedByTaskIds,
   });
 
   const {

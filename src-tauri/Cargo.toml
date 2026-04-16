@@ -19,3 +19,4 @@ hound = "3.5"
 voxtrans-core = { path = "../voxtrans-core" }
 tokio = { version = "1", features = ["rt", "sync", "time"] }
 font-kit = "0.14"
+async-trait = "0.1"

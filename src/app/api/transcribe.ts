@@ -1,12 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  BuildSegmentsResponse,
   DemucsModel,
   Provider,
-  TranslatePipelineRequest,
-  TranslatePipelineResponse,
   TranscribeResponse,
-  WordToken,
 } from "../../features/media/types";
 
 type AppendTaskLogRequest = {
@@ -31,27 +27,6 @@ type SeparateVocalsRequest = {
 
 type SeparateVocalsResponse = {
   vocalsPath: string;
-};
-
-type RunPostAsrPipelineRequest = {
-  taskId: string;
-  audioPath: string;
-  words: WordToken[];
-  subtitleMaxWordsPerSegment: number;
-  enablePunctuationOptimization: boolean;
-  translateApiKey: string;
-  translateBaseUrl: string;
-  translateModel: string;
-  llmConcurrency: number;
-};
-
-export type PostAsrPipelineResponse = {
-  text: string;
-  srt: string;
-  srtOutputPath: string;
-  segments: BuildSegmentsResponse["segments"];
-  words: TranscribeResponse["words"];
-  postAsrElapsedSec: number;
 };
 
 type SaveSrtRequest = {
@@ -97,12 +72,6 @@ export async function separateVocals(request: SeparateVocalsRequest): Promise<Se
   return invoke<SeparateVocalsResponse>("separate_vocals", { request });
 }
 
-export async function runPostAsrPipeline(
-  request: RunPostAsrPipelineRequest,
-): Promise<PostAsrPipelineResponse> {
-  return invoke<PostAsrPipelineResponse>("run_post_asr_pipeline", { request });
-}
-
 export async function saveSrt(request: SaveSrtRequest): Promise<void> {
   await invoke("save_srt", { request });
 }
@@ -113,10 +82,4 @@ export async function exportSrt(request: ExportSrtRequest): Promise<string> {
 
 export async function exportTaskSrts(request: ExportTaskSrtsRequest): Promise<string[]> {
   return invoke<string[]>("export_task_srts", { request });
-}
-
-export async function runTranslatePipeline(
-  request: TranslatePipelineRequest,
-): Promise<TranslatePipelineResponse> {
-  return invoke<TranslatePipelineResponse>("run_translate_pipeline", { request });
 }

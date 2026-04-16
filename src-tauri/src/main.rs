@@ -2,31 +2,25 @@
 
 mod app_state;
 mod commands;
-mod db;
 mod services;
 
 use std::sync::Arc;
 use tauri::Manager;
 
 fn main() {
-    services::task_worker::maybe_run_worker_mode_from_args();
+    commands::transcription::maybe_run_build_source_sentences_mode_from_args();
+    commands::translate::maybe_run_build_terminology_mode_from_args();
+    commands::translate::maybe_run_build_translation_mode_from_args();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let app_handle = app.handle().clone();
-            let pool = tauri::async_runtime::block_on(async { db::init_pool(&app_handle).await })?;
-            services::task_usage::init_task_usage_pool(pool.clone());
             app.manage(app_state::AppState {
-                pool,
                 asr_model_download: Arc::new(std::sync::Mutex::new(
                     app_state::ModelDownloadRuntime::default(),
                 )),
                 demucs_model_download: Arc::new(std::sync::Mutex::new(
                     app_state::ModelDownloadRuntime::default(),
-                )),
-                task_worker_runtime: Arc::new(std::sync::Mutex::new(
-                    app_state::TaskWorkerRuntime::default(),
                 )),
             });
             Ok(())
@@ -37,10 +31,9 @@ fn main() {
             commands::transcribe::separate_vocals,
             commands::file::save_srt,
             commands::file::export_srt,
-            commands::file::export_task_srts,
-            commands::subtitle::save_subtitle_editor,
-            commands::transcription::run_post_asr_pipeline,
-            commands::translate::run_translate_pipeline,
+            commands::transcription::build_source_sentences,
+            commands::translate::build_terminology_layer,
+            commands::translate::build_translation_layer,
             commands::translate::test_translate_llm,
             commands::file::get_file_size,
             commands::system::open_in_explorer,
@@ -56,20 +49,12 @@ fn main() {
             commands::preferences::save_app_settings,
             commands::workspace::load_workspace_state,
             commands::workspace::load_workspace_task,
-            commands::task_engine::register_task_upload,
-            commands::task_engine::enqueue_task_run,
-            commands::task_engine::list_task_runs,
-            commands::task_engine::get_task_run,
-            commands::task_engine::execute_task_run,
-            commands::task_engine::execute_task_batch,
-            commands::task_engine::enqueue_and_execute_task_batch,
-            commands::task_engine::delete_tasks,
-            commands::youtube::download_youtube_to_task_run,
-            commands::youtube::get_youtube_download_progress,
-            commands::youtube::list_youtube_download_progress,
-            commands::youtube::cancel_youtube_download,
-            commands::youtube::get_yt_dlp_version,
-            commands::youtube::update_yt_dlp,
+            commands::workspace::delete_tasks,
+            commands::workspace::register_task_upload,
+            commands::workspace::enqueue_task_run,
+            commands::workspace::execute_task_run,
+            commands::workspace::execute_task_batch,
+            commands::workspace::enqueue_and_execute_task_batch,
             commands::logs::append_task_log,
             commands::logs::read_task_log,
             commands::logs::clear_task_logs,

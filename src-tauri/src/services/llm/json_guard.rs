@@ -31,33 +31,78 @@ impl JsonResponseValidator {
         }
         Ok(())
     }
+
+    pub fn describe_constraints(&self) -> String {
+        if self.required_top_level_keys.is_empty() {
+            return "Return one valid JSON value.".to_string();
+        }
+        format!(
+            "Return one valid JSON object containing these top-level keys: {}.",
+            self.required_top_level_keys
+                .iter()
+                .map(|key| format!("`{key}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JsonRepairSource {
+    Raw,
+    ThoughtStripped,
+    FencedJson,
+    BalancedJson,
+    CommonRepair,
+}
+
+impl JsonRepairSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JsonRepairSource::Raw => "raw",
+            JsonRepairSource::ThoughtStripped => "thought_stripped",
+            JsonRepairSource::FencedJson => "fenced_json",
+            JsonRepairSource::BalancedJson => "balanced_json",
+            JsonRepairSource::CommonRepair => "common_repair",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct JsonRepairOutcome {
+    pub value: Value,
+    pub source: JsonRepairSource,
 }
 
 pub fn extract_and_repair_json(raw: &str) -> Result<Value, LlmError> {
-    let mut candidates: Vec<String> = Vec::new();
+    extract_and_repair_json_with_outcome(raw).map(|outcome| outcome.value)
+}
+
+pub fn extract_and_repair_json_with_outcome(raw: &str) -> Result<JsonRepairOutcome, LlmError> {
+    let mut candidates: Vec<(String, JsonRepairSource)> = Vec::new();
     let mut parse_failures: Vec<String> = Vec::new();
     let trimmed = raw.trim();
     if !trimmed.is_empty() {
-        candidates.push(trimmed.to_string());
+        candidates.push((trimmed.to_string(), JsonRepairSource::Raw));
     }
 
     // 剔除 <thought> 标签后重试
     if let Some(stripped) = strip_thought_blocks(trimmed) {
         if !stripped.is_empty() {
-            candidates.push(stripped);
+            candidates.push((stripped, JsonRepairSource::ThoughtStripped));
         }
     }
 
     if let Some(fenced) = extract_fenced_json(trimmed) {
-        candidates.push(fenced);
+        candidates.push((fenced, JsonRepairSource::FencedJson));
     }
     if let Some(balanced) = extract_first_balanced_json(trimmed) {
-        candidates.push(balanced);
+        candidates.push((balanced, JsonRepairSource::BalancedJson));
     }
 
-    for candidate in candidates {
+    for (candidate, source) in candidates {
         match serde_json::from_str::<Value>(&candidate) {
-            Ok(value) => return Ok(value),
+            Ok(value) => return Ok(JsonRepairOutcome { value, source }),
             Err(err) => parse_failures.push(format!(
                 "candidate parse failed: {}",
                 summarize_parse_error(&candidate, &err)
@@ -66,7 +111,12 @@ pub fn extract_and_repair_json(raw: &str) -> Result<Value, LlmError> {
 
         let repaired = repair_common_json_issues(&candidate);
         match serde_json::from_str::<Value>(&repaired) {
-            Ok(value) => return Ok(value),
+            Ok(value) => {
+                return Ok(JsonRepairOutcome {
+                    value,
+                    source: JsonRepairSource::CommonRepair,
+                });
+            }
             Err(err) => parse_failures.push(format!(
                 "repaired candidate parse failed: {}",
                 summarize_parse_error(&repaired, &err)

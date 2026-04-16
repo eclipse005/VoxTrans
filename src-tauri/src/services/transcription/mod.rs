@@ -1,9 +1,7 @@
-//! Post-ASR processing pipeline.
-//!
-//! This module orchestrates phases after ASR (currently segmentation), while
-//! ASR inference itself stays in `services::transcribe`.
-mod pipeline;
-mod punctuation;
+//! Post-ASR sentence-boundary processing for step2.
+mod sentence_boundary;
 
-pub use pipeline::{RunPostAsrPipelineRequest, run_post_asr_pipeline};
-pub use punctuation::{PunctuationConfig, optimize_words_with_llm};
+pub use sentence_boundary::{
+    BoundaryDecisionKind, SentenceBoundaryRequest, build_source_sentences_from_words,
+    source_sentences_to_srt,
+};

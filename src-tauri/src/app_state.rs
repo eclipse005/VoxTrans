@@ -1,5 +1,3 @@
-use sqlx::SqlitePool;
-use std::process::Child;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
@@ -51,26 +49,8 @@ impl Default for ModelDownloadRuntime {
     }
 }
 
-pub struct TaskWorkerRuntime {
-    pub running_task_id: Option<String>,
-    pub child: Option<Child>,
-    pub stderr_tail: Option<Arc<Mutex<String>>>,
-}
-
-impl Default for TaskWorkerRuntime {
-    fn default() -> Self {
-        Self {
-            running_task_id: None,
-            child: None,
-            stderr_tail: None,
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: SqlitePool,
     pub asr_model_download: Arc<Mutex<ModelDownloadRuntime>>,
     pub demucs_model_download: Arc<Mutex<ModelDownloadRuntime>>,
-    pub task_worker_runtime: Arc<Mutex<TaskWorkerRuntime>>,
 }

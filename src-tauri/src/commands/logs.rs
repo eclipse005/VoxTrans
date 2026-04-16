@@ -1,6 +1,3 @@
-use tauri::State;
-
-use crate::app_state::AppState;
 use crate::services::logs;
 use crate::services::task_usage;
 
@@ -61,9 +58,6 @@ pub fn clear_task_logs(request: ClearTaskLogsCommandRequest) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub async fn get_task_total_tokens(
-    _state: State<'_, AppState>,
-    task_id: String,
-) -> Result<u64, String> {
+pub async fn get_task_total_tokens(task_id: String) -> Result<u64, String> {
     task_usage::get_task_total_tokens(&task_id).await
 }

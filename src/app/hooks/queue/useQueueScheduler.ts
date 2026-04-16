@@ -19,8 +19,7 @@ type UseQueueSchedulerArgs = {
   dispatch: DispatchState;
   pushToast: PushToast;
   runBatch: (items: Array<{ item: QueueItem; mode: QueueRunMode }>) => Promise<void>;
-  setTaskMode: (taskId: string, mode: QueueRunMode) => void;
-  takeTaskMode: (taskId: string) => QueueRunMode;
+  runQueuedByTaskIds: (taskIds: string[]) => Promise<void>;
 };
 
 export type QueueBatchMode = "transcribe" | "transcribe_translate";
@@ -31,8 +30,7 @@ export function useQueueScheduler({
   dispatch,
   pushToast,
   runBatch,
-  setTaskMode,
-  takeTaskMode,
+  runQueuedByTaskIds,
 }: UseQueueSchedulerArgs) {
   const isYoutubePlaceholder = useCallback((item: QueueItem) => (
     item.path.startsWith("youtube://")
@@ -68,7 +66,6 @@ export function useQueueScheduler({
         maxRetries: 0,
         settingsSnapshot: buildSettingsSnapshot(settings),
       });
-      setTaskMode(item.id, mode);
       // State is updated via task-state-changed event from backend
       return true;
     } catch (error) {
@@ -87,7 +84,7 @@ export function useQueueScheduler({
       pushToast(`失败：${item.name}，${message}`, "error");
       return false;
     }
-  }, [dispatch, pushToast, setTaskMode, settings]);
+  }, [dispatch, pushToast, settings]);
 
   useEffect(() => {
     if (hasProcessingTask) return;
@@ -95,11 +92,7 @@ export function useQueueScheduler({
     const queuedItems = queue.filter((item) => item.transcribeStatus === "queued" && !isYoutubePlaceholder(item));
     if (queuedItems.length === 0) return;
     runBatchInFlightRef.current = true;
-    const batch = queuedItems.map((item) => ({
-      item,
-      mode: takeTaskMode(item.id),
-    }));
-    void runBatch(batch)
+    void runQueuedByTaskIds(queuedItems.map((item) => item.id))
       .catch(() => {
         pushToast("批处理执行失败，请重试", "error");
       })
@@ -107,7 +100,7 @@ export function useQueueScheduler({
         runBatchInFlightRef.current = false;
         setScheduleTick((value) => value + 1);
       });
-  }, [hasProcessingTask, isYoutubePlaceholder, queue, runBatch, takeTaskMode, pushToast, scheduleTick]);
+  }, [hasProcessingTask, isYoutubePlaceholder, queue, runQueuedByTaskIds, pushToast, scheduleTick]);
 
   const processQueue = useCallback(async (mode: QueueBatchMode = "transcribe") => {
     const retryableItems = queue.filter((item) => (

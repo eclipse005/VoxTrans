@@ -8,12 +8,15 @@ use crate::services::task_usage::{LlmTokenUsage as TaskUsage, record_llm_usage_b
 
 use super::cache::{append_cache_entry, read_cache_hit};
 use super::error::{LlmError, LlmErrorKind};
-use super::json_guard::{JsonResponseValidator, extract_and_repair_json};
+use super::json_guard::{
+    JsonRepairOutcome, JsonResponseValidator, extract_and_repair_json_with_outcome,
+};
 use super::port::{LlmCallContext, LlmConfig, LlmJsonResult, LlmPort, LlmTokenUsage};
 
 const LLM_PROVIDER: &str = "openai_compatible_http";
 const LLM_TRANSPORT: &str = "chat_completions";
 const RETRY_HINT_MAX_CHARS: usize = 320;
+const REPAIR_RAW_TEXT_MAX_CHARS: usize = 8_000;
 
 #[derive(Clone)]
 pub struct OpenAiCompatLlmClient {
@@ -206,6 +209,7 @@ impl OpenAiCompatLlmClient {
         let started = std::time::Instant::now();
         let mut last_error = String::new();
         let mut last_feedback: Option<RetryFeedback> = None;
+        let mut validation_failures = 0u32;
 
         for attempt in 1..=max_attempts {
             let effective_user_prompt = augment_user_prompt_with_retry_feedback(
@@ -230,76 +234,100 @@ impl OpenAiCompatLlmClient {
 
             match self.call_once(&effective_user_prompt).await {
                 Ok((raw_text, usage)) => {
-                    let parsed = match extract_and_repair_json(&raw_text) {
+                    let mut parsed = match extract_and_repair_json_with_outcome(&raw_text) {
                         Ok(v) => v,
                         Err(err) => {
-                            let feedback = feedback_from_llm_error(&err);
-                            last_error = feedback.detail.clone();
-                            last_feedback = Some(feedback.clone());
-                            let backoff_ms = retry_backoff_ms(attempt, max_attempts);
-                            logger.event(
-                                "llm.call",
-                                Some(&json!({
-                                    "status": "invalid_json",
-                                    "error": last_error,
-                                    "errorKind": feedback.error_kind,
-                                    "retryable": feedback.retryable,
-                                    "retryHint": feedback.retry_hint,
-                                    "response": { "text": raw_text },
-                                    "attempt": base_payload["attempt"],
-                                    "maxAttempts": base_payload["maxAttempts"],
-                                    "backoffMs": backoff_ms,
-                                    "model": base_payload["model"],
-                                    "baseUrl": base_payload["baseUrl"],
-                                    "provider": base_payload["provider"],
-                                    "transport": base_payload["transport"],
-                                    "phase": base_payload["phase"],
-                                    "llmId": base_payload["llmId"],
-                                    "request": base_payload["request"],
-                                })),
-                            );
-                            if let Some(delay) = backoff_ms {
-                                sleep(Duration::from_millis(delay)).await;
+                            validation_failures += 1;
+                            match self
+                                .repair_json_response(
+                                    context,
+                                    request_id,
+                                    user_prompt,
+                                    response_validator,
+                                    &raw_text,
+                                    &err,
+                                )
+                                .await
+                            {
+                                Ok(repaired) => repaired,
+                                Err(repair_err) => {
+                                    let feedback = feedback_from_llm_error(&repair_err);
+                                    last_error = feedback.detail.clone();
+                                    last_feedback = Some(feedback.clone());
+                                    logger.event(
+                                        "llm.call",
+                                        Some(&json!({
+                                            "status": "invalid_json",
+                                            "error": last_error,
+                                            "errorKind": feedback.error_kind,
+                                            "retryable": false,
+                                            "retryHint": feedback.retry_hint,
+                                            "repairMode": "llm_json_repair",
+                                            "response": { "text": raw_text },
+                                            "attempt": base_payload["attempt"],
+                                            "maxAttempts": base_payload["maxAttempts"],
+                                            "model": base_payload["model"],
+                                            "baseUrl": base_payload["baseUrl"],
+                                            "provider": base_payload["provider"],
+                                            "transport": base_payload["transport"],
+                                            "phase": base_payload["phase"],
+                                            "llmId": base_payload["llmId"],
+                                            "request": base_payload["request"],
+                                        })),
+                                    );
+                                    break;
+                                }
                             }
-                            continue;
                         }
                     };
 
                     if let Some(validator) = response_validator {
-                        if let Err(err) = validator.validate(&parsed) {
-                            let feedback = feedback_from_llm_error(&err);
-                            last_error = feedback.detail.clone();
-                            last_feedback = Some(feedback.clone());
-                            let backoff_ms = retry_backoff_ms(attempt, max_attempts);
-                            logger.event(
-                                "llm.call",
-                                Some(&json!({
-                                    "status": "invalid_schema",
-                                    "error": last_error,
-                                    "errorKind": feedback.error_kind,
-                                    "retryable": feedback.retryable,
-                                    "retryHint": feedback.retry_hint,
-                                    "response": { "text": raw_text },
-                                    "attempt": base_payload["attempt"],
-                                    "maxAttempts": base_payload["maxAttempts"],
-                                    "backoffMs": backoff_ms,
-                                    "model": base_payload["model"],
-                                    "baseUrl": base_payload["baseUrl"],
-                                    "provider": base_payload["provider"],
-                                    "transport": base_payload["transport"],
-                                    "phase": base_payload["phase"],
-                                    "llmId": base_payload["llmId"],
-                                    "request": base_payload["request"],
-                                })),
-                            );
-                            if let Some(delay) = backoff_ms {
-                                sleep(Duration::from_millis(delay)).await;
+                        if let Err(err) = validator.validate(&parsed.value) {
+                            validation_failures += 1;
+                            match self
+                                .repair_json_response(
+                                    context,
+                                    request_id,
+                                    user_prompt,
+                                    response_validator,
+                                    &raw_text,
+                                    &err,
+                                )
+                                .await
+                            {
+                                Ok(repaired) => parsed = repaired,
+                                Err(repair_err) => {
+                                    let feedback = feedback_from_llm_error(&repair_err);
+                                    last_error = feedback.detail.clone();
+                                    last_feedback = Some(feedback.clone());
+                                    logger.event(
+                                        "llm.call",
+                                        Some(&json!({
+                                            "status": "invalid_schema",
+                                            "error": last_error,
+                                            "errorKind": feedback.error_kind,
+                                            "retryable": false,
+                                            "retryHint": feedback.retry_hint,
+                                            "repairMode": "llm_json_repair",
+                                            "response": { "text": raw_text },
+                                            "attempt": base_payload["attempt"],
+                                            "maxAttempts": base_payload["maxAttempts"],
+                                            "model": base_payload["model"],
+                                            "baseUrl": base_payload["baseUrl"],
+                                            "provider": base_payload["provider"],
+                                            "transport": base_payload["transport"],
+                                            "phase": base_payload["phase"],
+                                            "llmId": base_payload["llmId"],
+                                            "request": base_payload["request"],
+                                        })),
+                                    );
+                                    break;
+                                }
                             }
-                            continue;
                         }
                     }
 
-                    match semantic_validate(parsed.clone()) {
+                    match semantic_validate(parsed.value.clone()) {
                         Ok(value) => {
                             append_cache_entry(
                                 context,
@@ -308,14 +336,17 @@ impl OpenAiCompatLlmClient {
                                 user_prompt,
                                 response_validator,
                                 &raw_text,
-                                &parsed,
+                                &parsed.value,
                                 &usage,
                             );
                             let elapsed_ms = started.elapsed().as_millis();
                             logger.event(
                                 "llm.call",
                                 Some(&json!({
-                                    "status": "ok",
+                                    "status": if validation_failures > 0 { "ok_after_repair" } else { "ok" },
+                                    "repairMode": if validation_failures > 0 { Some("llm_json_repair") } else { None::<&str> },
+                                    "validationFailures": validation_failures,
+                                    "localRepairSource": parsed.source.as_str(),
                                     "attempt": base_payload["attempt"],
                                     "maxAttempts": base_payload["maxAttempts"],
                                     "model": base_payload["model"],
@@ -439,6 +470,45 @@ impl OpenAiCompatLlmClient {
                 max_attempts, exhausted_feedback.error_kind, retry_hint_suffix
             ),
         ))
+    }
+}
+
+impl OpenAiCompatLlmClient {
+    async fn repair_json_response(
+        &self,
+        context: &LlmCallContext,
+        request_id: &str,
+        original_prompt: &str,
+        response_validator: Option<&JsonResponseValidator>,
+        raw_text: &str,
+        failure: &LlmError,
+    ) -> Result<JsonRepairOutcome, LlmError> {
+        let logger = match context.media_path.as_deref() {
+            Some(path) if !path.trim().is_empty() => {
+                TaskLogger::llm_with_media(context.task_id.clone(), path.to_string())
+            }
+            _ => TaskLogger::llm(context.task_id.clone()),
+        };
+
+        let repair_prompt =
+            build_json_repair_prompt(original_prompt, response_validator, raw_text, failure);
+        logger.event(
+            "llm.call",
+            Some(&json!({
+                "status": "repair_requested",
+                "repairMode": "llm_json_repair",
+                "errorKind": failure.kind.as_str(),
+                "phase": context.phase,
+                "llmId": request_id,
+            })),
+        );
+
+        let (repair_raw_text, _) = self.call_once(&repair_prompt).await?;
+        let repaired = extract_and_repair_json_with_outcome(&repair_raw_text)?;
+        if let Some(validator) = response_validator {
+            validator.validate(&repaired.value)?;
+        }
+        Ok(repaired)
     }
 }
 
@@ -637,6 +707,46 @@ fn augment_user_prompt_with_retry_feedback(
 
     format!(
         "{base_user_prompt}\n\n# Retry Constraint\nPrevious output validation failed ({attempt}/{max_attempts}): {hint}\nReturn a complete corrected JSON response only. Do not add any markdown, explanations, or extra text."
+    )
+}
+
+fn build_json_repair_prompt(
+    original_prompt: &str,
+    response_validator: Option<&JsonResponseValidator>,
+    raw_text: &str,
+    failure: &LlmError,
+) -> String {
+    let schema_constraints = response_validator
+        .map(|validator| validator.describe_constraints())
+        .unwrap_or_else(|| "Return one valid JSON value.".to_string());
+    let failure_hint = retry_hint_from_error(failure.kind, &failure.message)
+        .unwrap_or_else(|| compact_hint(&failure.message, RETRY_HINT_MAX_CHARS));
+    let original_prompt = truncate_chars(original_prompt.trim(), 2_000);
+    let raw_text = truncate_chars(raw_text.trim(), REPAIR_RAW_TEXT_MAX_CHARS);
+
+    format!(
+        concat!(
+            "You are a JSON repair tool.\n",
+            "Your job is to repair the candidate response into valid JSON without redoing the task.\n",
+            "Preserve the original intent and fields whenever possible.\n",
+            "Do not add explanations, markdown fences, or commentary.\n",
+            "If the candidate is partially valid, minimally fix it.\n",
+            "If a field is missing but can be copied from the candidate, keep it.\n",
+            "If something cannot be inferred, use the smallest safe JSON value instead of inventing extra content.\n\n",
+            "Target constraints:\n",
+            "{schema_constraints}\n\n",
+            "Validation failure:\n",
+            "{failure_hint}\n\n",
+            "Original task prompt:\n",
+            "{original_prompt}\n\n",
+            "Candidate response to repair:\n",
+            "{raw_text}\n\n",
+            "Return repaired JSON only."
+        ),
+        schema_constraints = schema_constraints,
+        failure_hint = failure_hint,
+        original_prompt = original_prompt,
+        raw_text = raw_text,
     )
 }
 

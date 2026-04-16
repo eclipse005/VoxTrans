@@ -2,6 +2,7 @@ import { useCallback, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   enqueueAndExecuteTaskBatch,
+  executeTaskBatch,
 } from "../../api/workspace";
 import type {
   QueueItem,
@@ -49,14 +50,8 @@ function phaseOrder(phase: string | undefined): number {
       return 40;
     case "segment":
       return 50;
-    case "summarize":
-      return 60;
     case "translate":
-      return 70;
-    case "segment_optimize":
-      return 80;
-    case "burning":
-      return 90;
+      return 60;
     default:
       return -1;
   }
@@ -179,10 +174,12 @@ export function useQueueRunner({
     settings,
   ]);
   const runBatch = useRunBatch(pushToast, isTaskPresent, settings);
+  const runQueuedByTaskIds = useRunQueuedByTaskIds(pushToast, isTaskPresent);
 
   return {
     runTask,
     runBatch,
+    runQueuedByTaskIds,
   };
 }
 
@@ -210,6 +207,25 @@ function useRunBatch(
       pushToast(`部分任务失败：${first.taskId}，${first.error}`, "error");
     }
   }, [pushToast, isTaskPresent, settings]);
+}
+
+function useRunQueuedByTaskIds(
+  pushToast: PushToast,
+  isTaskPresent: (taskId: string) => boolean,
+) {
+  return useCallback(async (taskIds: string[]) => {
+    const items = taskIds
+      .map((taskId) => taskId.trim())
+      .filter((taskId) => taskId.length > 0 && isTaskPresent(taskId))
+      .map((taskId) => ({ taskId }));
+    if (!items.length) return;
+
+    const response = await executeTaskBatch({ items });
+    if (response.failed.length > 0) {
+      const first = response.failed[0];
+      pushToast(`部分任务失败：${first.taskId}，${first.error}`, "error");
+    }
+  }, [pushToast, isTaskPresent]);
 }
 
 function toEnqueuePayload(

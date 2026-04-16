@@ -1,26 +1,11 @@
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::collections::HashSet;
+use std::fs;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Manager};
 
-const KEY_PROVIDER: &str = "settings.provider";
-const KEY_CHUNK_TARGET_SECONDS: &str = "settings.chunkTargetSeconds";
-const KEY_SUBTITLE_MAX_WORDS_PER_SEGMENT: &str = "settings.subtitleMaxWordsPerSegment";
-const KEY_SUBTITLE_LENGTH_REFERENCE: &str = "settings.subtitleLengthReference";
-const KEY_ASR_MODEL: &str = "settings.asrModel";
-const KEY_DEMUCS_MODEL: &str = "settings.demucsModel";
-const KEY_ENABLE_VOCAL_SEPARATION: &str = "settings.enableVocalSeparation";
-const KEY_TRANSLATE_API_KEY: &str = "settings.translateApiKey";
-const KEY_TRANSLATE_BASE_URL: &str = "settings.translateBaseUrl";
-const KEY_TRANSLATE_MODEL: &str = "settings.translateModel";
-const KEY_LLM_CONCURRENCY: &str = "settings.llmConcurrency";
-const KEY_TERMINOLOGY_GROUPS: &str = "settings.terminologyGroups";
-const KEY_ENABLE_TERMINOLOGY: &str = "settings.enableTerminology";
-const KEY_ENABLE_PUNCTUATION_OPTIMIZATION: &str = "settings.enablePunctuationOptimization";
-const KEY_ENABLE_SUBTITLE_BEAUTIFY: &str = "settings.enableSubtitleBeautify";
-const KEY_AUTO_BURN_HARD_SUBTITLE: &str = "settings.autoBurnHardSubtitle";
-const KEY_SUBTITLE_BURN_MODE: &str = "settings.subtitleBurnMode";
-const KEY_SUBTITLE_RENDER_STYLE: &str = "settings.subtitleRenderStyle";
+const SETTINGS_FILE_NAME: &str = "settings.json";
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -146,244 +131,131 @@ pub struct SaveAppSettingsRequest {
     pub settings: SavedSettings,
 }
 
-pub async fn load_user_preferences(pool: &SqlitePool) -> Result<UserPreferencesResponse, String> {
-    let settings = load_settings(pool).await?;
+pub async fn load_user_preferences(app: &AppHandle) -> Result<UserPreferencesResponse, String> {
+    let settings = load_settings(app)?;
     Ok(UserPreferencesResponse { settings })
 }
 
-pub async fn save_app_settings(
-    pool: &SqlitePool,
-    request: &SaveAppSettingsRequest,
-) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    set_setting(&mut tx, KEY_PROVIDER, &request.settings.provider).await?;
-    set_setting(
-        &mut tx,
-        KEY_CHUNK_TARGET_SECONDS,
-        &request
-            .settings
-            .chunk_target_seconds
-            .clamp(30, 300)
-            .to_string(),
-    )
-    .await?;
-    set_setting(
-        &mut tx,
-        KEY_SUBTITLE_MAX_WORDS_PER_SEGMENT,
-        &request
-            .settings
-            .subtitle_max_words_per_segment
-            .clamp(8, 40)
-            .to_string(),
-    )
-    .await?;
-    set_setting(&mut tx, KEY_ASR_MODEL, &request.settings.asr_model).await?;
-    set_setting(&mut tx, KEY_DEMUCS_MODEL, &request.settings.demucs_model).await?;
-    set_setting(
-        &mut tx,
-        KEY_ENABLE_VOCAL_SEPARATION,
-        if request.settings.enable_vocal_separation {
-            "1"
-        } else {
-            "0"
-        },
-    )
-    .await?;
-    set_setting(
-        &mut tx,
-        KEY_SUBTITLE_LENGTH_REFERENCE,
-        &request
-            .settings
-            .subtitle_length_reference
-            .clamp(8, 80)
-            .to_string(),
-    )
-    .await?;
-    set_setting(
-        &mut tx,
-        KEY_TRANSLATE_API_KEY,
-        request.settings.translate_api_key.trim(),
-    )
-    .await?;
-    set_setting(
-        &mut tx,
-        KEY_TRANSLATE_BASE_URL,
-        request.settings.translate_base_url.trim(),
-    )
-    .await?;
-    set_setting(
-        &mut tx,
-        KEY_TRANSLATE_MODEL,
-        request.settings.translate_model.trim(),
-    )
-    .await?;
-    set_setting(
-        &mut tx,
-        KEY_LLM_CONCURRENCY,
-        &request.settings.llm_concurrency.clamp(1, 16).to_string(),
-    )
-    .await?;
-    let terminology_groups =
-        normalize_terminology_groups(request.settings.terminology_groups.clone());
-    let terminology_json =
-        serde_json::to_string(&terminology_groups).map_err(|err| err.to_string())?;
-    set_setting(&mut tx, KEY_TERMINOLOGY_GROUPS, &terminology_json).await?;
-    set_setting(
-        &mut tx,
-        KEY_ENABLE_TERMINOLOGY,
-        if request.settings.enable_terminology {
-            "1"
-        } else {
-            "0"
-        },
-    )
-    .await?;
-    set_setting(
-        &mut tx,
-        KEY_ENABLE_PUNCTUATION_OPTIMIZATION,
-        if request.settings.enable_punctuation_optimization {
-            "1"
-        } else {
-            "0"
-        },
-    )
-    .await?;
-    set_setting(
-        &mut tx,
-        KEY_ENABLE_SUBTITLE_BEAUTIFY,
-        if request.settings.enable_subtitle_beautify {
-            "1"
-        } else {
-            "0"
-        },
-    )
-    .await?;
-    set_setting(
-        &mut tx,
-        KEY_AUTO_BURN_HARD_SUBTITLE,
-        if request.settings.auto_burn_hard_subtitle {
-            "1"
-        } else {
-            "0"
-        },
-    )
-    .await?;
-    set_setting(
-        &mut tx,
-        KEY_SUBTITLE_BURN_MODE,
-        normalize_subtitle_burn_mode(&request.settings.subtitle_burn_mode),
-    )
-    .await?;
-    let subtitle_render_style =
-        normalize_subtitle_render_style(request.settings.subtitle_render_style.clone());
-    let subtitle_render_style_json =
-        serde_json::to_string(&subtitle_render_style).map_err(|err| err.to_string())?;
-    set_setting(
-        &mut tx,
-        KEY_SUBTITLE_RENDER_STYLE,
-        &subtitle_render_style_json,
-    )
-    .await?;
-    tx.commit().await.map_err(|e| e.to_string())
+pub fn load_saved_settings_from_default_path() -> Result<SavedSettings, String> {
+    let path = default_settings_path()?;
+    load_settings_from_path(&path)
 }
 
-async fn load_settings(pool: &SqlitePool) -> Result<SavedSettings, String> {
-    let provider = get_setting(pool, KEY_PROVIDER)
-        .await?
-        .unwrap_or_else(|| "cpu".to_string());
-    let chunk_target_seconds = get_setting(pool, KEY_CHUNK_TARGET_SECONDS)
-        .await?
-        .and_then(|v| v.parse::<u32>().ok())
-        .map(|v| v.clamp(30, 300))
-        .unwrap_or(180);
-    let subtitle_max_words_per_segment = get_setting(pool, KEY_SUBTITLE_MAX_WORDS_PER_SEGMENT)
-        .await?
-        .and_then(|v| v.parse::<u32>().ok())
-        .map(|v| v.clamp(8, 40))
-        .unwrap_or(20);
-    let subtitle_length_reference = get_setting(pool, KEY_SUBTITLE_LENGTH_REFERENCE)
-        .await?
-        .and_then(|v| v.parse::<u32>().ok())
-        .map(|v| v.clamp(8, 80))
-        .unwrap_or(28);
-    let asr_model = get_setting(pool, KEY_ASR_MODEL)
-        .await?
-        .unwrap_or_else(|| "parakeet-tdt-0.6b-v2".to_string());
-    let demucs_model = match get_setting(pool, KEY_DEMUCS_MODEL).await?.as_deref() {
-        Some("htdemucs_ft") => "htdemucs_ft".to_string(),
-        _ => "htdemucs_ft".to_string(),
-    };
-    let enable_vocal_separation = get_setting(pool, KEY_ENABLE_VOCAL_SEPARATION)
-        .await?
-        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
-        .unwrap_or(false);
-    let translate_api_key = get_setting(pool, KEY_TRANSLATE_API_KEY)
-        .await?
-        .unwrap_or_default();
-    let translate_base_url = get_setting(pool, KEY_TRANSLATE_BASE_URL)
-        .await?
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-    let translate_model = get_setting(pool, KEY_TRANSLATE_MODEL)
-        .await?
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "gpt-4.1-mini".to_string());
-    let llm_concurrency = get_setting(pool, KEY_LLM_CONCURRENCY)
-        .await?
-        .and_then(|v| v.parse::<u32>().ok())
-        .map(|v| v.clamp(1, 16))
-        .unwrap_or(4);
-    let terminology_groups = get_setting(pool, KEY_TERMINOLOGY_GROUPS)
-        .await?
-        .and_then(|v| serde_json::from_str::<Vec<TerminologyGroup>>(&v).ok())
-        .map(normalize_terminology_groups)
-        .unwrap_or_else(|| normalize_terminology_groups(Vec::new()));
-    let enable_terminology = get_setting(pool, KEY_ENABLE_TERMINOLOGY)
-        .await?
-        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
-        .unwrap_or(true);
-    let enable_punctuation_optimization = get_setting(pool, KEY_ENABLE_PUNCTUATION_OPTIMIZATION)
-        .await?
-        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
-        .unwrap_or(false);
-    let enable_subtitle_beautify = get_setting(pool, KEY_ENABLE_SUBTITLE_BEAUTIFY)
-        .await?
-        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
-        .unwrap_or(true);
-    let auto_burn_hard_subtitle = get_setting(pool, KEY_AUTO_BURN_HARD_SUBTITLE)
-        .await?
-        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "True"))
-        .unwrap_or(false);
-    let subtitle_burn_mode = get_setting(pool, KEY_SUBTITLE_BURN_MODE)
-        .await?
-        .map(|v| normalize_subtitle_burn_mode(&v).to_string())
-        .unwrap_or_else(default_subtitle_burn_mode);
-    let subtitle_render_style = get_setting(pool, KEY_SUBTITLE_RENDER_STYLE)
-        .await?
-        .and_then(|v| serde_json::from_str::<SubtitleRenderStyle>(&v).ok())
-        .map(normalize_subtitle_render_style)
-        .unwrap_or_default();
+pub async fn save_app_settings(
+    app: &AppHandle,
+    request: &SaveAppSettingsRequest,
+) -> Result<(), String> {
+    let normalized = normalize_saved_settings(request.settings.clone());
+    let path = settings_path(app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let payload = serde_json::to_string_pretty(&normalized).map_err(|err| err.to_string())?;
+    fs::write(path, payload).map_err(|e| e.to_string())
+}
 
-    Ok(SavedSettings {
-        provider,
-        chunk_target_seconds,
-        subtitle_max_words_per_segment,
-        subtitle_length_reference,
-        asr_model,
-        demucs_model,
-        enable_vocal_separation,
-        translate_api_key,
-        translate_base_url,
-        translate_model,
-        llm_concurrency,
-        terminology_groups,
-        enable_terminology,
-        enable_punctuation_optimization,
-        enable_subtitle_beautify,
-        auto_burn_hard_subtitle,
-        subtitle_burn_mode,
-        subtitle_render_style,
-    })
+fn load_settings(app: &AppHandle) -> Result<SavedSettings, String> {
+    let path = settings_path(app)?;
+    load_settings_from_path(&path)
+}
+
+fn load_settings_from_path(path: &PathBuf) -> Result<SavedSettings, String> {
+    if !path.exists() {
+        return Ok(default_settings());
+    }
+    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let parsed = serde_json::from_str::<SavedSettings>(&raw).map_err(|e| e.to_string())?;
+    Ok(normalize_saved_settings(parsed))
+}
+
+fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join(SETTINGS_FILE_NAME))
+}
+
+fn default_settings_path() -> Result<PathBuf, String> {
+    let app_data =
+        std::env::var_os("APPDATA").ok_or_else(|| "APPDATA is not available".to_string())?;
+    Ok(PathBuf::from(app_data)
+        .join("com.voxtrans.desktop")
+        .join(SETTINGS_FILE_NAME))
+}
+
+fn default_settings() -> SavedSettings {
+    SavedSettings {
+        provider: "cpu".to_string(),
+        chunk_target_seconds: 180,
+        subtitle_max_words_per_segment: 20,
+        subtitle_length_reference: 28,
+        asr_model: "parakeet-tdt-0.6b-v2".to_string(),
+        demucs_model: "htdemucs_ft".to_string(),
+        enable_vocal_separation: false,
+        translate_api_key: String::new(),
+        translate_base_url: "https://api.openai.com/v1".to_string(),
+        translate_model: "gpt-4.1-mini".to_string(),
+        llm_concurrency: 4,
+        terminology_groups: normalize_terminology_groups(Vec::new()),
+        enable_terminology: true,
+        enable_punctuation_optimization: false,
+        enable_subtitle_beautify: true,
+        auto_burn_hard_subtitle: false,
+        subtitle_burn_mode: default_subtitle_burn_mode(),
+        subtitle_render_style: SubtitleRenderStyle::default(),
+    }
+}
+
+fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings {
+    SavedSettings {
+        provider: {
+            let trimmed = settings.provider.trim();
+            if trimmed.is_empty() {
+                "cpu".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        },
+        chunk_target_seconds: settings.chunk_target_seconds.clamp(30, 300),
+        subtitle_max_words_per_segment: settings.subtitle_max_words_per_segment.clamp(8, 40),
+        subtitle_length_reference: settings.subtitle_length_reference.clamp(8, 80),
+        asr_model: {
+            let trimmed = settings.asr_model.trim();
+            if trimmed.is_empty() {
+                "parakeet-tdt-0.6b-v2".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        },
+        demucs_model: match settings.demucs_model.trim() {
+            "htdemucs_ft" => "htdemucs_ft".to_string(),
+            _ => "htdemucs_ft".to_string(),
+        },
+        enable_vocal_separation: settings.enable_vocal_separation,
+        translate_api_key: settings.translate_api_key.trim().to_string(),
+        translate_base_url: {
+            let trimmed = settings.translate_base_url.trim();
+            if trimmed.is_empty() {
+                "https://api.openai.com/v1".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        },
+        translate_model: {
+            let trimmed = settings.translate_model.trim();
+            if trimmed.is_empty() {
+                "gpt-4.1-mini".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        },
+        llm_concurrency: settings.llm_concurrency.clamp(1, 16),
+        terminology_groups: normalize_terminology_groups(settings.terminology_groups),
+        enable_terminology: settings.enable_terminology,
+        enable_punctuation_optimization: settings.enable_punctuation_optimization,
+        enable_subtitle_beautify: settings.enable_subtitle_beautify,
+        auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
+        subtitle_burn_mode: normalize_subtitle_burn_mode(&settings.subtitle_burn_mode).to_string(),
+        subtitle_render_style: normalize_subtitle_render_style(settings.subtitle_render_style),
+    }
 }
 
 fn default_true() -> bool {
@@ -567,28 +439,4 @@ fn make_entity_id(prefix: &str, seq: usize) -> String {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     format!("{prefix}-{millis}-{seq}")
-}
-
-async fn get_setting(pool: &SqlitePool, key: &str) -> Result<Option<String>, String> {
-    sqlx::query_scalar::<_, String>("SELECT value FROM app_settings WHERE key = ?")
-        .bind(key)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-async fn set_setting(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    key: &str,
-    value: &str,
-) -> Result<(), String> {
-    sqlx::query(
-        "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, strftime('%s','now'))\n         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-    )
-    .bind(key)
-    .bind(value)
-    .execute(tx.as_mut())
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(())
 }

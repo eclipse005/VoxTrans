@@ -77,10 +77,7 @@ export type TranscribePhase =
   | "recognizing"
   | "punctuate"
   | "segment"
-  | "summarize"
-  | "translate"
-  | "segment_optimize"
-  | "burning";
+  | "translate";
 
 export type SubtitleCue = {
   id: string;
@@ -126,48 +123,6 @@ export type WordToken = {
   start: number;
   end: number;
   word: string;
-};
-
-export type TranslateToken = {
-  start: number;
-  end: number;
-  word: string;
-};
-
-export type TranslateTerminologyEntry = {
-  source: string;
-  target: string;
-  note: string;
-  group: string;
-};
-
-export type TranslateSegment = {
-  startMs: number;
-  endMs: number;
-  sourceText: string;
-  translatedText: string;
-};
-
-export type TranslatePipelineRequest = {
-  taskId: string;
-  mediaPath: string;
-  sourceLang: string;
-  targetLang: string;
-  tokens: TranslateToken[];
-  translateApiKey?: string;
-  translateBaseUrl?: string;
-  translateModel?: string;
-  llmConcurrency?: number;
-  terminologyEntries?: TranslateTerminologyEntry[];
-};
-
-export type TranslatePipelineResponse = {
-  sourceSrt: string;
-  targetSrt: string;
-  bilingualSrtSourceFirst: string;
-  bilingualSrtTargetFirst: string;
-  segments: TranslateSegment[];
-  themeSummary?: string;
 };
 
 export type SegmentWithWords = {
@@ -236,4 +191,26 @@ export type ModelStatusResponse = {
   missingFiles: string[];
   ready: boolean;
   download: ModelDownloadStateSnapshot;
+};
+
+export type TranslateAgentRuntimeEvent = {
+  kind: string;
+  toolName: string;
+  parentToolName: string;
+  phase: string;
+  reason: string;
+  detail: string;
+  toolInputSummary: string;
+  changedSegmentTotal: number;
+};
+
+export type TranslateAgentToolExecution = {
+  name: string;
+  status: string;
+  changedSegmentTotal: number;
+};
+
+export type TranslateAgentToolPlanStep = {
+  name: string;
+  toolInputSummary: string;
 };
