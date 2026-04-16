@@ -56,6 +56,8 @@ pub struct BuildTerminologyLayerResponse {
 struct ThemeExtraction {
     #[serde(default)]
     theme: String,
+    #[serde(default)]
+    output: Option<ThemeOutputExtraction>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -64,11 +66,37 @@ struct UserTermFilterExtraction {
     #[serde(default)]
     #[serde(alias = "keep_indexes")]
     keep_indexes: Vec<usize>,
+    #[serde(default)]
+    output: Option<UserTermFilterOutputExtraction>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ExtractedTermsExtraction {
+    #[serde(default)]
+    terms: Vec<TerminologyEntryExtraction>,
+    #[serde(default)]
+    output: Option<ExtractedTermsOutputExtraction>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThemeOutputExtraction {
+    #[serde(default)]
+    theme: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserTermFilterOutputExtraction {
+    #[serde(default)]
+    #[serde(alias = "keep_indexes")]
+    keep_indexes: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExtractedTermsOutputExtraction {
     #[serde(default)]
     terms: Vec<TerminologyEntryExtraction>,
 }
@@ -176,7 +204,17 @@ async fn extract_theme(
             )
         })?;
 
-    let normalized = normalize_theme(&result.value.theme);
+    let theme_text = if !result.value.theme.trim().is_empty() {
+        result.value.theme
+    } else {
+        result
+            .value
+            .output
+            .as_ref()
+            .map(|item| item.theme.clone())
+            .unwrap_or_default()
+    };
+    let normalized = normalize_theme(&theme_text);
     if normalized.is_empty() {
         Ok(DEFAULT_THEME.to_string())
     } else {
@@ -238,7 +276,18 @@ async fn filter_user_terms(
 
     let mut selected = Vec::<TerminologyEntry>::new();
     let mut seen = HashSet::<usize>::new();
-    for raw in result.value.keep_indexes {
+    let keep_indexes = if result.value.keep_indexes.is_empty() {
+        result
+            .value
+            .output
+            .as_ref()
+            .map(|item| item.keep_indexes.clone())
+            .unwrap_or_default()
+    } else {
+        result.value.keep_indexes
+    };
+
+    for raw in keep_indexes {
         if raw == 0 || raw > user_terms.len() {
             continue;
         }
@@ -287,10 +336,19 @@ async fn extract_terms(
             )
         })?;
 
-    Ok(normalize_entries(
+    let extracted = if result.value.terms.is_empty() {
         result
             .value
-            .terms
+            .output
+            .as_ref()
+            .map(|item| item.terms.clone())
+            .unwrap_or_default()
+    } else {
+        result.value.terms
+    };
+
+    Ok(normalize_entries(
+        extracted
             .into_iter()
             .map(|entry| TerminologyEntry {
                 source: entry.source,

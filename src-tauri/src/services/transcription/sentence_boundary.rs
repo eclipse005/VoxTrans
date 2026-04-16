@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::services::llm::batch::run_indexed_concurrent;
 use crate::services::llm::client::{LlmSemanticValidationError, OpenAiCompatLlmClient};
@@ -241,6 +242,22 @@ struct SemanticGroupWindow {
     prompt_end: usize,
 }
 
+#[derive(Debug, Clone)]
+struct RestoreEndPuncTask {
+    phase: String,
+    window: SemanticGroupWindow,
+    prompt: String,
+    prompt_words: Vec<WordTokenDto>,
+    parse_error_prefix: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LongSpanRecoveryTask {
+    span_index: usize,
+    span_start: usize,
+    span_end: usize,
+}
+
 pub async fn build_source_sentences_from_words(
     request: SentenceBoundaryRequest,
 ) -> Result<SourceSentenceStep2, String> {
@@ -311,6 +328,7 @@ async fn build_semantic_sentence_spans_with_llm(
 
     let mut boundary_ends = collect_existing_terminal_boundary_ends(words);
     let runs = build_no_terminal_runs(words);
+    let mut restore_tasks = Vec::<RestoreEndPuncTask>::new();
 
     for (run_index, (run_start, run_end)) in runs.into_iter().enumerate() {
         let run_words = run_end.saturating_sub(run_start) + 1;
@@ -322,40 +340,23 @@ async fn build_semantic_sentence_spans_with_llm(
         }
         let windows = build_semantic_group_windows_for_region(words, run_start, run_end);
         for (window_index, window) in windows.into_iter().enumerate() {
-            let prompt_words = &words[window.prompt_start..=window.prompt_end];
-            let prompt = build_end_punctuation_restore_prompt(&request.source_lang, prompt_words);
-            let context = LlmCallContext {
-                task_id: request.task_id.clone(),
-                media_path: Some(request.media_path.clone()),
+            let prompt_words = words[window.prompt_start..=window.prompt_end].to_vec();
+            restore_tasks.push(RestoreEndPuncTask {
                 phase: format!(
                     "restore_end_punc_run_{}_window_{}",
                     run_index + 1,
                     window_index + 1
                 ),
-            };
-            let llm_id = next_llm_request_id();
-            let result = llm_client
-                .call_json_validated(&context, &llm_id, &prompt, None, |value| {
-                    let parsed = parse_restored_token_array_extraction(value).map_err(|err| {
-                        LlmSemanticValidationError::retryable(format!(
-                            "restore end punctuation parse failed: {err}"
-                        ))
-                    })?;
-                    validate_restored_tokens_for_words(prompt_words, &parsed)
-                        .map_err(LlmSemanticValidationError::retryable)?;
-                    Ok(parsed)
-                })
-                .await;
-            let Ok(result) = result else {
-                continue;
-            };
-
-            boundary_ends.extend(collect_restored_boundary_ends_in_core(
                 window,
-                &result.value.tokens,
-            ));
+                prompt: build_end_punctuation_restore_prompt(&request.source_lang, &prompt_words),
+                prompt_words,
+                parse_error_prefix: "restore end punctuation parse failed".to_string(),
+            });
         }
     }
+    boundary_ends.extend(
+        collect_restore_end_punc_boundary_ends(request, llm_client, restore_tasks).await,
+    );
 
     let mut spans = build_spans_from_boundary_ends(words.len(), &boundary_ends);
     if spans.is_empty() {
@@ -390,41 +391,157 @@ async fn collect_long_span_recovery_boundary_ends(
         return out;
     }
 
-    for (span_index, (span_start, span_end)) in spans.iter().copied().enumerate() {
-        if span_start >= words.len() || span_end >= words.len() || span_start >= span_end {
-            continue;
-        }
-        let word_total = span_end - span_start + 1;
-        let duration_ms = gap_ms(words[span_start].start, words[span_end].end);
-        let needs_retry = duration_ms >= LONG_SPAN_RESTORE_MIN_DURATION_MS
-            || word_total >= LONG_SPAN_RESTORE_MIN_WORDS;
-        if !needs_retry {
-            continue;
-        }
+    let recovery_tasks = spans
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(span_index, (span_start, span_end))| {
+            if span_start >= words.len() || span_end >= words.len() || span_start >= span_end {
+                return None;
+            }
+            let word_total = span_end - span_start + 1;
+            let duration_ms = gap_ms(words[span_start].start, words[span_end].end);
+            let needs_retry = duration_ms >= LONG_SPAN_RESTORE_MIN_DURATION_MS
+                || word_total >= LONG_SPAN_RESTORE_MIN_WORDS;
+            if !needs_retry {
+                return None;
+            }
+            Some(LongSpanRecoveryTask {
+                span_index,
+                span_start,
+                span_end,
+            })
+        })
+        .collect::<Vec<_>>();
 
-        let mut span_boundary_ends = Vec::<usize>::new();
-        let windows = build_semantic_group_windows_for_region_with_limits(
+    if recovery_tasks.is_empty() {
+        return out;
+    }
+
+    let request_for_tasks = request.clone();
+    let llm_client_for_tasks = llm_client.clone();
+    let words_for_tasks = Arc::new(words.to_vec());
+    let results = run_indexed_concurrent(
+        recovery_tasks,
+        request.llm_concurrency.max(1) as usize,
+        move |task| {
+            let request = request_for_tasks.clone();
+            let llm_client = llm_client_for_tasks.clone();
+            let words = Arc::clone(&words_for_tasks);
+            async move {
+                Ok(collect_long_span_recovery_boundary_ends_for_span(
+                    &request,
+                    words.as_ref().as_slice(),
+                    task.span_index,
+                    task.span_start,
+                    task.span_end,
+                    &llm_client,
+                )
+                .await)
+            }
+        },
+        |message| message,
+    )
+    .await;
+
+    for (_, result) in results {
+        if let Ok(span_boundary_ends) = result {
+            out.extend(span_boundary_ends);
+        }
+    }
+
+    out
+}
+
+async fn collect_long_span_recovery_boundary_ends_for_span(
+    request: &SentenceBoundaryRequest,
+    words: &[WordTokenDto],
+    span_index: usize,
+    span_start: usize,
+    span_end: usize,
+    llm_client: &OpenAiCompatLlmClient,
+) -> Vec<usize> {
+    if span_start >= words.len() || span_end >= words.len() || span_start >= span_end {
+        return Vec::new();
+    }
+
+    let duration_ms = gap_ms(words[span_start].start, words[span_end].end);
+    let mut span_boundary_ends = Vec::<usize>::new();
+    let windows = build_semantic_group_windows_for_region_with_limits(
+        words,
+        span_start,
+        span_end,
+        LONG_SPAN_RESTORE_CORE_MAX_WORDS,
+        LONG_SPAN_RESTORE_CORE_MAX_CHARS,
+        LONG_SPAN_RESTORE_CONTEXT_MAX_WORDS,
+        LONG_SPAN_RESTORE_CONTEXT_MAX_CHARS,
+    );
+    for (window_index, window) in windows.into_iter().enumerate() {
+        let prompt_words = &words[window.prompt_start..=window.prompt_end];
+        let prompt = build_end_punctuation_restore_prompt_with_mode(
+            &request.source_lang,
+            prompt_words,
+            true,
+            false,
+        );
+        let context = LlmCallContext {
+            task_id: request.task_id.clone(),
+            media_path: Some(request.media_path.clone()),
+            phase: format!(
+                "restore_end_punc_long_span_{}_window_{}",
+                span_index + 1,
+                window_index + 1
+            ),
+        };
+        let llm_id = next_llm_request_id();
+        let result = llm_client
+            .call_json_validated(&context, &llm_id, &prompt, None, |value| {
+                let parsed = parse_restored_token_array_extraction(value).map_err(|err| {
+                    LlmSemanticValidationError::retryable(format!(
+                        "restore long span end punctuation parse failed: {err}"
+                    ))
+                })?;
+                validate_restored_tokens_for_words(prompt_words, &parsed)
+                    .map_err(LlmSemanticValidationError::retryable)?;
+                Ok(parsed)
+            })
+            .await;
+        let Ok(result) = result else {
+            continue;
+        };
+        span_boundary_ends.extend(collect_restored_boundary_ends_in_core(
+            window,
+            &result.value.tokens,
+        ));
+    }
+
+    let target_sentence_count =
+        ((duration_ms + LONG_SPAN_TARGET_SENTENCE_DURATION_MS - 1)
+            / LONG_SPAN_TARGET_SENTENCE_DURATION_MS) as usize;
+    let target_split_count = target_sentence_count.saturating_sub(1);
+    if span_boundary_ends.len() < target_split_count {
+        let dense_windows = build_semantic_group_windows_for_region_with_limits(
             words,
             span_start,
             span_end,
-            LONG_SPAN_RESTORE_CORE_MAX_WORDS,
-            LONG_SPAN_RESTORE_CORE_MAX_CHARS,
-            LONG_SPAN_RESTORE_CONTEXT_MAX_WORDS,
-            LONG_SPAN_RESTORE_CONTEXT_MAX_CHARS,
+            LONG_SPAN_DENSE_CORE_MAX_WORDS,
+            LONG_SPAN_DENSE_CORE_MAX_CHARS,
+            LONG_SPAN_DENSE_CONTEXT_MAX_WORDS,
+            LONG_SPAN_DENSE_CONTEXT_MAX_CHARS,
         );
-        for (window_index, window) in windows.into_iter().enumerate() {
+        for (window_index, window) in dense_windows.into_iter().enumerate() {
             let prompt_words = &words[window.prompt_start..=window.prompt_end];
             let prompt = build_end_punctuation_restore_prompt_with_mode(
                 &request.source_lang,
                 prompt_words,
                 true,
-                false,
+                true,
             );
             let context = LlmCallContext {
                 task_id: request.task_id.clone(),
                 media_path: Some(request.media_path.clone()),
                 phase: format!(
-                    "restore_end_punc_long_span_{}_window_{}",
+                    "restore_end_punc_long_span_dense_{}_window_{}",
                     span_index + 1,
                     window_index + 1
                 ),
@@ -434,7 +551,7 @@ async fn collect_long_span_recovery_boundary_ends(
                 .call_json_validated(&context, &llm_id, &prompt, None, |value| {
                     let parsed = parse_restored_token_array_extraction(value).map_err(|err| {
                         LlmSemanticValidationError::retryable(format!(
-                            "restore long span end punctuation parse failed: {err}"
+                            "restore long span dense end punctuation parse failed: {err}"
                         ))
                     })?;
                     validate_restored_tokens_for_words(prompt_words, &parsed)
@@ -450,73 +567,83 @@ async fn collect_long_span_recovery_boundary_ends(
                 &result.value.tokens,
             ));
         }
+    }
 
-        let target_sentence_count = ((duration_ms + LONG_SPAN_TARGET_SENTENCE_DURATION_MS - 1)
-            / LONG_SPAN_TARGET_SENTENCE_DURATION_MS) as usize;
-        let target_split_count = target_sentence_count.saturating_sub(1);
-        if span_boundary_ends.len() < target_split_count {
-            let dense_windows = build_semantic_group_windows_for_region_with_limits(
-                words,
-                span_start,
-                span_end,
-                LONG_SPAN_DENSE_CORE_MAX_WORDS,
-                LONG_SPAN_DENSE_CORE_MAX_CHARS,
-                LONG_SPAN_DENSE_CONTEXT_MAX_WORDS,
-                LONG_SPAN_DENSE_CONTEXT_MAX_CHARS,
-            );
-            for (window_index, window) in dense_windows.into_iter().enumerate() {
-                let prompt_words = &words[window.prompt_start..=window.prompt_end];
-                let prompt = build_end_punctuation_restore_prompt_with_mode(
-                    &request.source_lang,
+    if span_boundary_ends.len() < target_split_count {
+        span_boundary_ends.extend(
+            collect_sentence_array_boundary_ends_for_span(
+                request, words, span_index, span_start, span_end, llm_client,
+            )
+            .await,
+        );
+    }
+
+    span_boundary_ends
+}
+
+async fn collect_restore_end_punc_boundary_ends(
+    request: &SentenceBoundaryRequest,
+    llm_client: &OpenAiCompatLlmClient,
+    tasks: Vec<RestoreEndPuncTask>,
+) -> Vec<usize> {
+    if tasks.is_empty() {
+        return Vec::new();
+    }
+
+    let request_for_tasks = request.clone();
+    let llm_client_for_tasks = llm_client.clone();
+    let results = run_indexed_concurrent(
+        tasks,
+        request.llm_concurrency.max(1) as usize,
+        move |task| {
+            let request = request_for_tasks.clone();
+            let llm_client = llm_client_for_tasks.clone();
+            async move {
+                let RestoreEndPuncTask {
+                    phase,
+                    window,
+                    prompt,
                     prompt_words,
-                    true,
-                    true,
-                );
+                    parse_error_prefix,
+                } = task;
+
                 let context = LlmCallContext {
                     task_id: request.task_id.clone(),
                     media_path: Some(request.media_path.clone()),
-                    phase: format!(
-                        "restore_end_punc_long_span_dense_{}_window_{}",
-                        span_index + 1,
-                        window_index + 1
-                    ),
+                    phase,
                 };
                 let llm_id = next_llm_request_id();
                 let result = llm_client
-                    .call_json_validated(&context, &llm_id, &prompt, None, |value| {
+                    .call_json_validated(&context, &llm_id, &prompt, None, move |value| {
                         let parsed =
                             parse_restored_token_array_extraction(value).map_err(|err| {
                                 LlmSemanticValidationError::retryable(format!(
-                                    "restore long span dense end punctuation parse failed: {err}"
+                                    "{parse_error_prefix}: {err}"
                                 ))
                             })?;
-                        validate_restored_tokens_for_words(prompt_words, &parsed)
+                        validate_restored_tokens_for_words(&prompt_words, &parsed)
                             .map_err(LlmSemanticValidationError::retryable)?;
                         Ok(parsed)
                     })
-                    .await;
-                let Ok(result) = result else {
-                    continue;
-                };
-                span_boundary_ends.extend(collect_restored_boundary_ends_in_core(
+                    .await
+                    .map_err(|err| err.message)?;
+
+                Ok(collect_restored_boundary_ends_in_core(
                     window,
                     &result.value.tokens,
-                ));
+                ))
             }
-        }
+        },
+        |message| message,
+    )
+    .await;
 
-        if span_boundary_ends.len() < target_split_count {
-            span_boundary_ends.extend(
-                collect_sentence_array_boundary_ends_for_span(
-                    request, words, span_index, span_start, span_end, llm_client,
-                )
-                .await,
-            );
+    let mut out = Vec::<usize>::new();
+    for (_, result) in results {
+        if let Ok(boundary_ends) = result {
+            out.extend(boundary_ends);
         }
-
-        out.extend(span_boundary_ends);
     }
-
     out
 }
 

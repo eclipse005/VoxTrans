@@ -21,7 +21,7 @@ where
         return Vec::new();
     }
 
-    let concurrency = concurrency.clamp(1, 64);
+    let concurrency = concurrency.max(1);
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut join_set: JoinSet<(usize, Result<R, E>)> = JoinSet::new();
 

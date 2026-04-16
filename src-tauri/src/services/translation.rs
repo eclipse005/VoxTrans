@@ -122,7 +122,7 @@ pub async fn build_translation_layer(
         return Err("failed to build translation batches".to_string());
     }
 
-    let concurrency = request.llm_concurrency.clamp(1, 16) as usize;
+    let concurrency = request.llm_concurrency.max(1) as usize;
     let tasks = windows
         .iter()
         .map(|window| LlmJsonTask {

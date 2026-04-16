@@ -247,7 +247,7 @@ fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings {
                 trimmed.to_string()
             }
         },
-        llm_concurrency: settings.llm_concurrency.clamp(1, 16),
+        llm_concurrency: settings.llm_concurrency.max(1),
         terminology_groups: normalize_terminology_groups(settings.terminology_groups),
         enable_terminology: settings.enable_terminology,
         enable_punctuation_optimization: settings.enable_punctuation_optimization,
