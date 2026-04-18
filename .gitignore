@@ -23,9 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 
-# Trellis (personal workspace)
-.trellis/
-
 # Claude Code
 .claude/
 

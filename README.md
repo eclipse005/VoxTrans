@@ -28,17 +28,20 @@ VoxTrans 是一个 Windows 英文转录翻译工具，翻译需配置 LLM 相关
 
 任务输出目录按 step 落地中间结果，采用“**文件存在即跳过**”策略。
 
-- `step1_asr.json`：转录词级时间戳
-- `step2_segments.json`：组句结果
-- `step3_terminology.json`：术语层
-- `step4_translation.json`：翻译层
+- `step_01_asr.json`：转录词级时间戳
+- `step_02_segments.json`：组句结果
+- `step_03_terminology.json`：术语层
+- `step_04_translation.json`：翻译草稿层
+- `step_05_01_source_split.json`：原文展示断句（带时间戳重映射）
+- `step_05_02_translation_align.json`：译文按断句对齐
+- `step_05_03_translation_polish.json`：译文压缩/润色（最终同构输出）
 
 重跑规则：
 
-1. 仅重跑翻译（step4）：删除 `step4_translation.json`
-2. 重跑术语+翻译（step3+step4）：删除 `step3_terminology.json` 和 `step4_translation.json`
-3. 从组句后重跑（step2+step3+step4）：删除 `step2_segments.json`、`step3_terminology.json`、`step4_translation.json`
-4. 从头重跑（step1~step4）：删除 `step1_asr.json`、`step2_segments.json`、`step3_terminology.json`、`step4_translation.json`
+1. 仅重跑 step5：删除 `step_05_01_source_split.json`、`step_05_02_translation_align.json`、`step_05_03_translation_polish.json`
+2. 重跑术语+翻译+step5：删除 `step_03_terminology.json`、`step_04_translation.json` 及所有 `step_05_*`
+3. 从组句后重跑：删除 `step_02_segments.json`、`step_03_terminology.json`、`step_04_translation.json` 及所有 `step_05_*`
+4. 从头重跑：删除 `step_01_asr.json` 到 `step_05_03_translation_polish.json` 全部 step 文件
 
 说明：
 
