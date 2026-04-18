@@ -11,6 +11,7 @@ fn main() {
     commands::transcription::maybe_run_build_source_sentences_mode_from_args();
     commands::translate::maybe_run_build_terminology_mode_from_args();
     commands::translate::maybe_run_build_translation_mode_from_args();
+    commands::translate::maybe_run_build_step5_mode_from_args();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -34,6 +35,9 @@ fn main() {
             commands::transcription::build_source_sentences,
             commands::translate::build_terminology_layer,
             commands::translate::build_translation_layer,
+            commands::translate::build_step_5_1_source_split,
+            commands::translate::build_step_5_2_translation_align,
+            commands::translate::build_step_5_3_translation_polish,
             commands::translate::test_translate_llm,
             commands::file::get_file_size,
             commands::system::open_in_explorer,

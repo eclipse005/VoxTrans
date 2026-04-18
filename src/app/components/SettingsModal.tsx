@@ -28,7 +28,6 @@ type SettingsModalProps = {
   draftTranslateModel: string;
   draftLlmConcurrencyInput: string;
   draftEnableTerminology: boolean;
-  draftEnablePunctuationOptimization: boolean;
   draftEnableSubtitleBeautify: boolean;
   draftAutoBurnHardSubtitle: boolean;
   draftSubtitleBurnMode: SubtitleBurnMode;
@@ -49,7 +48,6 @@ type SettingsModalProps = {
   onDraftTranslateModelChange: (value: string) => void;
   onDraftLlmConcurrencyInputChange: (value: string) => void;
   onDraftEnableTerminologyChange: (value: boolean) => void;
-  onDraftEnablePunctuationOptimizationChange: (value: boolean) => void;
   onDraftEnableSubtitleBeautifyChange: (value: boolean) => void;
   onDraftAutoBurnHardSubtitleChange: (value: boolean) => void;
   onDraftSubtitleBurnModeChange: (value: SubtitleBurnMode) => void;
@@ -112,7 +110,6 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftTranslateModel,
     draftLlmConcurrencyInput,
     draftEnableTerminology,
-    draftEnablePunctuationOptimization,
     draftEnableSubtitleBeautify,
     draftAutoBurnHardSubtitle,
     draftSubtitleBurnMode,
@@ -133,7 +130,6 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftTranslateModelChange,
     onDraftLlmConcurrencyInputChange,
     onDraftEnableTerminologyChange,
-    onDraftEnablePunctuationOptimizationChange,
     onDraftEnableSubtitleBeautifyChange,
     onDraftAutoBurnHardSubtitleChange,
     onDraftSubtitleBurnModeChange,
@@ -282,19 +278,6 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <div className="toggle-label">
                       <span className="toggle-title">人声分离</span>
                       <span className="toggle-desc">背景吵杂时请使用，提高转录准确率</span>
-                    </div>
-                    <span className="toggle-switch" />
-                  </label>
-                  <label className="setting-toggle" htmlFor="enable-punctuation-optimization">
-                    <input
-                      id="enable-punctuation-optimization"
-                      type="checkbox"
-                      checked={draftEnablePunctuationOptimization}
-                      onChange={(e) => onDraftEnablePunctuationOptimizationChange(e.target.checked)}
-                    />
-                    <div className="toggle-label">
-                      <span className="toggle-title">标点符号优化</span>
-                      <span className="toggle-desc">使用 LLM 优化大小写标点符号，有益于断句。</span>
                     </div>
                     <span className="toggle-switch" />
                   </label>

@@ -161,11 +161,11 @@ pub fn append_cache_entry(
 
 fn cache_file_path(context: &LlmCallContext) -> Option<std::path::PathBuf> {
     let media_path = context.media_path.as_deref().map(Path::new);
-    let task_root = match media_path {
-        Some(path) => crate::services::task_path::task_output_dir(&context.task_id, path),
-        None => crate::services::task_path::task_output_dir_by_id(&context.task_id),
+    let artifact_root = match media_path {
+        Some(path) => crate::services::task_path::task_artifacts_dir(&context.task_id, path),
+        None => crate::services::task_path::task_artifacts_dir_by_id(&context.task_id),
     };
-    Some(task_root.join(CACHE_FILE_NAME))
+    Some(artifact_root.join(CACHE_FILE_NAME))
 }
 
 fn read_entries(path: &Path) -> Result<Vec<CacheEntry>, String> {

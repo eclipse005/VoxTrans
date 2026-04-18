@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow, type DragDropEvent } from "@tauri-apps/api/window";
 import { getFileSize } from "../../api/transcribe";
 import { registerTaskUpload } from "../../api/workspace";
-import type { QueueItem } from "../../../features/media/types";
+import { createEmptyTaskProgress, type QueueItem } from "../../../features/media/types";
 import { detectMediaKind, fileName } from "../../../features/media/utils";
 import type { AppAction } from "../../state/appReducer";
 import { addQueueItems } from "../../state/queueDomainActions";
@@ -37,11 +37,7 @@ export function useQueueInput({ dispatch, pushToast }: UseQueueInputArgs) {
           mediaKind: detectMediaKind(path),
           sizeBytes,
           transcribeStatus: "pending",
-          transcribeProgress: 0,
-          transcribeSegmentCurrent: 0,
-          transcribeSegmentTotal: 0,
-          transcribePhase: "",
-          transcribePhaseDetail: "",
+          taskProgress: createEmptyTaskProgress(),
           transcribeError: "",
           resultText: "",
           resultSrt: "",

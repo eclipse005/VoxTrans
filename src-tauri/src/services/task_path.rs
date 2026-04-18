@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+pub const ARTIFACTS_DIR_NAME: &str = "artifacts";
+
 pub fn sanitize_filename_component(raw: &str) -> String {
     raw.chars()
         .map(|ch| match ch {
@@ -44,6 +46,14 @@ pub fn task_srt_output_path(task_id: &str, audio_path: &Path) -> PathBuf {
     task_src_srt_output_path(task_id, audio_path)
 }
 
+pub fn task_artifacts_dir(task_id: &str, audio_path: &Path) -> PathBuf {
+    task_output_dir(task_id, audio_path).join(ARTIFACTS_DIR_NAME)
+}
+
+pub fn task_artifacts_dir_by_id(task_id: &str) -> PathBuf {
+    task_output_dir_by_id(task_id).join(ARTIFACTS_DIR_NAME)
+}
+
 pub fn task_src_srt_output_path(task_id: &str, audio_path: &Path) -> PathBuf {
     task_output_dir(task_id, audio_path).join("src.srt")
 }
@@ -61,11 +71,11 @@ pub fn task_trans_src_srt_output_path(task_id: &str, audio_path: &Path) -> PathB
 }
 
 pub fn task_log_dir(task_id: &str, media_path: Option<&Path>) -> PathBuf {
-    let task_root = match media_path {
-        Some(path) => task_output_dir(task_id, path),
-        None => task_output_dir_by_id(task_id),
+    let artifacts_root = match media_path {
+        Some(path) => task_artifacts_dir(task_id, path),
+        None => task_artifacts_dir_by_id(task_id),
     };
-    task_root.join("logs")
+    artifacts_root.join("logs")
 }
 
 fn media_parent_under_output(audio_path: &Path) -> Option<PathBuf> {

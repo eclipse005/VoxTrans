@@ -102,7 +102,6 @@ pub struct SavedSettingsCommand {
     pub terminology_groups: Vec<TerminologyGroupCommand>,
     #[serde(default = "default_true")]
     pub enable_terminology: bool,
-    pub enable_punctuation_optimization: bool,
     #[serde(default = "default_true")]
     pub enable_subtitle_beautify: bool,
     #[serde(default)]
@@ -183,7 +182,6 @@ fn to_service_settings(
             })
             .collect(),
         enable_terminology: settings.enable_terminology,
-        enable_punctuation_optimization: settings.enable_punctuation_optimization,
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         subtitle_burn_mode: settings.subtitle_burn_mode,
@@ -253,7 +251,6 @@ fn from_service_settings(
             })
             .collect(),
         enable_terminology: settings.enable_terminology,
-        enable_punctuation_optimization: settings.enable_punctuation_optimization,
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         subtitle_burn_mode: settings.subtitle_burn_mode,

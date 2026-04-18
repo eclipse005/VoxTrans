@@ -28,7 +28,7 @@ pub(crate) fn transcribe_in_segments(
     intra_threads: usize,
     inter_threads: usize,
     segments: &[AudioSegment],
-    on_segment_progress: &mut dyn FnMut(usize, usize),
+    on_segment_progress: &mut dyn FnMut(usize, usize, f64, f64),
 ) -> Result<TranscriptionResult, Box<dyn std::error::Error>> {
     let mut model = ParakeetTDT::from_pretrained(
         model_dir,
@@ -46,7 +46,12 @@ pub(crate) fn transcribe_in_segments(
     let total_segments = segments.len();
     let sample_len = full_audio_samples.len();
     for segment in segments {
-        on_segment_progress(segment.index + 1, total_segments);
+        on_segment_progress(
+            segment.index + 1,
+            total_segments,
+            segment.start_sec,
+            segment.end_sec,
+        );
         let start_index =
             ((segment.start_sec * TARGET_SAMPLE_RATE as f64).floor() as usize).min(sample_len);
         let end_index =

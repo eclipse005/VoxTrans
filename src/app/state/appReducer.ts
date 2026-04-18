@@ -33,7 +33,6 @@ export type AppState = {
   draftLlmConcurrencyInput: string;
   draftTerminologyGroups: SavedSettings["terminologyGroups"];
   draftEnableTerminology: boolean;
-  draftEnablePunctuationOptimization: boolean;
   draftEnableSubtitleBeautify: boolean;
   draftAutoBurnHardSubtitle: boolean;
   draftSubtitleBurnMode: SubtitleBurnMode;
@@ -110,7 +109,6 @@ export type SettingsAction =
           | "draftLlmConcurrencyInput"
           | "draftTerminologyGroups"
           | "draftEnableTerminology"
-          | "draftEnablePunctuationOptimization"
           | "draftEnableSubtitleBeautify"
           | "draftAutoBurnHardSubtitle"
           | "draftSubtitleBurnMode"
@@ -136,7 +134,6 @@ export const defaultSettings: SavedSettings = {
   llmConcurrency: 4,
   terminologyGroups: [createTerminologyGroup()],
   enableTerminology: true,
-  enablePunctuationOptimization: false,
   enableSubtitleBeautify: true,
   autoBurnHardSubtitle: false,
   subtitleBurnMode: "bilingualSourceFirst",
@@ -192,7 +189,6 @@ export const initialAppState: AppState = {
   draftLlmConcurrencyInput: String(defaultSettings.llmConcurrency),
   draftTerminologyGroups: defaultSettings.terminologyGroups,
   draftEnableTerminology: defaultSettings.enableTerminology,
-  draftEnablePunctuationOptimization: defaultSettings.enablePunctuationOptimization,
   draftEnableSubtitleBeautify: defaultSettings.enableSubtitleBeautify,
   draftAutoBurnHardSubtitle: defaultSettings.autoBurnHardSubtitle,
   draftSubtitleBurnMode: defaultSettings.subtitleBurnMode,

@@ -4,9 +4,12 @@ import {
   enqueueAndExecuteTaskBatch,
   executeTaskBatch,
 } from "../../api/workspace";
-import type {
-  QueueItem,
-  SavedSettings,
+import {
+  normalizeTaskProgress,
+  type TaskProgress,
+  type TaskStageProgress,
+  type QueueItem,
+  type SavedSettings,
 } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
 import {
@@ -25,51 +28,44 @@ type TaskStateChangedEvent = {
   mediaKind: string;
   sizeBytes: number;
   transcribeStatus: string;
-  transcribeProgress: number;
-  transcribeSegmentCurrent: number;
-  transcribeSegmentTotal: number;
-  transcribePhase: string;
-  transcribePhaseDetail: string;
+  taskProgress: TaskProgress;
   transcribeError: string;
   resultText: string;
   resultSrt: string;
   subtitleSegmentsJson: string;
 };
 
-function phaseOrder(phase: string | undefined): number {
-  switch (phase ?? "") {
-    case "downloading":
-      return 0;
-    case "initializing":
-      return 10;
-    case "separating":
-      return 20;
-    case "recognizing":
-      return 30;
-    case "punctuate":
-      return 40;
-    case "segment":
-      return 50;
-    case "translate":
-      return 60;
-    default:
-      return -1;
-  }
+function stageOrder(stage: Partial<TaskStageProgress> | null | undefined): number {
+  if (!stage) return 0;
+  const value = Number(stage.order ?? 0);
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.round(value));
 }
 
-function shouldKeepCurrentProcessingPhase(
+function stageRatio(stage: Partial<TaskStageProgress> | null | undefined): number {
+  if (!stage) return 0;
+  const current = Number(stage.current ?? 0);
+  const total = Number(stage.total ?? 0);
+  if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return 0;
+  return Math.max(0, Math.min(1, current / total));
+}
+
+function shouldKeepCurrentProcessingStage(
   current: QueueItem,
   incoming: TaskStateChangedEvent,
 ): boolean {
   if (current.transcribeStatus !== "processing" || incoming.transcribeStatus !== "processing") {
     return false;
   }
-  const currentOrder = phaseOrder(current.transcribePhase);
-  const incomingOrder = phaseOrder(incoming.transcribePhase);
-  if (currentOrder < 0 || incomingOrder < 0) {
-    return false;
+  const currentOrder = stageOrder(current.taskProgress.stage);
+  const incomingOrder = stageOrder(incoming.taskProgress?.stage);
+  if (incomingOrder > 0 && currentOrder > incomingOrder) {
+    return true;
   }
-  return incomingOrder < currentOrder;
+  if (incomingOrder > 0 && currentOrder === incomingOrder) {
+    return stageRatio(incoming.taskProgress?.stage) < stageRatio(current.taskProgress.stage);
+  }
+  return false;
 }
 
 export type QueueRunMode = "transcribe" | "transcribe_translate";
@@ -98,7 +94,8 @@ export function useQueueRunner({
       if (!isTaskPresent(payload.id)) return;
       // Backend is the single source of truth - replace local state directly
       patchQueueItem(dispatch, payload.id, (current) => {
-        const keepCurrentPhase = shouldKeepCurrentProcessingPhase(current, payload);
+        const keepCurrentStage = shouldKeepCurrentProcessingStage(current, payload);
+        const nextProgress = normalizeTaskProgress(payload.taskProgress);
         return {
           id: payload.id,
           path: payload.path,
@@ -106,19 +103,7 @@ export function useQueueRunner({
           mediaKind: payload.mediaKind as "audio" | "video",
           sizeBytes: payload.sizeBytes,
           transcribeStatus: payload.transcribeStatus as QueueItem["transcribeStatus"],
-          transcribeProgress: keepCurrentPhase ? current.transcribeProgress : payload.transcribeProgress,
-          transcribeSegmentCurrent: keepCurrentPhase
-            ? current.transcribeSegmentCurrent
-            : payload.transcribeSegmentCurrent,
-          transcribeSegmentTotal: keepCurrentPhase
-            ? current.transcribeSegmentTotal
-            : payload.transcribeSegmentTotal,
-          transcribePhase: keepCurrentPhase
-            ? current.transcribePhase
-            : (payload.transcribePhase || "") as QueueItem["transcribePhase"],
-          transcribePhaseDetail: keepCurrentPhase
-            ? current.transcribePhaseDetail
-            : payload.transcribePhaseDetail || "",
+          taskProgress: keepCurrentStage ? current.taskProgress : nextProgress,
           transcribeError: payload.transcribeError || "",
           resultText: payload.resultText || "",
           resultSrt: payload.resultSrt || "",
@@ -278,7 +263,6 @@ function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown>
     llmConcurrency: settings.llmConcurrency,
     terminologyGroups: settings.terminologyGroups,
     enableTerminology: settings.enableTerminology,
-    enablePunctuationOptimization: settings.enablePunctuationOptimization,
     enableSubtitleBeautify: settings.enableSubtitleBeautify,
   };
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { deleteTasks, enqueueTaskRun } from "../../api/workspace";
-import type { QueueItem, SavedSettings } from "../../../features/media/types";
+import { createEmptyTaskProgress, type QueueItem, type SavedSettings } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
 import type { QueueRunMode } from "./useQueueRunner";
 import {
@@ -18,7 +18,6 @@ type UseQueueSchedulerArgs = {
   settings: SavedSettings;
   dispatch: DispatchState;
   pushToast: PushToast;
-  runBatch: (items: Array<{ item: QueueItem; mode: QueueRunMode }>) => Promise<void>;
   runQueuedByTaskIds: (taskIds: string[]) => Promise<void>;
 };
 
@@ -29,7 +28,6 @@ export function useQueueScheduler({
   settings,
   dispatch,
   pushToast,
-  runBatch,
   runQueuedByTaskIds,
 }: UseQueueSchedulerArgs) {
   const isYoutubePlaceholder = useCallback((item: QueueItem) => (
@@ -74,11 +72,7 @@ export function useQueueScheduler({
       patchQueueItem(dispatch, item.id, (prev) => ({
         ...prev,
         transcribeStatus: "error",
-        transcribeProgress: 0,
-        transcribeSegmentCurrent: 0,
-        transcribeSegmentTotal: 0,
-        transcribePhase: "",
-        transcribePhaseDetail: "",
+        taskProgress: createEmptyTaskProgress(),
         transcribeError: message,
       }));
       pushToast(`失败：${item.name}，${message}`, "error");
@@ -133,35 +127,19 @@ export function useQueueScheduler({
     if (isYoutubePlaceholder(item)) return;
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
     const mode: QueueRunMode = "transcribe";
-    if (queueBusy) {
-      const ok = await enqueueForMode(item, mode);
-      if (!ok) return;
-      pushToast(`已加入排队：${item.name}`, "info");
-      return;
-    }
-    try {
-      await runBatch([{ item, mode }]);
-    } catch {
-      pushToast("任务执行失败，请重试", "error");
-    }
-  }, [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy, runBatch]);
+    const ok = await enqueueForMode(item, mode);
+    if (!ok) return;
+    pushToast(queueBusy ? `已加入排队：${item.name}` : `开始处理：${item.name}`, "info");
+  }, [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy]);
 
   const processSingleTranscribeTranslate = useCallback(async (item: QueueItem) => {
     if (isYoutubePlaceholder(item)) return;
     if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") return;
     const mode: QueueRunMode = "transcribe_translate";
-    if (queueBusy) {
-      const ok = await enqueueForMode(item, mode);
-      if (!ok) return;
-      pushToast(`已加入排队：${item.name}`, "info");
-      return;
-    }
-    try {
-      await runBatch([{ item, mode }]);
-    } catch {
-      pushToast("任务执行失败，请重试", "error");
-    }
-  }, [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy, runBatch]);
+    const ok = await enqueueForMode(item, mode);
+    if (!ok) return;
+    pushToast(queueBusy ? `已加入排队：${item.name}` : `开始处理：${item.name}`, "info");
+  }, [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy]);
 
   const clearQueue = useCallback(async () => {
     if (queueBusy) {
@@ -217,7 +195,6 @@ function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown>
     llmConcurrency: settings.llmConcurrency,
     terminologyGroups: settings.terminologyGroups,
     enableTerminology: settings.enableTerminology,
-    enablePunctuationOptimization: settings.enablePunctuationOptimization,
     enableSubtitleBeautify: settings.enableSubtitleBeautify,
   };
 }

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -22,15 +22,103 @@ pub struct WorkspaceQueueItem {
     pub media_kind: String,
     pub size_bytes: u64,
     pub transcribe_status: String,
-    pub transcribe_progress: u32,
-    pub transcribe_segment_current: u32,
-    pub transcribe_segment_total: u32,
-    pub transcribe_phase: String,
-    pub transcribe_phase_detail: String,
+    pub task_progress: WorkspaceTaskProgressState,
     pub transcribe_error: String,
     pub result_text: String,
     pub result_srt: String,
     pub subtitle_segments_json: String,
+    #[serde(default)]
+    pub llm_total_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceTaskStageState {
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub order: u32,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub current: u32,
+    #[serde(default)]
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceTaskProgressState {
+    #[serde(default)]
+    pub stage: WorkspaceTaskStageState,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+enum TaskStage {
+    Downloading,
+    Preparing,
+    Recognizing,
+    Segmenting,
+    Summarizing,
+    Terminology,
+    Translating,
+    SplitSource,
+    AlignTranslation,
+    PolishTranslation,
+    Qa,
+}
+
+impl TaskStage {
+    fn code(self) -> &'static str {
+        match self {
+            TaskStage::Downloading => "downloading",
+            TaskStage::Preparing => "preparing",
+            TaskStage::Recognizing => "recognizing",
+            TaskStage::Segmenting => "segmenting",
+            TaskStage::Summarizing => "summarizing",
+            TaskStage::Terminology => "terminology",
+            TaskStage::Translating => "translating",
+            TaskStage::SplitSource => "splitSource",
+            TaskStage::AlignTranslation => "alignTranslation",
+            TaskStage::PolishTranslation => "polishTranslation",
+            TaskStage::Qa => "qa",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            TaskStage::Downloading => "下载中",
+            TaskStage::Preparing => "准备中",
+            TaskStage::Recognizing => "语音识别中",
+            TaskStage::Segmenting => "AI断句中",
+            TaskStage::Summarizing => "总结中",
+            TaskStage::Terminology => "术语提取中",
+            TaskStage::Translating => "翻译中",
+            TaskStage::SplitSource => "源文拆分中",
+            TaskStage::AlignTranslation => "译文对齐中",
+            TaskStage::PolishTranslation => "润色中",
+            TaskStage::Qa => "QA质检中",
+        }
+    }
+
+    fn order(self) -> u32 {
+        match self {
+            TaskStage::Downloading => 10,
+            TaskStage::Preparing => 20,
+            TaskStage::Recognizing => 30,
+            TaskStage::Segmenting => 40,
+            TaskStage::Summarizing => 50,
+            TaskStage::Terminology => 60,
+            TaskStage::Translating => 70,
+            TaskStage::SplitSource => 80,
+            TaskStage::AlignTranslation => 90,
+            TaskStage::PolishTranslation => 100,
+            TaskStage::Qa => 110,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -51,10 +139,13 @@ struct WorkspaceStore {
 static WORKSPACE_STORE: OnceLock<Mutex<WorkspaceStore>> = OnceLock::new();
 static WORKSPACE_HYDRATED: OnceLock<Mutex<bool>> = OnceLock::new();
 const TASK_META_FILE_NAME: &str = "task_meta.json";
-const STEP1_ASR_FILE: &str = "step1_asr.json";
-const STEP2_SEGMENTS_FILE: &str = "step2_segments.json";
-const STEP3_TERMINOLOGY_FILE: &str = "step3_terminology.json";
-const STEP4_TRANSLATION_FILE: &str = "step4_translation.json";
+const STEP_01_ASR_FILE: &str = "step_01_asr.json";
+const STEP_02_SEGMENTS_FILE: &str = "step_02_segments.json";
+const STEP_03_TERMINOLOGY_FILE: &str = "step_03_terminology.json";
+const STEP_04_TRANSLATION_FILE: &str = "step_04_translation.json";
+const STEP_05_01_SOURCE_SPLIT_FILE: &str = "step_05_01_source_split.json";
+const STEP_05_02_TRANSLATION_ALIGN_FILE: &str = "step_05_02_translation_align.json";
+const STEP_05_03_TRANSLATION_POLISH_FILE: &str = "step_05_03_translation_polish.json";
 
 fn workspace_store() -> &'static Mutex<WorkspaceStore> {
     WORKSPACE_STORE.get_or_init(|| Mutex::new(WorkspaceStore::default()))
@@ -179,6 +270,10 @@ struct SettingsSnapshotInput {
     #[serde(default)]
     llm_concurrency: Option<u32>,
     #[serde(default)]
+    subtitle_max_words_per_segment: Option<u32>,
+    #[serde(default)]
+    subtitle_length_reference: Option<u32>,
+    #[serde(default)]
     terminology_groups: Option<Vec<SettingsSnapshotTerminologyGroup>>,
     #[serde(default)]
     enable_terminology: Option<bool>,
@@ -210,6 +305,8 @@ struct PipelineRuntimeSettings {
     translate_base_url: String,
     translate_model: String,
     llm_concurrency: u32,
+    subtitle_max_words_per_segment: u32,
+    subtitle_length_reference: u32,
     terminology_entries: Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
 }
 
@@ -237,11 +334,11 @@ impl PipelineStep for Step1AsrPipelineStep {
     type Output = Step1AsrArtifact;
 
     fn name(&self) -> &'static str {
-        "step1_asr"
+        "step_01_asr"
     }
 
     fn artifact_file(&self) -> &'static str {
-        STEP1_ASR_FILE
+        STEP_01_ASR_FILE
     }
 
     fn policy(&self) -> CheckpointPolicy {
@@ -275,20 +372,14 @@ impl PipelineStep for Step1AsrPipelineStep {
             crate::services::transcribe::transcribe_blocking(
                 transcribe_request,
                 move |current, total| {
-                    let progress = if total > 0 {
-                        10 + ((current as f64 / total as f64) * 35.0).round() as u32
-                    } else {
-                        10
-                    }
-                    .clamp(10, 45);
-                    let _ = patch_task_item(&app_for_progress, &task_id_owned, |task| {
-                        task.item.transcribe_status = "processing".to_string();
-                        task.item.transcribe_progress = progress;
-                        task.item.transcribe_segment_current = current as u32;
-                        task.item.transcribe_segment_total = total as u32;
-                        task.item.transcribe_phase = "recognizing".to_string();
-                        task.item.transcribe_phase_detail = format!("{current}/{total}");
-                    });
+                    let _ = report_task_stage(
+                        &app_for_progress,
+                        &task_id_owned,
+                        TaskStage::Recognizing,
+                        format!("{current}/{total}"),
+                        current as u32,
+                        total as u32,
+                    );
                 },
             )
         })
@@ -323,6 +414,7 @@ struct Step2SegmentsPipelineStep {
     translate_base_url: String,
     translate_model: String,
     llm_concurrency: u32,
+    app: AppHandle,
 }
 
 #[async_trait]
@@ -330,11 +422,11 @@ impl PipelineStep for Step2SegmentsPipelineStep {
     type Output = Vec<crate::commands::transcription::GroupedSentenceSegmentCommandDto>;
 
     fn name(&self) -> &'static str {
-        "step2_segments"
+        "step_02_segments"
     }
 
     fn artifact_file(&self) -> &'static str {
-        STEP2_SEGMENTS_FILE
+        STEP_02_SEGMENTS_FILE
     }
 
     fn policy(&self) -> CheckpointPolicy {
@@ -349,6 +441,24 @@ impl PipelineStep for Step2SegmentsPipelineStep {
     }
 
     async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        let task_id = self.task_id.clone();
+        let app_for_progress = self.app.clone();
+        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
+            Arc::new(move |current, total| {
+                let detail = if total > 0 {
+                    format!("{current}/{total}")
+                } else {
+                    String::new()
+                };
+                let _ = report_task_stage(
+                    &app_for_progress,
+                    &task_id,
+                    TaskStage::Segmenting,
+                    detail,
+                    current as u32,
+                    total as u32,
+                );
+            });
         let step2_request = crate::commands::transcription::BuildSourceSentencesCommandRequest {
             task_id: self.task_id.clone(),
             audio_path: self.media_path.clone(),
@@ -359,8 +469,11 @@ impl PipelineStep for Step2SegmentsPipelineStep {
             translate_model: self.translate_model.clone(),
             llm_concurrency: self.llm_concurrency,
         };
-        let step2_response =
-            crate::commands::transcription::build_source_sentences(step2_request).await?;
+        let step2_response = crate::commands::transcription::build_source_sentences_with_progress(
+            step2_request,
+            Some(on_progress),
+        )
+        .await?;
         Ok(step2_response.segments)
     }
 }
@@ -422,11 +535,11 @@ impl PipelineStep for Step3TerminologyPipelineStep {
     type Output = crate::commands::translate::BuildTerminologyLayerCommandResponse;
 
     fn name(&self) -> &'static str {
-        "step3_terminology"
+        "step_03_terminology"
     }
 
     fn artifact_file(&self) -> &'static str {
-        STEP3_TERMINOLOGY_FILE
+        STEP_03_TERMINOLOGY_FILE
     }
 
     fn policy(&self) -> CheckpointPolicy {
@@ -472,6 +585,7 @@ struct Step4TranslationPipelineStep {
     translate_base_url: String,
     translate_model: String,
     llm_concurrency: u32,
+    app: AppHandle,
 }
 
 #[async_trait]
@@ -479,11 +593,11 @@ impl PipelineStep for Step4TranslationPipelineStep {
     type Output = crate::commands::translate::BuildTranslationLayerCommandResponse;
 
     fn name(&self) -> &'static str {
-        "step4_translation"
+        "step_04_translation"
     }
 
     fn artifact_file(&self) -> &'static str {
-        STEP4_TRANSLATION_FILE
+        STEP_04_TRANSLATION_FILE
     }
 
     fn policy(&self) -> CheckpointPolicy {
@@ -498,7 +612,25 @@ impl PipelineStep for Step4TranslationPipelineStep {
     }
 
     async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        crate::commands::translate::build_translation_layer(
+        let task_id = self.task_id.clone();
+        let app_for_progress = self.app.clone();
+        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
+            Arc::new(move |current, total| {
+                let detail = if total > 0 {
+                    format!("{current}/{total}")
+                } else {
+                    String::new()
+                };
+                let _ = report_task_stage(
+                    &app_for_progress,
+                    &task_id,
+                    TaskStage::Translating,
+                    detail,
+                    current as u32,
+                    total as u32,
+                );
+            });
+        crate::commands::translate::build_translation_layer_with_progress(
             crate::commands::translate::BuildTranslationLayerCommandRequest {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),
@@ -513,6 +645,253 @@ impl PipelineStep for Step4TranslationPipelineStep {
                 llm_concurrency: self.llm_concurrency,
                 batch_size: 20,
             },
+            Some(on_progress),
+        )
+        .await
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Step51SourceSplitPipelineStep {
+    task_id: String,
+    media_path: String,
+    source_lang: String,
+    target_lang: String,
+    segments: Vec<crate::commands::translate::BuildTranslationSegmentCommand>,
+    translate_api_key: String,
+    translate_base_url: String,
+    translate_model: String,
+    llm_concurrency: u32,
+    subtitle_max_words_per_segment: u32,
+    subtitle_length_reference: u32,
+    app: AppHandle,
+}
+
+#[async_trait]
+impl PipelineStep for Step51SourceSplitPipelineStep {
+    type Output = crate::commands::translate::BuildStep51SourceSplitCommandResponse;
+
+    fn name(&self) -> &'static str {
+        "step_5_1_source_split"
+    }
+
+    fn artifact_file(&self) -> &'static str {
+        STEP_05_01_SOURCE_SPLIT_FILE
+    }
+
+    fn policy(&self) -> CheckpointPolicy {
+        CheckpointPolicy::ValidateThenSkip
+    }
+
+    fn validate(&self, output: &Self::Output) -> Result<(), String> {
+        if output.task_id.trim().is_empty()
+            || output.media_path.trim().is_empty()
+            || output.parents.is_empty()
+        {
+            return Err("invalid step5_1 artifact".to_string());
+        }
+        Ok(())
+    }
+
+    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        let task_id = self.task_id.clone();
+        let app_for_progress = self.app.clone();
+        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
+            Arc::new(move |current, total| {
+                let detail = if total > 0 {
+                    format!("{current}/{total}")
+                } else {
+                    String::new()
+                };
+                let _ = report_task_stage(
+                    &app_for_progress,
+                    &task_id,
+                    TaskStage::SplitSource,
+                    detail,
+                    current as u32,
+                    total as u32,
+                );
+            });
+        crate::commands::translate::build_step_5_1_source_split_with_progress(
+            crate::commands::translate::BuildStep51SourceSplitCommandRequest {
+                task_id: self.task_id.clone(),
+                media_path: self.media_path.clone(),
+                source_lang: self.source_lang.clone(),
+                target_lang: self.target_lang.clone(),
+                segments: self.segments.clone(),
+                translate_api_key: self.translate_api_key.clone(),
+                translate_base_url: self.translate_base_url.clone(),
+                translate_model: self.translate_model.clone(),
+                llm_concurrency: self.llm_concurrency,
+                subtitle_max_words_per_segment: self.subtitle_max_words_per_segment,
+                subtitle_length_reference: self.subtitle_length_reference,
+            },
+            Some(on_progress),
+        )
+        .await
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Step52TranslationAlignPipelineStep {
+    task_id: String,
+    media_path: String,
+    source_lang: String,
+    target_lang: String,
+    theme_summary: String,
+    parents: Vec<crate::commands::translate::Step5SplitParentCommand>,
+    terminology_entries: Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+    translate_api_key: String,
+    translate_base_url: String,
+    translate_model: String,
+    llm_concurrency: u32,
+    app: AppHandle,
+}
+
+#[async_trait]
+impl PipelineStep for Step52TranslationAlignPipelineStep {
+    type Output = crate::commands::translate::BuildStep52TranslationAlignCommandResponse;
+
+    fn name(&self) -> &'static str {
+        "step_5_2_translation_align"
+    }
+
+    fn artifact_file(&self) -> &'static str {
+        STEP_05_02_TRANSLATION_ALIGN_FILE
+    }
+
+    fn policy(&self) -> CheckpointPolicy {
+        CheckpointPolicy::ValidateThenSkip
+    }
+
+    fn validate(&self, output: &Self::Output) -> Result<(), String> {
+        if output.task_id.trim().is_empty()
+            || output.media_path.trim().is_empty()
+            || output.parents.is_empty()
+        {
+            return Err("invalid step5_2 artifact".to_string());
+        }
+        Ok(())
+    }
+
+    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        let task_id = self.task_id.clone();
+        let app_for_progress = self.app.clone();
+        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
+            Arc::new(move |current, total| {
+                let detail = if total > 0 {
+                    format!("{current}/{total}")
+                } else {
+                    String::new()
+                };
+                let _ = report_task_stage(
+                    &app_for_progress,
+                    &task_id,
+                    TaskStage::AlignTranslation,
+                    detail,
+                    current as u32,
+                    total as u32,
+                );
+            });
+        crate::commands::translate::build_step_5_2_translation_align_with_progress(
+            crate::commands::translate::BuildStep52TranslationAlignCommandRequest {
+                task_id: self.task_id.clone(),
+                media_path: self.media_path.clone(),
+                source_lang: self.source_lang.clone(),
+                target_lang: self.target_lang.clone(),
+                theme_summary: self.theme_summary.clone(),
+                parents: self.parents.clone(),
+                terminology_entries: self.terminology_entries.clone(),
+                translate_api_key: self.translate_api_key.clone(),
+                translate_base_url: self.translate_base_url.clone(),
+                translate_model: self.translate_model.clone(),
+                llm_concurrency: self.llm_concurrency,
+            },
+            Some(on_progress),
+        )
+        .await
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Step53TranslationPolishPipelineStep {
+    task_id: String,
+    media_path: String,
+    source_lang: String,
+    target_lang: String,
+    theme_summary: String,
+    parents: Vec<crate::commands::translate::Step5AlignedParentCommand>,
+    terminology_entries: Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+    translate_api_key: String,
+    translate_base_url: String,
+    translate_model: String,
+    llm_concurrency: u32,
+    subtitle_length_reference: u32,
+    app: AppHandle,
+}
+
+#[async_trait]
+impl PipelineStep for Step53TranslationPolishPipelineStep {
+    type Output = crate::commands::translate::BuildTranslationLayerCommandResponse;
+
+    fn name(&self) -> &'static str {
+        "step_5_3_translation_polish"
+    }
+
+    fn artifact_file(&self) -> &'static str {
+        STEP_05_03_TRANSLATION_POLISH_FILE
+    }
+
+    fn policy(&self) -> CheckpointPolicy {
+        CheckpointPolicy::ValidateThenSkip
+    }
+
+    fn validate(&self, output: &Self::Output) -> Result<(), String> {
+        if output.task_id.trim().is_empty()
+            || output.media_path.trim().is_empty()
+            || output.segments.is_empty()
+        {
+            return Err("invalid step5_3 artifact".to_string());
+        }
+        Ok(())
+    }
+
+    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        let task_id = self.task_id.clone();
+        let app_for_progress = self.app.clone();
+        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
+            Arc::new(move |current, total| {
+                let detail = if total > 0 {
+                    format!("{current}/{total}")
+                } else {
+                    String::new()
+                };
+                let _ = report_task_stage(
+                    &app_for_progress,
+                    &task_id,
+                    TaskStage::PolishTranslation,
+                    detail,
+                    current as u32,
+                    total as u32,
+                );
+            });
+        crate::commands::translate::build_step_5_3_translation_polish_with_progress(
+            crate::commands::translate::BuildStep53TranslationPolishCommandRequest {
+                task_id: self.task_id.clone(),
+                media_path: self.media_path.clone(),
+                source_lang: self.source_lang.clone(),
+                target_lang: self.target_lang.clone(),
+                theme_summary: self.theme_summary.clone(),
+                terminology_entries: self.terminology_entries.clone(),
+                parents: self.parents.clone(),
+                translate_api_key: self.translate_api_key.clone(),
+                translate_base_url: self.translate_base_url.clone(),
+                translate_model: self.translate_model.clone(),
+                llm_concurrency: self.llm_concurrency,
+                subtitle_length_reference: self.subtitle_length_reference,
+                batch_size: 20,
+            },
+            Some(on_progress),
         )
         .await
     }
@@ -574,15 +953,12 @@ pub async fn register_task_upload(request: RegisterTaskUploadCommandRequest) -> 
                     media_kind: normalize_media_kind(&request.media_kind).to_string(),
                     size_bytes: request.size_bytes,
                     transcribe_status: "pending".to_string(),
-                    transcribe_progress: 0,
-                    transcribe_segment_current: 0,
-                    transcribe_segment_total: 0,
-                    transcribe_phase: String::new(),
-                    transcribe_phase_detail: String::new(),
+                    task_progress: WorkspaceTaskProgressState::default(),
                     transcribe_error: String::new(),
                     result_text: String::new(),
                     result_srt: String::new(),
                     subtitle_segments_json: "[]".to_string(),
+                    llm_total_tokens: 0,
                 },
                 intent: "TRANSCRIBE".to_string(),
                 source_lang: "auto".to_string(),
@@ -736,11 +1112,7 @@ fn enqueue_task_run_internal(
             existing.item.media_kind = normalize_media_kind(&request.media_kind).to_string();
             existing.item.size_bytes = request.size_bytes;
             existing.item.transcribe_status = "queued".to_string();
-            existing.item.transcribe_progress = 0;
-            existing.item.transcribe_segment_current = 0;
-            existing.item.transcribe_segment_total = 0;
-            existing.item.transcribe_phase = String::new();
-            existing.item.transcribe_phase_detail = String::new();
+            existing.item.task_progress = WorkspaceTaskProgressState::default();
             existing.item.transcribe_error = String::new();
             existing.item.result_text = String::new();
             existing.item.result_srt = String::new();
@@ -769,15 +1141,12 @@ fn enqueue_task_run_internal(
                     media_kind: normalize_media_kind(&request.media_kind).to_string(),
                     size_bytes: request.size_bytes,
                     transcribe_status: "queued".to_string(),
-                    transcribe_progress: 0,
-                    transcribe_segment_current: 0,
-                    transcribe_segment_total: 0,
-                    transcribe_phase: String::new(),
-                    transcribe_phase_detail: String::new(),
+                    task_progress: WorkspaceTaskProgressState::default(),
                     transcribe_error: String::new(),
                     result_text: String::new(),
                     result_srt: String::new(),
                     subtitle_segments_json: "[]".to_string(),
+                    llm_total_tokens: 0,
                 },
                 intent: normalize_intent(&request.intent).to_string(),
                 source_lang: request.source_lang.unwrap_or_else(|| "auto".to_string()),
@@ -847,21 +1216,20 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
     } else {
         record.target_lang.trim().to_string()
     };
-    let output_dir =
+    let task_output_dir =
         crate::services::task_path::task_output_dir(task_id, Path::new(&record.item.path));
-    std::fs::create_dir_all(&output_dir).map_err(|err| err.to_string())?;
-    let step2_path = output_dir.join(STEP2_SEGMENTS_FILE);
+    std::fs::create_dir_all(&task_output_dir).map_err(|err| err.to_string())?;
+    let artifact_dir =
+        crate::services::task_path::task_artifacts_dir(task_id, Path::new(&record.item.path));
+    std::fs::create_dir_all(&artifact_dir).map_err(|err| err.to_string())?;
+    migrate_legacy_artifacts(&task_output_dir, &artifact_dir)?;
+    let step2_path = artifact_dir.join(STEP_02_SEGMENTS_FILE);
     let step_context = StepContext {
-        output_dir: &output_dir,
+        output_dir: &artifact_dir,
     };
 
+    report_task_stage(app, task_id, TaskStage::Preparing, "", 1, 1)?;
     patch_task_item(app, task_id, |task| {
-        task.item.transcribe_status = "processing".to_string();
-        task.item.transcribe_progress = 1;
-        task.item.transcribe_segment_current = 0;
-        task.item.transcribe_segment_total = 0;
-        task.item.transcribe_phase = "initializing".to_string();
-        task.item.transcribe_phase_detail = String::new();
         task.item.transcribe_error = String::new();
         task.item.result_text = String::new();
         task.item.result_srt = String::new();
@@ -873,12 +1241,7 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
     >(&step2_path)?
     {
         Some(existing) if !existing.is_empty() => {
-            patch_task_item(app, task_id, |task| {
-                task.item.transcribe_status = "processing".to_string();
-                task.item.transcribe_progress = 54;
-                task.item.transcribe_phase = "segment".to_string();
-                task.item.transcribe_phase_detail = "resume from step2".to_string();
-            })?;
+            report_task_stage(app, task_id, TaskStage::Segmenting, "缓存命中", 1, 1)?;
             existing
         }
         _ => {
@@ -906,18 +1269,7 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
                 source_lang = step1_exec.output.source_lang.clone();
             }
 
-            patch_task_item(app, task_id, |task| {
-                task.item.transcribe_status = "processing".to_string();
-                task.item.transcribe_progress = 50;
-                task.item.transcribe_segment_current = 0;
-                task.item.transcribe_segment_total = 0;
-                task.item.transcribe_phase = "segment".to_string();
-                task.item.transcribe_phase_detail = if step1_exec.source == StepSource::Cache {
-                    "resume from step1".to_string()
-                } else {
-                    "building step2 segments".to_string()
-                };
-            })?;
+            report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 1)?;
 
             let step2_exec = match execute_step(
                 &Step2SegmentsPipelineStep {
@@ -929,6 +1281,7 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
                     translate_base_url: runtime.translate_base_url.clone(),
                     translate_model: runtime.translate_model.clone(),
                     llm_concurrency: runtime.llm_concurrency,
+                    app: app.clone(),
                 },
                 &step_context,
             )
@@ -945,6 +1298,7 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
     };
     let source_text = source_text_from_step2_segments(&step2_segments);
     let step2_srt = step2_segments_to_srt(&step2_segments);
+    update_processing_preview_from_step2(app, task_id, &step2_segments, &source_text)?;
 
     if intent == "TRANSCRIBE_TRANSLATE" {
         execute_translate_steps(
@@ -954,9 +1308,8 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
             runtime,
             source_lang,
             target_lang,
-            &output_dir,
+            &artifact_dir,
             &step2_segments,
-            step2_srt,
             source_text,
         )
         .await
@@ -974,26 +1327,20 @@ async fn execute_translate_steps(
     target_lang: String,
     output_dir: &Path,
     step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
-    step2_srt: String,
     source_text: String,
 ) -> Result<(), String> {
     // Checkpoint contract:
-    // `step4_translation.json` exists => skip step3/step4 and finish directly.
+    // `step_05_03_translation_polish.json` exists => skip step3~step5 and finish directly.
     // We intentionally DO NOT auto-invalidate by input hash.
     // If user wants recompute, delete target step artifacts manually.
-    if let Some(step4_existing) = read_json_file_if_exists::<
+    if let Some(step5_existing) = read_json_file_if_exists::<
         crate::commands::translate::BuildTranslationLayerCommandResponse,
-    >(&output_dir.join(STEP4_TRANSLATION_FILE))?
+    >(&output_dir.join(STEP_05_03_TRANSLATION_POLISH_FILE))?
     {
-        return finish_translate_with_step4(app, task_id, &step4_existing, step2_srt, source_text);
+        return finish_translate_with_step5(app, task_id, &step5_existing, source_text);
     }
 
-    patch_task_item(app, task_id, |task| {
-        task.item.transcribe_status = "processing".to_string();
-        task.item.transcribe_progress = 68;
-        task.item.transcribe_phase = "translate".to_string();
-        task.item.transcribe_phase_detail = "step3 terminology".to_string();
-    })?;
+    report_task_stage(app, task_id, TaskStage::Terminology, "", 0, 1)?;
 
     let terminology_segments = map_step2_segments_for_translate(step2_segments);
     let step_context = StepContext { output_dir };
@@ -1021,24 +1368,25 @@ async fn execute_translate_steps(
         }
     };
     let step3_response = step3_exec.output;
-
-    patch_task_item(app, task_id, |task| {
-        task.item.transcribe_status = "processing".to_string();
-        task.item.transcribe_progress = if step3_exec.source == StepSource::Cache {
-            84
+    report_task_stage(
+        app,
+        task_id,
+        TaskStage::Terminology,
+        if step3_exec.source == StepSource::Cache {
+            "缓存命中"
         } else {
-            82
-        };
-        task.item.transcribe_phase = "translate".to_string();
-        task.item.transcribe_phase_detail = "step4 translation".to_string();
-    })?;
+            ""
+        },
+        1,
+        1,
+    )?;
 
     let step4_exec = match execute_step(
         &Step4TranslationPipelineStep {
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
-            source_lang,
-            target_lang,
+            source_lang: source_lang.clone(),
+            target_lang: target_lang.clone(),
             segments: terminology_segments,
             theme_summary: step3_response.theme_summary.clone(),
             terminology_entries: step3_response.terminology_entries.clone(),
@@ -1046,6 +1394,7 @@ async fn execute_translate_steps(
             translate_base_url: runtime.translate_base_url.clone(),
             translate_model: runtime.translate_model.clone(),
             llm_concurrency: runtime.llm_concurrency,
+            app: app.clone(),
         },
         &step_context,
     )
@@ -1057,7 +1406,123 @@ async fn execute_translate_steps(
             return Err(err);
         }
     };
-    finish_translate_with_step4(app, task_id, &step4_exec.output, step2_srt, source_text)
+
+    if step4_exec.source == StepSource::Cache {
+        report_task_stage(app, task_id, TaskStage::Translating, "缓存命中", 1, 1)?;
+    }
+    patch_task_item(app, task_id, |task| {
+        task.item.result_text = source_text.clone();
+        task.item.subtitle_segments_json =
+            serialize_workspace_subtitle_segments(&workspace_subtitle_segments_from_translation_segments(
+                &step4_exec.output.segments,
+            ));
+    })?;
+
+    let step51_exec = match execute_step(
+        &Step51SourceSplitPipelineStep {
+            task_id: task_id.to_string(),
+            media_path: record.item.path.clone(),
+            source_lang: source_lang.clone(),
+            target_lang: target_lang.clone(),
+            segments: step4_exec.output.segments.clone(),
+            translate_api_key: runtime.translate_api_key.clone(),
+            translate_base_url: runtime.translate_base_url.clone(),
+            translate_model: runtime.translate_model.clone(),
+            llm_concurrency: runtime.llm_concurrency,
+            subtitle_max_words_per_segment: runtime.subtitle_max_words_per_segment,
+            subtitle_length_reference: runtime.subtitle_length_reference,
+            app: app.clone(),
+        },
+        &step_context,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            mark_task_failed(app, task_id, &err)?;
+            return Err(err);
+        }
+    };
+
+    if step51_exec.source == StepSource::Cache {
+        report_task_stage(app, task_id, TaskStage::SplitSource, "缓存命中", 1, 1)?;
+    }
+    patch_task_item(app, task_id, |task| {
+        task.item.result_text = source_text.clone();
+        task.item.subtitle_segments_json =
+            serialize_workspace_subtitle_segments(&workspace_subtitle_segments_from_step51_parents(
+                &step51_exec.output.parents,
+            ));
+    })?;
+
+    let step52_exec = match execute_step(
+        &Step52TranslationAlignPipelineStep {
+            task_id: task_id.to_string(),
+            media_path: record.item.path.clone(),
+            source_lang: source_lang.clone(),
+            target_lang: target_lang.clone(),
+            theme_summary: step3_response.theme_summary.clone(),
+            parents: step51_exec.output.parents.clone(),
+            terminology_entries: step3_response.terminology_entries.clone(),
+            translate_api_key: runtime.translate_api_key.clone(),
+            translate_base_url: runtime.translate_base_url.clone(),
+            translate_model: runtime.translate_model.clone(),
+            llm_concurrency: runtime.llm_concurrency,
+            app: app.clone(),
+        },
+        &step_context,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            mark_task_failed(app, task_id, &err)?;
+            return Err(err);
+        }
+    };
+
+    if step52_exec.source == StepSource::Cache {
+        report_task_stage(app, task_id, TaskStage::AlignTranslation, "缓存命中", 1, 1)?;
+    }
+    patch_task_item(app, task_id, |task| {
+        task.item.result_text = source_text.clone();
+        task.item.subtitle_segments_json =
+            serialize_workspace_subtitle_segments(&workspace_subtitle_segments_from_step52_parents(
+                &step52_exec.output.parents,
+            ));
+    })?;
+
+    let step53_exec = match execute_step(
+        &Step53TranslationPolishPipelineStep {
+            task_id: task_id.to_string(),
+            media_path: record.item.path.clone(),
+            source_lang,
+            target_lang,
+            theme_summary: step3_response.theme_summary,
+            parents: step52_exec.output.parents,
+            terminology_entries: step3_response.terminology_entries,
+            translate_api_key: runtime.translate_api_key,
+            translate_base_url: runtime.translate_base_url,
+            translate_model: runtime.translate_model,
+            llm_concurrency: runtime.llm_concurrency,
+            subtitle_length_reference: runtime.subtitle_length_reference,
+            app: app.clone(),
+        },
+        &step_context,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            mark_task_failed(app, task_id, &err)?;
+            return Err(err);
+        }
+    };
+    if step53_exec.source == StepSource::Cache {
+        report_task_stage(app, task_id, TaskStage::PolishTranslation, "缓存命中", 1, 1)?;
+    }
+
+    finish_translate_with_step5(app, task_id, &step53_exec.output, source_text)
 }
 
 fn finish_transcribe_only(
@@ -1067,7 +1532,59 @@ fn finish_transcribe_only(
     step2_srt: String,
     source_text: String,
 ) -> Result<(), String> {
-    let subtitle_segments = step2_segments
+    let subtitle_segments_json = serialize_workspace_subtitle_segments(
+        &workspace_subtitle_segments_from_step2_segments(step2_segments),
+    );
+
+    patch_task_item(app, task_id, |task| {
+        task.item.transcribe_status = "done".to_string();
+        task.item.task_progress = done_task_progress_state();
+        task.item.transcribe_error = String::new();
+        task.item.result_text = source_text.clone();
+        task.item.result_srt = step2_srt.clone();
+        task.item.subtitle_segments_json = subtitle_segments_json.clone();
+    })
+}
+
+fn finish_translate_with_step5(
+    app: &AppHandle,
+    task_id: &str,
+    step5_response: &crate::commands::translate::BuildTranslationLayerCommandResponse,
+    source_text: String,
+) -> Result<(), String> {
+    let subtitle_segments_json = serialize_workspace_subtitle_segments(
+        &workspace_subtitle_segments_from_translation_segments(&step5_response.segments),
+    );
+
+    patch_task_item(app, task_id, |task| {
+        task.item.transcribe_status = "done".to_string();
+        task.item.task_progress = done_task_progress_state();
+        task.item.transcribe_error = String::new();
+        task.item.result_text = source_text.clone();
+        task.item.result_srt = String::new();
+        task.item.subtitle_segments_json = subtitle_segments_json.clone();
+    })
+}
+
+fn update_processing_preview_from_step2(
+    app: &AppHandle,
+    task_id: &str,
+    step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
+    source_text: &str,
+) -> Result<(), String> {
+    let subtitle_segments_json = serialize_workspace_subtitle_segments(
+        &workspace_subtitle_segments_from_step2_segments(step2_segments),
+    );
+    patch_task_item(app, task_id, |task| {
+        task.item.result_text = source_text.to_string();
+        task.item.subtitle_segments_json = subtitle_segments_json.clone();
+    })
+}
+
+fn workspace_subtitle_segments_from_step2_segments(
+    segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
+) -> Vec<WorkspaceSubtitleSegment> {
+    segments
         .iter()
         .map(|segment| WorkspaceSubtitleSegment {
             start_ms: seconds_to_millis(segment.start),
@@ -1084,33 +1601,13 @@ fn finish_transcribe_only(
                 })
                 .collect(),
         })
-        .collect::<Vec<_>>();
-    let subtitle_segments_json =
-        serde_json::to_string(&subtitle_segments).map_err(|err| err.to_string())?;
-
-    patch_task_item(app, task_id, |task| {
-        task.item.transcribe_status = "done".to_string();
-        task.item.transcribe_progress = 100;
-        task.item.transcribe_segment_current = 0;
-        task.item.transcribe_segment_total = 0;
-        task.item.transcribe_phase = String::new();
-        task.item.transcribe_phase_detail = String::new();
-        task.item.transcribe_error = String::new();
-        task.item.result_text = source_text.clone();
-        task.item.result_srt = step2_srt.clone();
-        task.item.subtitle_segments_json = subtitle_segments_json.clone();
-    })
+        .collect()
 }
 
-fn finish_translate_with_step4(
-    app: &AppHandle,
-    task_id: &str,
-    step4_response: &crate::commands::translate::BuildTranslationLayerCommandResponse,
-    step2_srt: String,
-    source_text: String,
-) -> Result<(), String> {
-    let subtitle_segments = step4_response
-        .segments
+fn workspace_subtitle_segments_from_translation_segments(
+    segments: &[crate::commands::translate::BuildTranslationSegmentCommand],
+) -> Vec<WorkspaceSubtitleSegment> {
+    segments
         .iter()
         .map(|segment| WorkspaceSubtitleSegment {
             start_ms: seconds_to_millis(segment.start),
@@ -1127,22 +1624,63 @@ fn finish_translate_with_step4(
                 })
                 .collect(),
         })
-        .collect::<Vec<_>>();
-    let subtitle_segments_json =
-        serde_json::to_string(&subtitle_segments).map_err(|err| err.to_string())?;
+        .collect()
+}
 
-    patch_task_item(app, task_id, |task| {
-        task.item.transcribe_status = "done".to_string();
-        task.item.transcribe_progress = 100;
-        task.item.transcribe_segment_current = 0;
-        task.item.transcribe_segment_total = 0;
-        task.item.transcribe_phase = String::new();
-        task.item.transcribe_phase_detail = String::new();
-        task.item.transcribe_error = String::new();
-        task.item.result_text = source_text.clone();
-        task.item.result_srt = step2_srt.clone();
-        task.item.subtitle_segments_json = subtitle_segments_json.clone();
-    })
+fn workspace_subtitle_segments_from_step51_parents(
+    parents: &[crate::commands::translate::Step5SplitParentCommand],
+) -> Vec<WorkspaceSubtitleSegment> {
+    let mut segments = Vec::new();
+    for parent in parents {
+        for part in &parent.parts {
+            segments.push(WorkspaceSubtitleSegment {
+                start_ms: seconds_to_millis(part.start),
+                end_ms: seconds_to_millis(part.end),
+                source_text: part.source.clone(),
+                translated_text: String::new(),
+                source_words: part
+                    .tokens
+                    .iter()
+                    .map(|token| WorkspaceSubtitleWord {
+                        start_ms: seconds_to_millis(token.start),
+                        end_ms: seconds_to_millis(token.end),
+                        word: token.text.clone(),
+                    })
+                    .collect(),
+            });
+        }
+    }
+    segments
+}
+
+fn workspace_subtitle_segments_from_step52_parents(
+    parents: &[crate::commands::translate::Step5AlignedParentCommand],
+) -> Vec<WorkspaceSubtitleSegment> {
+    let mut segments = Vec::new();
+    for parent in parents {
+        for part in &parent.parts {
+            segments.push(WorkspaceSubtitleSegment {
+                start_ms: seconds_to_millis(part.start),
+                end_ms: seconds_to_millis(part.end),
+                source_text: part.source.clone(),
+                translated_text: part.translation.clone(),
+                source_words: part
+                    .tokens
+                    .iter()
+                    .map(|token| WorkspaceSubtitleWord {
+                        start_ms: seconds_to_millis(token.start),
+                        end_ms: seconds_to_millis(token.end),
+                        word: token.text.clone(),
+                    })
+                    .collect(),
+            });
+        }
+    }
+    segments
+}
+
+fn serialize_workspace_subtitle_segments(segments: &[WorkspaceSubtitleSegment]) -> String {
+    serde_json::to_string(segments).unwrap_or_else(|_| "[]".to_string())
 }
 
 fn source_text_from_step2_segments(
@@ -1185,7 +1723,7 @@ fn format_srt_ms(total_ms: u64) -> String {
 }
 
 fn task_meta_version() -> u32 {
-    1
+    2
 }
 
 fn ensure_workspace_hydrated_from_disk() -> Result<(), String> {
@@ -1236,26 +1774,21 @@ fn load_task_meta_artifacts() -> Result<Vec<WorkspaceTaskMetaArtifact>, String> 
         if !path.is_dir() {
             continue;
         }
-        let meta_path = path.join(TASK_META_FILE_NAME);
-        let Some(mut artifact) = read_json_file_if_exists::<WorkspaceTaskMetaArtifact>(&meta_path)?
-        else {
+        let artifact_meta_path = path
+            .join(crate::services::task_path::ARTIFACTS_DIR_NAME)
+            .join(TASK_META_FILE_NAME);
+        let legacy_meta_path = path.join(TASK_META_FILE_NAME);
+        let Some(mut artifact) = read_json_file_if_exists::<WorkspaceTaskMetaArtifact>(
+            &artifact_meta_path,
+        )?
+        .or(read_json_file_if_exists::<WorkspaceTaskMetaArtifact>(
+            &legacy_meta_path,
+        )?) else {
             continue;
         };
-        if artifact
-            .item
-            .transcribe_phase_detail
-            .to_ascii_lowercase()
-            .contains("pipeline")
-        {
-            artifact.item.transcribe_phase_detail = String::new();
-        }
         if artifact.item.transcribe_status == "processing" {
             artifact.item.transcribe_status = "error".to_string();
-            artifact.item.transcribe_progress = 0;
-            artifact.item.transcribe_segment_current = 0;
-            artifact.item.transcribe_segment_total = 0;
-            artifact.item.transcribe_phase = String::new();
-            artifact.item.transcribe_phase_detail = String::new();
+            artifact.item.task_progress = WorkspaceTaskProgressState::default();
             artifact.item.transcribe_error = "任务在运行中被中断，请重新开始".to_string();
         }
         out.push(artifact);
@@ -1305,10 +1838,12 @@ fn persist_task_meta(record: &WorkspaceTaskRecord) -> Result<(), String> {
 fn remove_task_meta(item: &WorkspaceQueueItem) {
     let meta_path = task_meta_path_for_item(item);
     let _ = std::fs::remove_file(meta_path);
+    let legacy_meta_path = task_output_dir_for_item(item).join(TASK_META_FILE_NAME);
+    let _ = std::fs::remove_file(legacy_meta_path);
 }
 
 fn task_meta_path_for_item(item: &WorkspaceQueueItem) -> PathBuf {
-    task_output_dir_for_item(item).join(TASK_META_FILE_NAME)
+    task_artifact_dir_for_item(item).join(TASK_META_FILE_NAME)
 }
 
 fn task_output_dir_for_item(item: &WorkspaceQueueItem) -> PathBuf {
@@ -1317,6 +1852,104 @@ fn task_output_dir_for_item(item: &WorkspaceQueueItem) -> PathBuf {
         crate::services::task_path::task_output_dir_by_id(&item.id)
     } else {
         crate::services::task_path::task_output_dir(&item.id, Path::new(path))
+    }
+}
+
+fn task_artifact_dir_for_item(item: &WorkspaceQueueItem) -> PathBuf {
+    let path = item.path.trim();
+    if path.is_empty() {
+        crate::services::task_path::task_artifacts_dir_by_id(&item.id)
+    } else {
+        crate::services::task_path::task_artifacts_dir(&item.id, Path::new(path))
+    }
+}
+
+fn migrate_legacy_artifacts(task_output_dir: &Path, artifact_dir: &Path) -> Result<(), String> {
+    if !task_output_dir.exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(artifact_dir).map_err(|err| err.to_string())?;
+    migrate_legacy_logs_dir(task_output_dir, artifact_dir)?;
+    let entries = std::fs::read_dir(task_output_dir).map_err(|err| err.to_string())?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+            continue;
+        };
+        let Some(target_name) = migrate_target_artifact_name(name) else {
+            continue;
+        };
+        let target_path = artifact_dir.join(target_name);
+        if target_path.exists() {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        }
+        std::fs::rename(&path, &target_path)
+            .or_else(|_| std::fs::copy(&path, &target_path).map(|_| ()))
+            .map_err(|err| err.to_string())?;
+        let _ = std::fs::remove_file(&path);
+    }
+    Ok(())
+}
+
+fn migrate_legacy_logs_dir(task_output_dir: &Path, artifact_dir: &Path) -> Result<(), String> {
+    let legacy_log_dir = task_output_dir.join("logs");
+    if !legacy_log_dir.is_dir() {
+        return Ok(());
+    }
+    let target_log_dir = artifact_dir.join("logs");
+    if std::fs::rename(&legacy_log_dir, &target_log_dir).is_ok() {
+        return Ok(());
+    }
+    move_directory_contents(&legacy_log_dir, &target_log_dir)?;
+    let _ = std::fs::remove_dir_all(&legacy_log_dir);
+    Ok(())
+}
+
+fn move_directory_contents(source_dir: &Path, target_dir: &Path) -> Result<(), String> {
+    if !source_dir.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(target_dir).map_err(|err| err.to_string())?;
+    let entries = std::fs::read_dir(source_dir).map_err(|err| err.to_string())?;
+    for entry in entries.flatten() {
+        let source_path = entry.path();
+        let target_path = target_dir.join(entry.file_name());
+        if source_path.is_dir() {
+            move_directory_contents(&source_path, &target_path)?;
+            let _ = std::fs::remove_dir(&source_path);
+            continue;
+        }
+        if !source_path.is_file() {
+            continue;
+        }
+        if target_path.exists() {
+            let _ = std::fs::remove_file(&source_path);
+            continue;
+        }
+        std::fs::rename(&source_path, &target_path)
+            .or_else(|_| std::fs::copy(&source_path, &target_path).map(|_| ()))
+            .map_err(|err| err.to_string())?;
+        let _ = std::fs::remove_file(&source_path);
+    }
+    Ok(())
+}
+
+fn migrate_target_artifact_name(name: &str) -> Option<&'static str> {
+    match name {
+        "step_01_asr.json" => Some(STEP_01_ASR_FILE),
+        "step_02_segments.json" => Some(STEP_02_SEGMENTS_FILE),
+        "step_03_terminology.json" => Some(STEP_03_TERMINOLOGY_FILE),
+        "step_04_translation.json" => Some(STEP_04_TRANSLATION_FILE),
+        "step_05_01_source_split.json" => Some(STEP_05_01_SOURCE_SPLIT_FILE),
+        "step_05_02_translation_align.json" => Some(STEP_05_02_TRANSLATION_ALIGN_FILE),
+        "step_05_03_translation_polish.json" => Some(STEP_05_03_TRANSLATION_POLISH_FILE),
+        "gpt.log" => Some("gpt.log"),
+        "task_meta.json" => Some(TASK_META_FILE_NAME),
+        _ => None,
     }
 }
 
@@ -1368,19 +2001,27 @@ fn resolve_runtime_settings(snapshot: &Value) -> Result<PipelineRuntimeSettings,
         .unwrap_or_else(|| saved.translate_model.clone());
 
     if translate_api_key.trim().is_empty() {
-        return Err("translateApiKey is required for step2/step4".to_string());
+        return Err("translateApiKey is required for step_02~step_05".to_string());
     }
     if translate_base_url.trim().is_empty() {
-        return Err("translateBaseUrl is required for step2/step4".to_string());
+        return Err("translateBaseUrl is required for step_02~step_05".to_string());
     }
     if translate_model.trim().is_empty() {
-        return Err("translateModel is required for step2/step4".to_string());
+        return Err("translateModel is required for step_02~step_05".to_string());
     }
 
     let llm_concurrency = snapshot_parsed
         .llm_concurrency
         .unwrap_or(saved.llm_concurrency)
         .clamp(1, 16);
+    let subtitle_max_words_per_segment = snapshot_parsed
+        .subtitle_max_words_per_segment
+        .unwrap_or(saved.subtitle_max_words_per_segment)
+        .clamp(8, 40);
+    let subtitle_length_reference = snapshot_parsed
+        .subtitle_length_reference
+        .unwrap_or(saved.subtitle_length_reference)
+        .clamp(8, 80);
     let enable_terminology = snapshot_parsed
         .enable_terminology
         .unwrap_or(saved.enable_terminology);
@@ -1435,6 +2076,8 @@ fn resolve_runtime_settings(snapshot: &Value) -> Result<PipelineRuntimeSettings,
         translate_base_url,
         translate_model,
         llm_concurrency,
+        subtitle_max_words_per_segment,
+        subtitle_length_reference,
         terminology_entries,
     })
 }
@@ -1454,7 +2097,6 @@ fn fallback_saved_settings() -> crate::services::preferences::SavedSettings {
         llm_concurrency: 4,
         terminology_groups: Vec::new(),
         enable_terminology: true,
-        enable_punctuation_optimization: false,
         enable_subtitle_beautify: true,
         auto_burn_hard_subtitle: false,
         subtitle_burn_mode: "bilingualSourceFirst".to_string(),
@@ -1522,14 +2164,50 @@ fn read_json_file_if_exists<T: DeserializeOwned>(path: &Path) -> Result<Option<T
     Ok(parsed)
 }
 
+fn task_progress_state(
+    stage: TaskStage,
+    detail: impl Into<String>,
+    current: u32,
+    total: u32,
+) -> WorkspaceTaskProgressState {
+    WorkspaceTaskProgressState {
+        stage: WorkspaceTaskStageState {
+            code: stage.code().to_string(),
+            label: stage.label().to_string(),
+            order: stage.order(),
+            detail: detail.into(),
+            current,
+            total,
+        },
+    }
+}
+
+fn done_task_progress_state() -> WorkspaceTaskProgressState {
+    WorkspaceTaskProgressState {
+        stage: WorkspaceTaskStageState::default(),
+    }
+}
+
+fn report_task_stage(
+    app: &AppHandle,
+    task_id: &str,
+    stage: TaskStage,
+    detail: impl Into<String>,
+    current: u32,
+    total: u32,
+) -> Result<(), String> {
+    let progress = task_progress_state(stage, detail, current, total);
+    patch_task_item(app, task_id, |task| {
+        task.item.transcribe_status = "processing".to_string();
+        task.item.task_progress = progress;
+        task.item.transcribe_error = String::new();
+    })
+}
+
 fn mark_task_failed(app: &AppHandle, task_id: &str, error: &str) -> Result<(), String> {
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "error".to_string();
-        task.item.transcribe_progress = 0;
-        task.item.transcribe_segment_current = 0;
-        task.item.transcribe_segment_total = 0;
-        task.item.transcribe_phase = String::new();
-        task.item.transcribe_phase_detail = String::new();
+        task.item.task_progress = WorkspaceTaskProgressState::default();
         task.item.transcribe_error = error.to_string();
     })
 }
@@ -1539,16 +2217,16 @@ fn patch_task_item(
     task_id: &str,
     mutator: impl FnOnce(&mut WorkspaceTaskRecord),
 ) -> Result<(), String> {
-    let updated_record = {
+    let updated_item = {
         let mut store = lock_workspace_store()?;
         let Some(task) = find_task_mut(&mut store, task_id) else {
             return Err(format!("task not found: {task_id}"));
         };
         mutator(task);
-        task.clone()
+        persist_task_meta(task)?;
+        task.item.clone()
     };
-    persist_task_meta(&updated_record)?;
-    emit_task_state_changed(app, &updated_record.item);
+    emit_task_state_changed(app, &updated_item);
     Ok(())
 }
 
@@ -1558,6 +2236,39 @@ fn get_task_record(task_id: &str) -> Result<WorkspaceTaskRecord, String> {
         return Err(format!("task not found: {task_id}"));
     };
     Ok(task.clone())
+}
+
+pub fn add_task_total_tokens(task_id: &str, delta_tokens: u64) -> Result<u64, String> {
+    let task_id = task_id.trim();
+    if task_id.is_empty() || delta_tokens == 0 {
+        return Ok(0);
+    }
+
+    ensure_workspace_hydrated_from_disk()?;
+    let updated_total = {
+        let mut store = lock_workspace_store()?;
+        let Some(task) = find_task_mut(&mut store, task_id) else {
+            return Ok(0);
+        };
+        task.item.llm_total_tokens = task.item.llm_total_tokens.saturating_add(delta_tokens);
+        persist_task_meta(task)?;
+        task.item.llm_total_tokens
+    };
+    Ok(updated_total)
+}
+
+pub fn get_task_total_tokens_from_workspace(task_id: &str) -> Result<u64, String> {
+    let task_id = task_id.trim();
+    if task_id.is_empty() {
+        return Ok(0);
+    }
+
+    ensure_workspace_hydrated_from_disk()?;
+    let store = lock_workspace_store()?;
+    let Some(task) = store.tasks.iter().find(|entry| entry.item.id == task_id) else {
+        return Ok(0);
+    };
+    Ok(task.item.llm_total_tokens)
 }
 
 fn find_task_mut<'a>(

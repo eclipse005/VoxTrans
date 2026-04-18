@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import type { QueueItem } from "../../features/media/types";
+import {
+  createEmptyTaskProgress,
+  createTaskProgress,
+  type QueueItem,
+} from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { QueueRunMode } from "./queue/useQueueRunner";
 import type { YoutubeDownloadProgressResponse } from "../api/youtube";
@@ -69,11 +73,13 @@ function createYoutubePlaceholderTask(
     mediaKind: "video",
     sizeBytes,
     transcribeStatus: "processing",
-    transcribeProgress: progress,
-    transcribeSegmentCurrent: 0,
-    transcribeSegmentTotal: 0,
-    transcribePhase: "downloading",
-    transcribePhaseDetail: `${progress}%`,
+    taskProgress: createTaskProgress({
+      code: "downloading",
+      label: "下载中",
+      detail: `${progress}%`,
+      current: progress,
+      total: 100,
+    }),
     transcribeError: "",
     resultText: "",
     resultSrt: "",
@@ -182,9 +188,13 @@ export function useYoutubeDownloadWorkflow({
         name: nextName,
         sizeBytes: totalBytes > 0 ? totalBytes : item.sizeBytes,
         transcribeStatus: "processing",
-        transcribePhase: "downloading",
-        transcribeProgress: progress,
-        transcribePhaseDetail: `${progress}%`,
+        taskProgress: createTaskProgress({
+          code: "downloading",
+          label: "下载中",
+          detail: `${progress}%`,
+          current: progress,
+          total: 100,
+        }),
       };
     });
   }, [dispatch, isTaskPresent]);
@@ -217,9 +227,13 @@ export function useYoutubeDownloadWorkflow({
       patchQueueItem(dispatch, taskId, (item) => ({
         ...item,
         transcribeStatus: "processing",
-        transcribePhase: "downloading",
-        transcribeProgress: 0,
-        transcribePhaseDetail: "0%",
+        taskProgress: createTaskProgress({
+          code: "downloading",
+          label: "下载中",
+          detail: "0%",
+          current: 0,
+          total: 100,
+        }),
       }));
     }
 
@@ -240,11 +254,7 @@ export function useYoutubeDownloadWorkflow({
           mediaKind: response.task.mediaKind,
           sizeBytes: response.task.sizeBytes,
           transcribeStatus: "pending",
-          transcribeProgress: 0,
-          transcribeSegmentCurrent: 0,
-          transcribeSegmentTotal: 0,
-          transcribePhase: "",
-          transcribePhaseDetail: "",
+          taskProgress: createEmptyTaskProgress(),
           transcribeError: "",
         }));
       } else {
@@ -255,11 +265,7 @@ export function useYoutubeDownloadWorkflow({
           mediaKind: response.task.mediaKind,
           sizeBytes: response.task.sizeBytes,
           transcribeStatus: "pending",
-          transcribeProgress: 0,
-          transcribeSegmentCurrent: 0,
-          transcribeSegmentTotal: 0,
-          transcribePhase: "",
-          transcribePhaseDetail: "",
+          taskProgress: createEmptyTaskProgress(),
           transcribeError: "",
           resultText: "",
           resultSrt: "",
@@ -278,11 +284,7 @@ export function useYoutubeDownloadWorkflow({
           mediaKind: response.task.mediaKind,
           sizeBytes: response.task.sizeBytes,
           transcribeStatus: "pending",
-          transcribeProgress: 0,
-          transcribeSegmentCurrent: 0,
-          transcribeSegmentTotal: 0,
-          transcribePhase: "",
-          transcribePhaseDetail: "",
+          taskProgress: createEmptyTaskProgress(),
           transcribeError: "",
           resultText: "",
           resultSrt: "",
@@ -301,9 +303,7 @@ export function useYoutubeDownloadWorkflow({
         patchQueueItem(dispatch, taskId, (item) => ({
           ...item,
           transcribeStatus: "error",
-          transcribeProgress: 0,
-          transcribePhase: "",
-          transcribePhaseDetail: "",
+          taskProgress: createEmptyTaskProgress(),
           transcribeError: message,
         }));
         pushToast(message, "error");
@@ -371,9 +371,13 @@ export function useYoutubeDownloadWorkflow({
     patchQueueItem(dispatch, taskId, (item) => ({
       ...item,
       transcribeStatus: "queued",
-      transcribeProgress: 0,
-      transcribePhase: "downloading",
-      transcribePhaseDetail: "排队中",
+      taskProgress: createTaskProgress({
+        code: "downloading",
+        label: "下载中",
+        detail: "排队中",
+        current: 0,
+        total: 100,
+      }),
       transcribeError: "",
     }));
     setYoutubeDownloadQueue((prev) => ([

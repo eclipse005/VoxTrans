@@ -7,7 +7,6 @@ import {
   parseSubtitleSegments,
   subtitleSegmentsToSrt,
 } from "../../../features/media/subtitleSegments";
-import { buildFallbackCue, parseSrtContent } from "../../../features/media/srt";
 import { exportTaskSrts, type ExportSrtItem } from "../../api/transcribe";
 
 export async function saveSubtitleEditor(
@@ -40,11 +39,7 @@ export async function loadSubtitleEditorData(item: QueueItem): Promise<{
       hydratedCues: buildCueListFromSubtitleSegments(item.id, segments),
     };
   }
-
-  const content = (item.resultSrt || "").replace(/\r\n/g, "\n");
-  const parsedCues = parseSrtContent(content);
-  const hydratedCues = parsedCues.length > 0 ? parsedCues : buildFallbackCue(content);
-  return { response, hydratedCues };
+  return { response, hydratedCues: [] };
 }
 
 export async function exportSubtitleVariantsToDirectory(

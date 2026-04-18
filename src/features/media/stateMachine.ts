@@ -37,41 +37,25 @@ export function normalizeTranscribeStatus(value: unknown): TranscribeStatus {
 type QueueStatusPayloads = {
   queued: Pick<
     QueueItem,
-    | "transcribeProgress"
-    | "transcribeSegmentCurrent"
-    | "transcribeSegmentTotal"
-    | "transcribePhase"
-    | "transcribePhaseDetail"
+    | "taskProgress"
     | "transcribeError"
   >;
   processing: Pick<
     QueueItem,
-    | "transcribeProgress"
-    | "transcribeSegmentCurrent"
-    | "transcribeSegmentTotal"
-    | "transcribePhase"
-    | "transcribePhaseDetail"
+    | "taskProgress"
     | "transcribeError"
   >;
   done: Pick<
     QueueItem,
     | "subtitleSegmentsJson"
-    | "transcribeProgress"
-    | "transcribeSegmentCurrent"
-    | "transcribeSegmentTotal"
-    | "transcribePhase"
-    | "transcribePhaseDetail"
+    | "taskProgress"
     | "resultText"
     | "resultSrt"
     | "transcribeError"
   >;
   error: Pick<
     QueueItem,
-    | "transcribeProgress"
-    | "transcribeSegmentCurrent"
-    | "transcribeSegmentTotal"
-    | "transcribePhase"
-    | "transcribePhaseDetail"
+    | "taskProgress"
     | "transcribeError"
   >;
 };

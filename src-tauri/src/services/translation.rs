@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::services::llm::batch::run_indexed_concurrent;
+use crate::services::llm::batch::run_indexed_concurrent_with_progress;
 use crate::services::llm::client::{LlmSemanticValidationError, OpenAiCompatLlmClient};
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 
@@ -84,8 +85,9 @@ struct BatchWindow {
     prompt: String,
 }
 
-pub async fn build_translation_layer(
+pub async fn build_translation_layer_with_progress(
     request: BuildTranslationLayerRequest,
+    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> Result<BuildTranslationLayerResponse, String> {
     validate_request(&request)?;
 
@@ -140,7 +142,8 @@ pub async fn build_translation_layer(
     };
 
     let windows_for_worker = windows.clone();
-    let results = run_indexed_concurrent(
+    let progress_callback = on_progress.clone();
+    let results = run_indexed_concurrent_with_progress(
         tasks,
         concurrency,
         {
@@ -185,6 +188,11 @@ pub async fn build_translation_layer(
             }
         },
         |msg| msg,
+        move |done, total| {
+            if let Some(callback) = progress_callback.as_ref() {
+                callback(done, total);
+            }
+        },
     )
     .await;
 
@@ -209,6 +217,18 @@ pub async fn build_translation_layer(
             translation: translated,
             tokens: segment.tokens.clone(),
         });
+    }
+
+    let incomplete_ids = outputs
+        .iter()
+        .filter(|segment| segment.translation.trim().is_empty())
+        .map(|segment| segment.segment_id)
+        .collect::<Vec<_>>();
+    if !incomplete_ids.is_empty() {
+        return Err(format!(
+            "translation incomplete: missing non-empty translations for segment ids {:?}",
+            incomplete_ids
+        ));
     }
 
     Ok(BuildTranslationLayerResponse {
@@ -428,7 +448,6 @@ fn build_batch_translate_prompt(
             "Keep meaning faithful and natural.",
             "Apply provided terminology when relevant.",
             "Prefer one translation line per input line.",
-            "If a line is hard to translate safely, return empty text for that id.",
             "No extra explanations."
         ],
         "output": {
@@ -470,6 +489,11 @@ fn parse_batch_translation(
             if !expected_ids.contains(&id) {
                 continue;
             }
+            if text.is_empty() {
+                return Err(LlmSemanticValidationError::retryable(format!(
+                    "translation id {id} must be non-empty"
+                )));
+            }
             if out.insert(id, text).is_some() {
                 return Err(LlmSemanticValidationError::retryable(format!(
                     "duplicate translation id {id}"
@@ -491,6 +515,11 @@ fn parse_batch_translation(
             if !expected_ids.contains(&id) {
                 continue;
             }
+            if text.is_empty() {
+                return Err(LlmSemanticValidationError::retryable(format!(
+                    "translation id {id} must be non-empty"
+                )));
+            }
             if out.insert(id, text).is_some() {
                 return Err(LlmSemanticValidationError::retryable(format!(
                     "duplicate translation id {id}"
@@ -504,7 +533,11 @@ fn parse_batch_translation(
     }
 
     for expected_id in expected_ids {
-        out.entry(*expected_id).or_insert_with(String::new);
+        if !out.contains_key(expected_id) {
+            return Err(LlmSemanticValidationError::retryable(format!(
+                "missing translation id {expected_id}"
+            )));
+        }
     }
 
     Ok(out)
@@ -524,8 +557,9 @@ fn normalize_inline_text(raw: &str) -> String {
 mod tests {
     use super::{
         TranslationSegmentInput, TranslationTerminologyEntry, build_batch_windows,
-        normalize_segments,
+        normalize_segments, parse_batch_translation,
     };
+    use serde_json::json;
 
     fn seg(text: &str) -> TranslationSegmentInput {
         TranslationSegmentInput {
@@ -554,5 +588,44 @@ mod tests {
         assert_eq!(windows[0].local_to_global, vec![1, 2]);
         assert_eq!(windows[1].local_to_global, vec![3, 4]);
         assert_eq!(windows[2].local_to_global, vec![5]);
+    }
+
+    #[test]
+    fn parse_batch_translation_rejects_missing_expected_id() {
+        let value = json!({
+            "translations": [
+                { "id": 1, "text": "first" }
+            ]
+        });
+
+        let err = parse_batch_translation(value, &[1, 2]).expect_err("should reject missing id");
+        assert!(format!("{err:?}").contains("missing translation id 2"));
+    }
+
+    #[test]
+    fn parse_batch_translation_rejects_empty_translation_text() {
+        let value = json!({
+            "translations": [
+                { "id": 1, "text": "" }
+            ]
+        });
+
+        let err =
+            parse_batch_translation(value, &[1]).expect_err("should reject empty translation");
+        assert!(format!("{err:?}").contains("translation id 1 must be non-empty"));
+    }
+
+    #[test]
+    fn parse_batch_translation_accepts_complete_non_empty_batch() {
+        let value = json!({
+            "translations": [
+                { "id": 1, "text": "first" },
+                { "id": 2, "text": "second" }
+            ]
+        });
+
+        let out = parse_batch_translation(value, &[1, 2]).expect("should parse full batch");
+        assert_eq!(out.get(&1).map(String::as_str), Some("first"));
+        assert_eq!(out.get(&2).map(String::as_str), Some("second"));
     }
 }

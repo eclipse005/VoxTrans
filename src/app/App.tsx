@@ -76,7 +76,6 @@ function App() {
     draftLlmConcurrencyInput,
     draftTerminologyGroups,
     draftEnableTerminology,
-    draftEnablePunctuationOptimization,
     draftEnableSubtitleBeautify,
     draftAutoBurnHardSubtitle,
     draftSubtitleBurnMode,
@@ -204,7 +203,6 @@ function App() {
     draftLlmConcurrencyInput,
     draftTerminologyGroups,
     draftEnableTerminology,
-    draftEnablePunctuationOptimization,
     draftEnableSubtitleBeautify,
     draftAutoBurnHardSubtitle,
     draftSubtitleBurnMode,
@@ -320,7 +318,6 @@ function App() {
         draftTranslateModel={draftTranslateModel}
         draftLlmConcurrencyInput={draftLlmConcurrencyInput}
         draftEnableTerminology={draftEnableTerminology}
-        draftEnablePunctuationOptimization={draftEnablePunctuationOptimization}
         draftEnableSubtitleBeautify={draftEnableSubtitleBeautify}
         draftAutoBurnHardSubtitle={draftAutoBurnHardSubtitle}
         draftSubtitleBurnMode={draftSubtitleBurnMode}
@@ -341,7 +338,6 @@ function App() {
         onDraftTranslateModelChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateModel: value } })}
         onDraftLlmConcurrencyInputChange={(value) => dispatch({ type: "set_draft", payload: { draftLlmConcurrencyInput: value } })}
         onDraftEnableTerminologyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableTerminology: value } })}
-        onDraftEnablePunctuationOptimizationChange={(value) => dispatch({ type: "set_draft", payload: { draftEnablePunctuationOptimization: value } })}
         onDraftEnableSubtitleBeautifyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableSubtitleBeautify: value } })}
         onDraftAutoBurnHardSubtitleChange={(value) => dispatch({ type: "set_draft", payload: { draftAutoBurnHardSubtitle: value } })}
         onDraftSubtitleBurnModeChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleBurnMode: value } })}

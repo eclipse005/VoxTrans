@@ -62,6 +62,8 @@ pub enum TimestampKind {
 #[derive(Debug, Clone)]
 pub struct SegmentSummary {
     pub index: usize,
+    pub start_sec: f64,
+    pub end_sec: f64,
     pub duration_sec: f64,
 }
 
@@ -79,7 +81,7 @@ pub struct TranscribeOutput {
 pub fn transcribe_with_parakeet_v2(
     options: &TranscribeOptions,
 ) -> Result<TranscribeOutput, Box<dyn std::error::Error>> {
-    transcribe_with_parakeet_v2_with_progress(options, |_current, _total| {})
+    transcribe_with_parakeet_v2_with_progress(options, |_current, _total, _start, _end| {})
 }
 
 pub fn transcribe_with_parakeet_v2_with_progress<F>(
@@ -87,7 +89,7 @@ pub fn transcribe_with_parakeet_v2_with_progress<F>(
     mut on_segment_progress: F,
 ) -> Result<TranscribeOutput, Box<dyn std::error::Error>>
 where
-    F: FnMut(usize, usize),
+    F: FnMut(usize, usize, f64, f64),
 {
     if options.audio_path.as_os_str().is_empty() {
         return Err("audio_path is required".into());
@@ -126,6 +128,8 @@ where
         .iter()
         .map(|s| SegmentSummary {
             index: s.index + 1,
+            start_sec: s.start_sec,
+            end_sec: s.end_sec,
             duration_sec: s.duration_sec(),
         })
         .collect();

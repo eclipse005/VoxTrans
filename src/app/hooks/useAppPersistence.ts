@@ -51,7 +51,6 @@ export function useAppPersistence(dispatch: DispatchState) {
           : [];
         const terminologyGroups = normalizeTerminologyGroups(terminologyGroupsRaw);
         const enableTerminology = Boolean(res.settings.enableTerminology ?? true);
-        const enablePunctuationOptimization = Boolean(res.settings.enablePunctuationOptimization);
         const enableSubtitleBeautify = Boolean(res.settings.enableSubtitleBeautify ?? true);
         const autoBurnHardSubtitle = Boolean(res.settings.autoBurnHardSubtitle ?? false);
         const subtitleBurnModeRaw = String(res.settings.subtitleBurnMode ?? "bilingualSourceFirst");
@@ -119,7 +118,6 @@ export function useAppPersistence(dispatch: DispatchState) {
             llmConcurrency,
             terminologyGroups,
             enableTerminology,
-            enablePunctuationOptimization,
             enableSubtitleBeautify,
             autoBurnHardSubtitle,
             subtitleBurnMode,
@@ -142,7 +140,6 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftLlmConcurrencyInput: String(llmConcurrency),
             draftTerminologyGroups: terminologyGroups,
             draftEnableTerminology: enableTerminology,
-            draftEnablePunctuationOptimization: enablePunctuationOptimization,
             draftEnableSubtitleBeautify: enableSubtitleBeautify,
             draftAutoBurnHardSubtitle: autoBurnHardSubtitle,
             draftSubtitleBurnMode: subtitleBurnMode,

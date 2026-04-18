@@ -61,7 +61,6 @@ export type SavedSettings = {
   llmConcurrency: number;
   terminologyGroups: TerminologyGroup[];
   enableTerminology: boolean;
-  enablePunctuationOptimization: boolean;
   enableSubtitleBeautify: boolean;
   autoBurnHardSubtitle: boolean;
   subtitleBurnMode: SubtitleBurnMode;
@@ -70,14 +69,31 @@ export type SavedSettings = {
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
-export type TranscribePhase =
+export type TaskStageCode =
   | "downloading"
-  | "initializing"
-  | "separating"
+  | "preparing"
   | "recognizing"
-  | "punctuate"
-  | "segment"
-  | "translate";
+  | "segmenting"
+  | "summarizing"
+  | "terminology"
+  | "translating"
+  | "splitSource"
+  | "alignTranslation"
+  | "polishTranslation"
+  | "qa";
+
+export type TaskStageProgress = {
+  code: TaskStageCode | "";
+  label: string;
+  order: number;
+  detail: string;
+  current: number;
+  total: number;
+};
+
+export type TaskProgress = {
+  stage: TaskStageProgress;
+};
 
 export type SubtitleCue = {
   id: string;
@@ -108,16 +124,108 @@ export type QueueItem = {
   mediaKind: "audio" | "video";
   sizeBytes: number;
   transcribeStatus: TranscribeStatus;
-  transcribeProgress: number;
-  transcribeSegmentCurrent: number;
-  transcribeSegmentTotal: number;
-  transcribePhase?: TranscribePhase | "";
-  transcribePhaseDetail: string;
+  taskProgress: TaskProgress;
   transcribeError: string;
   resultText: string;
   resultSrt: string;
   subtitleSegmentsJson: string;
 };
+
+const TASK_STAGE_SET = new Set<TaskStageCode>([
+  "downloading",
+  "preparing",
+  "recognizing",
+  "segmenting",
+  "summarizing",
+  "terminology",
+  "translating",
+  "splitSource",
+  "alignTranslation",
+  "polishTranslation",
+  "qa",
+]);
+
+const TASK_STAGE_ORDER: Record<TaskStageCode, number> = {
+  downloading: 10,
+  preparing: 20,
+  recognizing: 30,
+  segmenting: 40,
+  summarizing: 50,
+  terminology: 60,
+  translating: 70,
+  splitSource: 80,
+  alignTranslation: 90,
+  polishTranslation: 100,
+  qa: 110,
+};
+
+export function normalizeTaskStageCode(value: unknown): TaskStageCode | "" {
+  if (typeof value !== "string") return "";
+  if (TASK_STAGE_SET.has(value as TaskStageCode)) {
+    return value as TaskStageCode;
+  }
+  return "";
+}
+
+function clampUnsigned(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.round(n));
+}
+
+export function createEmptyTaskProgress(): TaskProgress {
+  return {
+    stage: {
+      code: "",
+      label: "",
+      order: 0,
+      detail: "",
+      current: 0,
+      total: 0,
+    },
+  };
+}
+
+export function createTaskProgress(input: {
+  code?: TaskStageCode | "";
+  label?: string;
+  order?: number;
+  detail?: string;
+  current?: number;
+  total?: number;
+}): TaskProgress {
+  const code = normalizeTaskStageCode(input.code);
+  const order = clampUnsigned(input.order);
+  return {
+    stage: {
+      code,
+      label: typeof input.label === "string" ? input.label : "",
+      order: order > 0 ? order : (code ? TASK_STAGE_ORDER[code] : 0),
+      detail: typeof input.detail === "string" ? input.detail : "",
+      current: clampUnsigned(input.current),
+      total: clampUnsigned(input.total),
+    },
+  };
+}
+
+export function normalizeTaskProgress(value: unknown): TaskProgress {
+  if (typeof value !== "object" || value === null) {
+    return createEmptyTaskProgress();
+  }
+  const payload = value as Partial<TaskProgress>;
+  const stage =
+    typeof payload.stage === "object" && payload.stage !== null
+      ? payload.stage as Partial<TaskStageProgress>
+      : {};
+  return createTaskProgress({
+    code: normalizeTaskStageCode(stage.code),
+    label: typeof stage.label === "string" ? stage.label : "",
+    order: Number(stage.order ?? 0),
+    detail: typeof stage.detail === "string" ? stage.detail : "",
+    current: Number(stage.current ?? 0),
+    total: Number(stage.total ?? 0),
+  });
+}
 
 export type WordToken = {
   start: number;

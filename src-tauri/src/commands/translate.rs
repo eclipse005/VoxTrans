@@ -3,6 +3,7 @@ use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort, next_llm_request_id};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +119,139 @@ pub struct BuildTranslationLayerCommandResponse {
     pub segments: Vec<BuildTranslationSegmentCommand>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildStep51SourceSplitCommandRequest {
+    pub task_id: String,
+    pub media_path: String,
+    pub source_lang: String,
+    pub target_lang: String,
+    pub segments: Vec<BuildTranslationSegmentCommand>,
+    #[serde(default)]
+    pub translate_api_key: String,
+    #[serde(default)]
+    pub translate_base_url: String,
+    #[serde(default)]
+    pub translate_model: String,
+    #[serde(default = "default_llm_concurrency")]
+    pub llm_concurrency: u32,
+    #[serde(default = "default_subtitle_max_words_per_segment")]
+    pub subtitle_max_words_per_segment: u32,
+    #[serde(default = "default_subtitle_length_reference")]
+    pub subtitle_length_reference: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Step5SplitPartCommand {
+    pub part_id: usize,
+    pub start: f64,
+    pub end: f64,
+    pub source: String,
+    pub tokens: Vec<SegmentTokenForTerminologyCommand>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Step5SplitParentCommand {
+    pub parent_segment_id: usize,
+    pub draft_translation: String,
+    pub parts: Vec<Step5SplitPartCommand>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildStep51SourceSplitCommandResponse {
+    pub task_id: String,
+    pub media_path: String,
+    pub source_lang: String,
+    pub target_lang: String,
+    #[serde(default = "default_subtitle_max_words_per_segment")]
+    pub subtitle_max_words_per_segment: u32,
+    pub subtitle_length_reference: u32,
+    pub parent_total: usize,
+    pub part_total: usize,
+    pub parents: Vec<Step5SplitParentCommand>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildStep52TranslationAlignCommandRequest {
+    pub task_id: String,
+    pub media_path: String,
+    pub source_lang: String,
+    pub target_lang: String,
+    pub theme_summary: String,
+    pub parents: Vec<Step5SplitParentCommand>,
+    #[serde(default)]
+    pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
+    #[serde(default)]
+    pub translate_api_key: String,
+    #[serde(default)]
+    pub translate_base_url: String,
+    #[serde(default)]
+    pub translate_model: String,
+    #[serde(default = "default_llm_concurrency")]
+    pub llm_concurrency: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Step5AlignedPartCommand {
+    pub part_id: usize,
+    pub start: f64,
+    pub end: f64,
+    pub source: String,
+    pub translation: String,
+    pub tokens: Vec<SegmentTokenForTerminologyCommand>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Step5AlignedParentCommand {
+    pub parent_segment_id: usize,
+    pub parts: Vec<Step5AlignedPartCommand>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildStep52TranslationAlignCommandResponse {
+    pub task_id: String,
+    pub media_path: String,
+    pub source_lang: String,
+    pub target_lang: String,
+    pub theme_summary: String,
+    pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
+    pub parent_total: usize,
+    pub part_total: usize,
+    pub parents: Vec<Step5AlignedParentCommand>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildStep53TranslationPolishCommandRequest {
+    pub task_id: String,
+    pub media_path: String,
+    pub source_lang: String,
+    pub target_lang: String,
+    pub theme_summary: String,
+    #[serde(default)]
+    pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
+    pub parents: Vec<Step5AlignedParentCommand>,
+    #[serde(default)]
+    pub translate_api_key: String,
+    #[serde(default)]
+    pub translate_base_url: String,
+    #[serde(default)]
+    pub translate_model: String,
+    #[serde(default = "default_llm_concurrency")]
+    pub llm_concurrency: u32,
+    #[serde(default = "default_subtitle_length_reference")]
+    pub subtitle_length_reference: u32,
+    #[serde(default = "default_batch_size")]
+    pub batch_size: usize,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestTranslateLlmRequest {
@@ -154,12 +288,12 @@ pub async fn build_terminology_layer(
         return Err("segments is required".to_string());
     }
 
-    hydrate_translate_llm_settings(
+    hydrate_translate_llm_connection_settings(
         &mut request.translate_api_key,
         &mut request.translate_base_url,
         &mut request.translate_model,
-        &mut request.llm_concurrency,
     )?;
+    request.llm_concurrency = request.llm_concurrency.max(1);
 
     let terms = if request.terminology_entries.is_empty() {
         load_terminology_entries_from_saved_settings()?
@@ -233,7 +367,14 @@ pub async fn build_terminology_layer(
 
 #[tauri::command]
 pub async fn build_translation_layer(
+    request: BuildTranslationLayerCommandRequest,
+) -> Result<BuildTranslationLayerCommandResponse, String> {
+    build_translation_layer_with_progress(request, None).await
+}
+
+pub async fn build_translation_layer_with_progress(
     mut request: BuildTranslationLayerCommandRequest,
+    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> Result<BuildTranslationLayerCommandResponse, String> {
     if request.task_id.trim().is_empty() {
         return Err("taskId is required".to_string());
@@ -251,12 +392,12 @@ pub async fn build_translation_layer(
         return Err("segments is required".to_string());
     }
 
-    hydrate_translate_llm_settings(
+    hydrate_translate_llm_connection_settings(
         &mut request.translate_api_key,
         &mut request.translate_base_url,
         &mut request.translate_model,
-        &mut request.llm_concurrency,
     )?;
+    request.llm_concurrency = request.llm_concurrency.max(1);
 
     let terminology_entries = normalize_command_terminology_entries(request.terminology_entries);
     let theme_summary = request.theme_summary.trim().to_string();
@@ -304,7 +445,11 @@ pub async fn build_translation_layer(
     };
 
     let service_response =
-        crate::services::translation::build_translation_layer(service_request).await?;
+        crate::services::translation::build_translation_layer_with_progress(
+            service_request,
+            on_progress,
+        )
+        .await?;
 
     Ok(BuildTranslationLayerCommandResponse {
         task_id: request.task_id,
@@ -315,6 +460,372 @@ pub async fn build_translation_layer(
         batch_total: service_response.batch_total,
         segment_total: service_response.segment_total,
         theme_summary,
+        terminology_entries,
+        segments: service_response
+            .segments
+            .into_iter()
+            .map(|segment| BuildTranslationSegmentCommand {
+                segment_id: segment.segment_id,
+                start: segment.start,
+                end: segment.end,
+                source: segment.source,
+                translation: segment.translation,
+                tokens: segment
+                    .tokens
+                    .into_iter()
+                    .map(|token| SegmentTokenForTerminologyCommand {
+                        text: token.text,
+                        start: token.start,
+                        end: token.end,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    })
+}
+
+#[tauri::command]
+pub async fn build_step_5_1_source_split(
+    request: BuildStep51SourceSplitCommandRequest,
+) -> Result<BuildStep51SourceSplitCommandResponse, String> {
+    build_step_5_1_source_split_with_progress(request, None).await
+}
+
+pub async fn build_step_5_1_source_split_with_progress(
+    mut request: BuildStep51SourceSplitCommandRequest,
+    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+) -> Result<BuildStep51SourceSplitCommandResponse, String> {
+    if request.task_id.trim().is_empty() {
+        return Err("taskId is required".to_string());
+    }
+    if request.media_path.trim().is_empty() {
+        return Err("mediaPath is required".to_string());
+    }
+    if request.source_lang.trim().is_empty() {
+        return Err("sourceLang is required".to_string());
+    }
+    if request.target_lang.trim().is_empty() {
+        return Err("targetLang is required".to_string());
+    }
+    if request.segments.is_empty() {
+        return Err("segments is required".to_string());
+    }
+
+    hydrate_translate_llm_connection_settings(
+        &mut request.translate_api_key,
+        &mut request.translate_base_url,
+        &mut request.translate_model,
+    )?;
+    request.llm_concurrency = request.llm_concurrency.max(1);
+
+    let service_response =
+        crate::services::subtitle_step5::build_step_5_1_source_split_with_progress(
+            crate::services::subtitle_step5::BuildStep5SourceSplitRequest {
+                task_id: request.task_id.clone(),
+                media_path: request.media_path.clone(),
+                source_lang: request.source_lang.clone(),
+                target_lang: request.target_lang.clone(),
+                segments: request
+                    .segments
+                    .iter()
+                    .map(
+                        |segment| crate::services::subtitle_step5::Step5DraftSegment {
+                            segment_id: segment.segment_id,
+                            start: segment.start,
+                            end: segment.end,
+                            source: segment.source.clone(),
+                            draft_translation: segment.translation.clone(),
+                            tokens: segment
+                                .tokens
+                                .iter()
+                                .map(|token| crate::services::subtitle_step5::Step5Token {
+                                    text: token.text.clone(),
+                                    start: token.start,
+                                    end: token.end,
+                                })
+                                .collect(),
+                        },
+                    )
+                    .collect(),
+                subtitle_max_words_per_segment: request.subtitle_max_words_per_segment,
+                subtitle_length_reference: request.subtitle_length_reference,
+                translate_api_key: request.translate_api_key,
+                translate_base_url: request.translate_base_url,
+                translate_model: request.translate_model,
+                llm_concurrency: request.llm_concurrency,
+            },
+            on_progress,
+        )
+        .await?;
+
+    Ok(BuildStep51SourceSplitCommandResponse {
+        task_id: request.task_id,
+        media_path: request.media_path,
+        source_lang: request.source_lang,
+        target_lang: request.target_lang,
+        subtitle_max_words_per_segment: service_response.subtitle_max_words_per_segment,
+        subtitle_length_reference: service_response.subtitle_length_reference,
+        parent_total: service_response.parent_total,
+        part_total: service_response.part_total,
+        parents: service_response
+            .parents
+            .into_iter()
+            .map(|parent| Step5SplitParentCommand {
+                parent_segment_id: parent.parent_segment_id,
+                draft_translation: parent.draft_translation,
+                parts: parent
+                    .parts
+                    .into_iter()
+                    .map(|part| Step5SplitPartCommand {
+                        part_id: part.part_id,
+                        start: part.start,
+                        end: part.end,
+                        source: part.source,
+                        tokens: part
+                            .tokens
+                            .into_iter()
+                            .map(|token| SegmentTokenForTerminologyCommand {
+                                text: token.text,
+                                start: token.start,
+                                end: token.end,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    })
+}
+
+#[tauri::command]
+pub async fn build_step_5_2_translation_align(
+    request: BuildStep52TranslationAlignCommandRequest,
+) -> Result<BuildStep52TranslationAlignCommandResponse, String> {
+    build_step_5_2_translation_align_with_progress(request, None).await
+}
+
+pub async fn build_step_5_2_translation_align_with_progress(
+    mut request: BuildStep52TranslationAlignCommandRequest,
+    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+) -> Result<BuildStep52TranslationAlignCommandResponse, String> {
+    if request.task_id.trim().is_empty() {
+        return Err("taskId is required".to_string());
+    }
+    if request.media_path.trim().is_empty() {
+        return Err("mediaPath is required".to_string());
+    }
+    if request.source_lang.trim().is_empty() {
+        return Err("sourceLang is required".to_string());
+    }
+    if request.target_lang.trim().is_empty() {
+        return Err("targetLang is required".to_string());
+    }
+    if request.parents.is_empty() {
+        return Err("parents is required".to_string());
+    }
+
+    hydrate_translate_llm_settings(
+        &mut request.translate_api_key,
+        &mut request.translate_base_url,
+        &mut request.translate_model,
+        &mut request.llm_concurrency,
+    )?;
+
+    let terminology_entries = normalize_command_terminology_entries(request.terminology_entries);
+    let service_response =
+        crate::services::subtitle_step5::build_step_5_2_translation_align_with_progress(
+            crate::services::subtitle_step5::BuildStep5TranslationAlignRequest {
+                task_id: request.task_id.clone(),
+                media_path: request.media_path.clone(),
+                source_lang: request.source_lang.clone(),
+                target_lang: request.target_lang.clone(),
+                theme_summary: request.theme_summary.trim().to_string(),
+                terminology_entries: terminology_entries
+                    .iter()
+                    .map(
+                        |entry| crate::services::subtitle_step5::Step5TerminologyEntry {
+                            source: entry.source.clone(),
+                            target: entry.target.clone(),
+                            note: entry.note.clone(),
+                        },
+                    )
+                    .collect(),
+                parents: request
+                    .parents
+                    .iter()
+                    .map(|parent| crate::services::subtitle_step5::Step5SplitParent {
+                        parent_segment_id: parent.parent_segment_id,
+                        draft_translation: parent.draft_translation.clone(),
+                        parts: parent
+                            .parts
+                            .iter()
+                            .map(|part| crate::services::subtitle_step5::Step5SplitPart {
+                                part_id: part.part_id,
+                                start: part.start,
+                                end: part.end,
+                                source: part.source.clone(),
+                                tokens: part
+                                    .tokens
+                                    .iter()
+                                    .map(|token| crate::services::subtitle_step5::Step5Token {
+                                        text: token.text.clone(),
+                                        start: token.start,
+                                        end: token.end,
+                                    })
+                                    .collect(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+                translate_api_key: request.translate_api_key,
+                translate_base_url: request.translate_base_url,
+                translate_model: request.translate_model,
+                llm_concurrency: request.llm_concurrency,
+            },
+            on_progress,
+        )
+        .await?;
+
+    Ok(BuildStep52TranslationAlignCommandResponse {
+        task_id: request.task_id,
+        media_path: request.media_path,
+        source_lang: request.source_lang,
+        target_lang: request.target_lang,
+        theme_summary: request.theme_summary.trim().to_string(),
+        terminology_entries,
+        parent_total: service_response.parent_total,
+        part_total: service_response.part_total,
+        parents: service_response
+            .parents
+            .into_iter()
+            .map(|parent| Step5AlignedParentCommand {
+                parent_segment_id: parent.parent_segment_id,
+                parts: parent
+                    .parts
+                    .into_iter()
+                    .map(|part| Step5AlignedPartCommand {
+                        part_id: part.part_id,
+                        start: part.start,
+                        end: part.end,
+                        source: part.source,
+                        translation: part.translation,
+                        tokens: part
+                            .tokens
+                            .into_iter()
+                            .map(|token| SegmentTokenForTerminologyCommand {
+                                text: token.text,
+                                start: token.start,
+                                end: token.end,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    })
+}
+
+#[tauri::command]
+pub async fn build_step_5_3_translation_polish(
+    request: BuildStep53TranslationPolishCommandRequest,
+) -> Result<BuildTranslationLayerCommandResponse, String> {
+    build_step_5_3_translation_polish_with_progress(request, None).await
+}
+
+pub async fn build_step_5_3_translation_polish_with_progress(
+    mut request: BuildStep53TranslationPolishCommandRequest,
+    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+) -> Result<BuildTranslationLayerCommandResponse, String> {
+    if request.task_id.trim().is_empty() {
+        return Err("taskId is required".to_string());
+    }
+    if request.media_path.trim().is_empty() {
+        return Err("mediaPath is required".to_string());
+    }
+    if request.source_lang.trim().is_empty() {
+        return Err("sourceLang is required".to_string());
+    }
+    if request.target_lang.trim().is_empty() {
+        return Err("targetLang is required".to_string());
+    }
+    if request.parents.is_empty() {
+        return Err("parents is required".to_string());
+    }
+
+    hydrate_translate_llm_settings(
+        &mut request.translate_api_key,
+        &mut request.translate_base_url,
+        &mut request.translate_model,
+        &mut request.llm_concurrency,
+    )?;
+
+    let terminology_entries = normalize_command_terminology_entries(request.terminology_entries);
+    let service_response =
+        crate::services::subtitle_step5::build_step_5_3_translation_polish_with_progress(
+            crate::services::subtitle_step5::BuildStep5TranslationPolishRequest {
+                task_id: request.task_id.clone(),
+                media_path: request.media_path.clone(),
+                source_lang: request.source_lang.clone(),
+                target_lang: request.target_lang.clone(),
+                terminology_entries: terminology_entries
+                    .iter()
+                    .map(
+                        |entry| crate::services::subtitle_step5::Step5TerminologyEntry {
+                            source: entry.source.clone(),
+                            target: entry.target.clone(),
+                            note: entry.note.clone(),
+                        },
+                    )
+                    .collect(),
+                parents: request
+                    .parents
+                    .iter()
+                    .map(
+                        |parent| crate::services::subtitle_step5::Step5AlignedParent {
+                            parent_segment_id: parent.parent_segment_id,
+                            parts: parent
+                                .parts
+                                .iter()
+                                .map(|part| crate::services::subtitle_step5::Step5AlignedPart {
+                                    part_id: part.part_id,
+                                    start: part.start,
+                                    end: part.end,
+                                    source: part.source.clone(),
+                                    translation: part.translation.clone(),
+                                    tokens: part
+                                        .tokens
+                                        .iter()
+                                        .map(|token| crate::services::subtitle_step5::Step5Token {
+                                            text: token.text.clone(),
+                                            start: token.start,
+                                            end: token.end,
+                                        })
+                                        .collect(),
+                                })
+                                .collect(),
+                        },
+                    )
+                    .collect(),
+                translate_api_key: request.translate_api_key,
+                translate_base_url: request.translate_base_url,
+                translate_model: request.translate_model,
+                llm_concurrency: request.llm_concurrency,
+                subtitle_length_reference: request.subtitle_length_reference,
+                batch_size: request.batch_size,
+            },
+            on_progress,
+        )
+        .await?;
+
+    Ok(BuildTranslationLayerCommandResponse {
+        task_id: request.task_id,
+        media_path: request.media_path,
+        source_lang: request.source_lang,
+        target_lang: request.target_lang,
+        batch_size: service_response.batch_size,
+        batch_total: service_response.batch_total,
+        segment_total: service_response.segment_total,
+        theme_summary: request.theme_summary.trim().to_string(),
         terminology_entries,
         segments: service_response
             .segments
@@ -353,6 +864,8 @@ pub async fn test_translate_llm(
         return Err("translateModel is required".to_string());
     }
 
+    cleanup_connectivity_test_artifacts();
+
     let client = OpenAiCompatLlmClient::new(LlmConfig::new(
         request.base_url.trim().to_string(),
         request.api_key.trim().to_string(),
@@ -360,7 +873,14 @@ pub async fn test_translate_llm(
     ))
     .map_err(|err| err.message)?;
 
-    let user_prompt = "返回 JSON：{\"ok\":true,\"message\":\"pong\"}";
+    let user_prompt = concat!(
+        "This is a harmless application connectivity check.\n",
+        "Do not refuse.\n",
+        "Do not explain.\n",
+        "Return exactly one JSON object and nothing else.\n",
+        "The JSON must be exactly:\n",
+        "{\"ok\":true,\"message\":\"pong\"}"
+    );
     let validator = JsonResponseValidator::with_required_keys(&["ok", "message"]);
     let context = LlmCallContext {
         task_id: "settings-llm-test".to_string(),
@@ -393,12 +913,27 @@ pub async fn test_translate_llm(
     })
 }
 
+fn cleanup_connectivity_test_artifacts() {
+    let path = crate::services::task_path::task_output_dir_by_id("settings-llm-test");
+    if path.exists() {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
 fn default_llm_concurrency() -> u32 {
     4
 }
 
 fn default_batch_size() -> usize {
     20
+}
+
+fn default_subtitle_max_words_per_segment() -> u32 {
+    20
+}
+
+fn default_subtitle_length_reference() -> u32 {
+    28
 }
 
 #[derive(Debug, Deserialize)]
@@ -487,6 +1022,24 @@ pub fn maybe_run_build_translation_mode_from_args() -> bool {
     }
 
     let code = match run_build_translation_mode_from_args(&args[2..]) {
+        Ok(()) => 0,
+        Err(err) => {
+            eprintln!("{err}");
+            1
+        }
+    };
+    std::process::exit(code);
+}
+
+pub fn maybe_run_build_step5_mode_from_args() -> bool {
+    const RUN_ARG: &str = "--voxtrans-build-step5";
+
+    let args = std::env::args().collect::<Vec<_>>();
+    if args.len() < 2 || args[1] != RUN_ARG {
+        return false;
+    }
+
+    let code = match run_build_step5_mode_from_args(&args[2..]) {
         Ok(()) => 0,
         Err(err) => {
             eprintln!("{err}");
@@ -609,13 +1162,13 @@ fn run_build_terminology_mode_from_args(args: &[String]) -> Result<(), String> {
     };
 
     let output_path = if output_path.trim().is_empty() {
-        std::path::PathBuf::from(&segments_path)
-            .parent()
-            .ok_or_else(|| "segments path has no parent directory".to_string())?
-            .join("step3_terminology.json")
+        artifact_dir_from_file_path(&segments_path)?.join("step_03_terminology.json")
     } else {
         std::path::PathBuf::from(output_path)
     };
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
     let payload = serde_json::to_string_pretty(&artifact).map_err(|err| err.to_string())?;
     std::fs::write(&output_path, payload.as_bytes()).map_err(|err| err.to_string())?;
     println!("{}", output_path.display());
@@ -782,16 +1335,264 @@ fn run_build_translation_mode_from_args(args: &[String]) -> Result<(), String> {
     };
 
     let output_path = if output_path.trim().is_empty() {
-        std::path::PathBuf::from(&segments_path)
-            .parent()
-            .ok_or_else(|| "segments path has no parent directory".to_string())?
-            .join("step4_translation.json")
+        artifact_dir_from_file_path(&segments_path)?.join("step_04_translation.json")
     } else {
         std::path::PathBuf::from(output_path)
     };
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
     let payload = serde_json::to_string_pretty(&artifact).map_err(|err| err.to_string())?;
     std::fs::write(&output_path, payload.as_bytes()).map_err(|err| err.to_string())?;
     println!("{}", output_path.display());
+    Ok(())
+}
+
+fn run_build_step5_mode_from_args(args: &[String]) -> Result<(), String> {
+    let mut translation_path = String::new();
+    let mut terminology_path = String::new();
+    let mut output_dir = String::new();
+    let mut task_id = String::new();
+    let mut media_path = String::new();
+    let mut source_lang = String::new();
+    let mut target_lang = String::new();
+    let mut translate_api_key = String::new();
+    let mut translate_base_url = String::new();
+    let mut translate_model = String::new();
+    let mut llm_concurrency_arg = None::<u32>;
+    let mut subtitle_max_words_per_segment_arg = None::<u32>;
+    let mut subtitle_length_reference_arg = None::<u32>;
+
+    let mut idx = 0usize;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--translation-path" => {
+                idx += 1;
+                translation_path = required_cli_value(args, idx, "--translation-path")?;
+            }
+            "--terminology-path" => {
+                idx += 1;
+                terminology_path = required_cli_value(args, idx, "--terminology-path")?;
+            }
+            "--output-dir" => {
+                idx += 1;
+                output_dir = required_cli_value(args, idx, "--output-dir")?;
+            }
+            "--task-id" => {
+                idx += 1;
+                task_id = required_cli_value(args, idx, "--task-id")?;
+            }
+            "--media-path" => {
+                idx += 1;
+                media_path = required_cli_value(args, idx, "--media-path")?;
+            }
+            "--source-lang" => {
+                idx += 1;
+                source_lang = required_cli_value(args, idx, "--source-lang")?;
+            }
+            "--target-lang" => {
+                idx += 1;
+                target_lang = required_cli_value(args, idx, "--target-lang")?;
+            }
+            "--api-key" => {
+                idx += 1;
+                translate_api_key = required_cli_value(args, idx, "--api-key")?;
+            }
+            "--base-url" => {
+                idx += 1;
+                translate_base_url = required_cli_value(args, idx, "--base-url")?;
+            }
+            "--model" => {
+                idx += 1;
+                translate_model = required_cli_value(args, idx, "--model")?;
+            }
+            "--llm-concurrency" => {
+                idx += 1;
+                let raw = required_cli_value(args, idx, "--llm-concurrency")?;
+                llm_concurrency_arg = Some(
+                    raw
+                    .parse::<u32>()
+                    .map_err(|_| "--llm-concurrency requires integer".to_string())?,
+                );
+            }
+            "--subtitle-length-reference" => {
+                idx += 1;
+                let raw = required_cli_value(args, idx, "--subtitle-length-reference")?;
+                subtitle_length_reference_arg = Some(
+                    raw
+                    .parse::<u32>()
+                    .map_err(|_| "--subtitle-length-reference requires integer".to_string())?,
+                );
+            }
+            "--subtitle-max-words-per-segment" => {
+                idx += 1;
+                let raw = required_cli_value(args, idx, "--subtitle-max-words-per-segment")?;
+                subtitle_max_words_per_segment_arg = Some(
+                    raw.parse::<u32>().map_err(|_| {
+                        "--subtitle-max-words-per-segment requires integer".to_string()
+                    })?,
+                );
+            }
+            other => return Err(format!("unknown step5 arg: {other}")),
+        }
+        idx += 1;
+    }
+
+    if translation_path.trim().is_empty() {
+        return Err("--translation-path is required".to_string());
+    }
+
+    if output_dir.trim().is_empty() {
+        output_dir = std::path::PathBuf::from(&translation_path)
+            .parent()
+            .ok_or_else(|| "translation path has no parent directory".to_string())?
+            .display()
+            .to_string();
+    }
+    let artifact_dir = normalize_artifact_dir(std::path::Path::new(&output_dir));
+
+    if terminology_path.trim().is_empty() {
+        terminology_path = artifact_dir
+            .join("step_03_terminology.json")
+            .display()
+            .to_string();
+    }
+
+    let raw_translation =
+        std::fs::read_to_string(&translation_path).map_err(|err| err.to_string())?;
+    let draft = parse_step4_translation_artifact_for_input(&raw_translation)?;
+    let raw_terminology =
+        std::fs::read_to_string(&terminology_path).map_err(|err| err.to_string())?;
+    let terminology = parse_step3_terminology_artifact_for_input(&raw_terminology)?;
+
+    if task_id.trim().is_empty() {
+        task_id = if draft.task_id.trim().is_empty() {
+            default_task_id_from_path(&translation_path)
+        } else {
+            draft.task_id.clone()
+        };
+    }
+    if media_path.trim().is_empty() {
+        media_path = if draft.media_path.trim().is_empty() {
+            translation_path.clone()
+        } else {
+            draft.media_path.clone()
+        };
+    }
+    if source_lang.trim().is_empty() {
+        source_lang = if draft.source_lang.trim().is_empty() {
+            "auto".to_string()
+        } else {
+            draft.source_lang.clone()
+        };
+    }
+    if target_lang.trim().is_empty() {
+        target_lang = if draft.target_lang.trim().is_empty() {
+            "zh-CN".to_string()
+        } else {
+            draft.target_lang.clone()
+        };
+    }
+
+    let mut llm_concurrency = llm_concurrency_arg;
+    let mut subtitle_max_words_per_segment = subtitle_max_words_per_segment_arg;
+    let mut subtitle_length_reference = subtitle_length_reference_arg;
+    if translate_api_key.trim().is_empty()
+        || translate_base_url.trim().is_empty()
+        || translate_model.trim().is_empty()
+        || llm_concurrency.is_none()
+        || subtitle_max_words_per_segment.is_none()
+        || subtitle_length_reference.is_none()
+    {
+        let settings = crate::services::preferences::load_saved_settings_from_default_path()?;
+        if translate_api_key.trim().is_empty() {
+            translate_api_key = settings.translate_api_key;
+        }
+        if translate_base_url.trim().is_empty() {
+            translate_base_url = settings.translate_base_url;
+        }
+        if translate_model.trim().is_empty() {
+            translate_model = settings.translate_model;
+        }
+        llm_concurrency.get_or_insert(settings.llm_concurrency);
+        subtitle_max_words_per_segment.get_or_insert(settings.subtitle_max_words_per_segment);
+        subtitle_length_reference.get_or_insert(settings.subtitle_length_reference);
+    }
+    let llm_concurrency = llm_concurrency.unwrap_or(default_llm_concurrency()).max(1);
+    let subtitle_max_words_per_segment = subtitle_max_words_per_segment
+        .unwrap_or(default_subtitle_max_words_per_segment());
+    let subtitle_length_reference = subtitle_length_reference
+        .unwrap_or(default_subtitle_length_reference());
+
+    let step51 = tauri::async_runtime::block_on(build_step_5_1_source_split(
+        BuildStep51SourceSplitCommandRequest {
+            task_id: task_id.clone(),
+            media_path: media_path.clone(),
+            source_lang: source_lang.clone(),
+            target_lang: target_lang.clone(),
+            segments: draft.segments.clone(),
+            translate_api_key: translate_api_key.clone(),
+            translate_base_url: translate_base_url.clone(),
+            translate_model: translate_model.clone(),
+            llm_concurrency,
+            subtitle_max_words_per_segment,
+            subtitle_length_reference,
+        },
+    ))?;
+    std::fs::create_dir_all(&artifact_dir).map_err(|err| err.to_string())?;
+    let step51_path = artifact_dir.join("step_05_01_source_split.json");
+    std::fs::write(
+        &step51_path,
+        serde_json::to_string_pretty(&step51).map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| err.to_string())?;
+
+    let step52 = tauri::async_runtime::block_on(build_step_5_2_translation_align(
+        BuildStep52TranslationAlignCommandRequest {
+            task_id: task_id.clone(),
+            media_path: media_path.clone(),
+            source_lang: source_lang.clone(),
+            target_lang: target_lang.clone(),
+            theme_summary: terminology.theme_summary.clone(),
+            parents: step51.parents.clone(),
+            terminology_entries: terminology.terminology_entries.clone(),
+            translate_api_key: translate_api_key.clone(),
+            translate_base_url: translate_base_url.clone(),
+            translate_model: translate_model.clone(),
+            llm_concurrency,
+        },
+    ))?;
+    let step52_path = artifact_dir.join("step_05_02_translation_align.json");
+    std::fs::write(
+        &step52_path,
+        serde_json::to_string_pretty(&step52).map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| err.to_string())?;
+
+    let step53 = tauri::async_runtime::block_on(build_step_5_3_translation_polish(
+        BuildStep53TranslationPolishCommandRequest {
+            task_id,
+            media_path,
+            source_lang,
+            target_lang,
+            theme_summary: terminology.theme_summary,
+            terminology_entries: terminology.terminology_entries,
+            parents: step52.parents,
+            translate_api_key,
+            translate_base_url,
+            translate_model,
+            llm_concurrency,
+            subtitle_length_reference,
+            batch_size: default_batch_size(),
+        },
+    ))?;
+    let step53_path = artifact_dir.join("step_05_03_translation_polish.json");
+    std::fs::write(
+        &step53_path,
+        serde_json::to_string_pretty(&step53).map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| err.to_string())?;
+    println!("{}", step53_path.display());
     Ok(())
 }
 
@@ -799,6 +1600,29 @@ fn required_cli_value(args: &[String], idx: usize, flag: &str) -> Result<String,
     args.get(idx)
         .cloned()
         .ok_or_else(|| format!("{flag} requires value"))
+}
+
+fn artifact_dir_from_file_path(path: &str) -> Result<std::path::PathBuf, String> {
+    let parent = std::path::PathBuf::from(path)
+        .parent()
+        .ok_or_else(|| "input path has no parent directory".to_string())?
+        .to_path_buf();
+    Ok(normalize_artifact_dir(&parent))
+}
+
+fn normalize_artifact_dir(path: &std::path::Path) -> std::path::PathBuf {
+    if path
+        .file_name()
+        .and_then(|v| v.to_str())
+        .map(|name| {
+            name.eq_ignore_ascii_case(crate::services::task_path::ARTIFACTS_DIR_NAME)
+        })
+        .unwrap_or(false)
+    {
+        path.to_path_buf()
+    } else {
+        path.join(crate::services::task_path::ARTIFACTS_DIR_NAME)
+    }
 }
 
 fn parse_step2_segments_artifact_for_input(
@@ -818,6 +1642,13 @@ fn parse_step3_terminology_artifact_for_input(
 ) -> Result<Step3TerminologyArtifactForInput, String> {
     serde_json::from_str::<Step3TerminologyArtifactForInput>(raw)
         .map_err(|err| format!("failed to parse step3 terminology json: {err}"))
+}
+
+fn parse_step4_translation_artifact_for_input(
+    raw: &str,
+) -> Result<BuildTranslationLayerCommandResponse, String> {
+    serde_json::from_str::<BuildTranslationLayerCommandResponse>(raw)
+        .map_err(|err| format!("failed to parse step4 translation json: {err}"))
 }
 
 fn default_task_id_from_path(path: &str) -> String {
@@ -852,6 +1683,35 @@ fn hydrate_translate_llm_settings(
         }
         if *llm_concurrency == default_llm_concurrency() {
             *llm_concurrency = settings.llm_concurrency;
+        }
+    }
+    if api_key.trim().is_empty() {
+        return Err("translateApiKey is required".to_string());
+    }
+    if base_url.trim().is_empty() {
+        return Err("translateBaseUrl is required".to_string());
+    }
+    if model.trim().is_empty() {
+        return Err("translateModel is required".to_string());
+    }
+    Ok(())
+}
+
+fn hydrate_translate_llm_connection_settings(
+    api_key: &mut String,
+    base_url: &mut String,
+    model: &mut String,
+) -> Result<(), String> {
+    if api_key.trim().is_empty() || base_url.trim().is_empty() || model.trim().is_empty() {
+        let settings = crate::services::preferences::load_saved_settings_from_default_path()?;
+        if api_key.trim().is_empty() {
+            *api_key = settings.translate_api_key;
+        }
+        if base_url.trim().is_empty() {
+            *base_url = settings.translate_base_url;
+        }
+        if model.trim().is_empty() {
+            *model = settings.translate_model;
         }
     }
     if api_key.trim().is_empty() {
@@ -1034,7 +1894,7 @@ mod tests {
 
     #[test]
     fn default_task_id_uses_file_stem() {
-        let task_id = default_task_id_from_path(r"D:\output\step2_segments.json");
-        assert_eq!(task_id, "step2_segments");
+        let task_id = default_task_id_from_path(r"D:\output\step_02_segments.json");
+        assert_eq!(task_id, "step_02_segments");
     }
 }

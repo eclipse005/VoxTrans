@@ -110,10 +110,12 @@ where
         options.model_dir = PathBuf::from(model_dir);
     }
 
-    let output =
-        voxtrans_core::transcribe_with_parakeet_v2_with_progress(&options, |current, total| {
+    let output = voxtrans_core::transcribe_with_parakeet_v2_with_progress(
+        &options,
+        |current, total, _start_sec, _end_sec| {
             on_progress(current, total);
-        });
+        },
+    );
     let output = match output {
         Ok(v) => v,
         Err(raw_err) => {

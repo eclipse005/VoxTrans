@@ -50,30 +50,60 @@ function resolvePrimaryStatus(item: QueueItem): QueueStatus {
 }
 
 function getTranscribeProcessingText(item: QueueItem): string {
-  const detail = item.transcribePhaseDetail?.trim() ?? "";
-  if (item.transcribePhase === "downloading") {
-    return detail ? `下载中 ${detail}` : "下载中";
+  const stage = item.taskProgress.stage;
+  const rawDetail = stage.detail?.trim() ?? "";
+  const detail = rawDetail.startsWith("step_") ? "" : rawDetail;
+  const label = stage.label.trim() || resolveStageLabel(stage.code);
+  if (detail) return label ? `${label} ${detail}` : detail;
+  if (shouldShowStageCounter(stage.code) && stage.current > 0 && stage.total > 0) {
+    return `${label || "处理中"} ${stage.current}/${stage.total}`;
   }
-  if (item.transcribePhase === "initializing") {
-    return detail ? `转录准备中 ${detail}` : "转录准备中";
+  if (label) return label;
+  return "准备中";
+}
+
+function shouldShowStageCounter(code: QueueItem["taskProgress"]["stage"]["code"]): boolean {
+  switch (code) {
+    case "downloading":
+    case "recognizing":
+    case "segmenting":
+    case "translating":
+    case "splitSource":
+    case "alignTranslation":
+    case "polishTranslation":
+      return true;
+    default:
+      return false;
   }
-  if (item.transcribePhase === "separating") {
-    return detail ? `人声分离中 ${detail}` : "人声分离中";
+}
+
+function resolveStageLabel(code: QueueItem["taskProgress"]["stage"]["code"]): string {
+  switch (code) {
+    case "downloading":
+      return "下载中";
+    case "preparing":
+      return "准备中";
+    case "recognizing":
+      return "语音识别中";
+    case "segmenting":
+      return "AI断句中";
+    case "summarizing":
+      return "总结中";
+    case "terminology":
+      return "术语提取中";
+    case "translating":
+      return "翻译中";
+    case "splitSource":
+      return "源文拆分中";
+    case "alignTranslation":
+      return "译文对齐中";
+    case "polishTranslation":
+      return "润色中";
+    case "qa":
+      return "QA质检中";
+    default:
+      return "";
   }
-  if (item.transcribePhase === "recognizing") {
-    return detail ? `转录中 ${detail}` : "转录中";
-  }
-  if (item.transcribePhase === "punctuate") {
-    return detail ? `标点优化中 ${detail}` : "标点优化中";
-  }
-  if (item.transcribePhase === "segment") {
-    return detail ? `切分中 ${detail}` : "切分中";
-  }
-  if (item.transcribePhase === "translate") {
-    return detail ? `翻译中 ${detail}` : "翻译中";
-  }
-  if (detail) return detail;
-  return "处理中";
 }
 
 export default function MediaList({
@@ -182,7 +212,14 @@ export default function MediaList({
         ) : (
           queue.map((item) => {
             const primaryStatus = resolvePrimaryStatus(item);
-            const transcribeProcessing = item.transcribeStatus === "processing";
+            const transcribeProcessing =
+              item.transcribeStatus === "processing"
+              && (
+                item.taskProgress.stage.code !== ""
+                || item.taskProgress.stage.detail.trim().length > 0
+                || item.taskProgress.stage.current > 0
+                || item.taskProgress.stage.total > 0
+              );
             const transcribeProgressText = transcribeProcessing ? getTranscribeProcessingText(item) : "";
 
             return (
@@ -201,7 +238,7 @@ export default function MediaList({
                             <span className="task-step task-step-progress">
                               {transcribeProgressText}
                             </span>
-                          ) : primaryStatus === "processing" && item.transcribeSegmentTotal <= 0 ? (
+                          ) : primaryStatus === "processing" ? (
                             <span className="task-status status-processing">准备中</span>
                           ) : (
                             <span className={`task-status status-${primaryStatus}`}>

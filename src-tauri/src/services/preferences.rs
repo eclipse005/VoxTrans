@@ -108,7 +108,6 @@ pub struct SavedSettings {
     pub terminology_groups: Vec<TerminologyGroup>,
     #[serde(default = "default_true")]
     pub enable_terminology: bool,
-    pub enable_punctuation_optimization: bool,
     #[serde(default = "default_true")]
     pub enable_subtitle_beautify: bool,
     #[serde(default)]
@@ -196,7 +195,6 @@ fn default_settings() -> SavedSettings {
         llm_concurrency: 4,
         terminology_groups: normalize_terminology_groups(Vec::new()),
         enable_terminology: true,
-        enable_punctuation_optimization: false,
         enable_subtitle_beautify: true,
         auto_burn_hard_subtitle: false,
         subtitle_burn_mode: default_subtitle_burn_mode(),
@@ -250,7 +248,6 @@ fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings {
         llm_concurrency: settings.llm_concurrency.max(1),
         terminology_groups: normalize_terminology_groups(settings.terminology_groups),
         enable_terminology: settings.enable_terminology,
-        enable_punctuation_optimization: settings.enable_punctuation_optimization,
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         subtitle_burn_mode: normalize_subtitle_burn_mode(&settings.subtitle_burn_mode).to_string(),

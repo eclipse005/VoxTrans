@@ -258,19 +258,30 @@ struct LongSpanRecoveryTask {
     span_end: usize,
 }
 
-pub async fn build_source_sentences_from_words(
+pub async fn build_source_sentences_from_words_with_progress(
     request: SentenceBoundaryRequest,
+    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> Result<SourceSentenceStep2, String> {
     if request.words.is_empty() {
         return Err("words is empty".to_string());
+    }
+    let total = 4usize;
+    if let Some(callback) = on_progress.as_ref() {
+        callback(0, total);
     }
 
     let normalized_words = from_core_words(beautify_words_for_subtitle(to_core_words(
         request.words.clone(),
     )));
+    if let Some(callback) = on_progress.as_ref() {
+        callback(1, total);
+    }
     let micro_chunks = build_micro_chunks_for_source_lang(&normalized_words, false);
     if micro_chunks.is_empty() {
         return Err("failed to build micro chunks".to_string());
+    }
+    if let Some(callback) = on_progress.as_ref() {
+        callback(2, total);
     }
 
     let llm_client = OpenAiCompatLlmClient::new(LlmConfig::new(
@@ -285,9 +296,15 @@ pub async fn build_source_sentences_from_words(
     if semantic_spans.is_empty() {
         return Err("sentence boundary recovery returned empty spans".to_string());
     }
+    if let Some(callback) = on_progress.as_ref() {
+        callback(3, total);
+    }
     let forced_spans = enforce_hard_pause_spans(&normalized_words, &semantic_spans);
     let translation_sentences = build_sentences_from_word_spans(&normalized_words, &forced_spans);
     let boundaries = build_boundaries_from_spans(&micro_chunks, &forced_spans);
+    if let Some(callback) = on_progress.as_ref() {
+        callback(4, total);
+    }
 
     Ok(SourceSentenceStep2 {
         task_id: request.task_id,

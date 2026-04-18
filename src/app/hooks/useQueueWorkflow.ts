@@ -39,7 +39,7 @@ export function useQueueWorkflow({
     pushToast,
   });
 
-  const { runBatch, runQueuedByTaskIds } = useQueueRunner({
+  const { runQueuedByTaskIds } = useQueueRunner({
     dispatch,
     pushToast,
     isTaskPresent,
@@ -59,7 +59,6 @@ export function useQueueWorkflow({
     settings,
     dispatch,
     pushToast,
-    runBatch,
     runQueuedByTaskIds,
   });
 

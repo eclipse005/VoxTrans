@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { loadWorkspaceState } from "../api/workspace";
 import { normalizeTranscribeStatus } from "../../features/media/stateMachine";
 import { normalizeSubtitleSegmentsJson } from "../../features/media/subtitleSegments";
-import type { QueueItem } from "../../features/media/types";
+import {
+  createEmptyTaskProgress,
+  normalizeTaskProgress,
+  type QueueItem,
+} from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 
 type DispatchState = (action: AppAction) => void;
@@ -60,34 +64,10 @@ function normalizeQueueItem(item: QueueItem): QueueItem {
   return recoverTransientStates({
     ...item,
     transcribeStatus: normalizeTranscribeStatus(item.transcribeStatus),
-    transcribeProgress: clampProgress(item.transcribeProgress),
-    transcribeSegmentCurrent: Math.max(0, item.transcribeSegmentCurrent || 0),
-    transcribeSegmentTotal: Math.max(0, item.transcribeSegmentTotal || 0),
-    transcribePhase: normalizeTranscribePhase(item.transcribePhase),
-    transcribePhaseDetail: typeof item.transcribePhaseDetail === "string" ? item.transcribePhaseDetail : "",
+    taskProgress: normalizeTaskProgress(item.taskProgress),
     transcribeError: item.transcribeError || "",
     subtitleSegmentsJson: normalizeSubtitleSegmentsJson(item.subtitleSegmentsJson),
   });
-}
-
-function normalizeTranscribePhase(value: unknown): QueueItem["transcribePhase"] {
-  switch (value) {
-    case "downloading":
-    case "initializing":
-    case "separating":
-    case "recognizing":
-    case "punctuate":
-    case "segment":
-    case "translate":
-      return value;
-    default:
-      return "";
-  }
-}
-
-function clampProgress(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function recoverTransientStates(item: QueueItem): QueueItem {
@@ -96,11 +76,7 @@ function recoverTransientStates(item: QueueItem): QueueItem {
     return {
       ...item,
       transcribeStatus: "error",
-      transcribeProgress: 0,
-      transcribeSegmentCurrent: 0,
-      transcribeSegmentTotal: 0,
-      transcribePhase: "",
-      transcribePhaseDetail: "",
+      taskProgress: createEmptyTaskProgress(),
       transcribeError: "下载任务中断，请点击转录或转译继续下载",
     };
   }
@@ -109,11 +85,7 @@ function recoverTransientStates(item: QueueItem): QueueItem {
     return {
       ...item,
       transcribeStatus: "pending",
-      transcribeProgress: 0,
-      transcribeSegmentCurrent: 0,
-      transcribeSegmentTotal: 0,
-      transcribePhase: "",
-      transcribePhaseDetail: "",
+      taskProgress: createEmptyTaskProgress(),
       transcribeError: "",
     };
   }
@@ -122,8 +94,7 @@ function recoverTransientStates(item: QueueItem): QueueItem {
     return {
       ...item,
       transcribeStatus: "error",
-      transcribePhase: "",
-      transcribePhaseDetail: "",
+      taskProgress: createEmptyTaskProgress(),
       transcribeError: item.transcribeError || "任务在运行中被中断，请重新开始",
     };
   }

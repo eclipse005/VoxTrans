@@ -6,10 +6,25 @@ pub struct LlmTokenUsage {
 }
 
 pub async fn record_llm_usage(
-    _task_id: &str,
+    task_id: &str,
     _phase: &str,
-    _usage: LlmTokenUsage,
+    usage: LlmTokenUsage,
 ) -> Result<(), String> {
+    let task_id = task_id.trim();
+    if task_id.is_empty() {
+        return Ok(());
+    }
+
+    let normalized_total = if usage.total_tokens > 0 {
+        usage.total_tokens
+    } else {
+        usage.prompt_tokens.saturating_add(usage.completion_tokens)
+    };
+    if normalized_total == 0 {
+        return Ok(());
+    }
+
+    let _ = crate::commands::workspace::add_task_total_tokens(task_id, normalized_total)?;
     Ok(())
 }
 
@@ -22,6 +37,5 @@ pub fn record_llm_usage_best_effort(task_id: &str, phase: &str, usage: LlmTokenU
 }
 
 pub async fn get_task_total_tokens(task_id: &str) -> Result<u64, String> {
-    let _ = task_id;
-    Ok(0)
+    crate::commands::workspace::get_task_total_tokens_from_workspace(task_id)
 }

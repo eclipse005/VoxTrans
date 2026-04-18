@@ -99,8 +99,15 @@ pub struct GroupedSentenceSegmentCommandDto {
 pub async fn build_source_sentences(
     request: BuildSourceSentencesCommandRequest,
 ) -> Result<BuildSourceSentencesCommandResponse, String> {
+    build_source_sentences_with_progress(request, None).await
+}
+
+pub async fn build_source_sentences_with_progress(
+    request: BuildSourceSentencesCommandRequest,
+    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+) -> Result<BuildSourceSentencesCommandResponse, String> {
     let original_words = request.words.clone();
-    let step2 = crate::services::transcription::build_source_sentences_from_words(
+    let step2 = crate::services::transcription::build_source_sentences_from_words_with_progress(
         crate::services::transcription::SentenceBoundaryRequest {
             task_id: request.task_id,
             media_path: request.audio_path,
@@ -111,6 +118,7 @@ pub async fn build_source_sentences(
             translate_model: request.translate_model,
             llm_concurrency: request.llm_concurrency,
         },
+        on_progress,
     )
     .await?;
     let srt = crate::services::transcription::source_sentences_to_srt(&step2);
@@ -437,7 +445,7 @@ fn run_build_source_sentences_mode_from_args(args: &[String]) -> Result<(), Stri
         std::path::PathBuf::from(&asr_path)
             .parent()
             .ok_or_else(|| "asr path has no parent directory".to_string())?
-            .join("step2_segments.json")
+            .join("step_02_segments.json")
     } else {
         std::path::PathBuf::from(output_path)
     };
@@ -640,3 +648,4 @@ mod tests {
         assert_eq!(segments[0].segment, "안녕하세요 여러분");
     }
 }
+use std::sync::Arc;

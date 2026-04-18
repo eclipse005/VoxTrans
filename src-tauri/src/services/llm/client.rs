@@ -17,6 +17,7 @@ const LLM_PROVIDER: &str = "openai_compatible_http";
 const LLM_TRANSPORT: &str = "chat_completions";
 const RETRY_HINT_MAX_CHARS: usize = 320;
 const REPAIR_RAW_TEXT_MAX_CHARS: usize = 8_000;
+const EPHEMERAL_PHASE_CONNECTIVITY_TEST: &str = "connectivity_test";
 
 #[derive(Clone)]
 pub struct OpenAiCompatLlmClient {
@@ -60,6 +61,22 @@ impl OpenAiCompatLlmClient {
                 )
             })?;
         Ok(Self { config, http })
+    }
+
+    fn should_persist_artifacts(context: &LlmCallContext) -> bool {
+        context.phase != EPHEMERAL_PHASE_CONNECTIVITY_TEST
+    }
+
+    fn logger_for_context(context: &LlmCallContext) -> Option<TaskLogger> {
+        if !Self::should_persist_artifacts(context) {
+            return None;
+        }
+        match context.media_path.as_deref() {
+            Some(path) if !path.trim().is_empty() => {
+                Some(TaskLogger::llm_with_media(context.task_id.clone(), path.to_string()))
+            }
+            _ => Some(TaskLogger::llm(context.task_id.clone())),
+        }
     }
 
     async fn call_once(&self, user_prompt: &str) -> Result<(String, LlmTokenUsage), LlmError> {
@@ -137,70 +154,75 @@ impl OpenAiCompatLlmClient {
     where
         F: Fn(Value) -> Result<T, LlmSemanticValidationError>,
     {
-        let logger = match context.media_path.as_deref() {
-            Some(path) if !path.trim().is_empty() => {
-                TaskLogger::llm_with_media(context.task_id.clone(), path.to_string())
-            }
-            _ => TaskLogger::llm(context.task_id.clone()),
-        };
+        let logger = Self::logger_for_context(context);
+        let persist_artifacts = Self::should_persist_artifacts(context);
 
-        if let Some(cache_hit) =
+        if persist_artifacts
+            && let Some(cache_hit) =
             read_cache_hit(context, &self.config, "", user_prompt, response_validator)
         {
             if let Some(validator) = response_validator {
                 if let Err(err) = validator.validate(&cache_hit.json) {
-                    logger.event(
-                        "llm.call",
-                        Some(&json!({
-                            "status": "cache_invalid_schema",
-                            "error": err.message,
-                            "phase": context.phase,
-                            "llmId": request_id,
-                        })),
-                    );
+                    if let Some(logger) = logger.as_ref() {
+                        logger.event(
+                            "llm.call",
+                            Some(&json!({
+                                "status": "cache_invalid_schema",
+                                "error": err.message,
+                                "phase": context.phase,
+                                "llmId": request_id,
+                            })),
+                        );
+                    }
                 } else {
                     match semantic_validate(cache_hit.json.clone()) {
                         Ok(value) => {
-                            logger.event(
-                                "llm.call",
-                                Some(&json!({
-                                    "status": "cache_hit",
-                                    "model": self.config.model,
-                                    "baseUrl": normalize_base_url(&self.config.base_url),
-                                    "provider": LLM_PROVIDER,
-                                    "transport": LLM_TRANSPORT,
-                                    "phase": context.phase,
-                                    "llmId": request_id,
-                                })),
-                            );
+                            if let Some(logger) = logger.as_ref() {
+                                logger.event(
+                                    "llm.call",
+                                    Some(&json!({
+                                        "status": "cache_hit",
+                                        "model": self.config.model,
+                                        "baseUrl": normalize_base_url(&self.config.base_url),
+                                        "provider": LLM_PROVIDER,
+                                        "transport": LLM_TRANSPORT,
+                                        "phase": context.phase,
+                                        "llmId": request_id,
+                                    })),
+                                );
+                            }
                             return Ok(LlmValidatedJsonResult { value });
                         }
                         Err(LlmSemanticValidationError::Retryable(message)) => {
-                            logger.event(
-                                "llm.call",
-                                Some(&json!({
-                                    "status": "cache_invalid_semantic",
-                                    "error": message,
-                                    "phase": context.phase,
-                                    "llmId": request_id,
-                                })),
-                            );
+                            if let Some(logger) = logger.as_ref() {
+                                logger.event(
+                                    "llm.call",
+                                    Some(&json!({
+                                        "status": "cache_invalid_semantic",
+                                        "error": message,
+                                        "phase": context.phase,
+                                        "llmId": request_id,
+                                    })),
+                                );
+                            }
                         }
                     }
                 }
             } else if let Ok(value) = semantic_validate(cache_hit.json.clone()) {
-                logger.event(
-                    "llm.call",
-                    Some(&json!({
-                        "status": "cache_hit",
-                        "model": self.config.model,
-                        "baseUrl": normalize_base_url(&self.config.base_url),
-                        "provider": LLM_PROVIDER,
-                        "transport": LLM_TRANSPORT,
-                        "phase": context.phase,
-                        "llmId": request_id,
-                    })),
-                );
+                if let Some(logger) = logger.as_ref() {
+                    logger.event(
+                        "llm.call",
+                        Some(&json!({
+                            "status": "cache_hit",
+                            "model": self.config.model,
+                            "baseUrl": normalize_base_url(&self.config.base_url),
+                            "provider": LLM_PROVIDER,
+                            "transport": LLM_TRANSPORT,
+                            "phase": context.phase,
+                            "llmId": request_id,
+                        })),
+                    );
+                }
                 return Ok(LlmValidatedJsonResult { value });
             }
         }
@@ -254,27 +276,29 @@ impl OpenAiCompatLlmClient {
                                     let feedback = feedback_from_llm_error(&repair_err);
                                     last_error = feedback.detail.clone();
                                     last_feedback = Some(feedback.clone());
-                                    logger.event(
-                                        "llm.call",
-                                        Some(&json!({
-                                            "status": "invalid_json",
-                                            "error": last_error,
-                                            "errorKind": feedback.error_kind,
-                                            "retryable": false,
-                                            "retryHint": feedback.retry_hint,
-                                            "repairMode": "llm_json_repair",
-                                            "response": { "text": raw_text },
-                                            "attempt": base_payload["attempt"],
-                                            "maxAttempts": base_payload["maxAttempts"],
-                                            "model": base_payload["model"],
-                                            "baseUrl": base_payload["baseUrl"],
-                                            "provider": base_payload["provider"],
-                                            "transport": base_payload["transport"],
-                                            "phase": base_payload["phase"],
-                                            "llmId": base_payload["llmId"],
-                                            "request": base_payload["request"],
-                                        })),
-                                    );
+                                    if let Some(logger) = logger.as_ref() {
+                                        logger.event(
+                                            "llm.call",
+                                            Some(&json!({
+                                                "status": "invalid_json",
+                                                "error": last_error,
+                                                "errorKind": feedback.error_kind,
+                                                "retryable": false,
+                                                "retryHint": feedback.retry_hint,
+                                                "repairMode": "llm_json_repair",
+                                                "response": { "text": raw_text },
+                                                "attempt": base_payload["attempt"],
+                                                "maxAttempts": base_payload["maxAttempts"],
+                                                "model": base_payload["model"],
+                                                "baseUrl": base_payload["baseUrl"],
+                                                "provider": base_payload["provider"],
+                                                "transport": base_payload["transport"],
+                                                "phase": base_payload["phase"],
+                                                "llmId": base_payload["llmId"],
+                                                "request": base_payload["request"],
+                                            })),
+                                        );
+                                    }
                                     break;
                                 }
                             }
@@ -300,27 +324,29 @@ impl OpenAiCompatLlmClient {
                                     let feedback = feedback_from_llm_error(&repair_err);
                                     last_error = feedback.detail.clone();
                                     last_feedback = Some(feedback.clone());
-                                    logger.event(
-                                        "llm.call",
-                                        Some(&json!({
-                                            "status": "invalid_schema",
-                                            "error": last_error,
-                                            "errorKind": feedback.error_kind,
-                                            "retryable": false,
-                                            "retryHint": feedback.retry_hint,
-                                            "repairMode": "llm_json_repair",
-                                            "response": { "text": raw_text },
-                                            "attempt": base_payload["attempt"],
-                                            "maxAttempts": base_payload["maxAttempts"],
-                                            "model": base_payload["model"],
-                                            "baseUrl": base_payload["baseUrl"],
-                                            "provider": base_payload["provider"],
-                                            "transport": base_payload["transport"],
-                                            "phase": base_payload["phase"],
-                                            "llmId": base_payload["llmId"],
-                                            "request": base_payload["request"],
-                                        })),
-                                    );
+                                    if let Some(logger) = logger.as_ref() {
+                                        logger.event(
+                                            "llm.call",
+                                            Some(&json!({
+                                                "status": "invalid_schema",
+                                                "error": last_error,
+                                                "errorKind": feedback.error_kind,
+                                                "retryable": false,
+                                                "retryHint": feedback.retry_hint,
+                                                "repairMode": "llm_json_repair",
+                                                "response": { "text": raw_text },
+                                                "attempt": base_payload["attempt"],
+                                                "maxAttempts": base_payload["maxAttempts"],
+                                                "model": base_payload["model"],
+                                                "baseUrl": base_payload["baseUrl"],
+                                                "provider": base_payload["provider"],
+                                                "transport": base_payload["transport"],
+                                                "phase": base_payload["phase"],
+                                                "llmId": base_payload["llmId"],
+                                                "request": base_payload["request"],
+                                            })),
+                                        );
+                                    }
                                     break;
                                 }
                             }
@@ -329,51 +355,57 @@ impl OpenAiCompatLlmClient {
 
                     match semantic_validate(parsed.value.clone()) {
                         Ok(value) => {
-                            append_cache_entry(
-                                context,
-                                &self.config,
-                                "",
-                                user_prompt,
-                                response_validator,
-                                &raw_text,
-                                &parsed.value,
-                                &usage,
-                            );
+                            if persist_artifacts {
+                                append_cache_entry(
+                                    context,
+                                    &self.config,
+                                    "",
+                                    user_prompt,
+                                    response_validator,
+                                    &raw_text,
+                                    &parsed.value,
+                                    &usage,
+                                );
+                            }
                             let elapsed_ms = started.elapsed().as_millis();
-                            logger.event(
-                                "llm.call",
-                                Some(&json!({
-                                    "status": if validation_failures > 0 { "ok_after_repair" } else { "ok" },
-                                    "repairMode": if validation_failures > 0 { Some("llm_json_repair") } else { None::<&str> },
-                                    "validationFailures": validation_failures,
-                                    "localRepairSource": parsed.source.as_str(),
-                                    "attempt": base_payload["attempt"],
-                                    "maxAttempts": base_payload["maxAttempts"],
-                                    "model": base_payload["model"],
-                                    "baseUrl": base_payload["baseUrl"],
-                                    "provider": base_payload["provider"],
-                                    "transport": base_payload["transport"],
-                                    "phase": base_payload["phase"],
-                                    "llmId": base_payload["llmId"],
-                                    "request": base_payload["request"],
-                                    "response": { "text": raw_text },
-                                    "elapsedMs": elapsed_ms,
-                                    "usage": {
-                                        "promptTokens": usage.prompt_tokens,
-                                        "completionTokens": usage.completion_tokens,
-                                        "totalTokens": usage.total_tokens,
-                                    }
-                                })),
-                            );
-                            record_llm_usage_best_effort(
-                                &context.task_id,
-                                &context.phase,
-                                TaskUsage {
-                                    prompt_tokens: usage.prompt_tokens,
-                                    completion_tokens: usage.completion_tokens,
-                                    total_tokens: usage.total_tokens,
-                                },
-                            );
+                            if let Some(logger) = logger.as_ref() {
+                                logger.event(
+                                    "llm.call",
+                                    Some(&json!({
+                                        "status": if validation_failures > 0 { "ok_after_repair" } else { "ok" },
+                                        "repairMode": if validation_failures > 0 { Some("llm_json_repair") } else { None::<&str> },
+                                        "validationFailures": validation_failures,
+                                        "localRepairSource": parsed.source.as_str(),
+                                        "attempt": base_payload["attempt"],
+                                        "maxAttempts": base_payload["maxAttempts"],
+                                        "model": base_payload["model"],
+                                        "baseUrl": base_payload["baseUrl"],
+                                        "provider": base_payload["provider"],
+                                        "transport": base_payload["transport"],
+                                        "phase": base_payload["phase"],
+                                        "llmId": base_payload["llmId"],
+                                        "request": base_payload["request"],
+                                        "response": { "text": raw_text },
+                                        "elapsedMs": elapsed_ms,
+                                        "usage": {
+                                            "promptTokens": usage.prompt_tokens,
+                                            "completionTokens": usage.completion_tokens,
+                                            "totalTokens": usage.total_tokens,
+                                        }
+                                    })),
+                                );
+                            }
+                            if persist_artifacts {
+                                record_llm_usage_best_effort(
+                                    &context.task_id,
+                                    &context.phase,
+                                    TaskUsage {
+                                        prompt_tokens: usage.prompt_tokens,
+                                        completion_tokens: usage.completion_tokens,
+                                        total_tokens: usage.total_tokens,
+                                    },
+                                );
+                            }
 
                             return Ok(LlmValidatedJsonResult { value });
                         }
@@ -382,27 +414,29 @@ impl OpenAiCompatLlmClient {
                             last_error = feedback.detail.clone();
                             last_feedback = Some(feedback.clone());
                             let backoff_ms = retry_backoff_ms(attempt, max_attempts);
-                            logger.event(
-                                "llm.call",
-                                Some(&json!({
-                                    "status": "invalid_semantic",
-                                    "error": last_error,
-                                    "errorKind": feedback.error_kind,
-                                    "retryable": feedback.retryable,
-                                    "retryHint": feedback.retry_hint,
-                                    "response": { "text": raw_text },
-                                    "attempt": base_payload["attempt"],
-                                    "maxAttempts": base_payload["maxAttempts"],
-                                    "backoffMs": backoff_ms,
-                                    "model": base_payload["model"],
-                                    "baseUrl": base_payload["baseUrl"],
-                                    "provider": base_payload["provider"],
-                                    "transport": base_payload["transport"],
-                                    "phase": base_payload["phase"],
-                                    "llmId": base_payload["llmId"],
-                                    "request": base_payload["request"],
-                                })),
-                            );
+                            if let Some(logger) = logger.as_ref() {
+                                logger.event(
+                                    "llm.call",
+                                    Some(&json!({
+                                        "status": "invalid_semantic",
+                                        "error": last_error,
+                                        "errorKind": feedback.error_kind,
+                                        "retryable": feedback.retryable,
+                                        "retryHint": feedback.retry_hint,
+                                        "response": { "text": raw_text },
+                                        "attempt": base_payload["attempt"],
+                                        "maxAttempts": base_payload["maxAttempts"],
+                                        "backoffMs": backoff_ms,
+                                        "model": base_payload["model"],
+                                        "baseUrl": base_payload["baseUrl"],
+                                        "provider": base_payload["provider"],
+                                        "transport": base_payload["transport"],
+                                        "phase": base_payload["phase"],
+                                        "llmId": base_payload["llmId"],
+                                        "request": base_payload["request"],
+                                    })),
+                                );
+                            }
                             if let Some(delay) = backoff_ms {
                                 sleep(Duration::from_millis(delay)).await;
                             }
@@ -419,26 +453,28 @@ impl OpenAiCompatLlmClient {
                     } else {
                         None
                     };
-                    logger.event(
-                        "llm.call",
-                        Some(&json!({
-                            "status": "http_error",
-                            "error": last_error,
-                            "errorKind": feedback.error_kind,
-                            "retryable": feedback.retryable,
-                            "retryHint": feedback.retry_hint,
-                            "attempt": base_payload["attempt"],
-                            "maxAttempts": base_payload["maxAttempts"],
-                            "backoffMs": backoff_ms,
-                            "model": base_payload["model"],
-                            "baseUrl": base_payload["baseUrl"],
-                            "provider": base_payload["provider"],
-                            "transport": base_payload["transport"],
-                            "phase": base_payload["phase"],
-                            "llmId": base_payload["llmId"],
-                            "request": base_payload["request"],
-                        })),
-                    );
+                    if let Some(logger) = logger.as_ref() {
+                        logger.event(
+                            "llm.call",
+                            Some(&json!({
+                                "status": "http_error",
+                                "error": last_error,
+                                "errorKind": feedback.error_kind,
+                                "retryable": feedback.retryable,
+                                "retryHint": feedback.retry_hint,
+                                "attempt": base_payload["attempt"],
+                                "maxAttempts": base_payload["maxAttempts"],
+                                "backoffMs": backoff_ms,
+                                "model": base_payload["model"],
+                                "baseUrl": base_payload["baseUrl"],
+                                "provider": base_payload["provider"],
+                                "transport": base_payload["transport"],
+                                "phase": base_payload["phase"],
+                                "llmId": base_payload["llmId"],
+                                "request": base_payload["request"],
+                            })),
+                        );
+                    }
                     if !feedback.retryable {
                         break;
                     }
@@ -483,25 +519,22 @@ impl OpenAiCompatLlmClient {
         raw_text: &str,
         failure: &LlmError,
     ) -> Result<JsonRepairOutcome, LlmError> {
-        let logger = match context.media_path.as_deref() {
-            Some(path) if !path.trim().is_empty() => {
-                TaskLogger::llm_with_media(context.task_id.clone(), path.to_string())
-            }
-            _ => TaskLogger::llm(context.task_id.clone()),
-        };
+        let logger = Self::logger_for_context(context);
 
         let repair_prompt =
             build_json_repair_prompt(original_prompt, response_validator, raw_text, failure);
-        logger.event(
-            "llm.call",
-            Some(&json!({
-                "status": "repair_requested",
-                "repairMode": "llm_json_repair",
-                "errorKind": failure.kind.as_str(),
-                "phase": context.phase,
-                "llmId": request_id,
-            })),
-        );
+        if let Some(logger) = logger.as_ref() {
+            logger.event(
+                "llm.call",
+                Some(&json!({
+                    "status": "repair_requested",
+                    "repairMode": "llm_json_repair",
+                    "errorKind": failure.kind.as_str(),
+                    "phase": context.phase,
+                    "llmId": request_id,
+                })),
+            );
+        }
 
         let (repair_raw_text, _) = self.call_once(&repair_prompt).await?;
         let repaired = extract_and_repair_json_with_outcome(&repair_raw_text)?;

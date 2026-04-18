@@ -30,7 +30,6 @@ type UseSettingsControllerArgs = {
   draftLlmConcurrencyInput: string;
   draftTerminologyGroups: SavedSettings["terminologyGroups"];
   draftEnableTerminology: boolean;
-  draftEnablePunctuationOptimization: boolean;
   draftEnableSubtitleBeautify: boolean;
   draftAutoBurnHardSubtitle: boolean;
   draftSubtitleBurnMode: SavedSettings["subtitleBurnMode"];
@@ -55,7 +54,6 @@ export function useSettingsController({
   draftLlmConcurrencyInput,
   draftTerminologyGroups,
   draftEnableTerminology,
-  draftEnablePunctuationOptimization,
   draftEnableSubtitleBeautify,
   draftAutoBurnHardSubtitle,
   draftSubtitleBurnMode,
@@ -82,7 +80,6 @@ export function useSettingsController({
         draftLlmConcurrencyInput: String(settings.llmConcurrency),
         draftTerminologyGroups: settings.terminologyGroups,
         draftEnableTerminology: settings.enableTerminology,
-        draftEnablePunctuationOptimization: settings.enablePunctuationOptimization,
         draftEnableSubtitleBeautify: settings.enableSubtitleBeautify,
         draftAutoBurnHardSubtitle: settings.autoBurnHardSubtitle,
         draftSubtitleBurnMode: settings.subtitleBurnMode,
@@ -96,7 +93,6 @@ export function useSettingsController({
     settings.chunkTargetSeconds,
     settings.demucsModel,
     settings.enableVocalSeparation,
-    settings.enablePunctuationOptimization,
     settings.provider,
     settings.asrModel,
     settings.subtitleMaxWordsPerSegment,
@@ -154,7 +150,6 @@ export function useSettingsController({
       llmConcurrency: clampedConcurrency,
       terminologyGroups: normalizeTerminologyGroups(draftTerminologyGroups),
       enableTerminology: draftEnableTerminology,
-      enablePunctuationOptimization: draftEnablePunctuationOptimization,
       enableSubtitleBeautify: draftEnableSubtitleBeautify,
       autoBurnHardSubtitle: draftAutoBurnHardSubtitle,
       subtitleBurnMode: draftSubtitleBurnMode,
@@ -208,7 +203,6 @@ export function useSettingsController({
         draftLlmConcurrencyInput: String(nextSettings.llmConcurrency),
         draftTerminologyGroups: nextSettings.terminologyGroups,
         draftEnableTerminology: nextSettings.enableTerminology,
-        draftEnablePunctuationOptimization,
         draftEnableSubtitleBeautify,
         draftAutoBurnHardSubtitle: nextSettings.autoBurnHardSubtitle,
         draftSubtitleBurnMode: nextSettings.subtitleBurnMode,
@@ -228,7 +222,6 @@ export function useSettingsController({
     draftChunkInput,
     draftDemucsModel,
     draftEnableVocalSeparation,
-    draftEnablePunctuationOptimization,
     draftProvider,
     draftAsrModel,
     draftSubtitleMaxWordsInput,
