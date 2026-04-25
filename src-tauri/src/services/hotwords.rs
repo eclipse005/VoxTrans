@@ -525,6 +525,7 @@ pub fn recall_hotword_candidates(
                 &mut candidates,
                 &mut seen,
             );
+            recall_non_chinese_fuzzy(words, hotword, &mut candidates, &mut seen);
         }
     }
 
@@ -784,6 +785,87 @@ fn recall_chinese_phonetic(
             }
         }
     }
+}
+
+fn recall_non_chinese_fuzzy(
+    words: &[WordTokenDto],
+    hotword: &NormalizedHotword,
+    candidates: &mut Vec<HotwordCandidate>,
+    seen: &mut HashSet<(usize, usize, String)>,
+) {
+    let target_tokens = normalized_tokens(&hotword.word);
+    if target_tokens.is_empty() {
+        return;
+    }
+
+    for start in 0..words.len() {
+        for token_len in 1..=target_tokens.len() {
+            let end = start + token_len - 1;
+            if end >= words.len() {
+                continue;
+            }
+            let window = normalized_window_tokens(words, start, end);
+            if fuzzy_tokens_match(&window, &target_tokens) {
+                push_candidate(words, start, end, hotword, "fuzzy", candidates, seen);
+            }
+        }
+    }
+}
+
+fn fuzzy_tokens_match(source_tokens: &[String], target_tokens: &[String]) -> bool {
+    if source_tokens == target_tokens || source_tokens.is_empty() || target_tokens.is_empty() {
+        return false;
+    }
+    if source_tokens.len() != target_tokens.len() {
+        return false;
+    }
+
+    source_tokens
+        .iter()
+        .zip(target_tokens.iter())
+        .all(|(source, target)| fuzzy_ascii_token_match(source, target))
+}
+
+fn fuzzy_ascii_token_match(source: &str, target: &str) -> bool {
+    if source == target || source.len() < 4 || target.len() < 4 {
+        return false;
+    }
+    if !source.is_ascii() || !target.is_ascii() {
+        return false;
+    }
+    let length_delta = source.len().abs_diff(target.len());
+    if length_delta > 1 {
+        return false;
+    }
+    levenshtein_distance_at_most(source, target, 1)
+}
+
+fn levenshtein_distance_at_most(left: &str, right: &str, max_distance: usize) -> bool {
+    let left_chars = left.chars().collect::<Vec<_>>();
+    let right_chars = right.chars().collect::<Vec<_>>();
+    if left_chars.len().abs_diff(right_chars.len()) > max_distance {
+        return false;
+    }
+
+    let mut previous = (0..=right_chars.len()).collect::<Vec<_>>();
+    let mut current = vec![0usize; right_chars.len() + 1];
+    for (left_index, left_ch) in left_chars.iter().enumerate() {
+        current[0] = left_index + 1;
+        let mut row_min = current[0];
+        for (right_index, right_ch) in right_chars.iter().enumerate() {
+            let cost = usize::from(left_ch != right_ch);
+            current[right_index + 1] = (previous[right_index + 1] + 1)
+                .min(current[right_index] + 1)
+                .min(previous[right_index] + cost);
+            row_min = row_min.min(current[right_index + 1]);
+        }
+        if row_min > max_distance {
+            return false;
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+
+    previous[right_chars.len()] <= max_distance
 }
 
 fn push_candidate(
@@ -1065,6 +1147,29 @@ mod tests {
     fn exact_non_chinese_hotword_does_not_recall_candidate() {
         let words = vec![word(0, "CISD")];
         let hotwords = vec![hotword("CISD", vec![], HotwordLang::NonZh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn non_chinese_fuzzy_recalls_single_edit_acronym() {
+        let words = vec![word(0, "SISD")];
+        let hotwords = vec![hotword("CISD", vec![], HotwordLang::NonZh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source_text, "SISD");
+        assert_eq!(candidates[0].target, "CISD");
+        assert_eq!(candidates[0].source_kind, "fuzzy");
+    }
+
+    #[test]
+    fn non_chinese_fuzzy_skips_short_hotwords() {
+        let words = vec![word(0, "BI")];
+        let hotwords = vec![hotword("AI", vec![], HotwordLang::NonZh)];
 
         let candidates = recall_hotword_candidates(&words, &hotwords);
 
