@@ -123,7 +123,12 @@ pub fn apply_hotword_corrections(
         .iter()
         .filter(|candidate| accepted_ids.contains(candidate.id.as_str()))
         .collect();
-    accepted.sort_by_key(|candidate| (candidate.start_index, candidate.end_index));
+    accepted.sort_by_key(|candidate| {
+        (
+            candidate.start_index,
+            std::cmp::Reverse(candidate.end_index - candidate.start_index),
+        )
+    });
 
     let mut accepted_non_overlapping = Vec::new();
     let mut covered_until = 0;
@@ -238,12 +243,17 @@ fn recall_chinese_phonetic(
     if target_len == 0 {
         return;
     }
+    let allow_first_letters = target_len >= 2 && hotword.first_letters.len() >= 2;
 
     for start in 0..words.len() {
         for end in start..words.len() {
             let text = source_text(words, start, end);
             let compact = text.replace(' ', "");
-            if compact.eq_ignore_ascii_case(&hotword.first_letters) {
+            if allow_first_letters
+                && start == end
+                && is_first_letter_token(&words[start].word)
+                && compact.eq_ignore_ascii_case(&hotword.first_letters)
+            {
                 push_candidate(
                     words,
                     start,
@@ -328,6 +338,11 @@ fn normalize_ascii_token(text: &str) -> String {
         .filter(|ch| ch.is_alphanumeric() || contains_chinese_char(*ch))
         .flat_map(char::to_lowercase)
         .collect()
+}
+
+fn is_first_letter_token(text: &str) -> bool {
+    let trimmed = text.trim();
+    (2..=6).contains(&trimmed.len()) && trimmed.chars().all(|ch| ch.is_ascii_alphabetic())
 }
 
 fn generated_aliases(word: &str) -> Vec<String> {
@@ -415,6 +430,18 @@ mod tests {
         }
     }
 
+    fn candidate(id: &str, start_index: usize, end_index: usize, target: &str) -> HotwordCandidate {
+        HotwordCandidate {
+            id: id.to_string(),
+            start_index,
+            end_index,
+            source_text: String::new(),
+            target: target.to_string(),
+            source_kind: "generated_alias".to_string(),
+            context: String::new(),
+        }
+    }
+
     #[test]
     fn chinese_pinyin_recalls_homophone_without_alias() {
         let words = vec![word(0, "浩书")];
@@ -439,6 +466,36 @@ mod tests {
         assert_eq!(candidates[0].target, "浩叔");
         assert_eq!(candidates[0].source_text, "hs");
         assert_eq!(candidates[0].source_kind, "first_letters");
+    }
+
+    #[test]
+    fn chinese_first_letters_ignores_one_character_hotword() {
+        let words = vec![word(0, "a")];
+        let hotwords = vec![hotword("爱", vec![], HotwordLang::Zh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn chinese_first_letters_ignores_multi_token_abbreviation() {
+        let words = vec![word(0, "h"), word(1, "s")];
+        let hotwords = vec![hotword("浩叔", vec![], HotwordLang::Zh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn chinese_first_letters_ignores_long_normal_word() {
+        let words = vec![word(0, "abcdefg")];
+        let hotwords = vec![hotword("爱不才的饿飞个", vec![], HotwordLang::Zh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert!(candidates.is_empty());
     }
 
     #[test]
@@ -492,5 +549,38 @@ mod tests {
         assert_eq!(corrected[1].start, words[1].start);
         assert_eq!(corrected[1].end, words[2].end);
         assert_eq!(corrected[2].word, "now");
+    }
+
+    #[test]
+    fn accepted_overlapping_correction_prefers_longer_span_for_same_start() {
+        let words = vec![word(0, "cloud"), word(1, "code"), word(2, "now")];
+        let candidates = vec![
+            candidate("short", 0, 0, "Cloud"),
+            candidate("long", 0, 1, "Claude Code"),
+        ];
+        let decisions = vec![
+            HotwordDecision {
+                candidate_id: "short".to_string(),
+                replace: true,
+                target: "Cloud".to_string(),
+                reason: None,
+                error: None,
+            },
+            HotwordDecision {
+                candidate_id: "long".to_string(),
+                replace: true,
+                target: "Claude Code".to_string(),
+                reason: None,
+                error: None,
+            },
+        ];
+
+        let corrected = apply_hotword_corrections(&words, &candidates, &decisions);
+
+        assert_eq!(corrected.len(), 2);
+        assert_eq!(corrected[0].word, "Claude Code");
+        assert_eq!(corrected[0].start, words[0].start);
+        assert_eq!(corrected[0].end, words[1].end);
+        assert_eq!(corrected[1].word, "now");
     }
 }
