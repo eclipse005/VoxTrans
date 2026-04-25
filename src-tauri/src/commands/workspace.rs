@@ -469,6 +469,10 @@ impl PipelineStep for Step15HotwordsPipelineStep {
         {
             return Err("invalid step1.5 artifact".to_string());
         }
+        let expected_fingerprint = self.expected_input_fingerprint();
+        if output.input_fingerprint != expected_fingerprint {
+            return Err("stale step1.5 artifact".to_string());
+        }
         Ok(())
     }
 
@@ -488,6 +492,7 @@ impl PipelineStep for Step15HotwordsPipelineStep {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),
                 source_lang: self.source_lang.clone(),
+                input_fingerprint: self.expected_input_fingerprint(),
                 words,
                 hotwords: self.hotwords.clone(),
                 enabled: self.enabled,
@@ -496,6 +501,28 @@ impl PipelineStep for Step15HotwordsPipelineStep {
                 translate_model: self.translate_model.clone(),
             },
         ))
+    }
+}
+
+impl Step15HotwordsPipelineStep {
+    fn expected_input_fingerprint(&self) -> String {
+        let words = self
+            .words
+            .iter()
+            .map(|word| crate::services::transcribe::WordTokenDto {
+                start: word.start,
+                end: word.end,
+                word: word.word.clone(),
+            })
+            .collect::<Vec<_>>();
+        crate::services::hotwords::hotword_input_fingerprint(
+            &self.task_id,
+            &self.media_path,
+            &self.source_lang,
+            &words,
+            self.enabled,
+            &self.hotwords,
+        )
     }
 }
 
@@ -2596,9 +2623,13 @@ fn resolve_runtime_settings(
     let enable_terminology = snapshot_parsed
         .enable_terminology
         .unwrap_or(saved.enable_terminology);
-    let enable_hotwords = snapshot_parsed
-        .enable_hotwords
-        .unwrap_or(saved.enable_hotwords);
+    let snapshot_has_hotword_settings =
+        snapshot.get("hotwordGroups").is_some() || snapshot.get("enableHotwords").is_some();
+    let enable_hotwords = if snapshot_has_hotword_settings {
+        snapshot_parsed.enable_hotwords.unwrap_or(true)
+    } else {
+        saved.enable_hotwords
+    };
 
     let terminology_entries = if enable_terminology {
         let mut seen = HashSet::<(String, String)>::new();
@@ -2644,32 +2675,12 @@ fn resolve_runtime_settings(
     };
 
     let hotword_entries = if enable_hotwords {
-        snapshot_parsed
-            .hotword_groups
-            .unwrap_or_default()
-            .into_iter()
-            .flat_map(|group| group.terms.into_iter())
-            .map(|term| crate::services::hotwords::HotwordEntry {
-                word: term.word.trim().to_string(),
-                aliases: term
-                    .aliases
-                    .into_iter()
-                    .map(|alias| alias.trim().to_string())
-                    .filter(|alias| !alias.is_empty())
-                    .collect(),
-                lang: hotword_lang_from_settings_value(&term.lang),
-                note: {
-                    let note = term.note.trim();
-                    if note.is_empty() {
-                        None
-                    } else {
-                        Some(note.to_string())
-                    }
-                },
-            })
-            .chain(saved_hotword_entries(&saved).into_iter())
-            .filter(|entry| !entry.word.trim().is_empty())
-            .collect::<Vec<_>>()
+        let entries = if snapshot_has_hotword_settings {
+            snapshot_hotword_entries(snapshot_parsed.hotword_groups.unwrap_or_default())
+        } else {
+            saved_hotword_entries(&saved)
+        };
+        deduplicated_hotword_entries(entries)
     } else {
         Vec::new()
     };
@@ -2687,6 +2698,34 @@ fn resolve_runtime_settings(
         hotword_entries,
         enable_hotwords,
     })
+}
+
+fn snapshot_hotword_entries(
+    groups: Vec<SettingsSnapshotHotwordGroup>,
+) -> Vec<crate::services::hotwords::HotwordEntry> {
+    groups
+        .into_iter()
+        .flat_map(|group| group.terms.into_iter())
+        .map(|term| crate::services::hotwords::HotwordEntry {
+            word: term.word.trim().to_string(),
+            aliases: term
+                .aliases
+                .into_iter()
+                .map(|alias| alias.trim().to_string())
+                .filter(|alias| !alias.is_empty())
+                .collect(),
+            lang: hotword_lang_from_settings_value(&term.lang),
+            note: {
+                let note = term.note.trim();
+                if note.is_empty() {
+                    None
+                } else {
+                    Some(note.to_string())
+                }
+            },
+        })
+        .filter(|entry| !entry.word.trim().is_empty())
+        .collect()
 }
 
 fn fallback_saved_settings() -> crate::services::preferences::SavedSettings {
@@ -2757,6 +2796,47 @@ fn saved_hotword_entries(
         })
         .filter(|entry| !entry.word.trim().is_empty())
         .collect()
+}
+
+fn deduplicated_hotword_entries(
+    entries: Vec<crate::services::hotwords::HotwordEntry>,
+) -> Vec<crate::services::hotwords::HotwordEntry> {
+    let mut seen = HashSet::<(String, Vec<String>, String, String)>::new();
+    let mut out = Vec::new();
+
+    for entry in entries {
+        let word = entry.word.trim().to_string();
+        if word.is_empty() {
+            continue;
+        }
+        let aliases = entry
+            .aliases
+            .into_iter()
+            .map(|alias| alias.trim().to_string())
+            .filter(|alias| !alias.is_empty())
+            .collect::<Vec<_>>();
+        let note = entry.note.as_deref().unwrap_or_default().trim().to_string();
+        let key = (
+            word.to_ascii_lowercase(),
+            aliases
+                .iter()
+                .map(|alias| alias.to_ascii_lowercase())
+                .collect::<Vec<_>>(),
+            format!("{:?}", entry.lang),
+            note.to_ascii_lowercase(),
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        out.push(crate::services::hotwords::HotwordEntry {
+            word,
+            aliases,
+            lang: entry.lang,
+            note: if note.is_empty() { None } else { Some(note) },
+        });
+    }
+
+    out
 }
 
 fn hotword_lang_from_settings_value(value: &str) -> crate::services::hotwords::HotwordLang {

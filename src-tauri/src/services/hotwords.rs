@@ -61,6 +61,7 @@ pub struct BuildHotwordCorrectionRequest {
     pub task_id: String,
     pub media_path: String,
     pub source_lang: String,
+    pub input_fingerprint: String,
     pub words: Vec<WordTokenDto>,
     pub hotwords: Vec<HotwordEntry>,
     pub enabled: bool,
@@ -85,6 +86,7 @@ pub struct BuildHotwordCorrectionResponse {
     pub task_id: String,
     pub media_path: String,
     pub source_lang: String,
+    pub input_fingerprint: String,
     pub enabled: bool,
     pub hotwords: Vec<NormalizedHotword>,
     pub candidates: Vec<HotwordCandidate>,
@@ -96,12 +98,25 @@ pub struct BuildHotwordCorrectionResponse {
 pub fn build_hotword_correction(
     request: BuildHotwordCorrectionRequest,
 ) -> BuildHotwordCorrectionResponse {
+    let input_fingerprint = if request.input_fingerprint.trim().is_empty() {
+        hotword_input_fingerprint(
+            &request.task_id,
+            &request.media_path,
+            &request.source_lang,
+            &request.words,
+            request.enabled,
+            &request.hotwords,
+        )
+    } else {
+        request.input_fingerprint.clone()
+    };
     let normalized_hotwords = normalize_hotwords(&request.hotwords);
     if !request.enabled || normalized_hotwords.is_empty() || request.words.is_empty() {
         return BuildHotwordCorrectionResponse {
             task_id: request.task_id,
             media_path: request.media_path,
             source_lang: request.source_lang,
+            input_fingerprint,
             enabled: false,
             hotwords: normalized_hotwords,
             candidates: Vec::new(),
@@ -117,6 +132,7 @@ pub fn build_hotword_correction(
             task_id: request.task_id,
             media_path: request.media_path,
             source_lang: request.source_lang,
+            input_fingerprint,
             enabled: true,
             hotwords: normalized_hotwords,
             candidates,
@@ -156,6 +172,7 @@ pub fn build_hotword_correction(
         task_id: request.task_id,
         media_path: request.media_path,
         source_lang: request.source_lang,
+        input_fingerprint,
         enabled: true,
         hotwords: normalized_hotwords,
         candidates,
@@ -163,6 +180,83 @@ pub fn build_hotword_correction(
         corrections,
         words,
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HotwordInputFingerprintPayload<'a> {
+    task_id: &'a str,
+    media_path: &'a str,
+    source_lang: &'a str,
+    words: Vec<HotwordInputFingerprintWord<'a>>,
+    enabled: bool,
+    hotwords: Vec<HotwordInputFingerprintHotword>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HotwordInputFingerprintWord<'a> {
+    start: f64,
+    end: f64,
+    word: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HotwordInputFingerprintHotword {
+    word: String,
+    aliases: Vec<String>,
+    lang: HotwordLang,
+    note: String,
+}
+
+pub fn hotword_input_fingerprint(
+    task_id: &str,
+    media_path: &str,
+    source_lang: &str,
+    words: &[WordTokenDto],
+    enabled: bool,
+    hotwords: &[HotwordEntry],
+) -> String {
+    let payload = HotwordInputFingerprintPayload {
+        task_id: task_id.trim(),
+        media_path: media_path.trim(),
+        source_lang: source_lang.trim(),
+        words: words
+            .iter()
+            .map(|word| HotwordInputFingerprintWord {
+                start: word.start,
+                end: word.end,
+                word: word.word.as_str(),
+            })
+            .collect(),
+        enabled,
+        hotwords: hotwords
+            .iter()
+            .map(|entry| {
+                let normalized = normalize_hotword(entry);
+                HotwordInputFingerprintHotword {
+                    word: normalized.word,
+                    aliases: normalized.aliases,
+                    lang: normalized.lang,
+                    note: entry.note.as_deref().unwrap_or_default().trim().to_string(),
+                }
+            })
+            .filter(|entry| !entry.word.is_empty())
+            .collect(),
+    };
+    let serialized =
+        serde_json::to_vec(&payload).unwrap_or_else(|_| b"hotword_fingerprint_error".to_vec());
+    format!("{:016x}", fnv1a64(&serialized))
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 pub fn recall_hotword_candidates(
@@ -798,6 +892,7 @@ mod tests {
             task_id: "task-1".to_string(),
             media_path: "media.wav".to_string(),
             source_lang: "en".to_string(),
+            input_fingerprint: String::new(),
             words: words.clone(),
             hotwords: Vec::new(),
             enabled: false,
@@ -824,6 +919,7 @@ mod tests {
             task_id: "task-1".to_string(),
             media_path: "media.wav".to_string(),
             source_lang: "en".to_string(),
+            input_fingerprint: String::new(),
             words: words.clone(),
             hotwords,
             enabled: true,
@@ -849,5 +945,30 @@ mod tests {
         assert_eq!(response.words[0].word, words[0].word);
         assert_eq!(response.words[1].word, words[1].word);
         assert!(response.corrections.is_empty());
+    }
+
+    #[test]
+    fn hotword_input_fingerprint_changes_with_words_and_hotwords() {
+        let words = vec![word(0, "cloud"), word(1, "code")];
+        let hotwords = vec![hotword(
+            "Claude Code",
+            vec!["cloud code"],
+            HotwordLang::NonZh,
+        )];
+        let baseline =
+            hotword_input_fingerprint("task-1", "media.wav", "en", &words, true, &hotwords);
+
+        let mut changed_words = words.clone();
+        changed_words[1].word = "codes".to_string();
+        let changed_word_fingerprint =
+            hotword_input_fingerprint("task-1", "media.wav", "en", &changed_words, true, &hotwords);
+
+        let mut changed_hotwords = hotwords.clone();
+        changed_hotwords[0].aliases.push("claude".to_string());
+        let changed_hotword_fingerprint =
+            hotword_input_fingerprint("task-1", "media.wav", "en", &words, true, &changed_hotwords);
+
+        assert_ne!(baseline, changed_word_fingerprint);
+        assert_ne!(baseline, changed_hotword_fingerprint);
     }
 }
