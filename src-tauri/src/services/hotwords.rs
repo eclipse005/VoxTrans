@@ -544,10 +544,14 @@ pub fn apply_hotword_corrections(
             .iter()
             .find(|correction| correction.candidate.start_index == index)
         {
+            let target = replacement_target_with_boundary_punctuation(
+                &words[correction.candidate.start_index..=correction.candidate.end_index],
+                correction.target,
+            );
             out.push(WordTokenDto {
                 start: words[correction.candidate.start_index].start,
                 end: words[correction.candidate.end_index].end,
-                word: correction.target.to_string(),
+                word: target,
             });
             index = correction.candidate.end_index + 1;
         } else {
@@ -557,6 +561,43 @@ pub fn apply_hotword_corrections(
     }
 
     out
+}
+
+fn replacement_target_with_boundary_punctuation(words: &[WordTokenDto], target: &str) -> String {
+    let trimmed_target = target.trim();
+    if words.is_empty() || trimmed_target.is_empty() {
+        return trimmed_target.to_string();
+    }
+    let prefix = leading_boundary_punctuation(&words[0].word);
+    let suffix = trailing_boundary_punctuation(&words[words.len() - 1].word);
+    let mut out = String::new();
+    if !trimmed_target.starts_with(prefix) {
+        out.push_str(prefix);
+    }
+    out.push_str(trimmed_target);
+    if !trimmed_target.ends_with(suffix) {
+        out.push_str(suffix);
+    }
+    out
+}
+
+fn leading_boundary_punctuation(text: &str) -> &str {
+    let end = text
+        .char_indices()
+        .find(|(_, ch)| !is_boundary_punctuation(*ch))
+        .map(|(index, _)| index)
+        .unwrap_or(text.len());
+    &text[..end]
+}
+
+fn trailing_boundary_punctuation(text: &str) -> &str {
+    let start = text
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !is_boundary_punctuation(*ch))
+        .map(|(index, ch)| index + ch.len_utf8())
+        .unwrap_or(0);
+    &text[start..]
 }
 
 fn build_applied_hotword_corrections(
@@ -758,7 +799,7 @@ fn push_candidate(
     if !seen.insert(key) {
         return;
     }
-    let source_text = source_text(words, start, end);
+    let source_text = candidate_source_text(words, start, end);
     candidates.push(HotwordCandidate {
         id: format!("hotword:{}:{}:{}:{}", start, end, hotword.word, source_kind),
         start_index: start,
@@ -768,6 +809,10 @@ fn push_candidate(
         source_kind: source_kind.to_string(),
         context: context_text(words, start, end),
     });
+}
+
+fn candidate_source_text(words: &[WordTokenDto], start: usize, end: usize) -> String {
+    trim_boundary_punctuation(&source_text(words, start, end))
 }
 
 fn source_text(words: &[WordTokenDto], start: usize, end: usize) -> String {
@@ -804,6 +849,14 @@ fn normalized_tokens(text: &str) -> Vec<String> {
 
 fn tokens_equal_hotword_target(tokens: &[String], hotword: &NormalizedHotword) -> bool {
     tokens == normalized_tokens(&hotword.word)
+}
+
+fn trim_boundary_punctuation(text: &str) -> String {
+    text.trim_matches(is_boundary_punctuation).to_string()
+}
+
+fn is_boundary_punctuation(ch: char) -> bool {
+    !ch.is_alphanumeric() && !contains_chinese_char(ch)
 }
 
 fn normalize_ascii_token(text: &str) -> String {
@@ -985,6 +1038,17 @@ mod tests {
     }
 
     #[test]
+    fn alias_candidate_source_text_omits_boundary_punctuation() {
+        let words = vec![word(0, "SysD?")];
+        let hotwords = vec![hotword("CISD", vec!["SysD"], HotwordLang::NonZh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source_text, "SysD");
+    }
+
+    #[test]
     fn non_chinese_generated_alias_recalls_when_alias_is_missing() {
         let words = vec![word(0, "cloud"), word(1, "code")];
         let hotwords = vec![hotword("Claude Code", vec![], HotwordLang::NonZh)];
@@ -1042,6 +1106,24 @@ mod tests {
         assert_eq!(corrected[1].start, words[1].start);
         assert_eq!(corrected[1].end, words[2].end);
         assert_eq!(corrected[2].word, "now");
+    }
+
+    #[test]
+    fn accepted_single_token_correction_preserves_boundary_punctuation() {
+        let words = vec![word(0, "SysD?")];
+        let candidates = vec![candidate("sysd", 0, 0, "CISD")];
+        let decisions = vec![HotwordDecision {
+            candidate_id: "sysd".to_string(),
+            replace: true,
+            target: "CISD".to_string(),
+            reason: None,
+            error: None,
+        }];
+
+        let corrected = apply_hotword_corrections(&words, &candidates, &decisions);
+
+        assert_eq!(corrected.len(), 1);
+        assert_eq!(corrected[0].word, "CISD?");
     }
 
     #[test]

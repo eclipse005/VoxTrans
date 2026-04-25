@@ -475,6 +475,7 @@ fn ends_with_soft_punctuation(word: &str) -> bool {
 fn join_words<'a>(parts: impl Iterator<Item = &'a str>) -> String {
     let mut out = String::new();
     let mut prev_has_spacing_word = false;
+    let mut prev_allows_space_after = false;
 
     for raw in parts {
         let token = raw.trim();
@@ -482,11 +483,15 @@ fn join_words<'a>(parts: impl Iterator<Item = &'a str>) -> String {
             continue;
         }
         let next_has_spacing_word = token_has_spacing_word(token);
-        if !out.is_empty() && prev_has_spacing_word && next_has_spacing_word {
+        if !out.is_empty()
+            && next_has_spacing_word
+            && (prev_has_spacing_word || prev_allows_space_after)
+        {
             out.push(' ');
         }
         out.push_str(token);
         prev_has_spacing_word = next_has_spacing_word;
+        prev_allows_space_after = token_allows_space_after(token);
     }
 
     out.replace(" ,", ",")
@@ -495,6 +500,14 @@ fn join_words<'a>(parts: impl Iterator<Item = &'a str>) -> String {
         .replace(" ?", "?")
         .replace(" :", ":")
         .replace(" ;", ";")
+}
+
+fn token_allows_space_after(token: &str) -> bool {
+    token
+        .chars()
+        .last()
+        .map(|ch| matches!(ch, ',' | ';' | ':' | '?' | '!' | '.' | '，' | '；' | '：' | '？' | '！' | '。'))
+        .unwrap_or(false)
 }
 
 fn token_has_spacing_word(token: &str) -> bool {
@@ -723,5 +736,17 @@ mod tests {
         assert!(ends_with_terminal_punctuation("you."));
         assert!(ends_with_terminal_punctuation("真的吗？"));
         assert!(!ends_with_terminal_punctuation("because"));
+    }
+
+    #[test]
+    fn standalone_ascii_punctuation_keeps_following_space() {
+        let words = vec![w(0, "Alright"), w(1, ","), w(2, "welcome.")];
+
+        let response = tauri::async_runtime::block_on(
+            build_source_sentences_from_words_with_progress(request(words), None),
+        )
+        .expect("step2 should build sentence");
+
+        assert_eq!(response.translation_sentences[0].text, "Alright, welcome.");
     }
 }
