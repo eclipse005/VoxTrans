@@ -140,6 +140,7 @@ static WORKSPACE_STORE: OnceLock<Mutex<WorkspaceStore>> = OnceLock::new();
 static WORKSPACE_HYDRATED: OnceLock<Mutex<bool>> = OnceLock::new();
 const TASK_META_FILE_NAME: &str = "task_meta.json";
 const STEP_01_ASR_FILE: &str = "step_01_asr.json";
+const STEP_01_5_HOTWORDS_FILE: &str = "step_01_5_hotwords.json";
 const STEP_02_SEGMENTS_FILE: &str = "step_02_segments.json";
 const STEP_03_TERMINOLOGY_FILE: &str = "step_03_terminology.json";
 const STEP_04_TRANSLATION_FILE: &str = "step_04_translation.json";
@@ -279,6 +280,10 @@ struct SettingsSnapshotInput {
     terminology_groups: Option<Vec<SettingsSnapshotTerminologyGroup>>,
     #[serde(default)]
     enable_terminology: Option<bool>,
+    #[serde(default)]
+    hotword_groups: Option<Vec<SettingsSnapshotHotwordGroup>>,
+    #[serde(default)]
+    enable_hotwords: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -299,6 +304,26 @@ struct SettingsSnapshotTerminologyTerm {
     note: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct SettingsSnapshotHotwordGroup {
+    #[serde(default)]
+    terms: Vec<SettingsSnapshotHotwordTerm>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct SettingsSnapshotHotwordTerm {
+    #[serde(default)]
+    word: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+    #[serde(default)]
+    lang: String,
+    #[serde(default)]
+    note: String,
+}
+
 #[derive(Debug, Clone)]
 struct PipelineRuntimeSettings {
     provider: String,
@@ -310,6 +335,8 @@ struct PipelineRuntimeSettings {
     subtitle_max_words_per_segment: u32,
     subtitle_length_reference: u32,
     terminology_entries: Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+    hotword_entries: Vec<crate::services::hotwords::HotwordEntry>,
+    enable_hotwords: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -403,6 +430,72 @@ impl PipelineStep for Step1AsrPipelineStep {
             source_lang: self.source_lang.clone(),
             words,
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Step15HotwordsPipelineStep {
+    task_id: String,
+    media_path: String,
+    source_lang: String,
+    words: Vec<crate::commands::transcription::WordTokenCommandDto>,
+    hotwords: Vec<crate::services::hotwords::HotwordEntry>,
+    enabled: bool,
+    translate_api_key: String,
+    translate_base_url: String,
+    translate_model: String,
+}
+
+#[async_trait]
+impl PipelineStep for Step15HotwordsPipelineStep {
+    type Output = crate::services::hotwords::BuildHotwordCorrectionResponse;
+
+    fn name(&self) -> &'static str {
+        "step_01_5_hotwords"
+    }
+
+    fn artifact_file(&self) -> &'static str {
+        STEP_01_5_HOTWORDS_FILE
+    }
+
+    fn policy(&self) -> CheckpointPolicy {
+        CheckpointPolicy::ValidateThenSkip
+    }
+
+    fn validate(&self, output: &Self::Output) -> Result<(), String> {
+        if output.task_id.trim().is_empty()
+            || output.media_path.trim().is_empty()
+            || output.words.is_empty()
+        {
+            return Err("invalid step1.5 artifact".to_string());
+        }
+        Ok(())
+    }
+
+    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        let words = self
+            .words
+            .iter()
+            .map(|word| crate::services::transcribe::WordTokenDto {
+                start: word.start,
+                end: word.end,
+                word: word.word.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        Ok(crate::services::hotwords::build_hotword_correction(
+            crate::services::hotwords::BuildHotwordCorrectionRequest {
+                task_id: self.task_id.clone(),
+                media_path: self.media_path.clone(),
+                source_lang: self.source_lang.clone(),
+                words,
+                hotwords: self.hotwords.clone(),
+                enabled: self.enabled,
+                translate_api_key: self.translate_api_key.clone(),
+                translate_base_url: self.translate_base_url.clone(),
+                translate_model: self.translate_model.clone(),
+            },
+        ))
     }
 }
 
@@ -1416,6 +1509,39 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
         source_lang = step1_exec.output.source_lang.clone();
     }
 
+    let step15_exec = match execute_step(
+        &Step15HotwordsPipelineStep {
+            task_id: task_id.to_string(),
+            media_path: record.item.path.clone(),
+            source_lang: source_lang.clone(),
+            words: step1_exec.output.words.clone(),
+            hotwords: runtime.hotword_entries.clone(),
+            enabled: runtime.enable_hotwords,
+            translate_api_key: runtime.translate_api_key.clone(),
+            translate_base_url: runtime.translate_base_url.clone(),
+            translate_model: runtime.translate_model.clone(),
+        },
+        &step_context,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            mark_task_failed(app, task_id, &err)?;
+            return Err(err);
+        }
+    };
+    let step2_words = step15_exec
+        .output
+        .words
+        .iter()
+        .map(|word| crate::commands::transcription::WordTokenCommandDto {
+            start: word.start,
+            end: word.end,
+            word: word.word.clone(),
+        })
+        .collect::<Vec<_>>();
+
     report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 1)?;
 
     let step2_exec = match execute_step(
@@ -1423,7 +1549,7 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
             source_lang: source_lang.clone(),
-            words: step1_exec.output.words.clone(),
+            words: step2_words,
             subtitle_max_words_per_segment: runtime.subtitle_max_words_per_segment,
             translate_api_key: runtime.translate_api_key.clone(),
             translate_base_url: runtime.translate_base_url.clone(),
@@ -2381,6 +2507,7 @@ fn move_directory_contents(source_dir: &Path, target_dir: &Path) -> Result<(), S
 fn migrate_target_artifact_name(name: &str) -> Option<&'static str> {
     match name {
         "step_01_asr.json" => Some(STEP_01_ASR_FILE),
+        "step_01_5_hotwords.json" => Some(STEP_01_5_HOTWORDS_FILE),
         "step_02_segments.json" => Some(STEP_02_SEGMENTS_FILE),
         "step_03_terminology.json" => Some(STEP_03_TERMINOLOGY_FILE),
         "step_04_translation.json" => Some(STEP_04_TRANSLATION_FILE),
@@ -2469,6 +2596,9 @@ fn resolve_runtime_settings(
     let enable_terminology = snapshot_parsed
         .enable_terminology
         .unwrap_or(saved.enable_terminology);
+    let enable_hotwords = snapshot_parsed
+        .enable_hotwords
+        .unwrap_or(saved.enable_hotwords);
 
     let terminology_entries = if enable_terminology {
         let mut seen = HashSet::<(String, String)>::new();
@@ -2513,6 +2643,37 @@ fn resolve_runtime_settings(
         Vec::new()
     };
 
+    let hotword_entries = if enable_hotwords {
+        snapshot_parsed
+            .hotword_groups
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|group| group.terms.into_iter())
+            .map(|term| crate::services::hotwords::HotwordEntry {
+                word: term.word.trim().to_string(),
+                aliases: term
+                    .aliases
+                    .into_iter()
+                    .map(|alias| alias.trim().to_string())
+                    .filter(|alias| !alias.is_empty())
+                    .collect(),
+                lang: hotword_lang_from_settings_value(&term.lang),
+                note: {
+                    let note = term.note.trim();
+                    if note.is_empty() {
+                        None
+                    } else {
+                        Some(note.to_string())
+                    }
+                },
+            })
+            .chain(saved_hotword_entries(&saved).into_iter())
+            .filter(|entry| !entry.word.trim().is_empty())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
     Ok(PipelineRuntimeSettings {
         provider,
         chunk_target_seconds,
@@ -2523,6 +2684,8 @@ fn resolve_runtime_settings(
         subtitle_max_words_per_segment,
         subtitle_length_reference,
         terminology_entries,
+        hotword_entries,
+        enable_hotwords,
     })
 }
 
@@ -2565,6 +2728,43 @@ fn saved_terminology_entries(
             },
         )
         .collect()
+}
+
+fn saved_hotword_entries(
+    saved: &crate::services::preferences::SavedSettings,
+) -> Vec<crate::services::hotwords::HotwordEntry> {
+    saved
+        .hotword_groups
+        .iter()
+        .flat_map(|group| group.terms.iter())
+        .map(|term| crate::services::hotwords::HotwordEntry {
+            word: term.word.trim().to_string(),
+            aliases: term
+                .aliases
+                .iter()
+                .map(|alias| alias.trim().to_string())
+                .filter(|alias| !alias.is_empty())
+                .collect(),
+            lang: hotword_lang_from_settings_value(&term.lang),
+            note: {
+                let note = term.note.trim();
+                if note.is_empty() {
+                    None
+                } else {
+                    Some(note.to_string())
+                }
+            },
+        })
+        .filter(|entry| !entry.word.trim().is_empty())
+        .collect()
+}
+
+fn hotword_lang_from_settings_value(value: &str) -> crate::services::hotwords::HotwordLang {
+    match value.trim() {
+        "zh" => crate::services::hotwords::HotwordLang::Zh,
+        "non_zh" => crate::services::hotwords::HotwordLang::NonZh,
+        _ => crate::services::hotwords::HotwordLang::Auto,
+    }
 }
 
 fn map_step2_segments_for_translate(
