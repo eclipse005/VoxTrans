@@ -16,6 +16,7 @@ tauri = { version = "2.10.3", features = [] }
 tauri-plugin-dialog = "2.6.0"
 chrono = { version = "0.4", features = ["clock"] }
 hound = "3.5"
+pinyin = "0.10"
 voxtrans-core = { path = "../voxtrans-core" }
 tokio = { version = "1", features = ["rt", "sync", "time"] }
 font-kit = "0.14"
