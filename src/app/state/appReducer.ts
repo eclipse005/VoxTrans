@@ -134,6 +134,8 @@ export const defaultSettings: SavedSettings = {
   llmConcurrency: 4,
   terminologyGroups: [createTerminologyGroup()],
   enableTerminology: true,
+  hotwordGroups: [{ id: "hotword-group-default", name: "默认", terms: [] }],
+  enableHotwords: true,
   enableSubtitleBeautify: true,
   autoBurnHardSubtitle: false,
   subtitleBurnMode: "bilingualSourceFirst",

@@ -3,6 +3,7 @@ import { loadUserPreferences } from "../api/preferences";
 import { normalizeProvider } from "../../features/media/provider";
 import type {
   DemucsModel,
+  HotwordGroup,
   SubtitleBurnMode,
   SubtitleLineStyle,
   SubtitleRenderStyle,
@@ -51,6 +52,11 @@ export function useAppPersistence(dispatch: DispatchState) {
           : [];
         const terminologyGroups = normalizeTerminologyGroups(terminologyGroupsRaw);
         const enableTerminology = Boolean(res.settings.enableTerminology ?? true);
+        const hotwordGroupsRaw = Array.isArray(res.settings.hotwordGroups)
+          ? res.settings.hotwordGroups
+          : [];
+        const hotwordGroups = normalizeHotwordGroups(hotwordGroupsRaw);
+        const enableHotwords = Boolean(res.settings.enableHotwords ?? true);
         const enableSubtitleBeautify = Boolean(res.settings.enableSubtitleBeautify ?? true);
         const autoBurnHardSubtitle = Boolean(res.settings.autoBurnHardSubtitle ?? false);
         const subtitleBurnModeRaw = String(res.settings.subtitleBurnMode ?? "bilingualSourceFirst");
@@ -118,6 +124,8 @@ export function useAppPersistence(dispatch: DispatchState) {
             llmConcurrency,
             terminologyGroups,
             enableTerminology,
+            hotwordGroups,
+            enableHotwords,
             enableSubtitleBeautify,
             autoBurnHardSubtitle,
             subtitleBurnMode,
@@ -155,6 +163,11 @@ export function useAppPersistence(dispatch: DispatchState) {
       cancelled = true;
     };
   }, [dispatch]);
+}
+
+function normalizeHotwordGroups(groups: HotwordGroup[]): HotwordGroup[] {
+  if (groups.length > 0) return groups;
+  return [{ id: "hotword-group-default", name: "默认", terms: [] }];
 }
 
 function normalizeHexColor(raw: unknown, fallback: string): string {
