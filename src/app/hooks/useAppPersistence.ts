@@ -3,7 +3,6 @@ import { loadUserPreferences } from "../api/preferences";
 import { normalizeProvider } from "../../features/media/provider";
 import type {
   DemucsModel,
-  HotwordGroup,
   SubtitleBurnMode,
   SubtitleLineStyle,
   SubtitleRenderStyle,
@@ -11,6 +10,7 @@ import type {
 } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import { normalizeTerminologyGroups } from "../utils/terminology";
+import { normalizeHotwordGroups } from "../utils/hotwords";
 
 type DispatchState = (action: AppAction) => void;
 
@@ -148,6 +148,8 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftLlmConcurrencyInput: String(llmConcurrency),
             draftTerminologyGroups: terminologyGroups,
             draftEnableTerminology: enableTerminology,
+            draftHotwordGroups: hotwordGroups,
+            draftEnableHotwords: enableHotwords,
             draftEnableSubtitleBeautify: enableSubtitleBeautify,
             draftAutoBurnHardSubtitle: autoBurnHardSubtitle,
             draftSubtitleBurnMode: subtitleBurnMode,
@@ -163,11 +165,6 @@ export function useAppPersistence(dispatch: DispatchState) {
       cancelled = true;
     };
   }, [dispatch]);
-}
-
-function normalizeHotwordGroups(groups: HotwordGroup[]): HotwordGroup[] {
-  if (groups.length > 0) return groups;
-  return [{ id: "hotword-group-default", name: "默认", terms: [] }];
 }
 
 function normalizeHexColor(raw: unknown, fallback: string): string {

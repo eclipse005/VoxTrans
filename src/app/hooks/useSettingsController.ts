@@ -7,6 +7,7 @@ import type { SavedSettings } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { ToastTone } from "../types";
 import { normalizeTerminologyGroups } from "../utils/terminology";
+import { normalizeHotwordGroups } from "../utils/hotwords";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (
@@ -30,6 +31,8 @@ type UseSettingsControllerArgs = {
   draftLlmConcurrencyInput: string;
   draftTerminologyGroups: SavedSettings["terminologyGroups"];
   draftEnableTerminology: boolean;
+  draftHotwordGroups: SavedSettings["hotwordGroups"];
+  draftEnableHotwords: boolean;
   draftEnableSubtitleBeautify: boolean;
   draftAutoBurnHardSubtitle: boolean;
   draftSubtitleBurnMode: SavedSettings["subtitleBurnMode"];
@@ -54,6 +57,8 @@ export function useSettingsController({
   draftLlmConcurrencyInput,
   draftTerminologyGroups,
   draftEnableTerminology,
+  draftHotwordGroups,
+  draftEnableHotwords,
   draftEnableSubtitleBeautify,
   draftAutoBurnHardSubtitle,
   draftSubtitleBurnMode,
@@ -80,6 +85,8 @@ export function useSettingsController({
         draftLlmConcurrencyInput: String(settings.llmConcurrency),
         draftTerminologyGroups: settings.terminologyGroups,
         draftEnableTerminology: settings.enableTerminology,
+        draftHotwordGroups: settings.hotwordGroups,
+        draftEnableHotwords: settings.enableHotwords,
         draftEnableSubtitleBeautify: settings.enableSubtitleBeautify,
         draftAutoBurnHardSubtitle: settings.autoBurnHardSubtitle,
         draftSubtitleBurnMode: settings.subtitleBurnMode,
@@ -103,6 +110,8 @@ export function useSettingsController({
     settings.llmConcurrency,
     settings.terminologyGroups,
     settings.enableTerminology,
+    settings.hotwordGroups,
+    settings.enableHotwords,
     settings.enableSubtitleBeautify,
     settings.autoBurnHardSubtitle,
     settings.subtitleBurnMode,
@@ -150,8 +159,8 @@ export function useSettingsController({
       llmConcurrency: clampedConcurrency,
       terminologyGroups: normalizeTerminologyGroups(draftTerminologyGroups),
       enableTerminology: draftEnableTerminology,
-      hotwordGroups: settings.hotwordGroups,
-      enableHotwords: settings.enableHotwords,
+      hotwordGroups: normalizeHotwordGroups(draftHotwordGroups),
+      enableHotwords: draftEnableHotwords,
       enableSubtitleBeautify: draftEnableSubtitleBeautify,
       autoBurnHardSubtitle: draftAutoBurnHardSubtitle,
       subtitleBurnMode: draftSubtitleBurnMode,
@@ -205,6 +214,8 @@ export function useSettingsController({
         draftLlmConcurrencyInput: String(nextSettings.llmConcurrency),
         draftTerminologyGroups: nextSettings.terminologyGroups,
         draftEnableTerminology: nextSettings.enableTerminology,
+        draftHotwordGroups: nextSettings.hotwordGroups,
+        draftEnableHotwords: nextSettings.enableHotwords,
         draftEnableSubtitleBeautify,
         draftAutoBurnHardSubtitle: nextSettings.autoBurnHardSubtitle,
         draftSubtitleBurnMode: nextSettings.subtitleBurnMode,
@@ -234,8 +245,8 @@ export function useSettingsController({
     draftLlmConcurrencyInput,
     draftTerminologyGroups,
     draftEnableTerminology,
-    settings.hotwordGroups,
-    settings.enableHotwords,
+    draftHotwordGroups,
+    draftEnableHotwords,
     draftAutoBurnHardSubtitle,
     draftSubtitleBurnMode,
     draftSubtitleRenderStyle,
@@ -259,6 +270,22 @@ export function useSettingsController({
         pushToast("术语已保存", "success");
       } catch (error) {
         const message = error instanceof Error ? error.message : "术语保存失败";
+        pushToast(message, "error");
+      }
+    },
+    saveHotwordGroups: async (groups: SavedSettings["hotwordGroups"]) => {
+      const normalizedGroups = normalizeHotwordGroups(groups);
+      const nextSettings: SavedSettings = {
+        ...settings,
+        hotwordGroups: normalizedGroups,
+      };
+      dispatch({ type: "set_settings", settings: nextSettings });
+      dispatch({ type: "set_draft", payload: { draftHotwordGroups: normalizedGroups } });
+      try {
+        await saveAppSettingsApi(nextSettings);
+        pushToast("热词已保存", "success");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "热词保存失败";
         pushToast(message, "error");
       }
     },

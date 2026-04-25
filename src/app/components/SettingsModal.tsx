@@ -28,6 +28,7 @@ type SettingsModalProps = {
   draftTranslateModel: string;
   draftLlmConcurrencyInput: string;
   draftEnableTerminology: boolean;
+  draftEnableHotwords: boolean;
   draftEnableSubtitleBeautify: boolean;
   draftAutoBurnHardSubtitle: boolean;
   draftSubtitleBurnMode: SubtitleBurnMode;
@@ -48,6 +49,7 @@ type SettingsModalProps = {
   onDraftTranslateModelChange: (value: string) => void;
   onDraftLlmConcurrencyInputChange: (value: string) => void;
   onDraftEnableTerminologyChange: (value: boolean) => void;
+  onDraftEnableHotwordsChange: (value: boolean) => void;
   onDraftEnableSubtitleBeautifyChange: (value: boolean) => void;
   onDraftAutoBurnHardSubtitleChange: (value: boolean) => void;
   onDraftSubtitleBurnModeChange: (value: SubtitleBurnMode) => void;
@@ -110,6 +112,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftTranslateModel,
     draftLlmConcurrencyInput,
     draftEnableTerminology,
+    draftEnableHotwords,
     draftEnableSubtitleBeautify,
     draftAutoBurnHardSubtitle,
     draftSubtitleBurnMode,
@@ -130,6 +133,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftTranslateModelChange,
     onDraftLlmConcurrencyInputChange,
     onDraftEnableTerminologyChange,
+    onDraftEnableHotwordsChange,
     onDraftEnableSubtitleBeautifyChange,
     onDraftAutoBurnHardSubtitleChange,
     onDraftSubtitleBurnModeChange,
@@ -347,6 +351,19 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <div className="toggle-label">
                       <span className="toggle-title">启用术语库</span>
                       <span className="toggle-desc">关闭后翻译不注入术语，按通用语义翻译。</span>
+                    </div>
+                    <span className="toggle-switch" />
+                  </label>
+                  <label className="setting-toggle" htmlFor="enable-hotwords">
+                    <input
+                      id="enable-hotwords"
+                      type="checkbox"
+                      checked={draftEnableHotwords}
+                      onChange={(e) => onDraftEnableHotwordsChange(e.target.checked)}
+                    />
+                    <div className="toggle-label">
+                      <span className="toggle-title">启用热词</span>
+                      <span className="toggle-desc">关闭后转录不注入热词提示。</span>
                     </div>
                     <span className="toggle-switch" />
                   </label>

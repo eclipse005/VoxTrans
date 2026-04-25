@@ -5,6 +5,7 @@ import { getVersion } from "@tauri-apps/api/app";
 type NavbarProps = {
   onOpenSettings: () => void;
   onOpenTerminology: () => void;
+  onOpenHotwords: () => void;
   hasAvailableUpdate: boolean;
   onOpenUpdateDialog: () => void;
 };
@@ -12,6 +13,7 @@ type NavbarProps = {
 export default function Navbar({
   onOpenSettings,
   onOpenTerminology,
+  onOpenHotwords,
   hasAvailableUpdate,
   onOpenUpdateDialog,
 }: NavbarProps) {
@@ -63,6 +65,10 @@ export default function Navbar({
           <button className="nav-button" onClick={onOpenTerminology}>
             <BookIcon />
             <span>术语</span>
+          </button>
+          <button className="nav-button" onClick={onOpenHotwords}>
+            <BookIcon />
+            <span>热词</span>
           </button>
           <button className="nav-button" onClick={onOpenSettings}>
             <SettingsIcon />
