@@ -13,15 +13,11 @@ const MAX_EXTRACT_TERMS: usize = 24;
 #[derive(Debug, Clone)]
 pub struct TerminologyToken {
     pub text: String,
-    pub start: f64,
-    pub end: f64,
 }
 
 #[derive(Debug, Clone)]
 pub struct TerminologySegment {
     pub segment: String,
-    pub start: f64,
-    pub end: f64,
     pub tokens: Vec<TerminologyToken>,
 }
 

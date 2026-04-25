@@ -13,6 +13,7 @@ pub mod model;
 pub mod output;
 pub mod pipeline;
 pub mod preferences;
+pub mod subtitle_srt;
 pub mod subtitle_step5;
 pub mod system;
 pub mod task_log;

@@ -6,7 +6,6 @@ pub enum LlmErrorKind {
     InvalidJson,
     InvalidSchema,
     InvalidSemantic,
-    TaskJoin,
     Config,
 }
 
@@ -17,7 +16,6 @@ impl LlmErrorKind {
             LlmErrorKind::InvalidJson => "invalid_json",
             LlmErrorKind::InvalidSchema => "invalid_schema",
             LlmErrorKind::InvalidSemantic => "invalid_semantic",
-            LlmErrorKind::TaskJoin => "task_join",
             LlmErrorKind::Config => "config",
         }
     }

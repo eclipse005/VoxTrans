@@ -102,7 +102,7 @@ export default function SubtitleExportModal({
 
         <h3 className="apple-heading-small">导出字幕</h3>
         <p className="apple-body-small export-modal-desc">
-          请选择要导出的字幕类型。实际文件后缀会按任务源语言/目标语言生成。
+          请选择要导出的字幕类型。文件名固定为 src.srt / trans.srt / src_trans.srt / trans_src.srt。
         </p>
 
         <div className="export-option-list">

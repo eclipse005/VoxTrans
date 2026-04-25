@@ -74,10 +74,6 @@ pub struct JsonRepairOutcome {
     pub source: JsonRepairSource,
 }
 
-pub fn extract_and_repair_json(raw: &str) -> Result<Value, LlmError> {
-    extract_and_repair_json_with_outcome(raw).map(|outcome| outcome.value)
-}
-
 pub fn extract_and_repair_json_with_outcome(raw: &str) -> Result<JsonRepairOutcome, LlmError> {
     let mut candidates: Vec<(String, JsonRepairSource)> = Vec::new();
     let mut parse_failures: Vec<String> = Vec::new();

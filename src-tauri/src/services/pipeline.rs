@@ -30,7 +30,6 @@ pub struct StepContext<'a> {
 pub struct StepExecution<T> {
     pub output: T,
     pub source: StepSource,
-    pub artifact_path: PathBuf,
 }
 
 #[async_trait]
@@ -63,7 +62,6 @@ where
                 return Ok(StepExecution {
                     output: cached,
                     source: StepSource::Cache,
-                    artifact_path,
                 });
             }
             run_and_persist(step, ctx, artifact_path).await
@@ -74,7 +72,6 @@ where
                     return Ok(StepExecution {
                         output: cached,
                         source: StepSource::Cache,
-                        artifact_path,
                     });
                 }
             }
@@ -100,7 +97,6 @@ where
     Ok(StepExecution {
         output,
         source: StepSource::Computed,
-        artifact_path,
     })
 }
 

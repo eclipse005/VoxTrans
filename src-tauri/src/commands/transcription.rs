@@ -54,6 +54,8 @@ pub struct BuildSourceSentencesCommandRequest {
     pub audio_path: String,
     pub source_lang: String,
     pub words: Vec<WordTokenCommandDto>,
+    #[serde(default = "default_subtitle_max_words_per_segment")]
+    pub subtitle_max_words_per_segment: u32,
     #[serde(default)]
     pub translate_api_key: String,
     #[serde(default)]
@@ -113,6 +115,7 @@ pub async fn build_source_sentences_with_progress(
             media_path: request.audio_path,
             source_lang: request.source_lang,
             words: request.words.into_iter().map(to_service_word).collect(),
+            subtitle_max_words_per_segment: request.subtitle_max_words_per_segment,
             translate_api_key: request.translate_api_key,
             translate_base_url: request.translate_base_url,
             translate_model: request.translate_model,
@@ -306,6 +309,10 @@ fn default_llm_concurrency() -> u32 {
     4
 }
 
+fn default_subtitle_max_words_per_segment() -> u32 {
+    20
+}
+
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AsrArtifactForSentenceCli {
@@ -435,6 +442,7 @@ fn run_build_source_sentences_mode_from_args(args: &[String]) -> Result<(), Stri
             audio_path: asr.media_path.clone(),
             source_lang: asr.source_lang.clone(),
             words: asr.words,
+            subtitle_max_words_per_segment: default_subtitle_max_words_per_segment(),
             translate_api_key,
             translate_base_url,
             translate_model,

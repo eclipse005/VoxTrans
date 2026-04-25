@@ -21,6 +21,16 @@ pub struct ExportSrtCommandRequest {
     pub content: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportTaskSrtsCommandRequest {
+    pub task_id: String,
+    pub target_dir: String,
+    #[serde(default)]
+    pub task_name: Option<String>,
+    pub items: Vec<crate::services::subtitle_srt::ExportSrtItem>,
+}
+
 #[tauri::command]
 pub fn save_srt(request: SaveSrtCommandRequest) -> Result<(), String> {
     crate::services::file::save_srt(crate::services::file::SaveSrtRequest {
@@ -38,6 +48,16 @@ pub fn export_srt(request: ExportSrtCommandRequest) -> Result<String, String> {
         target_dir: request.target_dir,
         task_name: request.task_name,
         content: request.content,
+    })
+}
+
+#[tauri::command]
+pub fn export_task_srts(request: ExportTaskSrtsCommandRequest) -> Result<Vec<String>, String> {
+    crate::services::file::export_task_srts(crate::services::file::ExportTaskSrtsRequest {
+        task_id: request.task_id,
+        target_dir: request.target_dir,
+        task_name: request.task_name,
+        items: request.items,
     })
 }
 

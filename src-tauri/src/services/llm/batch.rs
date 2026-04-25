@@ -4,23 +4,6 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-pub async fn run_indexed_concurrent<T, R, E, F, Fut>(
-    items: Vec<T>,
-    concurrency: usize,
-    worker: F,
-    join_error: impl Fn(String) -> E + Clone + Send + 'static,
-) -> Vec<(usize, Result<R, E>)>
-where
-    T: Send + 'static,
-    R: Send + 'static,
-    E: Send + 'static,
-    F: Fn(T) -> Fut + Clone + Send + 'static,
-    Fut: Future<Output = Result<R, E>> + Send + 'static,
-{
-    run_indexed_concurrent_with_progress(items, concurrency, worker, join_error, |_done, _total| {})
-        .await
-}
-
 pub async fn run_indexed_concurrent_with_progress<T, R, E, F, Fut, P>(
     items: Vec<T>,
     concurrency: usize,

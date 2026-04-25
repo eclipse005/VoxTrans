@@ -146,6 +146,8 @@ const STEP_04_TRANSLATION_FILE: &str = "step_04_translation.json";
 const STEP_05_01_SOURCE_SPLIT_FILE: &str = "step_05_01_source_split.json";
 const STEP_05_02_TRANSLATION_ALIGN_FILE: &str = "step_05_02_translation_align.json";
 const STEP_05_03_TRANSLATION_POLISH_FILE: &str = "step_05_03_translation_polish.json";
+const STEP_05_04_QA_REPORT_FILE: &str = "step_05_04_qa_report.json";
+const STEP_05_05_QA_REPAIR_FILE: &str = "step_05_05_qa_repair.json";
 
 fn workspace_store() -> &'static Mutex<WorkspaceStore> {
     WORKSPACE_STORE.get_or_init(|| Mutex::new(WorkspaceStore::default()))
@@ -410,6 +412,7 @@ struct Step2SegmentsPipelineStep {
     media_path: String,
     source_lang: String,
     words: Vec<crate::commands::transcription::WordTokenCommandDto>,
+    subtitle_max_words_per_segment: u32,
     translate_api_key: String,
     translate_base_url: String,
     translate_model: String,
@@ -464,6 +467,7 @@ impl PipelineStep for Step2SegmentsPipelineStep {
             audio_path: self.media_path.clone(),
             source_lang: self.source_lang.clone(),
             words: self.words.clone(),
+            subtitle_max_words_per_segment: self.subtitle_max_words_per_segment,
             translate_api_key: self.translate_api_key.clone(),
             translate_base_url: self.translate_base_url.clone(),
             translate_model: self.translate_model.clone(),
@@ -832,7 +836,7 @@ struct Step53TranslationPolishPipelineStep {
 
 #[async_trait]
 impl PipelineStep for Step53TranslationPolishPipelineStep {
-    type Output = crate::commands::translate::BuildTranslationLayerCommandResponse;
+    type Output = crate::commands::translate::BuildStep53TranslationPolishCommandResponse;
 
     fn name(&self) -> &'static str {
         "step_5_3_translation_polish"
@@ -897,6 +901,158 @@ impl PipelineStep for Step53TranslationPolishPipelineStep {
     }
 }
 
+#[derive(Debug, Clone)]
+struct Step54QaPipelineStep {
+    task_id: String,
+    media_path: String,
+    source_lang: String,
+    target_lang: String,
+    segments: Vec<crate::commands::translate::BuildTranslationSegmentCommand>,
+    terminology_entries: Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+    model_fingerprint: String,
+    settings_fingerprint: String,
+    app: AppHandle,
+}
+
+#[async_trait]
+impl PipelineStep for Step54QaPipelineStep {
+    type Output = crate::commands::translate::BuildStep54QaReportCommandResponse;
+
+    fn name(&self) -> &'static str {
+        "step_5_4_qa_report"
+    }
+
+    fn artifact_file(&self) -> &'static str {
+        STEP_05_04_QA_REPORT_FILE
+    }
+
+    fn policy(&self) -> CheckpointPolicy {
+        CheckpointPolicy::ForceRebuild
+    }
+
+    fn validate(&self, output: &Self::Output) -> Result<(), String> {
+        if output.task_id.trim().is_empty() || output.media_path.trim().is_empty() {
+            return Err("invalid step5_4 artifact".to_string());
+        }
+        Ok(())
+    }
+
+    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        let task_id = self.task_id.clone();
+        let app_for_progress = self.app.clone();
+        let _ = report_task_stage(&app_for_progress, &task_id, TaskStage::Qa, "", 0, 1);
+        let result = crate::commands::translate::build_step_5_4_qa_report(
+            crate::commands::translate::BuildStep54QaReportCommandRequest {
+                task_id: self.task_id.clone(),
+                media_path: self.media_path.clone(),
+                source_lang: self.source_lang.clone(),
+                target_lang: self.target_lang.clone(),
+                segments: self.segments.clone(),
+                terminology_entries: self.terminology_entries.clone(),
+                model_fingerprint: self.model_fingerprint.clone(),
+                settings_fingerprint: self.settings_fingerprint.clone(),
+            },
+        )
+        .await?;
+        let detail = if result.quality_summary.passed {
+            "通过".to_string()
+        } else {
+            format!("失败({}项)", result.quality_summary.hard_fail_count)
+        };
+        let _ = report_task_stage(&app_for_progress, &task_id, TaskStage::Qa, detail, 1, 1);
+        Ok(result)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Step55QaRepairPipelineStep {
+    task_id: String,
+    media_path: String,
+    source_lang: String,
+    target_lang: String,
+    theme_summary: String,
+    segments: Vec<crate::commands::translate::BuildTranslationSegmentCommand>,
+    terminology_entries: Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+    issues: Vec<crate::commands::translate::Step5QualityIssueCommand>,
+    translate_api_key: String,
+    translate_base_url: String,
+    translate_model: String,
+    llm_concurrency: u32,
+    subtitle_length_reference: u32,
+    model_fingerprint: String,
+    settings_fingerprint: String,
+    app: AppHandle,
+}
+
+#[async_trait]
+impl PipelineStep for Step55QaRepairPipelineStep {
+    type Output = crate::commands::translate::BuildStep55QaRepairCommandResponse;
+
+    fn name(&self) -> &'static str {
+        "step_5_5_qa_repair"
+    }
+
+    fn artifact_file(&self) -> &'static str {
+        STEP_05_05_QA_REPAIR_FILE
+    }
+
+    fn policy(&self) -> CheckpointPolicy {
+        CheckpointPolicy::ForceRebuild
+    }
+
+    fn validate(&self, output: &Self::Output) -> Result<(), String> {
+        if output.task_id.trim().is_empty()
+            || output.media_path.trim().is_empty()
+            || output.segments.is_empty()
+        {
+            return Err("invalid step5_5 artifact".to_string());
+        }
+        Ok(())
+    }
+
+    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        let task_id = self.task_id.clone();
+        let app_for_progress = self.app.clone();
+        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
+            Arc::new(move |current, total| {
+                let detail = if total > 0 {
+                    format!("修复中 {current}/{total}")
+                } else {
+                    "修复中".to_string()
+                };
+                let _ = report_task_stage(
+                    &app_for_progress,
+                    &task_id,
+                    TaskStage::Qa,
+                    detail,
+                    current as u32,
+                    total as u32,
+                );
+            });
+        crate::commands::translate::build_step_5_5_qa_repair_with_progress(
+            crate::commands::translate::BuildStep55QaRepairCommandRequest {
+                task_id: self.task_id.clone(),
+                media_path: self.media_path.clone(),
+                source_lang: self.source_lang.clone(),
+                target_lang: self.target_lang.clone(),
+                theme_summary: self.theme_summary.clone(),
+                segments: self.segments.clone(),
+                terminology_entries: self.terminology_entries.clone(),
+                issues: self.issues.clone(),
+                translate_api_key: self.translate_api_key.clone(),
+                translate_base_url: self.translate_base_url.clone(),
+                translate_model: self.translate_model.clone(),
+                llm_concurrency: self.llm_concurrency,
+                subtitle_length_reference: self.subtitle_length_reference,
+                model_fingerprint: self.model_fingerprint.clone(),
+                settings_fingerprint: self.settings_fingerprint.clone(),
+            },
+            Some(on_progress),
+        )
+        .await
+    }
+}
+
 #[tauri::command]
 pub async fn load_workspace_state() -> Result<WorkspaceStateResponse, String> {
     ensure_workspace_hydrated_from_disk()?;
@@ -936,14 +1092,14 @@ pub async fn register_task_upload(request: RegisterTaskUploadCommandRequest) -> 
         return Err("mediaPath is required".to_string());
     }
 
-    let persisted = {
+    {
         let mut store = lock_workspace_store()?;
         if let Some(existing) = find_task_mut(&mut store, id) {
             existing.item.path = media_path.to_string();
             existing.item.name = request.name;
             existing.item.media_kind = normalize_media_kind(&request.media_kind).to_string();
             existing.item.size_bytes = request.size_bytes;
-            existing.clone()
+            persist_task_meta(existing)?;
         } else {
             let record = WorkspaceTaskRecord {
                 item: WorkspaceQueueItem {
@@ -966,12 +1122,10 @@ pub async fn register_task_upload(request: RegisterTaskUploadCommandRequest) -> 
                 max_retries: 0,
                 settings_snapshot: Value::Null,
             };
-            let cloned = record.clone();
+            persist_task_meta(&record)?;
             store.tasks.push(record);
-            cloned
         }
-    };
-    persist_task_meta(&persisted)?;
+    }
 
     Ok(())
 }
@@ -1117,6 +1271,7 @@ fn enqueue_task_run_internal(
             existing.item.result_text = String::new();
             existing.item.result_srt = String::new();
             existing.item.subtitle_segments_json = "[]".to_string();
+            existing.item.llm_total_tokens = 0;
 
             existing.intent = normalize_intent(&request.intent).to_string();
             existing.source_lang = request
@@ -1131,7 +1286,8 @@ fn enqueue_task_run_internal(
                 .to_string();
             existing.max_retries = request.max_retries.unwrap_or(0);
             existing.settings_snapshot = request.settings_snapshot.unwrap_or(Value::Null);
-            existing.clone()
+            persist_task_meta(existing)?;
+            existing.item.clone()
         } else {
             let record = WorkspaceTaskRecord {
                 item: WorkspaceQueueItem {
@@ -1154,13 +1310,13 @@ fn enqueue_task_run_internal(
                 max_retries: request.max_retries.unwrap_or(0),
                 settings_snapshot: request.settings_snapshot.unwrap_or(Value::Null),
             };
-            let emitted = record.clone();
+            let emitted = record.item.clone();
+            persist_task_meta(&record)?;
             store.tasks.push(record);
             emitted
         }
     };
-    persist_task_meta(&queued_item)?;
-    emit_task_state_changed(app, &queued_item.item);
+    emit_task_state_changed(app, &queued_item);
     Ok(())
 }
 
@@ -1204,8 +1360,9 @@ async fn execute_task_batch_internal(
 
 async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), String> {
     let record = get_task_record(task_id)?;
-    let runtime = resolve_runtime_settings(&record.settings_snapshot)?;
     let intent = normalize_intent(&record.intent).to_string();
+    let runtime =
+        resolve_runtime_settings(&record.settings_snapshot, intent == "TRANSCRIBE_TRANSLATE")?;
     let mut source_lang = if record.source_lang.trim().is_empty() {
         "auto".to_string()
     } else {
@@ -1223,7 +1380,6 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
         crate::services::task_path::task_artifacts_dir(task_id, Path::new(&record.item.path));
     std::fs::create_dir_all(&artifact_dir).map_err(|err| err.to_string())?;
     migrate_legacy_artifacts(&task_output_dir, &artifact_dir)?;
-    let step2_path = artifact_dir.join(STEP_02_SEGMENTS_FILE);
     let step_context = StepContext {
         output_dir: &artifact_dir,
     };
@@ -1236,71 +1392,61 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
         task.item.subtitle_segments_json = "[]".to_string();
     })?;
 
-    let step2_segments = match read_json_file_if_exists::<
-        Vec<crate::commands::transcription::GroupedSentenceSegmentCommandDto>,
-    >(&step2_path)?
+    let step1_exec = match execute_step(
+        &Step1AsrPipelineStep {
+            task_id: task_id.to_string(),
+            media_path: record.item.path.clone(),
+            source_lang: source_lang.clone(),
+            provider: runtime.provider.clone(),
+            chunk_target_seconds: runtime.chunk_target_seconds,
+            app: app.clone(),
+        },
+        &step_context,
+    )
+    .await
     {
-        Some(existing) if !existing.is_empty() => {
-            report_task_stage(app, task_id, TaskStage::Segmenting, "缓存命中", 1, 1)?;
-            existing
-        }
-        _ => {
-            let step1_exec = match execute_step(
-                &Step1AsrPipelineStep {
-                    task_id: task_id.to_string(),
-                    media_path: record.item.path.clone(),
-                    source_lang: source_lang.clone(),
-                    provider: runtime.provider.clone(),
-                    chunk_target_seconds: runtime.chunk_target_seconds,
-                    app: app.clone(),
-                },
-                &step_context,
-            )
-            .await
-            {
-                Ok(value) => value,
-                Err(err) => {
-                    mark_task_failed(app, task_id, &err)?;
-                    return Err(err);
-                }
-            };
-
-            if !step1_exec.output.source_lang.trim().is_empty() {
-                source_lang = step1_exec.output.source_lang.clone();
-            }
-
-            report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 1)?;
-
-            let step2_exec = match execute_step(
-                &Step2SegmentsPipelineStep {
-                    task_id: task_id.to_string(),
-                    media_path: record.item.path.clone(),
-                    source_lang: source_lang.clone(),
-                    words: step1_exec.output.words.clone(),
-                    translate_api_key: runtime.translate_api_key.clone(),
-                    translate_base_url: runtime.translate_base_url.clone(),
-                    translate_model: runtime.translate_model.clone(),
-                    llm_concurrency: runtime.llm_concurrency,
-                    app: app.clone(),
-                },
-                &step_context,
-            )
-            .await
-            {
-                Ok(value) => value,
-                Err(err) => {
-                    mark_task_failed(app, task_id, &err)?;
-                    return Err(err);
-                }
-            };
-            step2_exec.output
+        Ok(value) => value,
+        Err(err) => {
+            mark_task_failed(app, task_id, &err)?;
+            return Err(err);
         }
     };
+
+    if !step1_exec.output.source_lang.trim().is_empty() {
+        source_lang = step1_exec.output.source_lang.clone();
+    }
+
+    report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 1)?;
+
+    let step2_exec = match execute_step(
+        &Step2SegmentsPipelineStep {
+            task_id: task_id.to_string(),
+            media_path: record.item.path.clone(),
+            source_lang: source_lang.clone(),
+            words: step1_exec.output.words.clone(),
+            subtitle_max_words_per_segment: runtime.subtitle_max_words_per_segment,
+            translate_api_key: runtime.translate_api_key.clone(),
+            translate_base_url: runtime.translate_base_url.clone(),
+            translate_model: runtime.translate_model.clone(),
+            llm_concurrency: runtime.llm_concurrency,
+            app: app.clone(),
+        },
+        &step_context,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            mark_task_failed(app, task_id, &err)?;
+            return Err(err);
+        }
+    };
+    let step2_segments = step2_exec.output;
     let source_text = source_text_from_step2_segments(&step2_segments);
     let step2_srt = step2_segments_to_srt(&step2_segments);
     update_processing_preview_from_step2(app, task_id, &step2_segments, &source_text)?;
 
-    if intent == "TRANSCRIBE_TRANSLATE" {
+    let run_result = if intent == "TRANSCRIBE_TRANSLATE" {
         execute_translate_steps(
             app,
             task_id,
@@ -1314,8 +1460,20 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
         )
         .await
     } else {
-        finish_transcribe_only(app, task_id, &step2_segments, step2_srt, source_text)
+        finish_transcribe_only(
+            app,
+            task_id,
+            &record.item.path,
+            &step2_segments,
+            step2_srt,
+            source_text,
+        )
+    };
+    if let Err(err) = run_result {
+        mark_task_failed(app, task_id, &err)?;
+        return Err(err);
     }
+    Ok(())
 }
 
 async fn execute_translate_steps(
@@ -1329,15 +1487,100 @@ async fn execute_translate_steps(
     step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
     source_text: String,
 ) -> Result<(), String> {
+    let model_fingerprint = crate::commands::translate::build_model_fingerprint(
+        &runtime.translate_base_url,
+        &runtime.translate_model,
+    );
+    let settings_fingerprint = crate::commands::translate::build_settings_fingerprint(
+        &source_lang,
+        &target_lang,
+        runtime.llm_concurrency,
+        runtime.subtitle_max_words_per_segment,
+        runtime.subtitle_length_reference,
+    );
+
     // Checkpoint contract:
-    // `step_05_03_translation_polish.json` exists => skip step3~step5 and finish directly.
-    // We intentionally DO NOT auto-invalidate by input hash.
-    // If user wants recompute, delete target step artifacts manually.
+    // step53 + step54(qa passed + fingerprint match) => skip step3~step5 and finish.
     if let Some(step5_existing) = read_json_file_if_exists::<
-        crate::commands::translate::BuildTranslationLayerCommandResponse,
+        crate::commands::translate::BuildStep53TranslationPolishCommandResponse,
     >(&output_dir.join(STEP_05_03_TRANSLATION_POLISH_FILE))?
     {
-        return finish_translate_with_step5(app, task_id, &step5_existing, source_text);
+        let step53_fingerprint_ok = step5_existing.artifact_meta.model_fingerprint
+            == model_fingerprint
+            && step5_existing.artifact_meta.settings_fingerprint == settings_fingerprint;
+        if step53_fingerprint_ok {
+            if let Some(step54_existing) =
+                read_json_file_if_exists::<
+                    crate::commands::translate::BuildStep54QaReportCommandResponse,
+                >(&output_dir.join(STEP_05_04_QA_REPORT_FILE))?
+            {
+                let qa_ok = step54_existing.quality_summary.passed
+                    && step54_existing.artifact_meta.model_fingerprint == model_fingerprint
+                    && step54_existing.artifact_meta.settings_fingerprint == settings_fingerprint;
+                if qa_ok {
+                    return finish_translate_with_step5(
+                        app,
+                        task_id,
+                        &record.item.path,
+                        &step5_existing.segments,
+                        source_text,
+                    );
+                }
+            }
+            let step_context = StepContext { output_dir };
+            let step54_exec = execute_step(
+                &Step54QaPipelineStep {
+                    task_id: task_id.to_string(),
+                    media_path: record.item.path.clone(),
+                    source_lang: source_lang.clone(),
+                    target_lang: target_lang.clone(),
+                    segments: step5_existing.segments.clone(),
+                    terminology_entries: step5_existing.terminology_entries.clone(),
+                    model_fingerprint: model_fingerprint.clone(),
+                    settings_fingerprint: settings_fingerprint.clone(),
+                    app: app.clone(),
+                },
+                &step_context,
+            )
+            .await
+            .map_err(|err| {
+                let _ = mark_task_failed(app, task_id, &err);
+                err
+            })?;
+            let (step53_output, step54_output) = run_step5_qa_repair_loop(
+                app,
+                task_id,
+                output_dir,
+                &record.item.path,
+                &source_lang,
+                &target_lang,
+                &runtime,
+                &model_fingerprint,
+                &settings_fingerprint,
+                step5_existing,
+                step54_exec.output,
+            )
+            .await
+            .map_err(|err| {
+                let _ = mark_task_failed(app, task_id, &err);
+                err
+            })?;
+            if !step54_output.quality_summary.passed {
+                let err = format!(
+                    "QA未通过: {} 项硬失败",
+                    step54_output.quality_summary.hard_fail_count
+                );
+                mark_task_failed(app, task_id, &err)?;
+                return Err(err);
+            }
+            return finish_translate_with_step5(
+                app,
+                task_id,
+                &record.item.path,
+                &step53_output.segments,
+                source_text,
+            );
+        }
     }
 
     report_task_stage(app, task_id, TaskStage::Terminology, "", 0, 1)?;
@@ -1412,10 +1655,9 @@ async fn execute_translate_steps(
     }
     patch_task_item(app, task_id, |task| {
         task.item.result_text = source_text.clone();
-        task.item.subtitle_segments_json =
-            serialize_workspace_subtitle_segments(&workspace_subtitle_segments_from_translation_segments(
-                &step4_exec.output.segments,
-            ));
+        task.item.subtitle_segments_json = serialize_workspace_subtitle_segments(
+            &workspace_subtitle_segments_from_translation_segments(&step4_exec.output.segments),
+        );
     })?;
 
     let step51_exec = match execute_step(
@@ -1449,10 +1691,9 @@ async fn execute_translate_steps(
     }
     patch_task_item(app, task_id, |task| {
         task.item.result_text = source_text.clone();
-        task.item.subtitle_segments_json =
-            serialize_workspace_subtitle_segments(&workspace_subtitle_segments_from_step51_parents(
-                &step51_exec.output.parents,
-            ));
+        task.item.subtitle_segments_json = serialize_workspace_subtitle_segments(
+            &workspace_subtitle_segments_from_step51_parents(&step51_exec.output.parents),
+        );
     })?;
 
     let step52_exec = match execute_step(
@@ -1486,24 +1727,23 @@ async fn execute_translate_steps(
     }
     patch_task_item(app, task_id, |task| {
         task.item.result_text = source_text.clone();
-        task.item.subtitle_segments_json =
-            serialize_workspace_subtitle_segments(&workspace_subtitle_segments_from_step52_parents(
-                &step52_exec.output.parents,
-            ));
+        task.item.subtitle_segments_json = serialize_workspace_subtitle_segments(
+            &workspace_subtitle_segments_from_step52_parents(&step52_exec.output.parents),
+        );
     })?;
 
     let step53_exec = match execute_step(
         &Step53TranslationPolishPipelineStep {
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
-            source_lang,
-            target_lang,
+            source_lang: source_lang.clone(),
+            target_lang: target_lang.clone(),
             theme_summary: step3_response.theme_summary,
             parents: step52_exec.output.parents,
             terminology_entries: step3_response.terminology_entries,
-            translate_api_key: runtime.translate_api_key,
-            translate_base_url: runtime.translate_base_url,
-            translate_model: runtime.translate_model,
+            translate_api_key: runtime.translate_api_key.clone(),
+            translate_base_url: runtime.translate_base_url.clone(),
+            translate_model: runtime.translate_model.clone(),
             llm_concurrency: runtime.llm_concurrency,
             subtitle_length_reference: runtime.subtitle_length_reference,
             app: app.clone(),
@@ -1521,20 +1761,184 @@ async fn execute_translate_steps(
     if step53_exec.source == StepSource::Cache {
         report_task_stage(app, task_id, TaskStage::PolishTranslation, "缓存命中", 1, 1)?;
     }
+    let step53_output = step53_exec.output;
 
-    finish_translate_with_step5(app, task_id, &step53_exec.output, source_text)
+    let step54_exec = match execute_step(
+        &Step54QaPipelineStep {
+            task_id: task_id.to_string(),
+            media_path: record.item.path.clone(),
+            source_lang: source_lang.clone(),
+            target_lang: target_lang.clone(),
+            segments: step53_output.segments.clone(),
+            terminology_entries: step53_output.terminology_entries.clone(),
+            model_fingerprint: model_fingerprint.clone(),
+            settings_fingerprint: settings_fingerprint.clone(),
+            app: app.clone(),
+        },
+        &step_context,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            mark_task_failed(app, task_id, &err)?;
+            return Err(err);
+        }
+    };
+    let (step53_output, step54_output) = match run_step5_qa_repair_loop(
+        app,
+        task_id,
+        output_dir,
+        &record.item.path,
+        &source_lang,
+        &target_lang,
+        &runtime,
+        &model_fingerprint,
+        &settings_fingerprint,
+        step53_output,
+        step54_exec.output,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            mark_task_failed(app, task_id, &err)?;
+            return Err(err);
+        }
+    };
+
+    if !step54_output.quality_summary.passed {
+        let err = format!(
+            "QA未通过: {} 项硬失败",
+            step54_output.quality_summary.hard_fail_count
+        );
+        mark_task_failed(app, task_id, &err)?;
+        return Err(err);
+    }
+
+    finish_translate_with_step5(
+        app,
+        task_id,
+        &record.item.path,
+        &step53_output.segments,
+        source_text,
+    )
+}
+
+async fn run_step5_qa_repair_loop(
+    app: &AppHandle,
+    task_id: &str,
+    output_dir: &Path,
+    media_path: &str,
+    source_lang: &str,
+    target_lang: &str,
+    runtime: &PipelineRuntimeSettings,
+    model_fingerprint: &str,
+    settings_fingerprint: &str,
+    mut step53_output: crate::commands::translate::BuildStep53TranslationPolishCommandResponse,
+    mut step54_output: crate::commands::translate::BuildStep54QaReportCommandResponse,
+) -> Result<
+    (
+        crate::commands::translate::BuildStep53TranslationPolishCommandResponse,
+        crate::commands::translate::BuildStep54QaReportCommandResponse,
+    ),
+    String,
+> {
+    if step54_output.quality_summary.passed {
+        return Ok((step53_output, step54_output));
+    }
+
+    let step_context = StepContext { output_dir };
+    const MAX_QA_REPAIR_ROUNDS: usize = 2;
+    for round in 1..=MAX_QA_REPAIR_ROUNDS {
+        let hard_issues = step54_output
+            .issues
+            .iter()
+            .filter(|issue| issue.severity == "hard")
+            .cloned()
+            .collect::<Vec<_>>();
+        if hard_issues.is_empty() {
+            break;
+        }
+
+        let repair_exec = execute_step(
+            &Step55QaRepairPipelineStep {
+                task_id: task_id.to_string(),
+                media_path: media_path.to_string(),
+                source_lang: source_lang.to_string(),
+                target_lang: target_lang.to_string(),
+                theme_summary: step53_output.theme_summary.clone(),
+                segments: step53_output.segments.clone(),
+                terminology_entries: step53_output.terminology_entries.clone(),
+                issues: hard_issues,
+                translate_api_key: runtime.translate_api_key.clone(),
+                translate_base_url: runtime.translate_base_url.clone(),
+                translate_model: runtime.translate_model.clone(),
+                llm_concurrency: runtime.llm_concurrency,
+                subtitle_length_reference: runtime.subtitle_length_reference,
+                model_fingerprint: model_fingerprint.to_string(),
+                settings_fingerprint: settings_fingerprint.to_string(),
+                app: app.clone(),
+            },
+            &step_context,
+        )
+        .await?;
+
+        if repair_exec.output.repaired_total == 0 {
+            break;
+        }
+
+        step53_output.segments = repair_exec.output.segments.clone();
+        step53_output.quality_summary = repair_exec.output.quality_summary.clone();
+        write_json_file(
+            &output_dir.join(STEP_05_03_TRANSLATION_POLISH_FILE),
+            &step53_output,
+        )?;
+        patch_task_item(app, task_id, |task| {
+            task.item.subtitle_segments_json = serialize_workspace_subtitle_segments(
+                &workspace_subtitle_segments_from_translation_segments(&step53_output.segments),
+            );
+        })?;
+
+        let qa_exec = execute_step(
+            &Step54QaPipelineStep {
+                task_id: task_id.to_string(),
+                media_path: media_path.to_string(),
+                source_lang: source_lang.to_string(),
+                target_lang: target_lang.to_string(),
+                segments: step53_output.segments.clone(),
+                terminology_entries: step53_output.terminology_entries.clone(),
+                model_fingerprint: model_fingerprint.to_string(),
+                settings_fingerprint: settings_fingerprint.to_string(),
+                app: app.clone(),
+            },
+            &step_context,
+        )
+        .await?;
+        step54_output = qa_exec.output;
+        if step54_output.quality_summary.passed {
+            break;
+        }
+        if round < MAX_QA_REPAIR_ROUNDS {
+            let detail = format!("继续修复({}/{})", round + 1, MAX_QA_REPAIR_ROUNDS);
+            let _ = report_task_stage(app, task_id, TaskStage::Qa, detail, 0, 1);
+        }
+    }
+
+    Ok((step53_output, step54_output))
 }
 
 fn finish_transcribe_only(
     app: &AppHandle,
     task_id: &str,
+    media_path: &str,
     step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
     step2_srt: String,
     source_text: String,
 ) -> Result<(), String> {
-    let subtitle_segments_json = serialize_workspace_subtitle_segments(
-        &workspace_subtitle_segments_from_step2_segments(step2_segments),
-    );
+    let workspace_segments = workspace_subtitle_segments_from_step2_segments(step2_segments);
+    let subtitle_segments_json = serialize_workspace_subtitle_segments(&workspace_segments);
+    write_step6_srts(task_id, media_path, &workspace_segments, false)?;
 
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
@@ -1549,12 +1953,13 @@ fn finish_transcribe_only(
 fn finish_translate_with_step5(
     app: &AppHandle,
     task_id: &str,
-    step5_response: &crate::commands::translate::BuildTranslationLayerCommandResponse,
+    media_path: &str,
+    segments: &[crate::commands::translate::BuildTranslationSegmentCommand],
     source_text: String,
 ) -> Result<(), String> {
-    let subtitle_segments_json = serialize_workspace_subtitle_segments(
-        &workspace_subtitle_segments_from_translation_segments(&step5_response.segments),
-    );
+    let workspace_segments = workspace_subtitle_segments_from_translation_segments(segments);
+    let subtitle_segments_json = serialize_workspace_subtitle_segments(&workspace_segments);
+    write_step6_srts(task_id, media_path, &workspace_segments, true)?;
 
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
@@ -1564,6 +1969,42 @@ fn finish_translate_with_step5(
         task.item.result_srt = String::new();
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
     })
+}
+
+fn write_step6_srts(
+    task_id: &str,
+    media_path: &str,
+    segments: &[WorkspaceSubtitleSegment],
+    include_translation_variants: bool,
+) -> Result<(), String> {
+    let srt_segments = segments
+        .iter()
+        .map(
+            |segment| crate::services::subtitle_srt::SubtitleSrtSegment {
+                start_ms: segment.start_ms,
+                end_ms: segment.end_ms,
+                source_text: segment.source_text.clone(),
+                translated_text: segment.translated_text.clone(),
+            },
+        )
+        .collect::<Vec<_>>();
+    let items = if include_translation_variants {
+        vec![
+            crate::services::subtitle_srt::ExportSrtItem::Source,
+            crate::services::subtitle_srt::ExportSrtItem::Target,
+            crate::services::subtitle_srt::ExportSrtItem::BilingualSourceFirst,
+            crate::services::subtitle_srt::ExportSrtItem::BilingualTargetFirst,
+        ]
+    } else {
+        vec![crate::services::subtitle_srt::ExportSrtItem::Source]
+    };
+    crate::services::subtitle_srt::write_task_output_variants(
+        task_id,
+        Path::new(media_path),
+        &srt_segments,
+        &items,
+    )?;
+    Ok(())
 }
 
 fn update_processing_preview_from_step2(
@@ -1778,12 +2219,11 @@ fn load_task_meta_artifacts() -> Result<Vec<WorkspaceTaskMetaArtifact>, String> 
             .join(crate::services::task_path::ARTIFACTS_DIR_NAME)
             .join(TASK_META_FILE_NAME);
         let legacy_meta_path = path.join(TASK_META_FILE_NAME);
-        let Some(mut artifact) = read_json_file_if_exists::<WorkspaceTaskMetaArtifact>(
-            &artifact_meta_path,
-        )?
-        .or(read_json_file_if_exists::<WorkspaceTaskMetaArtifact>(
-            &legacy_meta_path,
-        )?) else {
+        let Some(mut artifact) =
+            read_json_file_if_exists::<WorkspaceTaskMetaArtifact>(&artifact_meta_path)?.or(
+                read_json_file_if_exists::<WorkspaceTaskMetaArtifact>(&legacy_meta_path)?,
+            )
+        else {
             continue;
         };
         if artifact.item.transcribe_status == "processing" {
@@ -1947,6 +2387,7 @@ fn migrate_target_artifact_name(name: &str) -> Option<&'static str> {
         "step_05_01_source_split.json" => Some(STEP_05_01_SOURCE_SPLIT_FILE),
         "step_05_02_translation_align.json" => Some(STEP_05_02_TRANSLATION_ALIGN_FILE),
         "step_05_03_translation_polish.json" => Some(STEP_05_03_TRANSLATION_POLISH_FILE),
+        "step_05_04_qa_report.json" => Some(STEP_05_04_QA_REPORT_FILE),
         "gpt.log" => Some("gpt.log"),
         "task_meta.json" => Some(TASK_META_FILE_NAME),
         _ => None,
@@ -1960,7 +2401,10 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
-fn resolve_runtime_settings(snapshot: &Value) -> Result<PipelineRuntimeSettings, String> {
+fn resolve_runtime_settings(
+    snapshot: &Value,
+    require_translate_llm: bool,
+) -> Result<PipelineRuntimeSettings, String> {
     let snapshot_parsed =
         serde_json::from_value::<SettingsSnapshotInput>(snapshot.clone()).unwrap_or_default();
     let saved = crate::services::preferences::load_saved_settings_from_default_path()
@@ -2000,14 +2444,14 @@ fn resolve_runtime_settings(snapshot: &Value) -> Result<PipelineRuntimeSettings,
         .map(str::to_string)
         .unwrap_or_else(|| saved.translate_model.clone());
 
-    if translate_api_key.trim().is_empty() {
-        return Err("translateApiKey is required for step_02~step_05".to_string());
+    if require_translate_llm && translate_api_key.trim().is_empty() {
+        return Err("translateApiKey is required for step_03~step_05".to_string());
     }
-    if translate_base_url.trim().is_empty() {
-        return Err("translateBaseUrl is required for step_02~step_05".to_string());
+    if require_translate_llm && translate_base_url.trim().is_empty() {
+        return Err("translateBaseUrl is required for step_03~step_05".to_string());
     }
-    if translate_model.trim().is_empty() {
-        return Err("translateModel is required for step_02~step_05".to_string());
+    if require_translate_llm && translate_model.trim().is_empty() {
+        return Err("translateModel is required for step_03~step_05".to_string());
     }
 
     let llm_concurrency = snapshot_parsed
@@ -2236,6 +2680,16 @@ fn get_task_record(task_id: &str) -> Result<WorkspaceTaskRecord, String> {
         return Err(format!("task not found: {task_id}"));
     };
     Ok(task.clone())
+}
+
+pub fn get_task_queue_item_for_export(task_id: &str) -> Result<WorkspaceQueueItem, String> {
+    let normalized = task_id.trim();
+    if normalized.is_empty() {
+        return Err("taskId is required".to_string());
+    }
+    ensure_workspace_hydrated_from_disk()?;
+    let record = get_task_record(normalized)?;
+    Ok(record.item)
 }
 
 pub fn add_task_total_tokens(task_id: &str, delta_tokens: u64) -> Result<u64, String> {
