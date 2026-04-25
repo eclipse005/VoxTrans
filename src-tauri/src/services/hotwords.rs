@@ -692,7 +692,7 @@ fn recall_direct_matches(
                 continue;
             }
             let window = normalized_window_tokens(words, start, end);
-            if window == source_tokens {
+            if window == source_tokens && !tokens_equal_hotword_target(&window, hotword) {
                 push_candidate(words, start, end, hotword, source_kind, candidates, seen);
             }
         }
@@ -715,6 +715,9 @@ fn recall_chinese_phonetic(
         for end in start..words.len() {
             let text = source_text(words, start, end);
             let compact = text.replace(' ', "");
+            if compact == hotword.word {
+                continue;
+            }
             if allow_first_letters
                 && start == end
                 && is_first_letter_token(&words[start].word)
@@ -797,6 +800,10 @@ fn normalized_tokens(text: &str) -> Vec<String> {
         .map(normalize_ascii_token)
         .filter(|token| !token.is_empty())
         .collect()
+}
+
+fn tokens_equal_hotword_target(tokens: &[String], hotword: &NormalizedHotword) -> bool {
+    tokens == normalized_tokens(&hotword.word)
 }
 
 fn normalize_ascii_token(text: &str) -> String {
@@ -988,6 +995,26 @@ mod tests {
         assert_eq!(candidates[0].target, "Claude Code");
         assert_eq!(candidates[0].source_text, "cloud code");
         assert_eq!(candidates[0].source_kind, "generated_alias");
+    }
+
+    #[test]
+    fn exact_non_chinese_hotword_does_not_recall_candidate() {
+        let words = vec![word(0, "CISD")];
+        let hotwords = vec![hotword("CISD", vec![], HotwordLang::NonZh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn exact_chinese_hotword_does_not_recall_candidate() {
+        let words = vec![word(0, "浩叔")];
+        let hotwords = vec![hotword("浩叔", vec![], HotwordLang::Zh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert!(candidates.is_empty());
     }
 
     #[test]
