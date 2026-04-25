@@ -149,23 +149,8 @@ pub fn build_hotword_correction(
             }
         })
         .collect::<Vec<_>>();
+    let corrections = build_applied_hotword_corrections(&request.words, &candidates, &decisions);
     let words = apply_hotword_corrections(&request.words, &candidates, &decisions);
-    let corrections = decisions
-        .iter()
-        .filter(|decision| decision.replace)
-        .filter_map(|decision| {
-            candidates
-                .iter()
-                .find(|candidate| candidate.id == decision.candidate_id)
-                .map(|candidate| HotwordCorrection {
-                    candidate_id: candidate.id.clone(),
-                    source_text: candidate.source_text.clone(),
-                    target: decision.target.clone(),
-                    start_index: candidate.start_index,
-                    end_index: candidate.end_index,
-                })
-        })
-        .collect::<Vec<_>>();
 
     BuildHotwordCorrectionResponse {
         task_id: request.task_id,
@@ -235,6 +220,56 @@ pub fn apply_hotword_corrections(
     candidates: &[HotwordCandidate],
     decisions: &[HotwordDecision],
 ) -> Vec<WordTokenDto> {
+    let applied = select_applied_hotword_corrections(words, candidates, decisions);
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < words.len() {
+        if let Some(correction) = applied
+            .iter()
+            .find(|correction| correction.candidate.start_index == index)
+        {
+            out.push(WordTokenDto {
+                start: words[correction.candidate.start_index].start,
+                end: words[correction.candidate.end_index].end,
+                word: correction.target.to_string(),
+            });
+            index = correction.candidate.end_index + 1;
+        } else {
+            out.push(words[index].clone());
+            index += 1;
+        }
+    }
+
+    out
+}
+
+fn build_applied_hotword_corrections(
+    words: &[WordTokenDto],
+    candidates: &[HotwordCandidate],
+    decisions: &[HotwordDecision],
+) -> Vec<HotwordCorrection> {
+    select_applied_hotword_corrections(words, candidates, decisions)
+        .iter()
+        .map(|correction| HotwordCorrection {
+            candidate_id: correction.candidate.id.clone(),
+            source_text: correction.candidate.source_text.clone(),
+            target: correction.target.to_string(),
+            start_index: correction.candidate.start_index,
+            end_index: correction.candidate.end_index,
+        })
+        .collect()
+}
+
+struct AppliedHotwordCorrection<'a> {
+    candidate: &'a HotwordCandidate,
+    target: &'a str,
+}
+
+fn select_applied_hotword_corrections<'a>(
+    words: &[WordTokenDto],
+    candidates: &'a [HotwordCandidate],
+    decisions: &'a [HotwordDecision],
+) -> Vec<AppliedHotwordCorrection<'a>> {
     let accepted_ids: HashSet<&str> = decisions
         .iter()
         .filter(|decision| decision.replace && decision.error.is_none())
@@ -242,6 +277,7 @@ pub fn apply_hotword_corrections(
         .collect();
     let decision_targets: Vec<(&str, &str)> = decisions
         .iter()
+        .filter(|decision| decision.replace && decision.error.is_none())
         .map(|decision| (decision.candidate_id.as_str(), decision.target.as_str()))
         .collect();
     let mut accepted: Vec<_> = candidates
@@ -260,36 +296,17 @@ pub fn apply_hotword_corrections(
     for candidate in accepted {
         if candidate.start_index >= covered_until && candidate.end_index < words.len() {
             covered_until = candidate.end_index + 1;
-            accepted_non_overlapping.push(candidate);
-        }
-    }
-
-    let mut out = Vec::new();
-    let mut index = 0;
-    while index < words.len() {
-        if let Some(candidate) = accepted_non_overlapping
-            .iter()
-            .find(|candidate| candidate.start_index == index)
-        {
             let target = decision_targets
                 .iter()
                 .find(|(id, _)| *id == candidate.id)
                 .map(|(_, target)| *target)
                 .filter(|target| !target.is_empty())
                 .unwrap_or(candidate.target.as_str());
-            out.push(WordTokenDto {
-                start: words[candidate.start_index].start,
-                end: words[candidate.end_index].end,
-                word: target.to_string(),
-            });
-            index = candidate.end_index + 1;
-        } else {
-            out.push(words[index].clone());
-            index += 1;
+            accepted_non_overlapping.push(AppliedHotwordCorrection { candidate, target });
         }
     }
 
-    out
+    accepted_non_overlapping
 }
 
 fn normalize_hotwords(hotwords: &[HotwordEntry]) -> Vec<NormalizedHotword> {
@@ -715,6 +732,62 @@ mod tests {
         assert_eq!(corrected[0].start, words[0].start);
         assert_eq!(corrected[0].end, words[1].end);
         assert_eq!(corrected[1].word, "now");
+    }
+
+    #[test]
+    fn correction_records_match_applied_non_overlapping_corrections() {
+        let words = vec![word(0, "cloud"), word(1, "code"), word(2, "now")];
+        let candidates = vec![
+            candidate("short", 0, 0, "Cloud"),
+            candidate("long", 0, 1, "Claude Code"),
+        ];
+        let decisions = vec![
+            HotwordDecision {
+                candidate_id: "short".to_string(),
+                replace: true,
+                target: "Cloud".to_string(),
+                reason: None,
+                error: None,
+            },
+            HotwordDecision {
+                candidate_id: "long".to_string(),
+                replace: true,
+                target: "Claude Code".to_string(),
+                reason: None,
+                error: None,
+            },
+        ];
+
+        let corrected = apply_hotword_corrections(&words, &candidates, &decisions);
+        let corrections = build_applied_hotword_corrections(&words, &candidates, &decisions);
+
+        assert_eq!(corrected.len(), 2);
+        assert_eq!(corrected[0].word, "Claude Code");
+        assert_eq!(corrections.len(), 1);
+        assert_eq!(corrections[0].candidate_id, "long");
+        assert_eq!(corrections[0].target, corrected[0].word);
+        assert_eq!(corrections[0].start_index, 0);
+        assert_eq!(corrections[0].end_index, 1);
+    }
+
+    #[test]
+    fn errored_replace_decisions_do_not_create_correction_records() {
+        let words = vec![word(0, "cloud"), word(1, "code")];
+        let candidates = vec![candidate("long", 0, 1, "Claude Code")];
+        let decisions = vec![HotwordDecision {
+            candidate_id: "long".to_string(),
+            replace: true,
+            target: "Claude Code".to_string(),
+            reason: None,
+            error: Some("llm_unavailable".to_string()),
+        }];
+
+        let corrected = apply_hotword_corrections(&words, &candidates, &decisions);
+        let corrections = build_applied_hotword_corrections(&words, &candidates, &decisions);
+
+        assert_eq!(corrected.len(), words.len());
+        assert_eq!(corrected[0].word, words[0].word);
+        assert!(corrections.is_empty());
     }
 
     #[test]
