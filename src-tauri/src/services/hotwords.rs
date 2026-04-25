@@ -55,11 +55,136 @@ pub struct HotwordDecision {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildHotwordCorrectionRequest {
+    pub task_id: String,
+    pub media_path: String,
+    pub source_lang: String,
+    pub words: Vec<WordTokenDto>,
+    pub hotwords: Vec<HotwordEntry>,
+    pub enabled: bool,
+    pub translate_api_key: String,
+    pub translate_base_url: String,
+    pub translate_model: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HotwordCorrection {
+    pub candidate_id: String,
+    pub source_text: String,
+    pub target: String,
+    pub start_index: usize,
+    pub end_index: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildHotwordCorrectionResponse {
+    pub task_id: String,
+    pub media_path: String,
+    pub source_lang: String,
+    pub enabled: bool,
+    pub hotwords: Vec<NormalizedHotword>,
+    pub candidates: Vec<HotwordCandidate>,
+    pub decisions: Vec<HotwordDecision>,
+    pub corrections: Vec<HotwordCorrection>,
+    pub words: Vec<WordTokenDto>,
+}
+
+pub fn build_hotword_correction(
+    request: BuildHotwordCorrectionRequest,
+) -> BuildHotwordCorrectionResponse {
+    let normalized_hotwords = normalize_hotwords(&request.hotwords);
+    if !request.enabled || normalized_hotwords.is_empty() || request.words.is_empty() {
+        return BuildHotwordCorrectionResponse {
+            task_id: request.task_id,
+            media_path: request.media_path,
+            source_lang: request.source_lang,
+            enabled: false,
+            hotwords: normalized_hotwords,
+            candidates: Vec::new(),
+            decisions: Vec::new(),
+            corrections: Vec::new(),
+            words: request.words,
+        };
+    }
+
+    let candidates = recall_hotword_candidates(&request.words, &request.hotwords);
+    if candidates.is_empty() {
+        return BuildHotwordCorrectionResponse {
+            task_id: request.task_id,
+            media_path: request.media_path,
+            source_lang: request.source_lang,
+            enabled: true,
+            hotwords: normalized_hotwords,
+            candidates,
+            decisions: Vec::new(),
+            corrections: Vec::new(),
+            words: request.words,
+        };
+    }
+
+    let llm_available = !request.translate_api_key.trim().is_empty()
+        && !request.translate_base_url.trim().is_empty()
+        && !request.translate_model.trim().is_empty();
+    let decisions = candidates
+        .iter()
+        .map(|candidate| {
+            let (reason, error) = if llm_available {
+                (
+                    Some("llm_decision_not_connected_yet".to_string()),
+                    Some("llm_decision_not_connected_yet".to_string()),
+                )
+            } else {
+                (Some(String::new()), Some("llm_unavailable".to_string()))
+            };
+            HotwordDecision {
+                candidate_id: candidate.id.clone(),
+                replace: false,
+                target: candidate.target.clone(),
+                reason,
+                error,
+            }
+        })
+        .collect::<Vec<_>>();
+    let words = apply_hotword_corrections(&request.words, &candidates, &decisions);
+    let corrections = decisions
+        .iter()
+        .filter(|decision| decision.replace)
+        .filter_map(|decision| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.id == decision.candidate_id)
+                .map(|candidate| HotwordCorrection {
+                    candidate_id: candidate.id.clone(),
+                    source_text: candidate.source_text.clone(),
+                    target: decision.target.clone(),
+                    start_index: candidate.start_index,
+                    end_index: candidate.end_index,
+                })
+        })
+        .collect::<Vec<_>>();
+
+    BuildHotwordCorrectionResponse {
+        task_id: request.task_id,
+        media_path: request.media_path,
+        source_lang: request.source_lang,
+        enabled: true,
+        hotwords: normalized_hotwords,
+        candidates,
+        decisions,
+        corrections,
+        words,
+    }
+}
+
 pub fn recall_hotword_candidates(
     words: &[WordTokenDto],
     hotwords: &[HotwordEntry],
 ) -> Vec<HotwordCandidate> {
-    let normalized: Vec<_> = hotwords.iter().map(normalize_hotword).collect();
+    let normalized = normalize_hotwords(hotwords);
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
 
@@ -165,6 +290,14 @@ pub fn apply_hotword_corrections(
     }
 
     out
+}
+
+fn normalize_hotwords(hotwords: &[HotwordEntry]) -> Vec<NormalizedHotword> {
+    hotwords
+        .iter()
+        .map(normalize_hotword)
+        .filter(|hotword| !hotword.word.is_empty())
+        .collect()
 }
 
 fn normalize_hotword(entry: &HotwordEntry) -> NormalizedHotword {
@@ -582,5 +715,66 @@ mod tests {
         assert_eq!(corrected[0].start, words[0].start);
         assert_eq!(corrected[0].end, words[1].end);
         assert_eq!(corrected[1].word, "now");
+    }
+
+    #[test]
+    fn disabled_hotwords_pass_through_words() {
+        let words = vec![word(0, "cloud"), word(1, "code")];
+
+        let response = build_hotword_correction(BuildHotwordCorrectionRequest {
+            task_id: "task-1".to_string(),
+            media_path: "media.wav".to_string(),
+            source_lang: "en".to_string(),
+            words: words.clone(),
+            hotwords: Vec::new(),
+            enabled: false,
+            translate_api_key: String::new(),
+            translate_base_url: String::new(),
+            translate_model: String::new(),
+        });
+
+        assert!(!response.enabled);
+        assert_eq!(response.words.len(), words.len());
+        assert_eq!(response.words[0].word, words[0].word);
+        assert_eq!(response.words[1].word, words[1].word);
+        assert!(response.candidates.is_empty());
+        assert!(response.decisions.is_empty());
+        assert!(response.corrections.is_empty());
+    }
+
+    #[test]
+    fn llm_unavailable_records_skipped_decision_and_keeps_words() {
+        let words = vec![word(0, "cloud"), word(1, "code")];
+        let hotwords = vec![hotword("Claude Code", vec![], HotwordLang::NonZh)];
+
+        let response = build_hotword_correction(BuildHotwordCorrectionRequest {
+            task_id: "task-1".to_string(),
+            media_path: "media.wav".to_string(),
+            source_lang: "en".to_string(),
+            words: words.clone(),
+            hotwords,
+            enabled: true,
+            translate_api_key: String::new(),
+            translate_base_url: String::new(),
+            translate_model: String::new(),
+        });
+
+        assert!(response.enabled);
+        assert_eq!(response.candidates.len(), 1);
+        assert_eq!(response.decisions.len(), 1);
+        assert_eq!(
+            response.decisions[0].candidate_id,
+            response.candidates[0].id
+        );
+        assert!(!response.decisions[0].replace);
+        assert_eq!(response.decisions[0].target, "Claude Code");
+        assert_eq!(
+            response.decisions[0].error.as_deref(),
+            Some("llm_unavailable")
+        );
+        assert_eq!(response.words.len(), words.len());
+        assert_eq!(response.words[0].word, words[0].word);
+        assert_eq!(response.words[1].word, words[1].word);
+        assert!(response.corrections.is_empty());
     }
 }
