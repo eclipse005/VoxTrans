@@ -17,6 +17,22 @@ export type TerminologyGroup = {
   terms: TerminologyTerm[];
 };
 
+export type HotwordLang = "auto" | "zh" | "non_zh";
+
+export type HotwordTerm = {
+  id: string;
+  word: string;
+  aliases: string[];
+  lang: HotwordLang;
+  note: string;
+};
+
+export type HotwordGroup = {
+  id: string;
+  name: string;
+  terms: HotwordTerm[];
+};
+
 export type SubtitleBurnMode =
   | "source"
   | "target"
@@ -61,6 +77,8 @@ export type SavedSettings = {
   llmConcurrency: number;
   terminologyGroups: TerminologyGroup[];
   enableTerminology: boolean;
+  hotwordGroups: HotwordGroup[];
+  enableHotwords: boolean;
   enableSubtitleBeautify: boolean;
   autoBurnHardSubtitle: boolean;
   subtitleBurnMode: SubtitleBurnMode;

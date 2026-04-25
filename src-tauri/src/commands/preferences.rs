@@ -20,6 +20,28 @@ pub struct TerminologyGroupCommand {
     pub terms: Vec<TerminologyTermCommand>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HotwordTermCommand {
+    pub id: String,
+    pub word: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub lang: String,
+    #[serde(default)]
+    pub note: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HotwordGroupCommand {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub terms: Vec<HotwordTermCommand>,
+}
+
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubtitleLineStyleCommand {
@@ -102,6 +124,10 @@ pub struct SavedSettingsCommand {
     pub terminology_groups: Vec<TerminologyGroupCommand>,
     #[serde(default = "default_true")]
     pub enable_terminology: bool,
+    #[serde(default)]
+    pub hotword_groups: Vec<HotwordGroupCommand>,
+    #[serde(default = "default_true")]
+    pub enable_hotwords: bool,
     #[serde(default = "default_true")]
     pub enable_subtitle_beautify: bool,
     #[serde(default)]
@@ -182,6 +208,26 @@ fn to_service_settings(
             })
             .collect(),
         enable_terminology: settings.enable_terminology,
+        hotword_groups: settings
+            .hotword_groups
+            .into_iter()
+            .map(|group| crate::services::preferences::HotwordGroup {
+                id: group.id,
+                name: group.name,
+                terms: group
+                    .terms
+                    .into_iter()
+                    .map(|term| crate::services::preferences::HotwordTerm {
+                        id: term.id,
+                        word: term.word,
+                        aliases: term.aliases,
+                        lang: term.lang,
+                        note: term.note,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        enable_hotwords: settings.enable_hotwords,
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         subtitle_burn_mode: settings.subtitle_burn_mode,
@@ -251,6 +297,26 @@ fn from_service_settings(
             })
             .collect(),
         enable_terminology: settings.enable_terminology,
+        hotword_groups: settings
+            .hotword_groups
+            .into_iter()
+            .map(|group| HotwordGroupCommand {
+                id: group.id,
+                name: group.name,
+                terms: group
+                    .terms
+                    .into_iter()
+                    .map(|term| HotwordTermCommand {
+                        id: term.id,
+                        word: term.word,
+                        aliases: term.aliases,
+                        lang: term.lang,
+                        note: term.note,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        enable_hotwords: settings.enable_hotwords,
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         subtitle_burn_mode: settings.subtitle_burn_mode,

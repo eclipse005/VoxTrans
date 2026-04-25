@@ -2541,6 +2541,8 @@ fn fallback_saved_settings() -> crate::services::preferences::SavedSettings {
         llm_concurrency: 4,
         terminology_groups: Vec::new(),
         enable_terminology: true,
+        hotword_groups: Vec::new(),
+        enable_hotwords: true,
         enable_subtitle_beautify: true,
         auto_burn_hard_subtitle: false,
         subtitle_burn_mode: "bilingualSourceFirst".to_string(),

@@ -26,6 +26,28 @@ pub struct TerminologyGroup {
     pub terms: Vec<TerminologyTerm>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HotwordTerm {
+    pub id: String,
+    pub word: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default = "default_hotword_lang")]
+    pub lang: String,
+    #[serde(default)]
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HotwordGroup {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub terms: Vec<HotwordTerm>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubtitleLineStyle {
@@ -108,6 +130,10 @@ pub struct SavedSettings {
     pub terminology_groups: Vec<TerminologyGroup>,
     #[serde(default = "default_true")]
     pub enable_terminology: bool,
+    #[serde(default)]
+    pub hotword_groups: Vec<HotwordGroup>,
+    #[serde(default = "default_true")]
+    pub enable_hotwords: bool,
     #[serde(default = "default_true")]
     pub enable_subtitle_beautify: bool,
     #[serde(default)]
@@ -195,6 +221,8 @@ fn default_settings() -> SavedSettings {
         llm_concurrency: 4,
         terminology_groups: normalize_terminology_groups(Vec::new()),
         enable_terminology: true,
+        hotword_groups: normalize_hotword_groups(Vec::new()),
+        enable_hotwords: true,
         enable_subtitle_beautify: true,
         auto_burn_hard_subtitle: false,
         subtitle_burn_mode: default_subtitle_burn_mode(),
@@ -248,6 +276,8 @@ fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings {
         llm_concurrency: settings.llm_concurrency.max(1),
         terminology_groups: normalize_terminology_groups(settings.terminology_groups),
         enable_terminology: settings.enable_terminology,
+        hotword_groups: normalize_hotword_groups(settings.hotword_groups),
+        enable_hotwords: settings.enable_hotwords,
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         subtitle_burn_mode: normalize_subtitle_burn_mode(&settings.subtitle_burn_mode).to_string(),
@@ -257,6 +287,10 @@ fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_hotword_lang() -> String {
+    "auto".to_string()
 }
 
 fn default_subtitle_burn_mode() -> String {
@@ -422,6 +456,90 @@ fn normalize_terminology_terms(
     normalized
 }
 
+fn normalize_hotword_lang(value: &str) -> String {
+    match value.trim() {
+        "zh" => "zh".to_string(),
+        "non_zh" => "non_zh".to_string(),
+        _ => default_hotword_lang(),
+    }
+}
+
+fn normalize_hotword_groups(groups: Vec<HotwordGroup>) -> Vec<HotwordGroup> {
+    let mut seen_group_ids = HashSet::new();
+    let mut normalized = Vec::new();
+
+    for (group_idx, group) in groups.into_iter().enumerate() {
+        let mut group_id = group.id.trim().to_string();
+        if group_id.is_empty() || !seen_group_ids.insert(group_id.clone()) {
+            group_id = make_entity_id("hotword-group", group_idx);
+            seen_group_ids.insert(group_id.clone());
+        }
+
+        let name = {
+            let trimmed = group.name.trim();
+            if trimmed.is_empty() {
+                "默认".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        };
+
+        normalized.push(HotwordGroup {
+            id: group_id,
+            name,
+            terms: normalize_hotword_terms(group.terms, group_idx),
+        });
+    }
+
+    if normalized.is_empty() {
+        return vec![HotwordGroup {
+            id: make_entity_id("hotword-group", 0),
+            name: "默认".to_string(),
+            terms: Vec::new(),
+        }];
+    }
+
+    normalized
+}
+
+fn normalize_hotword_terms(terms: Vec<HotwordTerm>, group_idx: usize) -> Vec<HotwordTerm> {
+    let mut normalized = Vec::new();
+    let mut seen_term_ids = HashSet::new();
+
+    for (term_idx, term) in terms.into_iter().enumerate() {
+        let word = term.word.trim();
+        if word.is_empty() {
+            continue;
+        }
+
+        let mut term_id = term.id.trim().to_string();
+        if term_id.is_empty() || !seen_term_ids.insert(term_id.clone()) {
+            let seq = group_idx.saturating_mul(10_000).saturating_add(term_idx);
+            term_id = make_entity_id("hotword", seq);
+            seen_term_ids.insert(term_id.clone());
+        }
+
+        let mut seen_aliases = HashSet::<String>::new();
+        let aliases = term
+            .aliases
+            .into_iter()
+            .map(|alias| alias.trim().to_string())
+            .filter(|alias| !alias.is_empty())
+            .filter(|alias| seen_aliases.insert(alias.to_lowercase()))
+            .collect::<Vec<_>>();
+
+        normalized.push(HotwordTerm {
+            id: term_id,
+            word: word.to_string(),
+            aliases,
+            lang: normalize_hotword_lang(&term.lang),
+            note: term.note.trim().to_string(),
+        });
+    }
+
+    normalized
+}
+
 fn default_terminology_group() -> TerminologyGroup {
     TerminologyGroup {
         id: make_entity_id("group", 0),
@@ -436,4 +554,70 @@ fn make_entity_id(prefix: &str, seq: usize) -> String {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     format!("{prefix}-{millis}-{seq}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        normalize_saved_settings, HotwordGroup, HotwordTerm, SavedSettings, SubtitleRenderStyle,
+    };
+
+    fn settings_with_hotwords(groups: Vec<HotwordGroup>) -> SavedSettings {
+        SavedSettings {
+            provider: "cpu".to_string(),
+            chunk_target_seconds: 180,
+            subtitle_max_words_per_segment: 20,
+            subtitle_length_reference: 28,
+            asr_model: "parakeet-tdt-0.6b-v2".to_string(),
+            demucs_model: "htdemucs_ft".to_string(),
+            enable_vocal_separation: false,
+            translate_api_key: String::new(),
+            translate_base_url: "https://api.openai.com/v1".to_string(),
+            translate_model: "gpt-4.1-mini".to_string(),
+            llm_concurrency: 4,
+            terminology_groups: Vec::new(),
+            enable_terminology: true,
+            hotword_groups: groups,
+            enable_hotwords: true,
+            enable_subtitle_beautify: true,
+            auto_burn_hard_subtitle: false,
+            subtitle_burn_mode: "bilingualSourceFirst".to_string(),
+            subtitle_render_style: SubtitleRenderStyle::default(),
+        }
+    }
+
+    #[test]
+    fn normalize_hotwords_trims_aliases_and_drops_empty_words() {
+        let normalized = normalize_saved_settings(settings_with_hotwords(vec![HotwordGroup {
+            id: " g1 ".to_string(),
+            name: " AI ".to_string(),
+            terms: vec![
+                HotwordTerm {
+                    id: " h1 ".to_string(),
+                    word: " Claude Code ".to_string(),
+                    aliases: vec![" cloud code ".to_string(), "cloud code".to_string()],
+                    lang: "non_zh".to_string(),
+                    note: " product ".to_string(),
+                },
+                HotwordTerm {
+                    id: " h2 ".to_string(),
+                    word: " ".to_string(),
+                    aliases: vec!["x".to_string()],
+                    lang: "zh".to_string(),
+                    note: String::new(),
+                },
+            ],
+        }]));
+
+        assert!(normalized.enable_hotwords);
+        assert_eq!(normalized.hotword_groups.len(), 1);
+        assert_eq!(normalized.hotword_groups[0].name, "AI");
+        assert_eq!(normalized.hotword_groups[0].terms.len(), 1);
+        assert_eq!(normalized.hotword_groups[0].terms[0].word, "Claude Code");
+        assert_eq!(
+            normalized.hotword_groups[0].terms[0].aliases,
+            vec!["cloud code"]
+        );
+        assert_eq!(normalized.hotword_groups[0].terms[0].lang, "non_zh");
+    }
 }
