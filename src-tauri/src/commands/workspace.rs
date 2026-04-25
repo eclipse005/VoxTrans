@@ -487,7 +487,7 @@ impl PipelineStep for Step15HotwordsPipelineStep {
             })
             .collect::<Vec<_>>();
 
-        Ok(crate::services::hotwords::build_hotword_correction(
+        Ok(crate::services::hotwords::build_hotword_correction_async(
             crate::services::hotwords::BuildHotwordCorrectionRequest {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),
@@ -500,7 +500,8 @@ impl PipelineStep for Step15HotwordsPipelineStep {
                 translate_base_url: self.translate_base_url.clone(),
                 translate_model: self.translate_model.clone(),
             },
-        ))
+        )
+        .await)
     }
 }
 

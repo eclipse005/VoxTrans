@@ -1,5 +1,6 @@
-#![allow(dead_code)]
-
+use crate::services::llm::client::{LlmSemanticValidationError, OpenAiCompatLlmClient};
+use crate::services::llm::json_guard::JsonResponseValidator;
+use crate::services::llm::port::{LlmCallContext, LlmConfig, next_llm_request_id};
 use crate::services::transcribe::WordTokenDto;
 use pinyin::ToPinyin;
 use serde::{Deserialize, Serialize};
@@ -95,7 +96,8 @@ pub struct BuildHotwordCorrectionResponse {
     pub words: Vec<WordTokenDto>,
 }
 
-pub fn build_hotword_correction(
+#[cfg(test)]
+fn build_hotword_correction(
     request: BuildHotwordCorrectionRequest,
 ) -> BuildHotwordCorrectionResponse {
     let input_fingerprint = if request.input_fingerprint.trim().is_empty() {
@@ -180,6 +182,226 @@ pub fn build_hotword_correction(
         corrections,
         words,
     }
+}
+
+pub async fn build_hotword_correction_async(
+    request: BuildHotwordCorrectionRequest,
+) -> BuildHotwordCorrectionResponse {
+    let input_fingerprint = if request.input_fingerprint.trim().is_empty() {
+        hotword_input_fingerprint(
+            &request.task_id,
+            &request.media_path,
+            &request.source_lang,
+            &request.words,
+            request.enabled,
+            &request.hotwords,
+        )
+    } else {
+        request.input_fingerprint.clone()
+    };
+    let normalized_hotwords = normalize_hotwords(&request.hotwords);
+    if !request.enabled || normalized_hotwords.is_empty() || request.words.is_empty() {
+        return BuildHotwordCorrectionResponse {
+            task_id: request.task_id,
+            media_path: request.media_path,
+            source_lang: request.source_lang,
+            input_fingerprint,
+            enabled: false,
+            hotwords: normalized_hotwords,
+            candidates: Vec::new(),
+            decisions: Vec::new(),
+            corrections: Vec::new(),
+            words: request.words,
+        };
+    }
+
+    let candidates = recall_hotword_candidates(&request.words, &request.hotwords);
+    if candidates.is_empty() {
+        return BuildHotwordCorrectionResponse {
+            task_id: request.task_id,
+            media_path: request.media_path,
+            source_lang: request.source_lang,
+            input_fingerprint,
+            enabled: true,
+            hotwords: normalized_hotwords,
+            candidates,
+            decisions: Vec::new(),
+            corrections: Vec::new(),
+            words: request.words,
+        };
+    }
+
+    let llm_available = !request.translate_api_key.trim().is_empty()
+        && !request.translate_base_url.trim().is_empty()
+        && !request.translate_model.trim().is_empty();
+    let decisions = if llm_available {
+        review_hotword_candidates_with_llm(&request, &candidates).await
+    } else {
+        unavailable_hotword_decisions(&candidates)
+    };
+    let corrections = build_applied_hotword_corrections(&request.words, &candidates, &decisions);
+    let words = apply_hotword_corrections(&request.words, &candidates, &decisions);
+
+    BuildHotwordCorrectionResponse {
+        task_id: request.task_id,
+        media_path: request.media_path,
+        source_lang: request.source_lang,
+        input_fingerprint,
+        enabled: true,
+        hotwords: normalized_hotwords,
+        candidates,
+        decisions,
+        corrections,
+        words,
+    }
+}
+
+async fn review_hotword_candidates_with_llm(
+    request: &BuildHotwordCorrectionRequest,
+    candidates: &[HotwordCandidate],
+) -> Vec<HotwordDecision> {
+    let client = match OpenAiCompatLlmClient::new(LlmConfig::new(
+        request.translate_base_url.clone(),
+        request.translate_api_key.clone(),
+        request.translate_model.clone(),
+    )) {
+        Ok(client) => client,
+        Err(err) => {
+            return candidates
+                .iter()
+                .map(|candidate| errored_hotword_decision(candidate, err.message.clone()))
+                .collect();
+        }
+    };
+    let context = LlmCallContext {
+        task_id: request.task_id.clone(),
+        media_path: Some(request.media_path.clone()),
+        phase: "step1_5_hotword_decision".to_string(),
+    };
+    let validator = JsonResponseValidator::with_required_keys(&["replace", "target", "reason"]);
+    let mut decisions = Vec::with_capacity(candidates.len());
+
+    for candidate in candidates {
+        let prompt = build_hotword_decision_prompt(candidate);
+        let llm_id = next_llm_request_id();
+        let decision = match client
+            .call_json_validated(&context, &llm_id, &prompt, Some(&validator), |value| {
+                serde_json::from_value::<RawHotwordDecision>(value)
+                    .map_err(|err| {
+                        LlmSemanticValidationError::retryable(format!(
+                            "hotword decision parse failed: {err}"
+                        ))
+                    })
+                    .map(|raw| hotword_decision_from_raw(candidate, raw))
+            })
+            .await
+        {
+            Ok(result) => result.value,
+            Err(err) => errored_hotword_decision(
+                candidate,
+                format!("llm_error:{llm_id}:{}", err.message),
+            ),
+        };
+        decisions.push(decision);
+    }
+
+    decisions
+}
+
+fn unavailable_hotword_decisions(candidates: &[HotwordCandidate]) -> Vec<HotwordDecision> {
+    candidates
+        .iter()
+        .map(|candidate| HotwordDecision {
+            candidate_id: candidate.id.clone(),
+            replace: false,
+            target: candidate.target.clone(),
+            reason: Some(String::new()),
+            error: Some("llm_unavailable".to_string()),
+        })
+        .collect()
+}
+
+fn errored_hotword_decision(candidate: &HotwordCandidate, error: String) -> HotwordDecision {
+    HotwordDecision {
+        candidate_id: candidate.id.clone(),
+        replace: false,
+        target: candidate.target.clone(),
+        reason: Some(String::new()),
+        error: Some(error),
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawHotwordDecision {
+    replace: bool,
+    #[serde(default)]
+    target: String,
+    #[serde(default)]
+    reason: String,
+}
+
+#[cfg(test)]
+fn parse_hotword_decision_json(
+    candidate_id: &str,
+    fallback_target: &str,
+    raw: &str,
+) -> HotwordDecision {
+    match serde_json::from_str::<RawHotwordDecision>(raw.trim()) {
+        Ok(parsed) => HotwordDecision {
+            candidate_id: candidate_id.to_string(),
+            replace: parsed.replace,
+            target: normalize_decision_target(&parsed.target, fallback_target),
+            reason: Some(parsed.reason.trim().to_string()),
+            error: None,
+        },
+        Err(_) => HotwordDecision {
+            candidate_id: candidate_id.to_string(),
+            replace: false,
+            target: fallback_target.to_string(),
+            reason: Some(String::new()),
+            error: Some("invalid_json".to_string()),
+        },
+    }
+}
+
+fn hotword_decision_from_raw(
+    candidate: &HotwordCandidate,
+    raw: RawHotwordDecision,
+) -> HotwordDecision {
+    HotwordDecision {
+        candidate_id: candidate.id.clone(),
+        replace: raw.replace,
+        target: normalize_decision_target(&raw.target, &candidate.target),
+        reason: Some(raw.reason.trim().to_string()),
+        error: None,
+    }
+}
+
+fn normalize_decision_target(raw: &str, fallback: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn build_hotword_decision_prompt(candidate: &HotwordCandidate) -> String {
+    format!(
+        concat!(
+            "You are judging whether one ASR phrase should be replaced by a configured hotword.\n",
+            "Only decide this candidate. Do not edit grammar, punctuation, style, or surrounding text.\n",
+            "Return only JSON: {{\"replace\": boolean, \"target\": string, \"reason\": string}}\n\n",
+            "Context: {context}\n",
+            "Candidate source text: {source_text}\n",
+            "Target hotword: {target}\n",
+            "Recall type: {source_kind}\n"
+        ),
+        context = candidate.context,
+        source_text = candidate.source_text,
+        target = candidate.target,
+        source_kind = candidate.source_kind,
+    )
 }
 
 #[derive(Serialize)]
@@ -970,5 +1192,42 @@ mod tests {
 
         assert_ne!(baseline, changed_word_fingerprint);
         assert_ne!(baseline, changed_hotword_fingerprint);
+    }
+
+    #[test]
+    fn parse_hotword_decision_accepts_strict_json() {
+        let decision = parse_hotword_decision_json(
+            "c1",
+            "Claude Code",
+            r#"{"replace":true,"target":"Claude Code","reason":"product name"}"#,
+        );
+
+        assert!(decision.replace);
+        assert_eq!(decision.candidate_id, "c1");
+        assert_eq!(decision.target, "Claude Code");
+        assert_eq!(decision.reason.as_deref(), Some("product name"));
+        assert!(decision.error.is_none());
+    }
+
+    #[test]
+    fn parse_hotword_decision_rejects_invalid_json() {
+        let decision = parse_hotword_decision_json("c1", "Claude Code", "yes");
+
+        assert!(!decision.replace);
+        assert_eq!(decision.target, "Claude Code");
+        assert_eq!(decision.error.as_deref(), Some("invalid_json"));
+    }
+
+    #[test]
+    fn parse_hotword_decision_uses_fallback_target_when_empty() {
+        let decision = parse_hotword_decision_json(
+            "c1",
+            "Claude Code",
+            r#"{"replace":true,"target":"","reason":"target omitted"}"#,
+        );
+
+        assert!(decision.replace);
+        assert_eq!(decision.target, "Claude Code");
+        assert!(decision.error.is_none());
     }
 }
