@@ -243,7 +243,7 @@ export default function HotwordsModal({ visible, groups, onClose, onChange, onSa
               <div className="terms-empty">请先新建一个分组。</div>
             ) : (
               <>
-                <div className="terms-add-form">
+                <div className="terms-add-form hotwords-add-form">
                   <input
                     className="terms-input"
                     value={singleInput}

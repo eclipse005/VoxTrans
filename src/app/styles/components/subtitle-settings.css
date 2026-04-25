@@ -605,10 +605,14 @@
 
 .terms-add-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(108px, 132px) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   margin-bottom: 8px;
+}
+
+.hotwords-add-form {
+  grid-template-columns: minmax(0, 1fr) minmax(108px, 132px) auto;
 }
 
 .terms-input {
