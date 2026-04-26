@@ -12,6 +12,7 @@ use tauri::{AppHandle, Emitter};
 use crate::services::pipeline::{
     CheckpointPolicy, PipelineStep, StepContext, StepSource, execute_step,
 };
+use crate::services::task_log::{TaskLogger, event as task_log_event};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -275,6 +276,8 @@ struct SettingsSnapshotInput {
     hotword_groups: Option<Vec<SettingsSnapshotHotwordGroup>>,
     #[serde(default)]
     enable_hotwords: Option<bool>,
+    #[serde(default)]
+    enable_subtitle_beautify: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -328,6 +331,7 @@ struct PipelineRuntimeSettings {
     terminology_entries: Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
     hotword_entries: Vec<crate::services::hotwords::HotwordEntry>,
     enable_hotwords: bool,
+    enable_subtitle_beautify: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -993,6 +997,10 @@ struct Step6FinalCheckPipelineStep {
     source_lang: String,
     target_lang: String,
     segments: Vec<crate::commands::translate::BuildTranslationSegmentCommand>,
+    translate_api_key: String,
+    translate_base_url: String,
+    translate_model: String,
+    llm_concurrency: u32,
     app: AppHandle,
 }
 
@@ -1013,7 +1021,10 @@ impl PipelineStep for Step6FinalCheckPipelineStep {
     }
 
     fn validate(&self, output: &Self::Output) -> Result<(), String> {
-        if output.task_id.trim().is_empty() || output.media_path.trim().is_empty() {
+        if output.task_id.trim().is_empty()
+            || output.media_path.trim().is_empty()
+            || output.segments.is_empty()
+        {
             return Err("invalid step6 artifact".to_string());
         }
         Ok(())
@@ -1030,6 +1041,10 @@ impl PipelineStep for Step6FinalCheckPipelineStep {
                 source_lang: self.source_lang.clone(),
                 target_lang: self.target_lang.clone(),
                 segments: self.segments.clone(),
+                translate_api_key: self.translate_api_key.clone(),
+                translate_base_url: self.translate_base_url.clone(),
+                translate_model: self.translate_model.clone(),
+                llm_concurrency: self.llm_concurrency,
             },
         )
         .await?;
@@ -1345,10 +1360,13 @@ async fn execute_task_batch_internal(
 
         match execute_single_task(app, &task_id).await {
             Ok(()) => response.succeeded_task_ids.push(task_id),
-            Err(err) => response.failed.push(ExecuteTaskBatchFailedItem {
-                task_id,
-                error: err,
-            }),
+            Err(err) => {
+                log_task_failure_to_main(&task_id, &err);
+                response.failed.push(ExecuteTaskBatchFailedItem {
+                    task_id,
+                    error: err,
+                });
+            }
         }
     }
 
@@ -1497,6 +1515,7 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
             &step2_segments,
             step2_srt,
             source_text,
+            runtime.enable_subtitle_beautify,
         )
     };
     if let Err(err) = run_result {
@@ -1531,6 +1550,10 @@ async fn execute_translate_steps(
                 source_lang: source_lang.clone(),
                 target_lang: target_lang.clone(),
                 segments: step5_existing.segments.clone(),
+                translate_api_key: runtime.translate_api_key.clone(),
+                translate_base_url: runtime.translate_base_url.clone(),
+                translate_model: runtime.translate_model.clone(),
+                llm_concurrency: runtime.llm_concurrency,
                 app: app.clone(),
             },
             &step_context,
@@ -1548,8 +1571,9 @@ async fn execute_translate_steps(
             app,
             task_id,
             &record.item.path,
-            &step5_existing.segments,
+            &step6_exec.output.segments,
             source_text,
+            runtime.enable_subtitle_beautify,
         );
     }
 
@@ -1761,6 +1785,10 @@ async fn execute_translate_steps(
             source_lang: source_lang.clone(),
             target_lang: target_lang.clone(),
             segments: step53_output.segments.clone(),
+            translate_api_key: runtime.translate_api_key.clone(),
+            translate_base_url: runtime.translate_base_url.clone(),
+            translate_model: runtime.translate_model.clone(),
+            llm_concurrency: runtime.llm_concurrency,
             app: app.clone(),
         },
         &step_context,
@@ -1782,8 +1810,9 @@ async fn execute_translate_steps(
         app,
         task_id,
         &record.item.path,
-        &step53_output.segments,
+        &step6_exec.output.segments,
         source_text,
+        runtime.enable_subtitle_beautify,
     )
 }
 
@@ -1806,10 +1835,17 @@ fn finish_transcribe_only(
     step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
     step2_srt: String,
     source_text: String,
+    enable_subtitle_beautify: bool,
 ) -> Result<(), String> {
     let workspace_segments = workspace_subtitle_segments_from_step2_segments(step2_segments);
     let subtitle_segments_json = serialize_workspace_subtitle_segments(&workspace_segments);
-    write_step7_srts(task_id, media_path, &workspace_segments, false)?;
+    write_step7_srts(
+        task_id,
+        media_path,
+        &workspace_segments,
+        false,
+        enable_subtitle_beautify,
+    )?;
 
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
@@ -1827,10 +1863,17 @@ fn finish_translate_with_step5(
     media_path: &str,
     segments: &[crate::commands::translate::BuildTranslationSegmentCommand],
     source_text: String,
+    enable_subtitle_beautify: bool,
 ) -> Result<(), String> {
     let workspace_segments = workspace_subtitle_segments_from_translation_segments(segments);
     let subtitle_segments_json = serialize_workspace_subtitle_segments(&workspace_segments);
-    write_step7_srts(task_id, media_path, &workspace_segments, true)?;
+    write_step7_srts(
+        task_id,
+        media_path,
+        &workspace_segments,
+        true,
+        enable_subtitle_beautify,
+    )?;
 
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
@@ -1847,8 +1890,9 @@ fn write_step7_srts(
     media_path: &str,
     segments: &[WorkspaceSubtitleSegment],
     include_translation_variants: bool,
+    enable_subtitle_beautify: bool,
 ) -> Result<(), String> {
-    let srt_segments = segments
+    let mut srt_segments = segments
         .iter()
         .map(
             |segment| crate::services::subtitle_srt::SubtitleSrtSegment {
@@ -1859,6 +1903,9 @@ fn write_step7_srts(
             },
         )
         .collect::<Vec<_>>();
+    if enable_subtitle_beautify {
+        beautify_subtitle_srt_segments(&mut srt_segments);
+    }
     let items = if include_translation_variants {
         vec![
             crate::services::subtitle_srt::ExportSrtItem::Source,
@@ -1876,6 +1923,156 @@ fn write_step7_srts(
         &items,
     )?;
     Ok(())
+}
+
+pub fn beautify_subtitle_srt_segments(
+    segments: &mut [crate::services::subtitle_srt::SubtitleSrtSegment],
+) {
+    for segment in segments {
+        segment.source_text = beautify_subtitle_text(&segment.source_text);
+        segment.translated_text = beautify_subtitle_text(&segment.translated_text);
+    }
+}
+
+pub fn task_enable_subtitle_beautify(task_id: &str) -> Result<bool, String> {
+    let record = get_task_record(task_id)?;
+    let saved = crate::services::preferences::load_saved_settings_from_default_path()
+        .unwrap_or_else(|_| fallback_saved_settings());
+    let _ = record;
+    Ok(saved.enable_subtitle_beautify)
+}
+
+fn beautify_subtitle_text(raw: &str) -> String {
+    let normalized = raw.replace('\r', "\n").replace('\n', " ");
+    let normalized = normalized.trim();
+    if normalized.is_empty() {
+        return String::new();
+    }
+
+    let without_edges = trim_bounding_punctuation(normalized);
+    if without_edges.is_empty() {
+        return String::new();
+    }
+    let without_commas = remove_internal_commas_for_subtitle(&without_edges);
+    let with_spacing = normalize_cjk_ascii_spacing(&without_commas);
+    collapse_multiple_spaces(&with_spacing).trim().to_string()
+}
+
+fn trim_bounding_punctuation(text: &str) -> String {
+    let mut chars = text.chars().collect::<Vec<char>>();
+    while matches!(chars.first(), Some(ch) if is_subtitle_boundary_punctuation(*ch)) {
+        let _ = chars.remove(0);
+    }
+    while matches!(chars.last(), Some(ch) if is_subtitle_boundary_punctuation(*ch)) {
+        let _ = chars.pop();
+    }
+    chars.into_iter().collect()
+}
+
+fn is_subtitle_boundary_punctuation(ch: char) -> bool {
+    ch.is_ascii_punctuation()
+        || matches!(
+            ch,
+            '，' | '。'
+                | '、'
+                | '；'
+                | '：'
+                | '！'
+                | '？'
+                | '…'
+                | '「'
+                | '」'
+                | '『'
+                | '』'
+                | '《'
+                | '》'
+                | '“'
+                | '”'
+                | '‘'
+                | '’'
+                | '（'
+                | '）'
+                | '［'
+                | '］'
+                | '【'
+                | '】'
+        )
+}
+
+fn remove_internal_commas_for_subtitle(text: &str) -> String {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut out = String::new();
+    for idx in 0..chars.len() {
+        let ch = chars[idx];
+        if ch == ',' {
+            let prev = chars.get(idx.wrapping_sub(1)).copied();
+            let next = chars.get(idx + 1).copied();
+            if prev.is_some_and(|value| value.is_ascii_digit())
+                && next.is_some_and(|value| value.is_ascii_digit())
+            {
+                out.push(ch);
+            } else {
+                out.push(' ');
+            }
+            continue;
+        }
+        if ch == '，' {
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn normalize_cjk_ascii_spacing(text: &str) -> String {
+    let mut output = String::new();
+    let mut previous = None;
+    for ch in text.chars() {
+        if let Some(prev) = previous {
+            if need_cjk_ascii_space(prev, ch) && !output.ends_with(' ') {
+                output.push(' ');
+            }
+        }
+        output.push(ch);
+        previous = Some(ch);
+    }
+    output
+}
+
+fn need_cjk_ascii_space(left: char, right: char) -> bool {
+    (is_cjk_char(left) && is_ascii_word_char(right))
+        || (is_ascii_word_char(left) && is_cjk_char(right))
+}
+
+fn is_ascii_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric()
+}
+
+fn is_cjk_char(ch: char) -> bool {
+    let value = ch as u32;
+    (0x3400..=0x4dbf).contains(&value)
+        || (0x4e00..=0x9fff).contains(&value)
+        || (0x20000..=0x2a6df).contains(&value)
+        || (0xf900..=0xfaff).contains(&value)
+        || (0x3040..=0x31ff).contains(&value)
+        || (0xaf00..=0xafff).contains(&value)
+}
+
+fn collapse_multiple_spaces(text: &str) -> String {
+    let mut out = String::new();
+    let mut saw_space = false;
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            if !saw_space {
+                out.push(' ');
+                saw_space = true;
+            }
+            continue;
+        }
+        out.push(ch);
+        saw_space = false;
+    }
+    out
 }
 
 fn update_processing_preview_from_step2(
@@ -2348,6 +2545,9 @@ fn resolve_runtime_settings(
     } else {
         saved.enable_hotwords
     };
+    let enable_subtitle_beautify = snapshot_parsed
+        .enable_subtitle_beautify
+        .unwrap_or(saved.enable_subtitle_beautify);
 
     let terminology_entries = if enable_terminology {
         let mut seen = HashSet::<(String, String)>::new();
@@ -2415,6 +2615,7 @@ fn resolve_runtime_settings(
         terminology_entries,
         hotword_entries,
         enable_hotwords,
+        enable_subtitle_beautify,
     })
 }
 
@@ -2656,6 +2857,24 @@ fn mark_task_failed(app: &AppHandle, task_id: &str, error: &str) -> Result<(), S
     })
 }
 
+fn log_task_failure_to_main(task_id: &str, error: &str) {
+    let payload = task_failure_log_payload(error);
+    let logger = match get_task_record(task_id) {
+        Ok(record) if !record.item.path.trim().is_empty() => {
+            TaskLogger::main_with_media(task_id.to_string(), record.item.path)
+        }
+        _ => TaskLogger::main(task_id.to_string()),
+    };
+    logger.event(task_log_event::TASK_FAILED, Some(&payload));
+}
+
+fn task_failure_log_payload(error: &str) -> Value {
+    serde_json::json!({
+        "status": "error",
+        "error": error,
+    })
+}
+
 fn patch_task_item(
     app: &AppHandle,
     task_id: &str,
@@ -2762,7 +2981,11 @@ fn seconds_to_millis(value: f64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_step6_final_check_passed;
+    use super::{
+        beautify_subtitle_text, collapse_multiple_spaces, ensure_step6_final_check_passed,
+        is_ascii_word_char, is_cjk_char, need_cjk_ascii_space, task_failure_log_payload,
+        trim_bounding_punctuation,
+    };
 
     #[test]
     fn final_check_hard_failure_blocks_completion() {
@@ -2776,5 +2999,42 @@ mod tests {
         );
 
         assert_eq!(result, Err("最终检查未通过: 2 项硬失败".to_string()));
+    }
+
+    #[test]
+    fn task_failure_log_payload_preserves_error_reason() {
+        let payload =
+            task_failure_log_payload("step_04_translation failed: missing translation id 20");
+
+        assert_eq!(payload["status"], "error");
+        assert_eq!(
+            payload["error"],
+            "step_04_translation failed: missing translation id 20"
+        );
+    }
+
+    #[test]
+    fn subtitle_beautify_text_handles_empty() {
+        assert_eq!(beautify_subtitle_text(""), "");
+        assert_eq!(beautify_subtitle_text("   "), "");
+    }
+
+    #[test]
+    fn subtitle_beautify_text_removes_boundary_punctuation_and_commas() {
+        assert_eq!(beautify_subtitle_text(" (Hello, world), "), "Hello world");
+        assert_eq!(
+            beautify_subtitle_text("代码,IPC,sockets"),
+            "代码 IPC sockets"
+        );
+    }
+
+    #[test]
+    fn cjk_ascii_space_helpers() {
+        assert!(is_cjk_char('中'));
+        assert!(is_ascii_word_char('A'));
+        assert!(need_cjk_ascii_space('码', 'v'));
+        assert!(!need_cjk_ascii_space('码', ','));
+        assert_eq!(collapse_multiple_spaces("a   b"), "a b");
+        assert_eq!(trim_bounding_punctuation("「Hello，"), "Hello");
     }
 }

@@ -5,6 +5,7 @@ pub mod event {
     pub const TRANSCRIBE_COMPLETED: &str = "transcribe.completed";
     pub const TRANSCRIBE_SAVED: &str = "transcribe.saved";
     pub const TRANSCRIBE_FAILED: &str = "transcribe.failed";
+    pub const TASK_FAILED: &str = "task.failed";
 }
 
 #[derive(Debug, Clone)]

@@ -702,6 +702,7 @@ fn recall_non_chinese_fuzzy(
     } else {
         target_tokens.len().min(8) + 1
     };
+    let target_is_short_acronym = is_short_acronym_hotword(&hotword.word);
 
     for start in 0..words.len() {
         for token_len in 1..=max_span_tokens {
@@ -709,8 +710,23 @@ fn recall_non_chinese_fuzzy(
             if end >= words.len() {
                 continue;
             }
+            if target_is_short_acronym && !source_window_looks_like_acronym(words, start, end) {
+                continue;
+            }
             let window = normalized_window_tokens(words, start, end);
             let collapsed_window = normalized_collapsed_window_tokens(words, start, end);
+            if target_is_short_acronym {
+                if window == target_tokens {
+                    continue;
+                }
+                if collapsed_window.len() != target_collapsed_len {
+                    continue;
+                }
+                if is_short_acronym_window_match(&collapsed_window, &target_collapsed) {
+                    push_candidate(words, start, end, hotword, "fuzzy", candidates, seen);
+                }
+                continue;
+            }
             if collapsed_window.len() < min_collapsed_len
                 || collapsed_window.len() > target_collapsed_len + 1
             {
@@ -817,6 +833,68 @@ fn normalized_collapsed_window_tokens(words: &[WordTokenDto], start: usize, end:
 
 fn normalized_collapsed_token(text: &str) -> String {
     normalize_ascii_token(text)
+}
+
+fn is_short_acronym_hotword(text: &str) -> bool {
+    let normalized = normalize_ascii_token(text);
+    let has_alpha = normalized.chars().any(|ch| ch.is_ascii_alphabetic());
+    let has_digit = normalized.chars().any(|ch| ch.is_ascii_digit());
+    ((3..=6).contains(&normalized.len()) || (normalized.len() == 2 && has_alpha && has_digit))
+        && has_alpha
+        && normalized.chars().all(|ch| ch.is_ascii_alphanumeric())
+}
+
+fn source_window_looks_like_acronym(words: &[WordTokenDto], start: usize, end: usize) -> bool {
+    if start > end || end >= words.len() {
+        return false;
+    }
+    words[start..=end]
+        .iter()
+        .all(|word| token_looks_like_acronym_piece(&word.word))
+}
+
+fn token_looks_like_acronym_piece(text: &str) -> bool {
+    let trimmed = trim_boundary_punctuation(text);
+    if trimmed.is_empty() {
+        return false;
+    }
+    let mut has_alpha = false;
+    let mut has_alnum = false;
+    for ch in trimmed.chars() {
+        if ch.is_ascii_alphabetic() {
+            has_alpha = true;
+            has_alnum = true;
+            continue;
+        }
+        if ch.is_ascii_digit() {
+            has_alnum = true;
+            continue;
+        }
+        return false;
+    }
+    let token_len = trimmed.chars().count();
+    if !has_alnum || (!has_alpha && token_len > 1) {
+        return false;
+    }
+    token_len <= 3 || trimmed == trimmed.to_ascii_uppercase()
+}
+
+fn is_short_acronym_window_match(source_collapsed: &str, target_collapsed: &str) -> bool {
+    if source_collapsed.is_empty() || target_collapsed.is_empty() {
+        return false;
+    }
+    if source_collapsed.len().abs_diff(target_collapsed.len()) > 1 {
+        return false;
+    }
+    if source_collapsed.eq_ignore_ascii_case(target_collapsed) {
+        return true;
+    }
+    if source_collapsed.len() < 2 || target_collapsed.len() < 2 {
+        return false;
+    }
+    let source_lower = source_collapsed.to_ascii_lowercase();
+    let target_lower = target_collapsed.to_ascii_lowercase();
+    levenshtein_distance_at_most(&source_lower, &target_lower, 2)
 }
 
 fn levenshtein_distance_at_most(left: &str, right: &str, max_distance: usize) -> bool {
@@ -1171,14 +1249,34 @@ mod tests {
     }
 
     #[test]
+    fn non_chinese_fuzzy_skips_plain_words_for_short_acronym_hotword() {
+        let words = vec![
+            word(0, "case"),
+            word(1, "kind"),
+            word(2, "mind"),
+            word(3, "SISD"),
+            word(4, "SIST"),
+        ];
+        let hotwords = vec![hotword("CISD", vec![], HotwordLang::NonZh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+        let sources = candidates
+            .iter()
+            .map(|candidate| candidate.source_text.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(sources, vec!["SISD", "SIST"]);
+    }
+
+    #[test]
     fn non_chinese_fuzzy_recalls_two_edit_candidate() {
-        let words = vec![word(0, "Sisty")];
+        let words = vec![word(0, "CISY")];
         let hotwords = vec![hotword("SIST", vec![], HotwordLang::NonZh)];
 
         let candidates = recall_hotword_candidates(&words, &hotwords);
 
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].source_text, "Sisty");
+        assert_eq!(candidates[0].source_text, "CISY");
         assert_eq!(candidates[0].target, "SIST");
         assert_eq!(candidates[0].source_kind, "fuzzy");
     }
@@ -1193,6 +1291,32 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].source_text, "C I S D");
         assert_eq!(candidates[0].target, "CISD");
+        assert_eq!(candidates[0].source_kind, "fuzzy");
+    }
+
+    #[test]
+    fn non_chinese_fuzzy_recalls_split_acronym_tokens_lowercase() {
+        let words = vec![word(0, "f"), word(1, "v"), word(2, "g")];
+        let hotwords = vec![hotword("FVG", vec![], HotwordLang::NonZh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source_text, "f v g");
+        assert_eq!(candidates[0].target, "FVG");
+        assert_eq!(candidates[0].source_kind, "fuzzy");
+    }
+
+    #[test]
+    fn non_chinese_fuzzy_recalls_split_number_letter_acronym() {
+        let words = vec![word(0, "3"), word(1, "r")];
+        let hotwords = vec![hotword("3R", vec![], HotwordLang::NonZh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source_text, "3 r");
+        assert_eq!(candidates[0].target, "3R");
         assert_eq!(candidates[0].source_kind, "fuzzy");
     }
 
