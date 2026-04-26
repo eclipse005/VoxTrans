@@ -23,7 +23,10 @@ pub fn has_break_terminal_punctuation(token: &str) -> bool {
 }
 
 pub fn ends_with_terminal_punctuation(word: &str) -> bool {
-    word.chars().last().map(is_terminal_punctuation).unwrap_or(false)
+    word.chars()
+        .last()
+        .map(is_terminal_punctuation)
+        .unwrap_or(false)
 }
 
 pub fn strip_trailing_closers(token: &str) -> &str {
@@ -158,4 +161,3 @@ mod tests {
         assert!(!should_split_after_terminal_token("hello.", Some("world")));
     }
 }
-

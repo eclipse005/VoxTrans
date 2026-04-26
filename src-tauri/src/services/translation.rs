@@ -91,7 +91,7 @@ pub async fn build_translation_layer_with_progress(
 ) -> Result<BuildTranslationLayerResponse, String> {
     validate_request(&request)?;
 
-    let normalized_segments = normalize_segments(&request.segments);
+    let normalized_segments = merge_dangling_source_segments(normalize_segments(&request.segments));
     if normalized_segments.is_empty() {
         return Err("segments contain no translatable text".to_string());
     }
@@ -295,6 +295,189 @@ fn normalize_segments(segments: &[TranslationSegmentInput]) -> Vec<NormalizedSeg
         });
     }
     out
+}
+
+fn merge_dangling_source_segments(segments: Vec<NormalizedSegment>) -> Vec<NormalizedSegment> {
+    if segments.len() < 2 {
+        return segments;
+    }
+
+    let mut merged = Vec::<NormalizedSegment>::new();
+    let mut index = 0usize;
+    while index < segments.len() {
+        let mut current = segments[index].clone();
+        while index + 1 < segments.len()
+            && can_merge_dangling_source_pair(&current, &segments[index + 1])
+        {
+            current = merge_source_pair(&current, &segments[index + 1]);
+            index += 1;
+        }
+        merged.push(current);
+        index += 1;
+    }
+
+    for (index, segment) in merged.iter_mut().enumerate() {
+        segment.segment_id = index + 1;
+    }
+    merged
+}
+
+fn can_merge_dangling_source_pair(left: &NormalizedSegment, right: &NormalizedSegment) -> bool {
+    let left_text = left.source.trim();
+    let right_text = right.source.trim();
+    if left_text.is_empty() || right_text.is_empty() {
+        return false;
+    }
+    if left.end > right.start || right.start - left.end > 1.0 {
+        return false;
+    }
+
+    let combined_words = count_ascii_words(left_text) + count_ascii_words(right_text);
+    if combined_words > 38 {
+        return false;
+    }
+    if right.end - left.start > 12.0 {
+        return false;
+    }
+
+    let left_last = left_text.chars().last().unwrap_or_default();
+    if is_hard_sentence_terminal(left_last) {
+        return false;
+    }
+
+    if left_last == ',' || left_last == ';' || left_last == ':' {
+        return starts_with_lowercase_or_connector(right_text)
+            || starts_with_continuation_word(right_text);
+    }
+
+    if ends_with_dangling_source_word(left_text) {
+        return true;
+    }
+
+    starts_with_subordinate_clause(left_text) && starts_with_lowercase_or_connector(right_text)
+}
+
+fn merge_source_pair(left: &NormalizedSegment, right: &NormalizedSegment) -> NormalizedSegment {
+    let mut tokens = left.tokens.clone();
+    tokens.extend(right.tokens.iter().cloned());
+    NormalizedSegment {
+        segment_id: left.segment_id,
+        start: left.start,
+        end: right.end.max(left.end),
+        source: normalize_inline_text(&format!("{} {}", left.source, right.source)),
+        tokens,
+    }
+}
+
+fn is_hard_sentence_terminal(ch: char) -> bool {
+    matches!(ch, '.' | '?' | '!' | '。' | '？' | '！')
+}
+
+fn count_ascii_words(text: &str) -> usize {
+    text.split_whitespace()
+        .filter(|token| token.chars().any(|ch| ch.is_ascii_alphanumeric()))
+        .count()
+}
+
+fn last_ascii_word_lower(text: &str) -> String {
+    text.split_whitespace()
+        .rev()
+        .find_map(|token| {
+            let cleaned = token
+                .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '\'')
+                .to_ascii_lowercase();
+            if cleaned.is_empty() {
+                None
+            } else {
+                Some(cleaned)
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn first_ascii_word_lower(text: &str) -> String {
+    text.split_whitespace()
+        .find_map(|token| {
+            let cleaned = token
+                .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '\'')
+                .to_ascii_lowercase();
+            if cleaned.is_empty() {
+                None
+            } else {
+                Some(cleaned)
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn starts_with_lowercase_or_connector(text: &str) -> bool {
+    text.chars()
+        .next()
+        .map(|ch| ch.is_ascii_lowercase())
+        .unwrap_or(false)
+        || starts_with_continuation_word(text)
+}
+
+fn starts_with_continuation_word(text: &str) -> bool {
+    let first = first_ascii_word_lower(text);
+    matches!(
+        first.as_str(),
+        "and"
+            | "or"
+            | "but"
+            | "so"
+            | "then"
+            | "because"
+            | "which"
+            | "that"
+            | "to"
+            | "for"
+            | "with"
+            | "plus"
+    )
+}
+
+fn ends_with_dangling_source_word(text: &str) -> bool {
+    let last = last_ascii_word_lower(text);
+    matches!(
+        last.as_str(),
+        "a" | "an"
+            | "the"
+            | "this"
+            | "that"
+            | "these"
+            | "those"
+            | "my"
+            | "your"
+            | "his"
+            | "her"
+            | "their"
+            | "our"
+            | "of"
+            | "to"
+            | "for"
+            | "with"
+            | "and"
+            | "or"
+            | "but"
+            | "because"
+            | "if"
+            | "when"
+            | "which"
+            | "who"
+            | "you"
+            | "i"
+            | "we"
+            | "they"
+    )
+}
+
+fn starts_with_subordinate_clause(text: &str) -> bool {
+    let first = first_ascii_word_lower(text);
+    matches!(
+        first.as_str(),
+        "if" | "when" | "because" | "although" | "while" | "once" | "unless"
+    )
 }
 
 fn build_batch_windows(
@@ -557,7 +740,7 @@ fn normalize_inline_text(raw: &str) -> String {
 mod tests {
     use super::{
         TranslationSegmentInput, TranslationTerminologyEntry, build_batch_windows,
-        normalize_segments, parse_batch_translation,
+        merge_dangling_source_segments, normalize_segments, parse_batch_translation,
     };
     use serde_json::json;
 
@@ -566,6 +749,15 @@ mod tests {
             segment: text.to_string(),
             start: 0.0,
             end: 1.0,
+            tokens: Vec::new(),
+        }
+    }
+
+    fn timed_seg(index: usize, text: &str) -> TranslationSegmentInput {
+        TranslationSegmentInput {
+            segment: text.to_string(),
+            start: index as f64,
+            end: index as f64 + 1.0,
             tokens: Vec::new(),
         }
     }
@@ -627,5 +819,47 @@ mod tests {
         let out = parse_batch_translation(value, &[1, 2]).expect("should parse full batch");
         assert_eq!(out.get(&1).map(String::as_str), Some("first"));
         assert_eq!(out.get(&2).map(String::as_str), Some("second"));
+    }
+
+    #[test]
+    fn merge_dangling_source_segments_keeps_translation_units_semantic() {
+        let normalized = normalize_segments(&[
+            timed_seg(
+                0,
+                "It's something I've been trying to do every week just to get a good idea of how I'm performing",
+            ),
+            timed_seg(1, "against the reference list of literally reviewing a"),
+            timed_seg(2, "high quality example that I see"),
+            timed_seg(3, "because sometimes your execution slips, you"),
+            timed_seg(
+                4,
+                "might skip every high quality example due to hesitation or maybe you choose weaker examples because you're not thinking straight.",
+            ),
+            timed_seg(
+                5,
+                "And it's also just a good exercise to rebuild belief in the system.",
+            ),
+            timed_seg(
+                6,
+                "If maybe you had a bad week and you're like, oh, this doesn't work anymore,",
+            ),
+            timed_seg(
+                7,
+                "but you can just actually look back at all the proper examples and see how it actually would have performed.",
+            ),
+        ]);
+
+        let merged = merge_dangling_source_segments(normalized);
+        let sources = merged
+            .iter()
+            .map(|segment| segment.source.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(sources.contains(
+            &"against the reference list of literally reviewing a high quality example that I see"
+        ));
+        assert!(sources.contains(&"because sometimes your execution slips, you might skip every high quality example due to hesitation or maybe you choose weaker examples because you're not thinking straight."));
+        assert!(sources.contains(&"If maybe you had a bad week and you're like, oh, this doesn't work anymore, but you can just actually look back at all the proper examples and see how it actually would have performed."));
+        assert_eq!(merged.len(), 5);
     }
 }

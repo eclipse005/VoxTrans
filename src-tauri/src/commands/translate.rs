@@ -126,10 +126,6 @@ pub struct Step5ArtifactMetaCommand {
     pub schema_version: u32,
     #[serde(default)]
     pub pipeline_version: String,
-    #[serde(default)]
-    pub model_fingerprint: String,
-    #[serde(default)]
-    pub settings_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -162,7 +158,7 @@ pub struct Step5QualitySummaryCommand {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub struct Step5QaMetricsCommand {
+pub struct Step6FinalCheckMetricsCommand {
     #[serde(default)]
     pub segment_total: usize,
     #[serde(default)]
@@ -353,23 +349,17 @@ pub struct BuildStep53TranslationPolishCommandResponse {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BuildStep54QaReportCommandRequest {
+pub struct BuildStep6FinalCheckCommandRequest {
     pub task_id: String,
     pub media_path: String,
     pub source_lang: String,
     pub target_lang: String,
     pub segments: Vec<BuildTranslationSegmentCommand>,
-    #[serde(default)]
-    pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
-    #[serde(default)]
-    pub model_fingerprint: String,
-    #[serde(default)]
-    pub settings_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BuildStep54QaReportCommandResponse {
+pub struct BuildStep6FinalCheckCommandResponse {
     pub task_id: String,
     pub media_path: String,
     pub source_lang: String,
@@ -383,64 +373,9 @@ pub struct BuildStep54QaReportCommandResponse {
     #[serde(default)]
     pub quality_summary: Step5QualitySummaryCommand,
     #[serde(default)]
-    pub metrics: Step5QaMetricsCommand,
+    pub metrics: Step6FinalCheckMetricsCommand,
     #[serde(default)]
     pub issues: Vec<Step5QualityIssueCommand>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildStep55QaRepairCommandRequest {
-    pub task_id: String,
-    pub media_path: String,
-    pub source_lang: String,
-    pub target_lang: String,
-    #[serde(default)]
-    pub theme_summary: String,
-    pub segments: Vec<BuildTranslationSegmentCommand>,
-    #[serde(default)]
-    pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
-    #[serde(default)]
-    pub issues: Vec<Step5QualityIssueCommand>,
-    #[serde(default)]
-    pub translate_api_key: String,
-    #[serde(default)]
-    pub translate_base_url: String,
-    #[serde(default)]
-    pub translate_model: String,
-    #[serde(default = "default_llm_concurrency")]
-    pub llm_concurrency: u32,
-    #[serde(default = "default_subtitle_length_reference")]
-    pub subtitle_length_reference: u32,
-    #[serde(default)]
-    pub model_fingerprint: String,
-    #[serde(default)]
-    pub settings_fingerprint: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildStep55QaRepairCommandResponse {
-    pub task_id: String,
-    pub media_path: String,
-    pub source_lang: String,
-    pub target_lang: String,
-    #[serde(default)]
-    pub schema_version: u32,
-    #[serde(default)]
-    pub pipeline_version: String,
-    #[serde(default)]
-    pub artifact_meta: Step5ArtifactMetaCommand,
-    #[serde(default)]
-    pub quality_summary: Step5QualitySummaryCommand,
-    pub segment_total: usize,
-    pub candidate_total: usize,
-    pub repaired_total: usize,
-    pub theme_summary: String,
-    pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
-    #[serde(default)]
-    pub issues: Vec<Step5QualityIssueCommand>,
-    pub segments: Vec<BuildTranslationSegmentCommand>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -743,16 +678,6 @@ pub async fn build_step_5_1_source_split_with_progress(
             on_progress,
         )
         .await?;
-    let model_fingerprint =
-        build_model_fingerprint(&request.translate_base_url, &request.translate_model);
-    let settings_fingerprint = build_settings_fingerprint(
-        &request.source_lang,
-        &request.target_lang,
-        request.llm_concurrency,
-        request.subtitle_max_words_per_segment,
-        request.subtitle_length_reference,
-    );
-
     Ok(BuildStep51SourceSplitCommandResponse {
         task_id: request.task_id,
         media_path: request.media_path,
@@ -763,8 +688,6 @@ pub async fn build_step_5_1_source_split_with_progress(
         artifact_meta: Step5ArtifactMetaCommand {
             schema_version: step5_schema_version(),
             pipeline_version: step5_pipeline_version().to_string(),
-            model_fingerprint,
-            settings_fingerprint,
         },
         quality_summary: Step5QualitySummaryCommand {
             passed: service_response.parent_total > 0 && service_response.part_total > 0,
@@ -894,16 +817,6 @@ pub async fn build_step_5_2_translation_align_with_progress(
             on_progress,
         )
         .await?;
-    let model_fingerprint =
-        build_model_fingerprint(&request.translate_base_url, &request.translate_model);
-    let settings_fingerprint = build_settings_fingerprint(
-        &request.source_lang,
-        &request.target_lang,
-        request.llm_concurrency,
-        0,
-        0,
-    );
-
     Ok(BuildStep52TranslationAlignCommandResponse {
         task_id: request.task_id,
         media_path: request.media_path,
@@ -914,8 +827,6 @@ pub async fn build_step_5_2_translation_align_with_progress(
         artifact_meta: Step5ArtifactMetaCommand {
             schema_version: step5_schema_version(),
             pipeline_version: step5_pipeline_version().to_string(),
-            model_fingerprint,
-            settings_fingerprint,
         },
         quality_summary: summarize_step52_quality(&service_response.parents),
         theme_summary: request.theme_summary.trim().to_string(),
@@ -1044,15 +955,6 @@ pub async fn build_step_5_3_translation_polish_with_progress(
         )
         .await?;
 
-    let model_fingerprint =
-        build_model_fingerprint(&request.translate_base_url, &request.translate_model);
-    let settings_fingerprint = build_settings_fingerprint(
-        &request.source_lang,
-        &request.target_lang,
-        request.llm_concurrency,
-        0,
-        request.subtitle_length_reference,
-    );
     let quality_summary = summarize_step53_quality(&service_response.segments);
     Ok(BuildStep53TranslationPolishCommandResponse {
         task_id: request.task_id,
@@ -1064,8 +966,6 @@ pub async fn build_step_5_3_translation_polish_with_progress(
         artifact_meta: Step5ArtifactMetaCommand {
             schema_version: step5_schema_version(),
             pipeline_version: step5_pipeline_version().to_string(),
-            model_fingerprint,
-            settings_fingerprint,
         },
         quality_summary,
         batch_size: service_response.batch_size,
@@ -1097,9 +997,9 @@ pub async fn build_step_5_3_translation_polish_with_progress(
 }
 
 #[tauri::command]
-pub async fn build_step_5_4_qa_report(
-    request: BuildStep54QaReportCommandRequest,
-) -> Result<BuildStep54QaReportCommandResponse, String> {
+pub async fn build_step_6_final_check(
+    request: BuildStep6FinalCheckCommandRequest,
+) -> Result<BuildStep6FinalCheckCommandResponse, String> {
     if request.task_id.trim().is_empty() {
         return Err("taskId is required".to_string());
     }
@@ -1115,20 +1015,9 @@ pub async fn build_step_5_4_qa_report(
     if request.segments.is_empty() {
         return Err("segments is required".to_string());
     }
-    let terminology_entries = normalize_command_terminology_entries(request.terminology_entries);
-    let service_response = crate::services::subtitle_step5::build_step_5_4_qa_report(
-        crate::services::subtitle_step5::BuildStep5QaReportRequest {
+    let service_response = crate::services::subtitle_step5::build_step_6_final_check(
+        crate::services::subtitle_step5::BuildStep6FinalCheckRequest {
             target_lang: request.target_lang.clone(),
-            terminology_entries: terminology_entries
-                .iter()
-                .map(
-                    |entry| crate::services::subtitle_step5::Step5TerminologyEntry {
-                        source: entry.source.clone(),
-                        target: entry.target.clone(),
-                        note: entry.note.clone(),
-                    },
-                )
-                .collect(),
             segments: request
                 .segments
                 .iter()
@@ -1154,7 +1043,7 @@ pub async fn build_step_5_4_qa_report(
         },
     )?;
 
-    Ok(BuildStep54QaReportCommandResponse {
+    Ok(BuildStep6FinalCheckCommandResponse {
         task_id: request.task_id,
         media_path: request.media_path,
         source_lang: request.source_lang,
@@ -1164,8 +1053,6 @@ pub async fn build_step_5_4_qa_report(
         artifact_meta: Step5ArtifactMetaCommand {
             schema_version: step5_schema_version(),
             pipeline_version: step5_pipeline_version().to_string(),
-            model_fingerprint: normalize_inline_marker(&request.model_fingerprint),
-            settings_fingerprint: normalize_inline_marker(&request.settings_fingerprint),
         },
         quality_summary: Step5QualitySummaryCommand {
             passed: service_response.passed,
@@ -1173,7 +1060,7 @@ pub async fn build_step_5_4_qa_report(
             issue_count: service_response.issue_count,
             soft_score: service_response.soft_score,
         },
-        metrics: Step5QaMetricsCommand {
+        metrics: Step6FinalCheckMetricsCommand {
             segment_total: service_response.metrics.segment_total,
             empty_count: service_response.metrics.empty_count,
             ellipsis_tail_count: service_response.metrics.ellipsis_tail_count,
@@ -1193,184 +1080,6 @@ pub async fn build_step_5_4_qa_report(
                 message: issue.message,
             })
             .collect(),
-    })
-}
-
-pub async fn build_step_5_5_qa_repair_with_progress(
-    mut request: BuildStep55QaRepairCommandRequest,
-    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
-) -> Result<BuildStep55QaRepairCommandResponse, String> {
-    if request.task_id.trim().is_empty() {
-        return Err("taskId is required".to_string());
-    }
-    if request.media_path.trim().is_empty() {
-        return Err("mediaPath is required".to_string());
-    }
-    if request.source_lang.trim().is_empty() {
-        return Err("sourceLang is required".to_string());
-    }
-    if request.target_lang.trim().is_empty() {
-        return Err("targetLang is required".to_string());
-    }
-    if request.segments.is_empty() {
-        return Err("segments is required".to_string());
-    }
-
-    hydrate_translate_llm_settings(
-        &mut request.translate_api_key,
-        &mut request.translate_base_url,
-        &mut request.translate_model,
-        &mut request.llm_concurrency,
-    )?;
-
-    let terminology_entries = normalize_command_terminology_entries(request.terminology_entries);
-    let service_response = crate::services::subtitle_step5::build_step_5_5_qa_repair_with_progress(
-        crate::services::subtitle_step5::BuildStep5QaRepairRequest {
-            task_id: request.task_id.clone(),
-            media_path: request.media_path.clone(),
-            source_lang: request.source_lang.clone(),
-            target_lang: request.target_lang.clone(),
-            theme_summary: request.theme_summary.trim().to_string(),
-            terminology_entries: terminology_entries
-                .iter()
-                .map(
-                    |entry| crate::services::subtitle_step5::Step5TerminologyEntry {
-                        source: entry.source.clone(),
-                        target: entry.target.clone(),
-                        note: entry.note.clone(),
-                    },
-                )
-                .collect(),
-            segments: request
-                .segments
-                .iter()
-                .map(
-                    |segment| crate::services::subtitle_step5::Step5FinalSegment {
-                        segment_id: segment.segment_id,
-                        start: segment.start,
-                        end: segment.end,
-                        source: segment.source.clone(),
-                        translation: segment.translation.clone(),
-                        tokens: segment
-                            .tokens
-                            .iter()
-                            .map(|token| crate::services::subtitle_step5::Step5Token {
-                                text: token.text.clone(),
-                                start: token.start,
-                                end: token.end,
-                            })
-                            .collect(),
-                    },
-                )
-                .collect(),
-            issues: request
-                .issues
-                .iter()
-                .map(|issue| crate::services::subtitle_step5::Step5QualityIssue {
-                    rule_id: issue.rule_id.clone(),
-                    severity: issue.severity.clone(),
-                    segment_id: issue.segment_id,
-                    part_id: issue.part_id,
-                    message: issue.message.clone(),
-                })
-                .collect(),
-            translate_api_key: request.translate_api_key,
-            translate_base_url: request.translate_base_url.clone(),
-            translate_model: request.translate_model.clone(),
-            llm_concurrency: request.llm_concurrency,
-            subtitle_length_reference: request.subtitle_length_reference,
-        },
-        on_progress,
-    )
-    .await?;
-
-    let default_model_fingerprint =
-        build_model_fingerprint(&request.translate_base_url, &request.translate_model);
-    let default_settings_fingerprint = build_settings_fingerprint(
-        &request.source_lang,
-        &request.target_lang,
-        request.llm_concurrency,
-        0,
-        request.subtitle_length_reference,
-    );
-    let model_fingerprint = normalize_inline_marker(&request.model_fingerprint);
-    let settings_fingerprint = normalize_inline_marker(&request.settings_fingerprint);
-    let model_fingerprint = if model_fingerprint.is_empty() {
-        default_model_fingerprint
-    } else {
-        model_fingerprint
-    };
-    let settings_fingerprint = if settings_fingerprint.is_empty() {
-        default_settings_fingerprint
-    } else {
-        settings_fingerprint
-    };
-
-    let segments = service_response
-        .segments
-        .into_iter()
-        .map(|segment| BuildTranslationSegmentCommand {
-            segment_id: segment.segment_id,
-            start: segment.start,
-            end: segment.end,
-            source: segment.source,
-            translation: segment.translation,
-            tokens: segment
-                .tokens
-                .into_iter()
-                .map(|token| SegmentTokenForTerminologyCommand {
-                    text: token.text,
-                    start: token.start,
-                    end: token.end,
-                })
-                .collect(),
-        })
-        .collect::<Vec<_>>();
-    let quality_summary = summarize_step53_quality(
-        &segments
-            .iter()
-            .map(
-                |segment| crate::services::subtitle_step5::Step5FinalSegment {
-                    segment_id: segment.segment_id,
-                    start: segment.start,
-                    end: segment.end,
-                    source: segment.source.clone(),
-                    translation: segment.translation.clone(),
-                    tokens: segment
-                        .tokens
-                        .iter()
-                        .map(|token| crate::services::subtitle_step5::Step5Token {
-                            text: token.text.clone(),
-                            start: token.start,
-                            end: token.end,
-                        })
-                        .collect(),
-                },
-            )
-            .collect::<Vec<_>>(),
-    );
-
-    Ok(BuildStep55QaRepairCommandResponse {
-        task_id: request.task_id,
-        media_path: request.media_path,
-        source_lang: request.source_lang,
-        target_lang: request.target_lang,
-        schema_version: step5_schema_version(),
-        pipeline_version: step5_pipeline_version().to_string(),
-        artifact_meta: Step5ArtifactMetaCommand {
-            schema_version: step5_schema_version(),
-            pipeline_version: step5_pipeline_version().to_string(),
-            model_fingerprint,
-            settings_fingerprint,
-        },
-        quality_summary,
-        segment_total: service_response.segment_total,
-        candidate_total: service_response.candidate_total,
-        repaired_total: service_response.repaired_total,
-        theme_summary: request.theme_summary.trim().to_string(),
-        terminology_entries,
-        issues: request.issues,
-        segments,
     })
 }
 
@@ -2112,31 +1821,22 @@ fn run_build_step5_mode_from_args(args: &[String]) -> Result<(), String> {
         serde_json::to_string_pretty(&step53).map_err(|err| err.to_string())?,
     )
     .map_err(|err| err.to_string())?;
-    let step54 = tauri::async_runtime::block_on(build_step_5_4_qa_report(
-        BuildStep54QaReportCommandRequest {
+    let step6 = tauri::async_runtime::block_on(build_step_6_final_check(
+        BuildStep6FinalCheckCommandRequest {
             task_id,
             media_path,
             source_lang,
             target_lang,
             segments: step53.segments.clone(),
-            terminology_entries: step53.terminology_entries.clone(),
-            model_fingerprint: build_model_fingerprint(&translate_base_url, &translate_model),
-            settings_fingerprint: build_settings_fingerprint(
-                &step53.source_lang,
-                &step53.target_lang,
-                llm_concurrency,
-                subtitle_max_words_per_segment,
-                subtitle_length_reference,
-            ),
         },
     ))?;
-    let step54_path = artifact_dir.join("step_05_04_qa_report.json");
+    let step6_path = artifact_dir.join("step_06_final_check.json");
     std::fs::write(
-        &step54_path,
-        serde_json::to_string_pretty(&step54).map_err(|err| err.to_string())?,
+        &step6_path,
+        serde_json::to_string_pretty(&step6).map_err(|err| err.to_string())?,
     )
     .map_err(|err| err.to_string())?;
-    println!("{}", step54_path.display());
+    println!("{}", step6_path.display());
     Ok(())
 }
 
@@ -2338,31 +2038,6 @@ pub fn step5_pipeline_version() -> &'static str {
     "step5.v2"
 }
 
-pub fn build_model_fingerprint(base_url: &str, model: &str) -> String {
-    format!(
-        "model:{}|base:{}",
-        normalize_inline_marker(model),
-        normalize_inline_marker(base_url)
-    )
-}
-
-pub fn build_settings_fingerprint(
-    source_lang: &str,
-    target_lang: &str,
-    llm_concurrency: u32,
-    subtitle_max_words_per_segment: u32,
-    subtitle_length_reference: u32,
-) -> String {
-    format!(
-        "src:{}|tgt:{}|cc:{}|w:{}|len:{}",
-        normalize_inline_marker(source_lang),
-        normalize_inline_marker(target_lang),
-        llm_concurrency,
-        subtitle_max_words_per_segment,
-        subtitle_length_reference
-    )
-}
-
 fn summarize_step52_quality(
     parents: &[crate::services::subtitle_step5::Step5AlignedParent],
 ) -> Step5QualitySummaryCommand {
@@ -2418,16 +2093,6 @@ fn summarize_step53_quality(
 fn is_tail_ellipsis(text: &str) -> bool {
     let trimmed = text.trim_end();
     trimmed.ends_with("...") || trimmed.ends_with('…')
-}
-
-fn normalize_inline_marker(raw: &str) -> String {
-    raw.replace('\r', " ")
-        .replace('\n', " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim()
-        .to_string()
 }
 
 #[cfg(test)]

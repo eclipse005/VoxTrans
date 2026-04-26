@@ -1,6 +1,9 @@
 use super::WordToken;
 
-pub(super) fn recursive_balance_split(words: &[WordToken], max_words: usize) -> Vec<Vec<WordToken>> {
+pub(super) fn recursive_balance_split(
+    words: &[WordToken],
+    max_words: usize,
+) -> Vec<Vec<WordToken>> {
     if words.len() <= max_words {
         return vec![words.to_vec()];
     }

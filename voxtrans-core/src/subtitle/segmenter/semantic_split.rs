@@ -1,7 +1,10 @@
 use super::WordToken;
 use crate::subtitle::text_rules::should_split_after_terminal_token;
 
-pub(super) fn split_by_semantic_boundary(words: &[WordToken], max_pause_ms: f64) -> Vec<Vec<WordToken>> {
+pub(super) fn split_by_semantic_boundary(
+    words: &[WordToken],
+    max_pause_ms: f64,
+) -> Vec<Vec<WordToken>> {
     let mut segments: Vec<Vec<WordToken>> = Vec::new();
     let mut current: Vec<WordToken> = Vec::new();
 

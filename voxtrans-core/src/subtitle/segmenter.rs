@@ -290,7 +290,10 @@ fn should_merge_time_pair(left: &str, right: &str) -> bool {
         return false;
     }
     let parts: Vec<&str> = prefix.split(':').collect();
-    if parts.iter().any(|part| part.is_empty() || !part.chars().all(|c| c.is_ascii_digit())) {
+    if parts
+        .iter()
+        .any(|part| part.is_empty() || !part.chars().all(|c| c.is_ascii_digit()))
+    {
         return false;
     }
     !right.is_empty()
@@ -369,7 +372,11 @@ fn is_numeric_prefix_symbol(token: &str) -> bool {
 }
 
 fn starts_with_numeric_value(token: &str) -> bool {
-    token.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+    token
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
 }
 
 fn is_numeric_value(token: &str) -> bool {
@@ -387,16 +394,12 @@ fn is_numeric_value(token: &str) -> bool {
 
 fn is_numeric_unit_suffix(token: &str) -> bool {
     const KNOWN_UNITS: &[&str] = &[
-        "k", "m", "b", "t",
-        "x", "s", "ms", "kg", "g", "mg", "lb", "lbs",
-        "km", "m", "cm", "mm", "ft", "in",
-        "h", "hr", "hrs", "min", "mins",
-        "usd", "eur", "gbp", "jpy", "cny",
-        "bp", "bps",
+        "k", "m", "b", "t", "x", "s", "ms", "kg", "g", "mg", "lb", "lbs", "km", "m", "cm", "mm",
+        "ft", "in", "h", "hr", "hrs", "min", "mins", "usd", "eur", "gbp", "jpy", "cny", "bp",
+        "bps",
     ];
     let lower = token.trim().to_ascii_lowercase();
-    !lower.is_empty()
-        && KNOWN_UNITS.contains(&lower.as_str())
+    !lower.is_empty() && KNOWN_UNITS.contains(&lower.as_str())
 }
 
 fn round_millis(value: f64) -> f64 {
@@ -405,13 +408,21 @@ fn round_millis(value: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_word_tokens, WordToken};
+    use super::{WordToken, normalize_word_tokens};
 
     #[test]
     fn merges_am_pm_pairs() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.1, word: "p".to_string() },
-            WordToken { start: 0.1, end: 0.2, word: ".m.".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.1,
+                word: "p".to_string(),
+            },
+            WordToken {
+                start: 0.1,
+                end: 0.2,
+                word: ".m.".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -424,9 +435,21 @@ mod tests {
     #[test]
     fn merges_decimal_percentage_pairs() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.1, word: "2".to_string() },
-            WordToken { start: 0.1, end: 0.15, word: ".".to_string() },
-            WordToken { start: 0.15, end: 0.3, word: "5%".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.1,
+                word: "2".to_string(),
+            },
+            WordToken {
+                start: 0.1,
+                end: 0.15,
+                word: ".".to_string(),
+            },
+            WordToken {
+                start: 0.15,
+                end: 0.3,
+                word: "5%".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -439,9 +462,21 @@ mod tests {
     #[test]
     fn merges_time_pairs() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.1, word: "6".to_string() },
-            WordToken { start: 0.1, end: 0.15, word: ":".to_string() },
-            WordToken { start: 0.15, end: 0.25, word: "20".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.1,
+                word: "6".to_string(),
+            },
+            WordToken {
+                start: 0.1,
+                end: 0.15,
+                word: ":".to_string(),
+            },
+            WordToken {
+                start: 0.15,
+                end: 0.25,
+                word: "20".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -454,11 +489,31 @@ mod tests {
     #[test]
     fn merges_multi_part_times_across_multiple_passes() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.1, word: "12".to_string() },
-            WordToken { start: 0.1, end: 0.15, word: ":".to_string() },
-            WordToken { start: 0.15, end: 0.25, word: "30".to_string() },
-            WordToken { start: 0.25, end: 0.3, word: ":".to_string() },
-            WordToken { start: 0.3, end: 0.4, word: "45".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.1,
+                word: "12".to_string(),
+            },
+            WordToken {
+                start: 0.1,
+                end: 0.15,
+                word: ":".to_string(),
+            },
+            WordToken {
+                start: 0.15,
+                end: 0.25,
+                word: "30".to_string(),
+            },
+            WordToken {
+                start: 0.25,
+                end: 0.3,
+                word: ":".to_string(),
+            },
+            WordToken {
+                start: 0.3,
+                end: 0.4,
+                word: "45".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -471,9 +526,21 @@ mod tests {
     #[test]
     fn merges_thousands_separator_pairs() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.1, word: "1".to_string() },
-            WordToken { start: 0.1, end: 0.12, word: ",".to_string() },
-            WordToken { start: 0.12, end: 0.2, word: "000".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.1,
+                word: "1".to_string(),
+            },
+            WordToken {
+                start: 0.1,
+                end: 0.12,
+                word: ",".to_string(),
+            },
+            WordToken {
+                start: 0.12,
+                end: 0.2,
+                word: "000".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -486,11 +553,31 @@ mod tests {
     #[test]
     fn merges_date_slash_pairs() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.1, word: "03".to_string() },
-            WordToken { start: 0.1, end: 0.12, word: "/".to_string() },
-            WordToken { start: 0.12, end: 0.2, word: "23".to_string() },
-            WordToken { start: 0.2, end: 0.22, word: "/".to_string() },
-            WordToken { start: 0.22, end: 0.32, word: "2026".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.1,
+                word: "03".to_string(),
+            },
+            WordToken {
+                start: 0.1,
+                end: 0.12,
+                word: "/".to_string(),
+            },
+            WordToken {
+                start: 0.12,
+                end: 0.2,
+                word: "23".to_string(),
+            },
+            WordToken {
+                start: 0.2,
+                end: 0.22,
+                word: "/".to_string(),
+            },
+            WordToken {
+                start: 0.22,
+                end: 0.32,
+                word: "2026".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -503,11 +590,31 @@ mod tests {
     #[test]
     fn merges_date_hyphen_pairs() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.1, word: "2026".to_string() },
-            WordToken { start: 0.1, end: 0.12, word: "-".to_string() },
-            WordToken { start: 0.12, end: 0.2, word: "03".to_string() },
-            WordToken { start: 0.2, end: 0.22, word: "-".to_string() },
-            WordToken { start: 0.22, end: 0.3, word: "23".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.1,
+                word: "2026".to_string(),
+            },
+            WordToken {
+                start: 0.1,
+                end: 0.12,
+                word: "-".to_string(),
+            },
+            WordToken {
+                start: 0.12,
+                end: 0.2,
+                word: "03".to_string(),
+            },
+            WordToken {
+                start: 0.2,
+                end: 0.22,
+                word: "-".to_string(),
+            },
+            WordToken {
+                start: 0.22,
+                end: 0.3,
+                word: "23".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -520,9 +627,21 @@ mod tests {
     #[test]
     fn merges_fraction_pairs() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.1, word: "3".to_string() },
-            WordToken { start: 0.1, end: 0.12, word: "/".to_string() },
-            WordToken { start: 0.12, end: 0.2, word: "4".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.1,
+                word: "3".to_string(),
+            },
+            WordToken {
+                start: 0.1,
+                end: 0.12,
+                word: "/".to_string(),
+            },
+            WordToken {
+                start: 0.12,
+                end: 0.2,
+                word: "4".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -535,8 +654,16 @@ mod tests {
     #[test]
     fn merges_currency_prefix_pairs() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.05, word: "$".to_string() },
-            WordToken { start: 0.05, end: 0.2, word: "12.5".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.05,
+                word: "$".to_string(),
+            },
+            WordToken {
+                start: 0.05,
+                end: 0.2,
+                word: "12.5".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -549,9 +676,21 @@ mod tests {
     #[test]
     fn keeps_currency_prefix_separate_from_previous_word() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.1, word: "cost".to_string() },
-            WordToken { start: 0.1, end: 0.12, word: "$".to_string() },
-            WordToken { start: 0.12, end: 0.2, word: "10".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.1,
+                word: "cost".to_string(),
+            },
+            WordToken {
+                start: 0.1,
+                end: 0.12,
+                word: "$".to_string(),
+            },
+            WordToken {
+                start: 0.12,
+                end: 0.2,
+                word: "10".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -565,10 +704,26 @@ mod tests {
     #[test]
     fn merges_currency_amount_with_thousands_separator() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.02, word: "$".to_string() },
-            WordToken { start: 0.02, end: 0.1, word: "1".to_string() },
-            WordToken { start: 0.1, end: 0.12, word: ",".to_string() },
-            WordToken { start: 0.12, end: 0.2, word: "000".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.02,
+                word: "$".to_string(),
+            },
+            WordToken {
+                start: 0.02,
+                end: 0.1,
+                word: "1".to_string(),
+            },
+            WordToken {
+                start: 0.1,
+                end: 0.12,
+                word: ",".to_string(),
+            },
+            WordToken {
+                start: 0.12,
+                end: 0.2,
+                word: "000".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -581,8 +736,16 @@ mod tests {
     #[test]
     fn merges_numeric_unit_suffix_pairs() {
         let words = vec![
-            WordToken { start: 0.0, end: 0.15, word: "10".to_string() },
-            WordToken { start: 0.15, end: 0.22, word: "kg".to_string() },
+            WordToken {
+                start: 0.0,
+                end: 0.15,
+                word: "10".to_string(),
+            },
+            WordToken {
+                start: 0.15,
+                end: 0.22,
+                word: "kg".to_string(),
+            },
         ];
 
         let normalized = normalize_word_tokens(words);
@@ -613,7 +776,7 @@ mod tests {
             WordToken {
                 start: 0.0,
                 end: 0.3,
-                word: "trades".to_string(),
+                word: "notes".to_string(),
             },
             WordToken {
                 start: 0.3,
@@ -624,7 +787,7 @@ mod tests {
 
         let normalized = normalize_word_tokens(words);
         assert_eq!(normalized.len(), 1);
-        assert_eq!(normalized[0].word, "trades.");
+        assert_eq!(normalized[0].word, "notes.");
         assert_eq!(normalized[0].start, 0.0);
         assert_eq!(normalized[0].end, 0.35);
     }

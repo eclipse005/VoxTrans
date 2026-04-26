@@ -1,5 +1,5 @@
-use super::WordToken;
 use super::super::srt::{SegmentWord, SubtitleSegment};
+use super::WordToken;
 
 pub(super) fn segment_from_words(words: &[WordToken]) -> SubtitleSegment {
     let start = words.first().map(|w| w.start).unwrap_or(0.0);

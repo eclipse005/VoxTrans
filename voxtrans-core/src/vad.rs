@@ -4,8 +4,8 @@ use std::time::Instant;
 
 use serde::Deserialize;
 
-use crate::transcribe_engine::AudioSegment;
 use crate::binary::resolve_bundled_or_path;
+use crate::transcribe_engine::AudioSegment;
 
 #[derive(Debug, Deserialize)]
 struct VadOutput {
@@ -79,7 +79,9 @@ pub(crate) fn build_segments_from_vad(
     Ok((segments, vad_elapsed_sec))
 }
 
-fn detect_speech_with_fireredvad(audio_path: &Path) -> Result<VadOutput, Box<dyn std::error::Error>> {
+fn detect_speech_with_fireredvad(
+    audio_path: &Path,
+) -> Result<VadOutput, Box<dyn std::error::Error>> {
     let output = fireredvad_command().arg(audio_path).output()?;
     if !output.status.success() {
         return Err(format!(

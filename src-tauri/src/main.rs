@@ -39,7 +39,7 @@ fn main() {
             commands::translate::build_step_5_1_source_split,
             commands::translate::build_step_5_2_translation_align,
             commands::translate::build_step_5_3_translation_polish,
-            commands::translate::build_step_5_4_qa_report,
+            commands::translate::build_step_6_final_check,
             commands::translate::test_translate_llm,
             commands::file::get_file_size,
             commands::system::open_in_explorer,

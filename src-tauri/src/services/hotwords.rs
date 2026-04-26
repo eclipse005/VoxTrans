@@ -62,7 +62,6 @@ pub struct BuildHotwordCorrectionRequest {
     pub task_id: String,
     pub media_path: String,
     pub source_lang: String,
-    pub input_fingerprint: String,
     pub words: Vec<WordTokenDto>,
     pub hotwords: Vec<HotwordEntry>,
     pub enabled: bool,
@@ -87,7 +86,6 @@ pub struct BuildHotwordCorrectionResponse {
     pub task_id: String,
     pub media_path: String,
     pub source_lang: String,
-    pub input_fingerprint: String,
     pub enabled: bool,
     pub hotwords: Vec<NormalizedHotword>,
     pub candidates: Vec<HotwordCandidate>,
@@ -100,25 +98,12 @@ pub struct BuildHotwordCorrectionResponse {
 fn build_hotword_correction(
     request: BuildHotwordCorrectionRequest,
 ) -> BuildHotwordCorrectionResponse {
-    let input_fingerprint = if request.input_fingerprint.trim().is_empty() {
-        hotword_input_fingerprint(
-            &request.task_id,
-            &request.media_path,
-            &request.source_lang,
-            &request.words,
-            request.enabled,
-            &request.hotwords,
-        )
-    } else {
-        request.input_fingerprint.clone()
-    };
     let normalized_hotwords = normalize_hotwords(&request.hotwords);
     if !request.enabled || normalized_hotwords.is_empty() || request.words.is_empty() {
         return BuildHotwordCorrectionResponse {
             task_id: request.task_id,
             media_path: request.media_path,
             source_lang: request.source_lang,
-            input_fingerprint,
             enabled: false,
             hotwords: normalized_hotwords,
             candidates: Vec::new(),
@@ -134,7 +119,6 @@ fn build_hotword_correction(
             task_id: request.task_id,
             media_path: request.media_path,
             source_lang: request.source_lang,
-            input_fingerprint,
             enabled: true,
             hotwords: normalized_hotwords,
             candidates,
@@ -174,7 +158,6 @@ fn build_hotword_correction(
         task_id: request.task_id,
         media_path: request.media_path,
         source_lang: request.source_lang,
-        input_fingerprint,
         enabled: true,
         hotwords: normalized_hotwords,
         candidates,
@@ -187,25 +170,12 @@ fn build_hotword_correction(
 pub async fn build_hotword_correction_async(
     request: BuildHotwordCorrectionRequest,
 ) -> BuildHotwordCorrectionResponse {
-    let input_fingerprint = if request.input_fingerprint.trim().is_empty() {
-        hotword_input_fingerprint(
-            &request.task_id,
-            &request.media_path,
-            &request.source_lang,
-            &request.words,
-            request.enabled,
-            &request.hotwords,
-        )
-    } else {
-        request.input_fingerprint.clone()
-    };
     let normalized_hotwords = normalize_hotwords(&request.hotwords);
     if !request.enabled || normalized_hotwords.is_empty() || request.words.is_empty() {
         return BuildHotwordCorrectionResponse {
             task_id: request.task_id,
             media_path: request.media_path,
             source_lang: request.source_lang,
-            input_fingerprint,
             enabled: false,
             hotwords: normalized_hotwords,
             candidates: Vec::new(),
@@ -221,7 +191,6 @@ pub async fn build_hotword_correction_async(
             task_id: request.task_id,
             media_path: request.media_path,
             source_lang: request.source_lang,
-            input_fingerprint,
             enabled: true,
             hotwords: normalized_hotwords,
             candidates,
@@ -246,7 +215,6 @@ pub async fn build_hotword_correction_async(
         task_id: request.task_id,
         media_path: request.media_path,
         source_lang: request.source_lang,
-        input_fingerprint,
         enabled: true,
         hotwords: normalized_hotwords,
         candidates,
@@ -297,10 +265,9 @@ async fn review_hotword_candidates_with_llm(
             .await
         {
             Ok(result) => result.value,
-            Err(err) => errored_hotword_decision(
-                candidate,
-                format!("llm_error:{llm_id}:{}", err.message),
-            ),
+            Err(err) => {
+                errored_hotword_decision(candidate, format!("llm_error:{llm_id}:{}", err.message))
+            }
         };
         decisions.push(decision);
     }
@@ -402,83 +369,6 @@ fn build_hotword_decision_prompt(candidate: &HotwordCandidate) -> String {
         target = candidate.target,
         source_kind = candidate.source_kind,
     )
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct HotwordInputFingerprintPayload<'a> {
-    task_id: &'a str,
-    media_path: &'a str,
-    source_lang: &'a str,
-    words: Vec<HotwordInputFingerprintWord<'a>>,
-    enabled: bool,
-    hotwords: Vec<HotwordInputFingerprintHotword>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct HotwordInputFingerprintWord<'a> {
-    start: f64,
-    end: f64,
-    word: &'a str,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct HotwordInputFingerprintHotword {
-    word: String,
-    aliases: Vec<String>,
-    lang: HotwordLang,
-    note: String,
-}
-
-pub fn hotword_input_fingerprint(
-    task_id: &str,
-    media_path: &str,
-    source_lang: &str,
-    words: &[WordTokenDto],
-    enabled: bool,
-    hotwords: &[HotwordEntry],
-) -> String {
-    let payload = HotwordInputFingerprintPayload {
-        task_id: task_id.trim(),
-        media_path: media_path.trim(),
-        source_lang: source_lang.trim(),
-        words: words
-            .iter()
-            .map(|word| HotwordInputFingerprintWord {
-                start: word.start,
-                end: word.end,
-                word: word.word.as_str(),
-            })
-            .collect(),
-        enabled,
-        hotwords: hotwords
-            .iter()
-            .map(|entry| {
-                let normalized = normalize_hotword(entry);
-                HotwordInputFingerprintHotword {
-                    word: normalized.word,
-                    aliases: normalized.aliases,
-                    lang: normalized.lang,
-                    note: entry.note.as_deref().unwrap_or_default().trim().to_string(),
-                }
-            })
-            .filter(|entry| !entry.word.is_empty())
-            .collect(),
-    };
-    let serialized =
-        serde_json::to_vec(&payload).unwrap_or_else(|_| b"hotword_fingerprint_error".to_vec());
-    format!("{:016x}", fnv1a64(&serialized))
-}
-
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
 }
 
 pub fn recall_hotword_candidates(
@@ -797,47 +687,136 @@ fn recall_non_chinese_fuzzy(
     if target_tokens.is_empty() {
         return;
     }
+    let target_collapsed = normalized_collapsed_token(&hotword.word);
+    if target_collapsed.is_empty() {
+        return;
+    }
+    let target_collapsed_len = target_collapsed.len();
+    let min_collapsed_len = if target_tokens.len() == 1 {
+        target_collapsed_len
+    } else {
+        target_collapsed_len.saturating_sub(1)
+    };
+    let max_span_tokens = if target_tokens.len() == 1 {
+        (target_collapsed_len + 1).min(8).max(1)
+    } else {
+        target_tokens.len().min(8) + 1
+    };
 
     for start in 0..words.len() {
-        for token_len in 1..=target_tokens.len() {
+        for token_len in 1..=max_span_tokens {
             let end = start + token_len - 1;
             if end >= words.len() {
                 continue;
             }
             let window = normalized_window_tokens(words, start, end);
-            if fuzzy_tokens_match(&window, &target_tokens) {
+            let collapsed_window = normalized_collapsed_window_tokens(words, start, end);
+            if collapsed_window.len() < min_collapsed_len
+                || collapsed_window.len() > target_collapsed_len + 1
+            {
+                continue;
+            }
+            if fuzzy_tokens_match(
+                &window,
+                &target_tokens,
+                &target_collapsed,
+                collapsed_window.len(),
+            ) || fuzzy_collapsed_match(
+                &collapsed_window,
+                &target_collapsed,
+                target_tokens.len() == 1 && window.len() > 1,
+                target_collapsed_len,
+            ) {
                 push_candidate(words, start, end, hotword, "fuzzy", candidates, seen);
             }
         }
     }
 }
 
-fn fuzzy_tokens_match(source_tokens: &[String], target_tokens: &[String]) -> bool {
-    if source_tokens == target_tokens || source_tokens.is_empty() || target_tokens.is_empty() {
+fn fuzzy_tokens_match(
+    source_tokens: &[String],
+    target_tokens: &[String],
+    target_collapsed: &str,
+    source_collapsed_len: usize,
+) -> bool {
+    if source_tokens == target_tokens
+        || source_tokens.is_empty()
+        || target_tokens.is_empty()
+        || source_tokens.len() != target_tokens.len()
+    {
         return false;
     }
-    if source_tokens.len() != target_tokens.len() {
+    if target_collapsed.len() < 4 {
         return false;
     }
-
-    source_tokens
+    if source_tokens
         .iter()
         .zip(target_tokens.iter())
         .all(|(source, target)| fuzzy_ascii_token_match(source, target))
+    {
+        return true;
+    }
+
+    // Secondary fallback: keep one short tokenization tolerant if combined string is near target.
+    if source_tokens.len() <= 1 || source_collapsed_len < 4 {
+        return false;
+    }
+    let source_collapsed = source_tokens.join("");
+    if source_collapsed.len().abs_diff(target_collapsed.len()) > 1 {
+        return false;
+    }
+    levenshtein_distance_at_most(&source_collapsed, target_collapsed, 1)
+}
+
+fn fuzzy_collapsed_match(
+    source_collapsed: &str,
+    target_collapsed: &str,
+    allow_exact_spanning_mismatch: bool,
+    target_collapsed_len: usize,
+) -> bool {
+    if source_collapsed.is_empty() || target_collapsed_len < 4 {
+        return false;
+    }
+    if !allow_exact_spanning_mismatch && source_collapsed.len() == target_collapsed.len() {
+        return false;
+    }
+    let length_delta = source_collapsed.len().abs_diff(target_collapsed_len);
+    if length_delta == 0 {
+        source_collapsed == target_collapsed
+    } else if length_delta <= 1 {
+        levenshtein_distance_at_most(source_collapsed, target_collapsed, 1)
+    } else {
+        false
+    }
 }
 
 fn fuzzy_ascii_token_match(source: &str, target: &str) -> bool {
-    if source == target || source.len() < 4 || target.len() < 4 {
+    if source.len() < 4 || target.len() < 4 {
         return false;
+    }
+    if source == target {
+        return true;
     }
     if !source.is_ascii() || !target.is_ascii() {
         return false;
     }
     let length_delta = source.len().abs_diff(target.len());
-    if length_delta > 1 {
+    if length_delta > 2 {
         return false;
     }
-    levenshtein_distance_at_most(source, target, 1)
+    levenshtein_distance_at_most(source, target, 2)
+}
+
+fn normalized_collapsed_window_tokens(words: &[WordTokenDto], start: usize, end: usize) -> String {
+    let mut out = String::new();
+    for word in &words[start..=end] {
+        out.push_str(&normalize_ascii_token(&word.word));
+    }
+    out
+}
+
+fn normalized_collapsed_token(text: &str) -> String {
+    normalize_ascii_token(text)
 }
 
 fn levenshtein_distance_at_most(left: &str, right: &str, max_distance: usize) -> bool {
@@ -957,15 +936,7 @@ fn generated_aliases(word: &str) -> Vec<String> {
     let tokens = normalized_tokens(word);
     let mut variants: Vec<Vec<String>> = Vec::new();
     for token in &tokens {
-        let token_variants = match token.as_str() {
-            "claude" => vec![
-                "claude".to_string(),
-                "cloud".to_string(),
-                "clod".to_string(),
-            ],
-            "code" => vec!["code".to_string(), "cod".to_string()],
-            _ => vec![token.clone()],
-        };
+        let token_variants = token_fuzzy_variants(token);
         variants.push(token_variants);
     }
 
@@ -1007,6 +978,39 @@ fn chinese_first_letters(text: &str) -> String {
     text.to_pinyin()
         .filter_map(|pinyin| pinyin.map(|p| p.first_letter().to_string()))
         .collect()
+}
+
+fn token_fuzzy_variants(token: &str) -> Vec<String> {
+    let normalized = token.to_string();
+    let mut variants = vec![normalized.clone()];
+    if normalized.len() < 4 {
+        return dedupe_strings(variants);
+    }
+
+    let chars: Vec<char> = normalized.chars().collect();
+    for i in 0..chars.len() {
+        let mut deleted = chars.clone();
+        deleted.remove(i);
+        if deleted.len() >= 4 {
+            variants.push(deleted.iter().collect::<String>());
+        }
+    }
+    for i in 0..chars.len() - 1 {
+        let mut swapped = chars.clone();
+        swapped.swap(i, i + 1);
+        variants.push(swapped.iter().collect::<String>());
+    }
+    dedupe_strings(variants)
+}
+
+fn dedupe_strings(values: Vec<String>) -> Vec<String> {
+    let mut out = Vec::<String>::new();
+    for value in values {
+        if !out.contains(&value) {
+            out.push(value);
+        }
+    }
+    out
 }
 
 fn contains_chinese(text: &str) -> bool {
@@ -1140,7 +1144,7 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].target, "Claude Code");
         assert_eq!(candidates[0].source_text, "cloud code");
-        assert_eq!(candidates[0].source_kind, "generated_alias");
+        assert_eq!(candidates[0].source_kind, "fuzzy");
     }
 
     #[test]
@@ -1162,6 +1166,32 @@ mod tests {
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].source_text, "SISD");
+        assert_eq!(candidates[0].target, "CISD");
+        assert_eq!(candidates[0].source_kind, "fuzzy");
+    }
+
+    #[test]
+    fn non_chinese_fuzzy_recalls_two_edit_candidate() {
+        let words = vec![word(0, "Sisty")];
+        let hotwords = vec![hotword("SIST", vec![], HotwordLang::NonZh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source_text, "Sisty");
+        assert_eq!(candidates[0].target, "SIST");
+        assert_eq!(candidates[0].source_kind, "fuzzy");
+    }
+
+    #[test]
+    fn non_chinese_fuzzy_recalls_split_acronym_tokens() {
+        let words = vec![word(0, "C"), word(1, "I"), word(2, "S"), word(3, "D")];
+        let hotwords = vec![hotword("CISD", vec![], HotwordLang::NonZh)];
+
+        let candidates = recall_hotword_candidates(&words, &hotwords);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source_text, "C I S D");
         assert_eq!(candidates[0].target, "CISD");
         assert_eq!(candidates[0].source_kind, "fuzzy");
     }
@@ -1328,7 +1358,6 @@ mod tests {
             task_id: "task-1".to_string(),
             media_path: "media.wav".to_string(),
             source_lang: "en".to_string(),
-            input_fingerprint: String::new(),
             words: words.clone(),
             hotwords: Vec::new(),
             enabled: false,
@@ -1355,7 +1384,6 @@ mod tests {
             task_id: "task-1".to_string(),
             media_path: "media.wav".to_string(),
             source_lang: "en".to_string(),
-            input_fingerprint: String::new(),
             words: words.clone(),
             hotwords,
             enabled: true,
@@ -1381,31 +1409,6 @@ mod tests {
         assert_eq!(response.words[0].word, words[0].word);
         assert_eq!(response.words[1].word, words[1].word);
         assert!(response.corrections.is_empty());
-    }
-
-    #[test]
-    fn hotword_input_fingerprint_changes_with_words_and_hotwords() {
-        let words = vec![word(0, "cloud"), word(1, "code")];
-        let hotwords = vec![hotword(
-            "Claude Code",
-            vec!["cloud code"],
-            HotwordLang::NonZh,
-        )];
-        let baseline =
-            hotword_input_fingerprint("task-1", "media.wav", "en", &words, true, &hotwords);
-
-        let mut changed_words = words.clone();
-        changed_words[1].word = "codes".to_string();
-        let changed_word_fingerprint =
-            hotword_input_fingerprint("task-1", "media.wav", "en", &changed_words, true, &hotwords);
-
-        let mut changed_hotwords = hotwords.clone();
-        changed_hotwords[0].aliases.push("claude".to_string());
-        let changed_hotword_fingerprint =
-            hotword_input_fingerprint("task-1", "media.wav", "en", &words, true, &changed_hotwords);
-
-        assert_ne!(baseline, changed_word_fingerprint);
-        assert_ne!(baseline, changed_hotword_fingerprint);
     }
 
     #[test]

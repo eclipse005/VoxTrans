@@ -224,10 +224,8 @@ mod tests {
 
     #[test]
     fn write_variants_requires_translation_for_target_modes() {
-        let dir = std::env::temp_dir().join(format!(
-            "voxtrans_subtitle_srt_test_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("voxtrans_subtitle_srt_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let segments = vec![SubtitleSrtSegment {
             start_ms: 0,
@@ -241,15 +239,13 @@ mod tests {
     }
 
     #[test]
-    fn write_task_output_variants_uses_step6_file_names() {
-        let media_dir = std::env::temp_dir().join(format!(
-            "voxtrans_step6_media_{}",
-            std::process::id()
-        ));
+    fn write_task_output_variants_uses_export_file_names() {
+        let media_dir =
+            std::env::temp_dir().join(format!("voxtrans_export_media_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&media_dir);
         let media_path = media_dir.join("sample.mp3");
         let _ = std::fs::write(&media_path, []);
-        let task_id = format!("step6-test-{}", std::process::id());
+        let task_id = format!("export-test-{}", std::process::id());
         let segments = vec![SubtitleSrtSegment {
             start_ms: 0,
             end_ms: 1000,

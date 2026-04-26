@@ -72,9 +72,10 @@ impl OpenAiCompatLlmClient {
             return None;
         }
         match context.media_path.as_deref() {
-            Some(path) if !path.trim().is_empty() => {
-                Some(TaskLogger::llm_with_media(context.task_id.clone(), path.to_string()))
-            }
+            Some(path) if !path.trim().is_empty() => Some(TaskLogger::llm_with_media(
+                context.task_id.clone(),
+                path.to_string(),
+            )),
             _ => Some(TaskLogger::llm(context.task_id.clone())),
         }
     }
@@ -159,7 +160,7 @@ impl OpenAiCompatLlmClient {
 
         if persist_artifacts
             && let Some(cache_hit) =
-            read_cache_hit(context, &self.config, "", user_prompt, response_validator)
+                read_cache_hit(context, &self.config, "", user_prompt, response_validator)
         {
             if let Some(validator) = response_validator {
                 if let Err(err) = validator.validate(&cache_hit.json) {

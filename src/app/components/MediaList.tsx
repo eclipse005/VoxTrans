@@ -53,7 +53,9 @@ function getTranscribeProcessingText(item: QueueItem): string {
   const stage = item.taskProgress.stage;
   const rawDetail = stage.detail?.trim() ?? "";
   const detail = rawDetail.startsWith("step_") ? "" : rawDetail;
-  const label = stage.label.trim() || resolveStageLabel(stage.code);
+  const label = stage.code === "subtitleLayout"
+    ? ""
+    : stage.label.trim() || resolveStageLabel(stage.code);
   if (detail) return label ? `${label} ${detail}` : detail;
   if (shouldShowStageCounter(stage.code) && stage.current > 0 && stage.total > 0) {
     return `${label || "处理中"} ${stage.current}/${stage.total}`;
@@ -68,9 +70,8 @@ function shouldShowStageCounter(code: QueueItem["taskProgress"]["stage"]["code"]
     case "recognizing":
     case "segmenting":
     case "translating":
-    case "splitSource":
-    case "alignTranslation":
-    case "polishTranslation":
+    case "subtitleLayout":
+    case "finalCheck":
       return true;
     default:
       return false;
@@ -93,14 +94,10 @@ function resolveStageLabel(code: QueueItem["taskProgress"]["stage"]["code"]): st
       return "术语提取中";
     case "translating":
       return "翻译中";
-    case "splitSource":
-      return "源文拆分中";
-    case "alignTranslation":
-      return "译文对齐中";
-    case "polishTranslation":
-      return "润色中";
-    case "qa":
-      return "QA质检中";
+    case "subtitleLayout":
+      return "";
+    case "finalCheck":
+      return "本地最终检查中";
     default:
       return "";
   }

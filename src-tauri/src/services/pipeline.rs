@@ -8,11 +8,6 @@ use serde::de::DeserializeOwned;
 pub enum CheckpointPolicy {
     // Artifact exists => skip directly, no validation.
     SkipIfExists,
-    // Artifact exists => validate shape/basic contract then skip.
-    // Note: current project contract is manual invalidation by deleting files,
-    // not automatic input-signature invalidation.
-    ValidateThenSkip,
-    ForceRebuild,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,24 +51,12 @@ where
 {
     let artifact_path = ctx.output_dir.join(step.artifact_file());
     match step.policy() {
-        CheckpointPolicy::ForceRebuild => run_and_persist(step, ctx, artifact_path).await,
         CheckpointPolicy::SkipIfExists => {
             if let Some(cached) = read_json_if_exists::<S::Output>(&artifact_path)? {
                 return Ok(StepExecution {
                     output: cached,
                     source: StepSource::Cache,
                 });
-            }
-            run_and_persist(step, ctx, artifact_path).await
-        }
-        CheckpointPolicy::ValidateThenSkip => {
-            if let Some(cached) = read_json_if_exists::<S::Output>(&artifact_path)? {
-                if step.validate(&cached).is_ok() {
-                    return Ok(StepExecution {
-                        output: cached,
-                        source: StepSource::Cache,
-                    });
-                }
             }
             run_and_persist(step, ctx, artifact_path).await
         }

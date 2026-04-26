@@ -5,7 +5,7 @@ use parakeet_rs::{
     TranscriptionResult,
 };
 
-use crate::{TimestampKind, TARGET_SAMPLE_RATE};
+use crate::{TARGET_SAMPLE_RATE, TimestampKind};
 
 #[derive(Debug, Clone)]
 pub(crate) struct AudioSegment {

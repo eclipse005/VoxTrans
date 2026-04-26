@@ -17,6 +17,11 @@ const MIN_READABLE_DURATION_SECONDS: f64 = 0.9;
 const DEFAULT_BATCH_SIZE: usize = 20;
 const MAX_BATCH_SIZE: usize = 40;
 const MAX_TERMS_PER_LINE: usize = 10;
+const LONG_LINE_SCORE_TRIGGER: f64 = 25.0;
+const WATCHABILITY_SPLIT_TRIGGER: f64 = 25.0;
+const WATCHABILITY_MERGE_TIME_GAP_SECONDS: f64 = 1.0;
+const WATCHABILITY_MERGE_TIME_BUDGET_SECONDS: f64 = 6.0;
+const WATCHABILITY_MERGE_LEN_RATIO: f64 = 1.55;
 
 #[derive(Debug, Clone)]
 pub struct Step5Token {
@@ -164,7 +169,7 @@ pub struct Step5QualityIssue {
 }
 
 #[derive(Debug, Clone)]
-pub struct Step5QaMetrics {
+pub struct Step6FinalCheckMetrics {
     pub segment_total: usize,
     pub empty_count: usize,
     pub ellipsis_tail_count: usize,
@@ -175,45 +180,19 @@ pub struct Step5QaMetrics {
 }
 
 #[derive(Debug, Clone)]
-pub struct BuildStep5QaReportRequest {
+pub struct BuildStep6FinalCheckRequest {
     pub target_lang: String,
-    pub terminology_entries: Vec<Step5TerminologyEntry>,
     pub segments: Vec<Step5FinalSegment>,
 }
 
 #[derive(Debug, Clone)]
-pub struct BuildStep5QaReportResponse {
+pub struct BuildStep6FinalCheckResponse {
     pub passed: bool,
     pub hard_fail_count: usize,
     pub soft_score: f64,
     pub issue_count: usize,
     pub issues: Vec<Step5QualityIssue>,
-    pub metrics: Step5QaMetrics,
-}
-
-#[derive(Debug, Clone)]
-pub struct BuildStep5QaRepairRequest {
-    pub task_id: String,
-    pub media_path: String,
-    pub source_lang: String,
-    pub target_lang: String,
-    pub theme_summary: String,
-    pub terminology_entries: Vec<Step5TerminologyEntry>,
-    pub segments: Vec<Step5FinalSegment>,
-    pub issues: Vec<Step5QualityIssue>,
-    pub translate_api_key: String,
-    pub translate_base_url: String,
-    pub translate_model: String,
-    pub llm_concurrency: u32,
-    pub subtitle_length_reference: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct BuildStep5QaRepairResponse {
-    pub segment_total: usize,
-    pub candidate_total: usize,
-    pub repaired_total: usize,
-    pub segments: Vec<Step5FinalSegment>,
+    pub metrics: Step6FinalCheckMetrics,
 }
 
 #[derive(Debug, Clone)]
@@ -243,16 +222,6 @@ struct Step51LlmSplitTask {
     mandatory_boundaries: Vec<usize>,
     fallback_boundaries: Vec<usize>,
     min_parts: usize,
-    prompt: String,
-}
-
-#[derive(Debug, Clone)]
-struct Step55RepairTask {
-    task_id: usize,
-    segment_index: usize,
-    source_numbers: Vec<String>,
-    forbidden_numbers: Vec<String>,
-    has_watchability_issue: bool,
     prompt: String,
 }
 
@@ -734,10 +703,11 @@ pub async fn build_step_5_3_translation_polish_with_progress(
         .map(|segment| segment.translation.clone())
         .collect::<Vec<_>>();
 
+    let polish_length_trigger = (subtitle_length_reference as f64).min(LONG_LINE_SCORE_TRIGGER);
     let mut polish_candidates = Vec::<usize>::new();
     for (index, segment) in segments.iter().enumerate() {
         let target_len = text_length_units(&segment.translation, &request.target_lang);
-        if target_len > subtitle_length_reference {
+        if target_len > polish_length_trigger {
             polish_candidates.push(index);
         }
     }
@@ -875,6 +845,21 @@ pub async fn build_step_5_3_translation_polish_with_progress(
         segment.translation = fallback;
         repair_polished_translation(segment);
     }
+    merge_watchability_fragments(
+        &mut segments,
+        request.subtitle_length_reference,
+        &request.target_lang,
+    );
+    split_watchability_overlong_segments(
+        &mut segments,
+        WATCHABILITY_SPLIT_TRIGGER,
+        &request.target_lang,
+    );
+    for segment in &mut segments {
+        repair_polished_translation(segment);
+    }
+    repair_watchability_fragments(&mut segments, &request.target_lang);
+    apply_residual_watchability_overrides(&mut segments, &request.target_lang);
 
     let batch_size = if request.batch_size == 0 {
         DEFAULT_BATCH_SIZE
@@ -898,9 +883,9 @@ pub async fn build_step_5_3_translation_polish_with_progress(
     })
 }
 
-pub fn build_step_5_4_qa_report(
-    request: BuildStep5QaReportRequest,
-) -> Result<BuildStep5QaReportResponse, String> {
+pub fn build_step_6_final_check(
+    request: BuildStep6FinalCheckRequest,
+) -> Result<BuildStep6FinalCheckResponse, String> {
     if request.segments.is_empty() {
         return Err("segments is required".to_string());
     }
@@ -913,16 +898,6 @@ pub fn build_step_5_4_qa_report(
     let mut cross_line_leak_count = 0usize;
     let mut gt25_count = 0usize;
     let mut gt32_count = 0usize;
-
-    let mut terminology_pairs = Vec::<(String, String)>::new();
-    for term in &request.terminology_entries {
-        let source = normalize_inline_text(&term.source).to_lowercase();
-        let target = normalize_inline_text(&term.target).to_lowercase();
-        if source.is_empty() || target.is_empty() {
-            continue;
-        }
-        terminology_pairs.push((source, target));
-    }
 
     for (index, segment) in request.segments.iter().enumerate() {
         let source = normalize_inline_text(&segment.source);
@@ -1025,28 +1000,6 @@ pub fn build_step_5_4_qa_report(
                 },
             );
         }
-
-        let source_lower = source.to_lowercase();
-        let translation_lower = translation.to_lowercase();
-        for (term_source, term_target) in &terminology_pairs {
-            if !source_lower.contains(term_source) {
-                continue;
-            }
-            if translation_lower.contains(term_target) {
-                continue;
-            }
-            push_quality_issue(
-                &mut issues,
-                &mut issue_keys,
-                Step5QualityIssue {
-                    rule_id: "terminology_drift".to_string(),
-                    severity: "soft".to_string(),
-                    segment_id: segment.segment_id,
-                    part_id: index + 1,
-                    message: format!("术语未命中目标词: {}", term_target),
-                },
-            );
-        }
     }
 
     for window in request.segments.windows(2) {
@@ -1103,13 +1056,13 @@ pub fn build_step_5_4_qa_report(
         soft_score = 0.0;
     }
 
-    Ok(BuildStep5QaReportResponse {
+    Ok(BuildStep6FinalCheckResponse {
         passed: hard_fail_count == 0,
         hard_fail_count,
         soft_score: (soft_score * 10.0).round() / 10.0,
         issue_count: issues.len(),
         issues,
-        metrics: Step5QaMetrics {
+        metrics: Step6FinalCheckMetrics {
             segment_total,
             empty_count,
             ellipsis_tail_count,
@@ -1118,303 +1071,6 @@ pub fn build_step_5_4_qa_report(
             gt25_count,
             gt32_count,
         },
-    })
-}
-
-pub async fn build_step_5_5_qa_repair_with_progress(
-    request: BuildStep5QaRepairRequest,
-    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
-) -> Result<BuildStep5QaRepairResponse, String> {
-    if request.task_id.trim().is_empty() {
-        return Err("taskId is required".to_string());
-    }
-    if request.media_path.trim().is_empty() {
-        return Err("mediaPath is required".to_string());
-    }
-    if request.source_lang.trim().is_empty() {
-        return Err("sourceLang is required".to_string());
-    }
-    if request.target_lang.trim().is_empty() {
-        return Err("targetLang is required".to_string());
-    }
-    if request.segments.is_empty() {
-        return Err("segments is required".to_string());
-    }
-
-    let mut segments = request.segments;
-    let repair_issues = request
-        .issues
-        .iter()
-        .filter(|issue| issue.severity == "hard" || issue.rule_id == "watchability_fragment")
-        .cloned()
-        .collect::<Vec<_>>();
-    if repair_issues.is_empty() {
-        if let Some(callback) = on_progress.as_ref() {
-            callback(1, 1);
-        }
-        return Ok(BuildStep5QaRepairResponse {
-            segment_total: segments.len(),
-            candidate_total: 0,
-            repaired_total: 0,
-            segments,
-        });
-    }
-
-    let llm_client = OpenAiCompatLlmClient::new(LlmConfig::new(
-        request.translate_base_url.clone(),
-        request.translate_api_key.clone(),
-        request.translate_model.clone(),
-    ))
-    .map_err(|err| err.message)?;
-
-    let mut candidate_set = HashSet::<usize>::new();
-    for issue in &repair_issues {
-        if issue.segment_id == 0 {
-            continue;
-        }
-        let current_index = issue.segment_id.saturating_sub(1);
-        if current_index >= segments.len() {
-            continue;
-        }
-        candidate_set.insert(current_index);
-        if issue.rule_id == "cross_line_leak" && current_index + 1 < segments.len() {
-            candidate_set.insert(current_index + 1);
-        }
-    }
-    let mut candidate_indexes = candidate_set.into_iter().collect::<Vec<_>>();
-    candidate_indexes.sort_unstable();
-
-    if candidate_indexes.is_empty() {
-        if let Some(callback) = on_progress.as_ref() {
-            callback(1, 1);
-        }
-        return Ok(BuildStep5QaRepairResponse {
-            segment_total: segments.len(),
-            candidate_total: 0,
-            repaired_total: 0,
-            segments,
-        });
-    }
-
-    let subtitle_length_soft = request.subtitle_length_reference.clamp(8, 80) as f64;
-    let mut repair_tasks = Vec::<Step55RepairTask>::new();
-    for segment_index in candidate_indexes {
-        let Some(segment) = segments.get(segment_index) else {
-            continue;
-        };
-
-        let prev_source = segment_index
-            .checked_sub(1)
-            .and_then(|idx| segments.get(idx))
-            .map(|item| item.source.clone())
-            .unwrap_or_default();
-        let prev_translation = segment_index
-            .checked_sub(1)
-            .and_then(|idx| segments.get(idx))
-            .map(|item| item.translation.clone())
-            .unwrap_or_default();
-        let next_source = segments
-            .get(segment_index + 1)
-            .map(|item| item.source.clone())
-            .unwrap_or_default();
-        let next_translation = segments
-            .get(segment_index + 1)
-            .map(|item| item.translation.clone())
-            .unwrap_or_default();
-
-        let mut issue_tags = repair_issues
-            .iter()
-            .filter(|issue| issue.segment_id == segment.segment_id)
-            .map(|issue| issue.rule_id.clone())
-            .collect::<Vec<_>>();
-        if issue_tags.is_empty() {
-            issue_tags.push("neighbor_context_repair".to_string());
-        }
-        issue_tags.sort();
-        issue_tags.dedup();
-
-        let source_number_set = extract_numbers(&segment.source);
-        let mut source_numbers = source_number_set.iter().cloned().collect::<Vec<_>>();
-        source_numbers.sort();
-
-        let mut forbidden_number_set = HashSet::<String>::new();
-        if let Some(next_segment) = segments.get(segment_index + 1) {
-            let next_numbers = extract_numbers(&next_segment.source);
-            for value in next_numbers {
-                if !source_number_set.contains(&value) {
-                    forbidden_number_set.insert(value);
-                }
-            }
-        }
-        let mut forbidden_numbers = forbidden_number_set.into_iter().collect::<Vec<_>>();
-        forbidden_numbers.sort();
-
-        let terms = select_terms_for_text(
-            &segment.source,
-            &request.terminology_entries,
-            MAX_TERMS_PER_LINE,
-        );
-        let prompt = build_qa_repair_prompt(
-            &request.source_lang,
-            &request.target_lang,
-            &request.theme_summary,
-            &segment.source,
-            &segment.translation,
-            &prev_source,
-            &prev_translation,
-            &next_source,
-            &next_translation,
-            &issue_tags,
-            &source_numbers,
-            &forbidden_numbers,
-            subtitle_length_soft,
-            &terms,
-        );
-        repair_tasks.push(Step55RepairTask {
-            task_id: repair_tasks.len(),
-            segment_index,
-            source_numbers,
-            forbidden_numbers,
-            has_watchability_issue: issue_tags.iter().any(|tag| tag == "watchability_fragment"),
-            prompt,
-        });
-    }
-
-    if repair_tasks.is_empty() {
-        if let Some(callback) = on_progress.as_ref() {
-            callback(1, 1);
-        }
-        return Ok(BuildStep5QaRepairResponse {
-            segment_total: segments.len(),
-            candidate_total: 0,
-            repaired_total: 0,
-            segments,
-        });
-    }
-
-    let tasks = repair_tasks
-        .iter()
-        .map(|task| LlmJsonTask {
-            id: task.task_id,
-            request_id: next_llm_request_id(),
-            user_prompt: task.prompt.clone(),
-            response_validator: None,
-        })
-        .collect::<Vec<_>>();
-
-    let context = LlmCallContext {
-        task_id: request.task_id.clone(),
-        media_path: Some(request.media_path.clone()),
-        phase: "step_5_5_qa_repair".to_string(),
-    };
-    let repair_tasks_for_worker = repair_tasks.clone();
-    let progress_callback = on_progress.clone();
-    let results = run_indexed_concurrent_with_progress(
-        tasks,
-        request.llm_concurrency.max(1) as usize,
-        {
-            let llm_client = llm_client.clone();
-            let context = context.clone();
-            move |task| {
-                let llm_client = llm_client.clone();
-                let context = context.clone();
-                let repair_tasks = repair_tasks_for_worker.clone();
-                async move {
-                    let Some(repair_task) = repair_tasks.get(task.id) else {
-                        return Err(format!("missing step5 qa repair task {}", task.id));
-                    };
-                    let llm_id = task.request_id.clone();
-                    let call = llm_client
-                        .call_json_validated(
-                            &context,
-                            &llm_id,
-                            &task.user_prompt,
-                            task.response_validator.as_ref(),
-                            parse_polish_translation,
-                        )
-                        .await
-                        .map_err(|err| {
-                            format!("step5 qa repair failed (llmId={}): {}", llm_id, err.message)
-                        })?;
-                    Ok((repair_task.task_id, call.value))
-                }
-            }
-        },
-        |msg| msg,
-        move |done, total| {
-            if let Some(callback) = progress_callback.as_ref() {
-                callback(done, total);
-            }
-        },
-    )
-    .await;
-
-    let mut repaired_total = 0usize;
-    for (_, result) in results {
-        let Ok((task_id, repaired_raw)) = result else {
-            continue;
-        };
-        let Some(repair_task) = repair_tasks.get(task_id) else {
-            continue;
-        };
-        let Some(segment) = segments.get_mut(repair_task.segment_index) else {
-            continue;
-        };
-        let repaired = sanitize_translation_candidate(&repaired_raw);
-        if repaired.is_empty() || is_unusable_translation(&repaired) {
-            continue;
-        }
-        if looks_like_non_cjk_translation_for_cjk_target(&repaired, &request.target_lang) {
-            continue;
-        }
-
-        let source_numbers = repair_task
-            .source_numbers
-            .iter()
-            .cloned()
-            .collect::<HashSet<_>>();
-        let repaired_numbers = extract_numbers(&repaired);
-        if !source_numbers.is_empty()
-            && source_numbers
-                .iter()
-                .any(|value| !repaired_numbers.contains(value))
-        {
-            continue;
-        }
-        if repair_task
-            .forbidden_numbers
-            .iter()
-            .any(|value| repaired_numbers.contains(value))
-        {
-            continue;
-        }
-
-        let current_units = text_length_units(&segment.translation, &request.target_lang).max(1.0);
-        let repaired_units = text_length_units(&repaired, &request.target_lang);
-        let hard_limit = if repair_task.has_watchability_issue {
-            (subtitle_length_soft * 1.35).max(current_units * 3.0)
-        } else {
-            subtitle_length_soft.max(current_units * 1.20)
-        };
-        if repaired_units > hard_limit {
-            continue;
-        }
-
-        if repaired != segment.translation {
-            segment.translation = repaired;
-            repaired_total += 1;
-        }
-    }
-
-    for segment in &mut segments {
-        repair_polished_translation(segment);
-    }
-
-    Ok(BuildStep5QaRepairResponse {
-        segment_total: segments.len(),
-        candidate_total: repair_tasks.len(),
-        repaired_total,
-        segments,
     })
 }
 
@@ -2526,28 +2182,65 @@ fn is_cjk_char(ch: char) -> bool {
 
 fn build_source_from_tokens(tokens: &[Step5Token]) -> String {
     let mut out = String::new();
+    let mut prev_has_spacing_word = false;
+    let mut prev_allows_space_after = false;
+
     for token in tokens {
         let text = token.text.trim();
         if text.is_empty() {
             continue;
         }
-        let should_space = out
-            .chars()
-            .last()
-            .zip(text.chars().next())
-            .map(|(left, right)| {
-                left.is_ascii_alphanumeric()
-                    && right.is_ascii_alphanumeric()
-                    && !left.is_ascii_punctuation()
-                    && !right.is_ascii_punctuation()
-            })
-            .unwrap_or(false);
-        if should_space {
+        let next_has_spacing_word = source_token_has_spacing_word(text);
+        if !out.is_empty()
+            && next_has_spacing_word
+            && !source_token_starts_attached(text)
+            && (prev_has_spacing_word || prev_allows_space_after)
+        {
             out.push(' ');
         }
         out.push_str(text);
+        prev_has_spacing_word = next_has_spacing_word;
+        prev_allows_space_after = source_token_allows_space_after(text);
     }
     normalize_inline_text(&out)
+}
+
+fn source_token_has_spacing_word(token: &str) -> bool {
+    token
+        .chars()
+        .any(|ch| ch.is_ascii_alphanumeric() || is_hangul_char(ch))
+}
+
+fn source_token_starts_attached(token: &str) -> bool {
+    token
+        .chars()
+        .next()
+        .map(|ch| ch == '\'' || ch == '’' || ch.is_ascii_punctuation())
+        .unwrap_or(false)
+}
+
+fn source_token_allows_space_after(token: &str) -> bool {
+    token
+        .chars()
+        .last()
+        .map(|ch| {
+            matches!(
+                ch,
+                ',' | ';' | ':' | '?' | '!' | '.' | '，' | '；' | '：' | '？' | '！' | '。'
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn is_hangul_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x1100..=0x11FF
+            | 0x3130..=0x318F
+            | 0xA960..=0xA97F
+            | 0xAC00..=0xD7AF
+            | 0xD7B0..=0xD7FF
+    )
 }
 
 fn heuristic_split_translation(
@@ -2829,6 +2522,399 @@ fn split_translation_evenly_by_weights(
     out
 }
 
+fn split_watchability_overlong_segments(
+    segments: &mut Vec<Step5FinalSegment>,
+    split_trigger: f64,
+    target_lang: &str,
+) {
+    if segments.is_empty() || split_trigger <= 0.0 {
+        return;
+    }
+
+    let mut split_segments = Vec::<Step5FinalSegment>::new();
+    for segment in segments.drain(..) {
+        split_segments.push(segment);
+    }
+
+    let mut output = Vec::<Step5FinalSegment>::new();
+    let mut work_queue = split_segments;
+    while let Some(segment) = work_queue.pop() {
+        let target_len = text_length_units(&segment.translation, target_lang);
+        if target_len <= split_trigger {
+            output.push(segment);
+            continue;
+        }
+
+        let Some((left, right)) = split_long_final_segment_for_watchability(&segment, target_lang)
+        else {
+            output.push(segment);
+            continue;
+        };
+
+        if !is_safe_watchability_split_part(&left, target_lang)
+            || !is_safe_watchability_split_part(&right, target_lang)
+        {
+            output.push(segment);
+            continue;
+        }
+
+        let left_len = text_length_units(&left.translation, target_lang);
+        let right_len = text_length_units(&right.translation, target_lang);
+        if left_len <= 0.0 || right_len <= 0.0 {
+            output.push(left);
+            output.push(right);
+            continue;
+        }
+
+        if left_len > split_trigger || right_len > split_trigger {
+            work_queue.push(left);
+            work_queue.push(right);
+        } else {
+            work_queue.push(right);
+            work_queue.push(left);
+        }
+    }
+
+    output.sort_by(|a, b| a.start.total_cmp(&b.start));
+    for (index, segment) in output.iter_mut().enumerate() {
+        segment.segment_id = index + 1;
+    }
+    *segments = output;
+}
+
+fn is_safe_watchability_split_part(segment: &Step5FinalSegment, target_lang: &str) -> bool {
+    let translation = normalize_inline_text(&segment.translation);
+    if translation.is_empty() || is_unusable_translation(&translation) {
+        return false;
+    }
+    !looks_like_source_residue(&segment.source, &translation, target_lang)
+}
+
+fn merge_watchability_fragments(
+    segments: &mut Vec<Step5FinalSegment>,
+    subtitle_length_reference: u32,
+    target_lang: &str,
+) {
+    if segments.len() < 2 {
+        return;
+    }
+
+    let max_watch_units = (f64::from(subtitle_length_reference.max(1))
+        * WATCHABILITY_MERGE_LEN_RATIO)
+        .max(WATCHABILITY_SPLIT_TRIGGER);
+    let mut merged = Vec::<Step5FinalSegment>::with_capacity(segments.len());
+    let mut index = 0usize;
+
+    while index < segments.len() {
+        if index + 1 >= segments.len() {
+            merged.push(segments[index].clone());
+            break;
+        }
+
+        let left = &segments[index];
+        let right = &segments[index + 1];
+
+        if can_merge_watchability_fragments(left, right, max_watch_units, target_lang) {
+            let merged_segment = merge_watchability_pair(left, right, target_lang);
+            if is_watchability_fragment_issue(
+                &merged_segment.source,
+                &merged_segment.translation,
+                target_lang,
+            ) {
+                merged.push(left.clone());
+            } else {
+                merged.push(merged_segment);
+                index += 1;
+            }
+        } else {
+            merged.push(left.clone());
+        }
+        index += 1;
+    }
+
+    if merged.len() == segments.len() {
+        return;
+    }
+    for (index, segment) in merged.iter_mut().enumerate() {
+        segment.segment_id = index + 1;
+    }
+    *segments = merged;
+}
+
+fn can_merge_watchability_fragments(
+    left: &Step5FinalSegment,
+    right: &Step5FinalSegment,
+    max_watch_units: f64,
+    target_lang: &str,
+) -> bool {
+    if left.translation.trim().is_empty() || right.translation.trim().is_empty() {
+        return false;
+    }
+    if left.end > right.start {
+        return false;
+    }
+    if right.start - left.end > WATCHABILITY_MERGE_TIME_GAP_SECONDS {
+        return false;
+    }
+    if right.end - left.start > WATCHABILITY_MERGE_TIME_BUDGET_SECONDS {
+        return false;
+    }
+    if is_terminal_punctuation(left.translation.trim().chars().last().unwrap_or_default()) {
+        return false;
+    }
+
+    let left_frag = ends_with_short_dangling_fragment(&left.translation);
+    if !left_frag && !is_watchability_fragment_issue(&left.source, &left.translation, target_lang) {
+        return false;
+    }
+
+    if !starts_with_continuation_fragment(&right.translation, target_lang) {
+        return false;
+    }
+
+    let merged_source = merge_watchability_text(&left.source, &right.source, " ", target_lang);
+    if merged_source.is_empty() {
+        return false;
+    }
+    let merged_translation =
+        merge_watchability_text(&left.translation, &right.translation, "", target_lang);
+    if merged_translation.is_empty() {
+        return false;
+    }
+
+    if text_length_units(&merged_translation, target_lang) > max_watch_units {
+        return false;
+    }
+
+    let repaired =
+        repair_single_watchability_line(&merged_source, &merged_translation, target_lang);
+    !is_watchability_fragment_issue(&merged_source, &repaired, target_lang)
+}
+
+fn merge_watchability_pair(
+    left: &Step5FinalSegment,
+    right: &Step5FinalSegment,
+    target_lang: &str,
+) -> Step5FinalSegment {
+    let source = merge_watchability_text(&left.source, &right.source, " ", target_lang);
+    let merged_translation =
+        merge_watchability_text(&left.translation, &right.translation, "", target_lang);
+    let translation = normalize_inline_text(&repair_single_watchability_line(
+        &source,
+        &merged_translation,
+        target_lang,
+    ));
+    let mut tokens = left.tokens.clone();
+    tokens.extend(right.tokens.iter().cloned());
+    Step5FinalSegment {
+        segment_id: left.segment_id,
+        start: left.start,
+        end: right.end.max(left.end),
+        source,
+        translation,
+        tokens,
+    }
+}
+
+fn starts_with_continuation_fragment(text: &str, target_lang: &str) -> bool {
+    let normalized = normalize_inline_text(text);
+    if normalized.is_empty() {
+        return false;
+    }
+    if use_char_units(target_lang, &normalized) {
+        let starters = [
+            "个", "这个", "那个", "这", "那", "然后", "并且", "而且", "而", "并", "因为", "所以",
+            "如果", "还", "继续", "将", "与", "和",
+        ];
+        return starters.iter().any(|prefix| normalized.starts_with(prefix));
+    }
+
+    let first_token = normalized
+        .split_whitespace()
+        .next()
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if first_token.is_empty() {
+        return false;
+    }
+    let starters = [
+        "a", "an", "the", "to", "of", "and", "or", "with", "for", "this", "that", "if", "so",
+        "then", "while", "it", "you", "we", "they",
+    ];
+    starters
+        .iter()
+        .any(|starter| first_token == *starter || normalized.starts_with(&format!("{starter} ")))
+}
+
+fn merge_watchability_text(left: &str, right: &str, separator: &str, _target_lang: &str) -> String {
+    let left_clean = sanitize_translation_candidate(left);
+    let right_clean = sanitize_translation_candidate(right);
+    if left_clean.is_empty() {
+        return right_clean;
+    }
+    if right_clean.is_empty() {
+        return left_clean;
+    }
+    let mut merged = left_clean;
+    if !separator.is_empty() {
+        merged.push_str(separator);
+    }
+    merged.push_str(&right_clean);
+    normalize_inline_text(&merged)
+}
+
+fn split_long_final_segment_for_watchability(
+    segment: &Step5FinalSegment,
+    target_lang: &str,
+) -> Option<(Step5FinalSegment, Step5FinalSegment)> {
+    if segment.translation.trim().is_empty() {
+        return None;
+    }
+
+    if segment.tokens.len() >= 2 {
+        split_final_segment_by_source_tokens(segment, target_lang)
+    } else {
+        split_final_segment_without_tokens(segment)
+    }
+}
+
+fn split_final_segment_by_source_tokens(
+    segment: &Step5FinalSegment,
+    target_lang: &str,
+) -> Option<(Step5FinalSegment, Step5FinalSegment)> {
+    let split_index = split_token_index_by_readability(&segment.tokens, target_lang)?;
+    let (left_tokens, right_tokens) = segment.tokens.split_at(split_index + 1);
+    let right_tokens = right_tokens.to_vec();
+    if right_tokens.is_empty() {
+        return None;
+    }
+    let source_left = normalize_inline_text(&build_source_from_tokens(left_tokens));
+    let source_right = normalize_inline_text(&build_source_from_tokens(&right_tokens));
+    if source_left.is_empty() || source_right.is_empty() {
+        return None;
+    }
+    let left_source_units = text_length_units(&source_left, target_lang);
+    let right_source_units = text_length_units(&source_right, target_lang).max(1.0);
+    let weights = vec![left_source_units.max(1.0), right_source_units];
+    let translations = split_translation_evenly_by_weights(&segment.translation, 2, &weights);
+    if translations.len() != 2 {
+        return None;
+    }
+    let translation_left = normalize_inline_text(&translations[0]);
+    let translation_right = normalize_inline_text(&translations[1]);
+    if translation_left.is_empty() || translation_right.is_empty() {
+        return None;
+    }
+    let left_start = segment.start.max(0.0);
+    let (left_end, right_start) = source_split_times(left_tokens, &right_tokens, segment);
+    Some((
+        Step5FinalSegment {
+            segment_id: segment.segment_id,
+            start: left_start,
+            end: left_end,
+            source: source_left,
+            translation: translation_left,
+            tokens: left_tokens.to_vec(),
+        },
+        Step5FinalSegment {
+            segment_id: segment.segment_id,
+            start: right_start,
+            end: segment.end.max(right_start),
+            source: source_right,
+            translation: translation_right,
+            tokens: right_tokens,
+        },
+    ))
+}
+
+fn split_final_segment_without_tokens(
+    segment: &Step5FinalSegment,
+) -> Option<(Step5FinalSegment, Step5FinalSegment)> {
+    let translations = split_translation_evenly_by_weights(&segment.translation, 2, &[1.0, 1.0]);
+    if translations.len() != 2 {
+        return None;
+    }
+    let source_parts = split_translation_evenly_by_weights(&segment.source, 2, &[1.0, 1.0]);
+    if source_parts.len() != 2 {
+        return None;
+    }
+    let left_len = segment.end - segment.start;
+    if !left_len.is_finite() || left_len <= 0.0 {
+        return None;
+    }
+    let mid = segment.start + (left_len * 0.5);
+    Some((
+        Step5FinalSegment {
+            segment_id: segment.segment_id,
+            start: segment.start,
+            end: mid,
+            source: normalize_inline_text(&source_parts[0]),
+            translation: normalize_inline_text(&translations[0]),
+            tokens: Vec::new(),
+        },
+        Step5FinalSegment {
+            segment_id: segment.segment_id,
+            start: mid,
+            end: segment.end,
+            source: normalize_inline_text(&source_parts[1]),
+            translation: normalize_inline_text(&translations[1]),
+            tokens: Vec::new(),
+        },
+    ))
+}
+
+fn split_token_index_by_readability(tokens: &[Step5Token], target_lang: &str) -> Option<usize> {
+    if tokens.len() < 2 {
+        return None;
+    }
+    let mut target_units = 0.0f64;
+    let mut token_units = Vec::<f64>::with_capacity(tokens.len());
+    for token in tokens {
+        let unit = text_length_units(&token.text, target_lang);
+        target_units += unit;
+        token_units.push(unit);
+    }
+    let mut preferred = target_units / 2.0;
+    if !preferred.is_finite() || preferred <= 0.0 {
+        preferred = (tokens.len() as f64) / 2.0;
+    }
+    let mut cumulative = 0.0f64;
+    for (index, unit) in token_units.iter().enumerate() {
+        cumulative += unit;
+        if cumulative >= preferred {
+            if index == tokens.len() - 1 {
+                return Some(index.saturating_sub(1));
+            }
+            return Some(index);
+        }
+    }
+    Some((tokens.len() / 2).max(1) - 1)
+}
+
+fn source_split_times(
+    left_tokens: &[Step5Token],
+    right_tokens: &[Step5Token],
+    segment: &Step5FinalSegment,
+) -> (f64, f64) {
+    let left_end = left_tokens
+        .last()
+        .map(|token| token.end.max(token.start))
+        .unwrap_or(segment.end)
+        .max(segment.start)
+        .min(segment.end.max(segment.start));
+    let right_start = right_tokens
+        .first()
+        .map(|token| token.start.min(segment.end).max(segment.start))
+        .unwrap_or(left_end)
+        .max(left_end);
+    if (right_start - left_end).abs() < MIN_READABLE_DURATION_SECONDS {
+        let mid = (segment.start + segment.end.max(segment.start)) / 2.0;
+        (mid, mid)
+    } else {
+        (left_end, right_start)
+    }
+}
+
 fn split_line_quality_score(lines: &[String]) -> i64 {
     if lines.is_empty() {
         return i64::MIN / 8;
@@ -2922,7 +3008,10 @@ fn line_redundancy_penalty(signatures: &[String]) -> i64 {
 }
 
 fn is_terminal_punctuation(ch: char) -> bool {
-    matches!(ch, '.' | '!' | '?' | ';' | '。' | '！' | '？' | '；')
+    matches!(
+        ch,
+        '.' | '!' | '?' | ';' | '。' | '！' | '？' | '；' | '，' | ','
+    )
 }
 
 fn ends_with_short_dangling_fragment(text: &str) -> bool {
@@ -2930,18 +3019,7 @@ fn ends_with_short_dangling_fragment(text: &str) -> bool {
     if normalized.is_empty() {
         return false;
     }
-    let suffixes = [
-        "一个",
-        "做一个",
-        "这个",
-        "那个",
-        "这笔",
-        "那笔",
-        "这",
-        "那",
-        "拿下了",
-        "花大约",
-    ];
+    let suffixes = ["一个", "做一个", "这个", "那个", "这笔", "那笔", "这", "那"];
     suffixes.iter().any(|suffix| normalized.ends_with(suffix))
 }
 
@@ -2951,29 +3029,8 @@ fn ends_with_connector_like_fragment(text: &str) -> bool {
         return false;
     }
     let cjk_connectors = [
-        "然后",
-        "而且",
-        "并且",
-        "因为",
-        "所以",
-        "但是",
-        "如果",
-        "为了",
-        "以及",
-        "还有",
-        "并",
-        "和",
-        "与",
-        "及",
-        "或",
-        "来",
-        "去",
-        "在",
-        "对",
-        "把",
-        "将",
-        "花大约",
-        "大约",
+        "然后", "而且", "并且", "因为", "所以", "但是", "如果", "为了", "以及", "还有", "并", "和",
+        "与", "及", "或", "来", "去", "在", "对", "把", "将", "大约",
     ];
     if cjk_connectors
         .iter()
@@ -3000,11 +3057,8 @@ fn is_watchability_fragment_issue(source: &str, translation: &str, target_lang: 
         return false;
     }
     if let Some(leading_number) = leading_number_anchor(&normalized) {
-        let source_leading = leading_number_anchor(source);
-        let source_matches = source_leading
-            .as_ref()
-            .map(|value| value == &leading_number)
-            .unwrap_or(false);
+        let source_numbers = extract_numbers(source);
+        let source_matches = source_numbers.iter().any(|value| value == &leading_number);
         if !source_matches {
             return true;
         }
@@ -3794,7 +3848,84 @@ fn repair_polished_translation(segment: &mut Step5FinalSegment) {
     if is_unusable_translation(&translation) {
         translation = "[缺失译文]".to_string();
     }
+    translation = append_missing_terminal_punctuation(&segment.source, &translation);
     segment.translation = translation;
+}
+
+fn append_missing_terminal_punctuation(source: &str, translation: &str) -> String {
+    let translation = normalize_inline_text(translation);
+    if translation.is_empty()
+        || translation
+            .chars()
+            .last()
+            .map(is_terminal_punctuation)
+            .unwrap_or(false)
+    {
+        return translation;
+    }
+
+    let Some(source_terminal) = source.trim().chars().last() else {
+        return translation;
+    };
+    if !is_terminal_punctuation(source_terminal) {
+        return translation;
+    }
+
+    let mut out = translation;
+    let punctuation = if out.chars().any(is_cjk_char) {
+        match source_terminal {
+            '?' | '？' => '？',
+            '!' | '！' => '！',
+            _ => '。',
+        }
+    } else {
+        match source_terminal {
+            '？' => '?',
+            '！' => '!',
+            '。' => '.',
+            other => other,
+        }
+    };
+    out.push(punctuation);
+    out
+}
+
+fn source_contains_terminology_term(source_lower: &str, term_source_lower: &str) -> bool {
+    let term = term_source_lower.trim();
+    if term.is_empty() {
+        return false;
+    }
+    if term.chars().any(is_cjk_char) {
+        return source_lower.contains(term);
+    }
+
+    let is_single_ascii_token_term = term.chars().any(|ch| ch.is_ascii_alphabetic())
+        && !term.chars().any(|ch| ch.is_whitespace() || is_cjk_char(ch));
+    if !is_single_ascii_token_term {
+        return source_lower.contains(term);
+    }
+
+    let mut search_start = 0usize;
+    while let Some(offset) = source_lower[search_start..].find(term) {
+        let start = search_start + offset;
+        let end = start + term.len();
+        let prev_blocks = source_lower[..start]
+            .chars()
+            .next_back()
+            .map(|ch| ch.is_ascii_alphabetic())
+            .unwrap_or(false);
+        let next_blocks = source_lower[end..]
+            .chars()
+            .next()
+            .map(|ch| ch.is_ascii_alphabetic())
+            .unwrap_or(false);
+        if !prev_blocks && !next_blocks {
+            return true;
+        }
+        search_start = end;
+    }
+
+    false
 }
 
 fn repair_watchability_fragments(segments: &mut [Step5FinalSegment], target_lang: &str) {
@@ -3817,50 +3948,7 @@ fn repair_watchability_fragments(segments: &mut [Step5FinalSegment], target_lang
 
 fn apply_residual_watchability_overrides(segments: &mut [Step5FinalSegment], target_lang: &str) {
     for segment in segments.iter_mut() {
-        let source_lower = segment.source.to_ascii_lowercase();
         let mut updated = sanitize_translation_candidate(&segment.translation);
-
-        if source_lower.contains("a day in") && updated.starts_with(|ch: char| ch.is_ascii_digit())
-        {
-            if let Some(leading_number) = leading_number_anchor(&updated) {
-                let body = strip_leading_number_token(&updated);
-                if body.starts_with("分钟") {
-                    updated = normalize_inline_text(&format!("一天{}{}", leading_number, body));
-                } else if body.is_empty() {
-                    updated = normalize_inline_text(&format!("一天{}分钟", leading_number));
-                } else if body.starts_with('，') || body.starts_with(',') || body.starts_with('。')
-                {
-                    updated = normalize_inline_text(&format!("一天{}分钟{}", leading_number, body));
-                } else {
-                    updated =
-                        normalize_inline_text(&format!("一天{}分钟，{}", leading_number, body));
-                }
-            }
-        }
-
-        if source_lower.contains("trading platform")
-            && (updated == "然后" || updated == "然后，" || updated == "然后。")
-        {
-            updated = "然后我开始加载交易平台".to_string();
-        }
-
-        if source_lower.contains("second") && updated.starts_with(|ch: char| ch.is_ascii_digit()) {
-            if let Some(leading_number) = leading_number_anchor(&updated) {
-                let body = strip_leading_number_token(&updated);
-                if body.starts_with("秒") {
-                    updated = normalize_inline_text(&format!("花大约{}{}", leading_number, body));
-                } else if body.is_empty() {
-                    updated = normalize_inline_text(&format!("花大约{}秒", leading_number));
-                } else if body.starts_with('，') || body.starts_with(',') || body.starts_with('。')
-                {
-                    updated = normalize_inline_text(&format!("花大约{}秒{}", leading_number, body));
-                } else {
-                    updated =
-                        normalize_inline_text(&format!("花大约{}秒，{}", leading_number, body));
-                }
-            }
-        }
-
         if is_watchability_fragment_issue(&segment.source, &updated, target_lang) {
             if let Some(trimmed) = trim_trailing_connector_fragment(&updated) {
                 updated = trimmed;
@@ -3887,73 +3975,6 @@ fn repair_watchability_lines(
         );
     }
 
-    for index in 0..translation_lines.len().saturating_sub(1) {
-        let current_translation = sanitize_translation_candidate(&translation_lines[index]);
-        let next_translation = sanitize_translation_candidate(&translation_lines[index + 1]);
-        if current_translation.ends_with("做一个") {
-            let next_source_lower = source_lines[index + 1].to_ascii_lowercase();
-            if next_source_lower.contains("trade") {
-                if let Some(leading_number) = leading_number_anchor(&next_translation) {
-                    let current_trimmed = current_translation
-                        .trim_end_matches("做一个")
-                        .trim_end_matches('，')
-                        .trim_end_matches(',')
-                        .trim();
-                    let next_body = strip_leading_number_token(&next_translation);
-                    if !current_trimmed.is_empty() && !next_body.is_empty() {
-                        translation_lines[index] = normalize_inline_text(current_trimmed);
-                        translation_lines[index + 1] = normalize_inline_text(&format!(
-                            "做一笔{}点的交易，{}",
-                            leading_number, next_body
-                        ));
-                    }
-                }
-            }
-        }
-
-        let current_translation = sanitize_translation_candidate(&translation_lines[index]);
-        let next_translation = sanitize_translation_candidate(&translation_lines[index + 1]);
-        if !current_translation.ends_with("花大约") {
-            continue;
-        }
-        let Some(leading_number) = leading_number_anchor(&next_translation) else {
-            continue;
-        };
-        let next_body = strip_leading_number_token(&next_translation);
-        if next_body.is_empty() {
-            continue;
-        }
-        let current_trimmed = current_translation
-            .trim_end_matches("花大约")
-            .trim_end_matches('，')
-            .trim_end_matches(',')
-            .trim();
-        let current_repaired = if current_trimmed.is_empty() {
-            "然后"
-        } else {
-            current_trimmed
-        };
-        translation_lines[index] = normalize_inline_text(current_repaired);
-
-        let needs_seconds_unit = source_lines[index + 1]
-            .to_ascii_lowercase()
-            .contains("second")
-            && !next_body.starts_with('秒');
-        let mut rebuilt = if needs_seconds_unit {
-            format!("花大约{}秒", leading_number)
-        } else {
-            format!("花大约{}", leading_number)
-        };
-        if next_body.starts_with('，') || next_body.starts_with(',') || next_body.starts_with('。')
-        {
-            rebuilt.push_str(&next_body);
-        } else {
-            rebuilt.push('，');
-            rebuilt.push_str(&next_body);
-        }
-        translation_lines[index + 1] = normalize_inline_text(&rebuilt);
-    }
-
     for index in 0..translation_lines.len() {
         translation_lines[index] = repair_single_watchability_line(
             &source_lines[index],
@@ -3968,76 +3989,13 @@ fn repair_single_watchability_line(source: &str, translation: &str, target_lang:
     if original.is_empty() {
         return original;
     }
-    if !is_watchability_fragment_issue(source, &original, target_lang) {
-        return original;
-    }
 
     let mut updated = original.clone();
-    if updated.ends_with("拿下了") {
-        updated = normalize_inline_text(&format!("{updated}那笔单子"));
+
+    if !is_watchability_fragment_issue(source, &updated, target_lang) {
+        return updated;
     }
-    let source_lower = source.to_ascii_lowercase();
-    if source_lower.contains("a day in") && updated.starts_with(|ch: char| ch.is_ascii_digit()) {
-        if let Some(leading_number) = leading_number_anchor(&updated) {
-            let body = strip_leading_number_token(&updated);
-            if body.starts_with("分钟") {
-                updated = normalize_inline_text(&format!("一天{}{}", leading_number, body));
-            } else if body.is_empty() {
-                updated = normalize_inline_text(&format!("一天{}分钟", leading_number));
-            } else if body.starts_with('，') || body.starts_with(',') || body.starts_with('。') {
-                updated = normalize_inline_text(&format!("一天{}分钟{}", leading_number, body));
-            } else {
-                updated = normalize_inline_text(&format!("一天{}分钟，{}", leading_number, body));
-            }
-        }
-    }
-    if source_lower.contains("second") && updated.starts_with(|ch: char| ch.is_ascii_digit()) {
-        if let Some(leading_number) = leading_number_anchor(&updated) {
-            let body = strip_leading_number_token(&updated);
-            if body.starts_with("秒") {
-                updated = normalize_inline_text(&format!("花大约{}{}", leading_number, body));
-            } else if body.is_empty() {
-                updated = normalize_inline_text(&format!("花大约{}秒", leading_number));
-            } else if body.starts_with('，') || body.starts_with(',') || body.starts_with('。') {
-                updated = normalize_inline_text(&format!("花大约{}秒{}", leading_number, body));
-            } else {
-                updated = normalize_inline_text(&format!("花大约{}秒，{}", leading_number, body));
-            }
-        }
-    }
-    if source_lower.contains("trading platform") && text_length_units(&updated, target_lang) <= 3.0
-    {
-        updated = "然后我开始加载交易平台".to_string();
-    }
-    if source_lower.contains("point trade") {
-        if let Some(leading_number) = leading_number_anchor(&updated) {
-            let body = strip_leading_numeric_noise(&updated);
-            if !body.is_empty() && !updated.contains("做一笔") {
-                updated =
-                    normalize_inline_text(&format!("做一笔{}点的交易，{}", leading_number, body));
-            }
-        }
-    }
-    if source.contains('%') && updated.starts_with(|ch: char| ch.is_ascii_digit()) {
-        let mut numbers = extract_numbers(source)
-            .into_iter()
-            .filter_map(|value| value.parse::<f64>().ok())
-            .filter(|value| *value > 0.0 && *value <= 100.0)
-            .map(normalize_numeric_value)
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>();
-        numbers.sort();
-        numbers.dedup();
-        if numbers.len() >= 2 {
-            let body = strip_leading_numeric_noise(&updated);
-            if !body.is_empty() && !body.starts_with("如果你拿走") {
-                updated = normalize_inline_text(&format!(
-                    "如果你拿走{}%或{}%的总涨幅，{}",
-                    numbers[0], numbers[1], body
-                ));
-            }
-        }
-    }
+
     if is_watchability_fragment_issue(source, &updated, target_lang) {
         if let Some(trimmed) = trim_trailing_connector_fragment(&updated) {
             updated = trimmed;
@@ -4073,9 +4031,7 @@ fn trim_trailing_connector_fragment(text: &str) -> Option<String> {
         "把",
         "将",
         "做一个",
-        "花大约",
         "大约",
-        "拿下了",
     ];
     for suffix in suffixes {
         if !normalized.ends_with(suffix) {
@@ -4145,47 +4101,6 @@ fn prepend_missing_number_token(text: &str, number: &str) -> String {
         return prefix;
     }
     normalize_inline_text(&format!("{prefix} {body}"))
-}
-
-fn strip_all_leading_number_tokens(text: &str) -> String {
-    let mut out = sanitize_translation_candidate(text);
-    for _ in 0..3 {
-        if leading_number_anchor(&out).is_none() {
-            break;
-        }
-        let stripped = strip_leading_number_token(&out);
-        if stripped.is_empty() || stripped == out {
-            break;
-        }
-        out = stripped;
-    }
-    out
-}
-
-fn strip_leading_numeric_noise(text: &str) -> String {
-    let mut out = strip_all_leading_number_tokens(text);
-    out = normalize_inline_text(out.trim_start_matches(|ch: char| {
-        ch.is_ascii_whitespace()
-            || ch == '/'
-            || ch == '\\'
-            || ch == '%'
-            || ch == ','
-            || ch == '，'
-            || ch == '.'
-    }));
-    if leading_number_anchor(&out).is_some() {
-        out = strip_all_leading_number_tokens(&out);
-        out = normalize_inline_text(out.trim_start_matches(|ch: char| {
-            ch.is_ascii_whitespace()
-                || ch == '/'
-                || ch == '\\'
-                || ch == '%'
-                || ch == ','
-                || ch == '，'
-                || ch == '.'
-        }));
-    }
-    out
 }
 
 fn leading_number_anchor(text: &str) -> Option<String> {
@@ -4755,71 +4670,6 @@ fn build_polish_prompt(
     .to_string()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_qa_repair_prompt(
-    source_lang: &str,
-    target_lang: &str,
-    theme_summary: &str,
-    source_text: &str,
-    current_translation: &str,
-    prev_source: &str,
-    prev_translation: &str,
-    next_source: &str,
-    next_translation: &str,
-    issue_tags: &[String],
-    source_numbers: &[String],
-    forbidden_numbers: &[String],
-    target_length_soft: f64,
-    terms: &[Step5TerminologyEntry],
-) -> String {
-    let terms_json = terms
-        .iter()
-        .map(|term| {
-            serde_json::json!({
-                "source": term.source,
-                "target": term.target,
-                "note": term.note,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    serde_json::json!({
-        "task": "repair_subtitle_line_from_qa_issue",
-        "rule": "Return JSON only.",
-        "sourceLanguage": source_lang,
-        "targetLanguage": target_lang,
-        "theme": theme_summary,
-        "sourceText": source_text,
-        "currentTranslation": current_translation,
-        "previousLine": {
-            "source": prev_source,
-            "translation": prev_translation
-        },
-        "nextLine": {
-            "source": next_source,
-            "translation": next_translation
-        },
-        "qaIssueTags": issue_tags,
-        "requiredNumbers": source_numbers,
-        "forbiddenNumbers": forbidden_numbers,
-        "targetLengthSoft": target_length_soft,
-        "terminology": terms_json,
-        "constraints": [
-            "Translate current source line only.",
-            "Do not include information that belongs to previous or next lines.",
-            "Keep all requiredNumbers if requiredNumbers is not empty.",
-            "Do not output forbiddenNumbers.",
-            "Keep one subtitle line only.",
-            "Make wording natural and watchable.",
-            "No explanations."
-        ],
-        "output": {
-            "text": "repaired translation"
-        }
-    })
-    .to_string()
-}
-
 fn parse_align_translation(
     value: Value,
     expected_ids: &[usize],
@@ -4883,7 +4733,7 @@ fn select_terms_for_text(
             break;
         }
         let key = entry.source.trim().to_lowercase();
-        if key.is_empty() || !source_lower.contains(&key) {
+        if key.is_empty() || !source_contains_terminology_term(&source_lower, &key) {
             continue;
         }
         if !seen.insert(key) {
@@ -4921,13 +4771,88 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{
-        BuildStep5QaReportRequest, BuildStep5SourceSplitRequest, Step5DraftSegment,
-        Step5FinalSegment, Step5SplitParent, Step5SplitPart, Step5Token,
+        BuildStep5SourceSplitRequest, BuildStep6FinalCheckRequest, Step5DraftSegment,
+        Step5FinalSegment, Step5SplitParent, Step5SplitPart, Step5Token, build_source_from_tokens,
         build_step_5_1_source_split_with_progress, choose_better_alignment, extract_numbers,
-        has_tail_ellipsis, heuristic_split_translation, looks_like_source_residue,
-        merge_tiny_ranges_for_readability, rebalance_dangling_tail_tokens, repair_aligned_lines,
-        split_line_quality_score, split_token_ranges,
+        has_tail_ellipsis, heuristic_split_translation, is_watchability_fragment_issue,
+        looks_like_source_residue, merge_tiny_ranges_for_readability, merge_watchability_fragments,
+        rebalance_dangling_tail_tokens, repair_aligned_lines, split_line_quality_score,
+        split_token_ranges,
     };
+
+    #[test]
+    fn step5_source_rebuild_preserves_space_after_inline_punctuation() {
+        let tokens = vec![
+            Step5Token {
+                text: "So".to_string(),
+                start: 0.0,
+                end: 0.1,
+            },
+            Step5Token {
+                text: "in".to_string(),
+                start: 0.1,
+                end: 0.2,
+            },
+            Step5Token {
+                text: "this".to_string(),
+                start: 0.2,
+                end: 0.3,
+            },
+            Step5Token {
+                text: "video,".to_string(),
+                start: 0.3,
+                end: 0.4,
+            },
+            Step5Token {
+                text: "I'm".to_string(),
+                start: 0.4,
+                end: 0.5,
+            },
+            Step5Token {
+                text: "here.".to_string(),
+                start: 0.5,
+                end: 0.6,
+            },
+        ];
+
+        assert_eq!(
+            build_source_from_tokens(&tokens),
+            "So in this video, I'm here."
+        );
+    }
+
+    #[test]
+    fn step5_source_rebuild_keeps_attached_decimal_punctuation() {
+        let tokens = vec![
+            Step5Token {
+                text: "It's".to_string(),
+                start: 0.0,
+                end: 0.1,
+            },
+            Step5Token {
+                text: "only".to_string(),
+                start: 0.1,
+                end: 0.2,
+            },
+            Step5Token {
+                text: "like".to_string(),
+                start: 0.2,
+                end: 0.3,
+            },
+            Step5Token {
+                text: "1".to_string(),
+                start: 0.3,
+                end: 0.4,
+            },
+            Step5Token {
+                text: ".3.".to_string(),
+                start: 0.4,
+                end: 0.5,
+            },
+        ];
+
+        assert_eq!(build_source_from_tokens(&tokens), "It's only like 1.3.");
+    }
 
     #[test]
     fn step5_source_split_splits_on_hard_pause() {
@@ -5063,6 +4988,46 @@ mod tests {
     }
 
     #[test]
+    fn step5_watchability_merges_contiguous_fragment_lines() {
+        let mut segments = vec![
+            Step5FinalSegment {
+                segment_id: 16,
+                start: 51.12,
+                end: 52.76,
+                source: "And it's also just a good".to_string(),
+                translation: "如果你某周表现不佳，可能会怀疑这".to_string(),
+                tokens: vec![],
+            },
+            Step5FinalSegment {
+                segment_id: 17,
+                start: 52.76,
+                end: 54.4,
+                source: "exercise to rebuild belief in the system.".to_string(),
+                translation: "个系统是否还有效，重建系统信心".to_string(),
+                tokens: vec![],
+            },
+        ];
+
+        merge_watchability_fragments(&mut segments, 28, "zh-CN");
+
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].segment_id, 1);
+        assert_eq!(
+            segments[0].source,
+            "And it's also just a good exercise to rebuild belief in the system."
+        );
+        assert_eq!(
+            segments[0].translation,
+            "如果你某周表现不佳，可能会怀疑这个系统是否还有效，重建系统信心"
+        );
+        assert!(!is_watchability_fragment_issue(
+            &segments[0].source,
+            &segments[0].translation,
+            "zh-CN"
+        ));
+    }
+
+    #[test]
     fn step5_source_split_merges_sub_half_second_piece() {
         let tokens = vec![
             Step5Token {
@@ -5146,7 +5111,7 @@ mod tests {
                 end: 2.0,
             },
             Step5Token {
-                text: "trade".to_string(),
+                text: "report".to_string(),
                 start: 2.0,
                 end: 2.4,
             },
@@ -5174,13 +5139,33 @@ mod tests {
         let mut leaked = HashSet::<String>::new();
         leaked.insert("10".to_string());
         let trimmed = super::trim_before_leaked_number_anchor(
-            "你知道， 对于基础命中， 当你刚开始时， 做一个10点的交易，",
+            "你知道， 对于复盘练习， 当你刚开始时， 做一个10分钟的记录，",
             &leaked,
         );
         assert_eq!(
             trimmed,
-            Some("你知道， 对于基础命中， 当你刚开始时， 做一个".to_string())
+            Some("你知道， 对于复盘练习， 当你刚开始时， 做一个".to_string())
         );
+    }
+
+    #[test]
+    fn step5_source_terminology_matcher_uses_boundaries_for_short_ascii_terms() {
+        assert!(!super::source_contains_terminology_term(
+            "this example executes normally",
+            "x"
+        ));
+        assert!(super::source_contains_terminology_term(
+            "this result is 2x higher",
+            "x"
+        ));
+        assert!(super::source_contains_terminology_term(
+            "this result is x higher",
+            "x"
+        ));
+        assert!(!super::source_contains_terminology_term(
+            "the prefixvalue should not match",
+            "fix"
+        ));
     }
 
     #[test]
@@ -5214,16 +5199,15 @@ mod tests {
     }
 
     #[test]
-    fn step5_qa_report_detects_hard_issues() {
-        let report = super::build_step_5_4_qa_report(BuildStep5QaReportRequest {
+    fn step6_final_check_detects_hard_issues() {
+        let report = super::build_step_6_final_check(BuildStep6FinalCheckRequest {
             target_lang: "zh-CN".to_string(),
-            terminology_entries: vec![],
             segments: vec![
                 Step5FinalSegment {
                     segment_id: 1,
                     start: 0.0,
                     end: 1.0,
-                    source: "profit was 1037 dollars".to_string(),
+                    source: "the invoice was 1037 units".to_string(),
                     translation: "".to_string(),
                     tokens: vec![],
                 },
@@ -5237,26 +5221,25 @@ mod tests {
                 },
             ],
         })
-        .expect("qa report");
+        .expect("final check");
         assert!(!report.passed);
         assert!(report.hard_fail_count >= 2);
     }
 
     #[test]
-    fn step5_qa_report_flags_watchability_fragment_issue() {
-        let report = super::build_step_5_4_qa_report(BuildStep5QaReportRequest {
+    fn step6_final_check_flags_watchability_fragment_issue() {
+        let report = super::build_step_6_final_check(BuildStep6FinalCheckRequest {
             target_lang: "zh-CN".to_string(),
-            terminology_entries: vec![],
             segments: vec![Step5FinalSegment {
                 segment_id: 1,
                 start: 0.0,
                 end: 1.0,
-                source: "and I sit down, I start loading up my trading platform".to_string(),
+                source: "and I sit down, I start loading up my writing workspace".to_string(),
                 translation: "然后花大约".to_string(),
                 tokens: vec![],
             }],
         })
-        .expect("qa report");
+        .expect("final check");
         assert!(
             report
                 .issues
@@ -5266,37 +5249,73 @@ mod tests {
     }
 
     #[test]
-    fn step5_watchability_repair_applies_percent_rewrite() {
+    fn step6_final_check_does_not_report_terminology_drift() {
+        let report = super::build_step_6_final_check(BuildStep6FinalCheckRequest {
+            target_lang: "zh-CN".to_string(),
+            segments: vec![Step5FinalSegment {
+                segment_id: 1,
+                start: 0.0,
+                end: 1.0,
+                source: "This mentions a single-letter term.".to_string(),
+                translation: "这里提到了一个单字母术语。".to_string(),
+                tokens: vec![],
+            }],
+        })
+        .expect("final check");
+        assert!(report.passed);
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|issue| issue.rule_id == "terminology_drift")
+        );
+    }
+
+    #[test]
+    fn step5_watchability_repair_does_not_invent_percent_sentence() {
         let mut segments = vec![Step5FinalSegment {
             segment_id: 1,
             start: 0.0,
             end: 1.0,
-            source: "happy with if you're taking 50%or 60%of the total run up without leaving a lot on the table.".to_string(),
-            translation: "60 50 你更有可能持续地以满意的金额退出那笔交易。".to_string(),
+            source: "happy with if you're keeping 50%or 60%of the total budget without leaving a lot unused.".to_string(),
+            translation: "60 50 你更有可能持续地以满意的金额完成那项计划。".to_string(),
             tokens: vec![],
         }];
         super::repair_watchability_fragments(&mut segments, "zh-CN");
-        assert!(segments[0].translation.contains("50%或60%"));
-        assert!(!segments[0].translation.starts_with("60 50"));
-        assert!(!segments[0].translation.contains("/60 "));
+        assert_eq!(
+            segments[0].translation,
+            "60 50 你更有可能持续地以满意的金额完成那项计划。"
+        );
+        assert!(!segments[0].translation.contains("如果你拿走"));
     }
 
     #[test]
-    fn step5_watchability_repair_rewrites_point_trade_number_lead() {
+    fn step5_watchability_repair_does_not_invent_domain_sentence() {
         let mut segments = vec![Step5FinalSegment {
             segment_id: 1,
             start: 0.0,
             end: 1.0,
-            source: "to take a 10-point trade and watch it run for 50 points".to_string(),
-            translation: "10 看着它涨到50点。".to_string(),
+            source: "to take a 10-minute note and watch it grow to 50 lines".to_string(),
+            translation: "10 看着它增加到50行。".to_string(),
             tokens: vec![],
         }];
         super::repair_watchability_fragments(&mut segments, "zh-CN");
-        assert!(segments[0].translation.contains("做一笔10点的交易"));
+        assert_eq!(segments[0].translation, "10 看着它增加到50行。");
     }
 
     #[test]
-    fn step5_watchability_repair_rewrites_day_in_minutes_prefix() {
+    fn step5_watchability_repair_does_not_invent_domain_phrasing() {
+        let repaired = super::repair_single_watchability_line(
+            "after the 10 minute review we wait for confirmation",
+            "10后等待确认",
+            "zh-CN",
+        );
+
+        assert_eq!(repaired, "10后等待确认");
+    }
+
+    #[test]
+    fn step5_watchability_repair_does_not_invent_day_phrase() {
         let mut segments = vec![Step5FinalSegment {
             segment_id: 1,
             start: 0.0,
@@ -5306,11 +5325,11 @@ mod tests {
             tokens: vec![],
         }];
         super::repair_watchability_fragments(&mut segments, "zh-CN");
-        assert_eq!(segments[0].translation, "一天30分钟，对吧？");
+        assert_eq!(segments[0].translation, "30分钟，对吧？");
     }
 
     #[test]
-    fn step5_watchability_repair_rewrites_seconds_prefix() {
+    fn step5_watchability_repair_does_not_invent_seconds_phrase() {
         let mut segments = vec![Step5FinalSegment {
             segment_id: 1,
             start: 0.0,
@@ -5320,7 +5339,7 @@ mod tests {
             tokens: vec![],
         }];
         super::repair_watchability_fragments(&mut segments, "zh-CN");
-        assert!(segments[0].translation.starts_with("花大约30秒"));
+        assert_eq!(segments[0].translation, "30 来阅读这些内容。");
     }
 
     #[test]
@@ -5329,12 +5348,107 @@ mod tests {
             segment_id: 1,
             start: 0.0,
             end: 1.0,
-            source: "I have these stickies up and when they fall down I rewrite them and stick them back up".to_string(),
-            translation: "我有这些便利贴，而且".to_string(),
+            source: "I have these notes open and when they get outdated I rewrite them and put them back up".to_string(),
+            translation: "我有这些笔记，而且".to_string(),
             tokens: vec![],
         }];
         super::repair_watchability_fragments(&mut segments, "zh-CN");
-        assert_eq!(segments[0].translation, "我有这些便利贴");
+        assert_eq!(segments[0].translation, "我有这些笔记");
+    }
+
+    #[test]
+    fn step5_polish_adds_terminal_punctuation_for_finished_source_sentence() {
+        let mut segment = Step5FinalSegment {
+            segment_id: 190,
+            start: 0.0,
+            end: 1.0,
+            source: "Alright, I believe this is the last one for the week.".to_string(),
+            translation: "好了，我认为这是本周最后一个".to_string(),
+            tokens: vec![],
+        };
+
+        super::repair_polished_translation(&mut segment);
+
+        assert_eq!(segment.translation, "好了，我认为这是本周最后一个。");
+        assert!(!is_watchability_fragment_issue(
+            &segment.source,
+            &segment.translation,
+            "zh-CN"
+        ));
+    }
+
+    #[test]
+    fn step5_watchability_split_long_segments_with_source_tokens() {
+        let mut segments = vec![Step5FinalSegment {
+            segment_id: 1,
+            start: 0.0,
+            end: 12.0,
+            source: "I want to share a deeper note for this part and make it easier for review.".to_string(),
+            translation: "I want to share a deeper note for this part and make it easier for review while keeping enough context".to_string(),
+            tokens: (0..16)
+                .map(|index| Step5Token {
+                    text: format!("w{index}"),
+                    start: index as f64 * 0.2,
+                    end: (index as f64 + 1.0) * 0.2,
+                })
+                .collect::<Vec<_>>(),
+        }];
+        super::split_watchability_overlong_segments(&mut segments, 15.0, "en-US");
+        assert!(segments.len() >= 2);
+        for segment in &segments {
+            assert!(!segment.translation.trim().is_empty());
+            assert!(!segment.source.trim().is_empty());
+            assert!(segment.end >= segment.start);
+        }
+    }
+
+    #[test]
+    fn step5_watchability_split_long_segments_without_tokens() {
+        let mut segments = vec![Step5FinalSegment {
+            segment_id: 1,
+            start: 0.0,
+            end: 10.0,
+            source: "这个中文句子会被切分以便提升观看体验".to_string(),
+            translation: "这个中文句子会被切分以便提升观看体验效果从而更容易理解".to_string(),
+            tokens: vec![],
+        }];
+        super::split_watchability_overlong_segments(&mut segments, 7.0, "zh-CN");
+        assert!(segments.len() >= 2);
+        assert_eq!(segments[0].segment_id, 1);
+        assert_eq!(segments[segments.len() - 1].segment_id, segments.len());
+        assert!(segments[0].end <= segments[1].end);
+    }
+
+    #[test]
+    fn step5_watchability_split_rejects_source_residue_fallback_for_cjk() {
+        let source = "Then we switch to the one minute review window, wait for the paragraph to match the highlighted note, which was";
+        let words = source.split_whitespace().collect::<Vec<_>>();
+        let tokens = words
+            .iter()
+            .enumerate()
+            .map(|(index, word)| Step5Token {
+                text: (*word).to_string(),
+                start: index as f64 * 0.4,
+                end: (index as f64 + 1.0) * 0.4,
+            })
+            .collect::<Vec<_>>();
+        let mut segments = vec![Step5FinalSegment {
+            segment_id: 1,
+            start: 82.56,
+            end: 87.52,
+            source: source.to_string(),
+            translation:
+                "然后我们切换到一分钟复盘窗口，等待段落匹配高亮笔记（即，高亮笔记 / 关注区"
+                    .to_string(),
+            tokens,
+        }];
+
+        super::split_watchability_overlong_segments(&mut segments, 8.0, "zh-CN");
+
+        assert!(segments.iter().all(|segment| {
+            !looks_like_source_residue(&segment.source, &segment.translation, "zh-CN")
+                && !super::is_unusable_translation(&segment.translation)
+        }));
     }
 
     #[test]
@@ -5439,14 +5553,14 @@ mod tests {
                 part_id: 1,
                 start: 0.0,
                 end: 1.0,
-                source: "and out, take my base hit and trade another day".to_string(),
+                source: "and out, keep my short note and review another day".to_string(),
                 tokens: vec![],
             }],
         };
-        let aligned = vec!["and out take my base hit and trade another day".to_string()];
-        let fallback = vec!["收手，拿到安打，留到下次再做".to_string()];
+        let aligned = vec!["and out keep my short note and review another day".to_string()];
+        let fallback = vec!["收手，保留简短记录，留到下次再复盘".to_string()];
         let repaired = repair_aligned_lines(&parent, &aligned, &fallback, "zh-CN");
-        assert_eq!(repaired[0], "收手，拿到安打，留到下次再做");
+        assert_eq!(repaired[0], "收手，保留简短记录，留到下次再复盘");
     }
 
     #[test]
@@ -5464,7 +5578,7 @@ mod tests {
     fn step5_align_repair_rebalances_leaked_numbers_between_neighbors() {
         let parent = Step5SplitParent {
             parent_segment_id: 1,
-            draft_translation: "刚开始时很常见，你做一笔10点交易，看它涨到50点。".to_string(),
+            draft_translation: "刚开始时很常见，你写一个10分钟记录，看它扩展到50行。".to_string(),
             parts: vec![
                 Step5SplitPart {
                     part_id: 1,
@@ -5478,18 +5592,18 @@ mod tests {
                     part_id: 2,
                     start: 1.0,
                     end: 2.0,
-                    source: "to take a 10-point trade and watch it run for 50 points".to_string(),
+                    source: "to write a 10-minute note and watch it grow to 50 lines".to_string(),
                     tokens: vec![],
                 },
             ],
         };
         let aligned = vec![
-            "刚开始时，做一个10点交易很常见".to_string(),
-            "看它涨到50点很难".to_string(),
+            "刚开始时，写一个10分钟记录很常见".to_string(),
+            "看它扩展到50行很难".to_string(),
         ];
         let fallback = vec![
             "刚开始时这很常见".to_string(),
-            "看它涨到50点很难".to_string(),
+            "看它扩展到50行很难".to_string(),
         ];
         let repaired = repair_aligned_lines(&parent, &aligned, &fallback, "zh-CN");
         assert_eq!(repaired[0], "刚开始时这很常见");
@@ -5501,14 +5615,14 @@ mod tests {
     fn step5_align_repair_removes_next_line_number_from_numberless_line() {
         let parent = Step5SplitParent {
             parent_segment_id: 67,
-            draft_translation: "你知道，对于基础命中，当你刚开始时，做一个10点的交易，看着它涨到50点或100点，这实际上非常常见，也非常具有挑战性。".to_string(),
+            draft_translation: "你知道，对于复盘练习，当你刚开始时，写一个10分钟的记录，看着它扩展到50行或100行，这实际上非常常见，也非常具有挑战性。".to_string(),
             parts: vec![
                 Step5SplitPart {
                     part_id: 1,
                     start: 0.0,
                     end: 1.0,
                     source:
-                        "with base hits it's actually very common and very challenging when you're first starting out"
+                        "with review practice it's actually very common and very challenging when you're first starting out"
                             .to_string(),
                     tokens: vec![],
                 },
@@ -5517,15 +5631,15 @@ mod tests {
                     start: 1.0,
                     end: 2.0,
                     source:
-                        "to take a 10-point trade and watch it run for 50 points or watch it run for 100 points"
+                        "to write a 10-minute note and watch it grow to 50 lines or watch it grow to 100 lines"
                             .to_string(),
                     tokens: vec![],
                 },
             ],
         };
         let aligned = vec![
-            "你知道， 对于基础命中， 当你刚开始时， 做一个10点的交易，".to_string(),
-            "10 看着它涨到50点或100点， 这实际上非常常见， 也非常具有挑战性。".to_string(),
+            "你知道， 对于复盘练习， 当你刚开始时， 写一个10分钟的记录，".to_string(),
+            "10 看着它扩展到50行或100行， 这实际上非常常见， 也非常具有挑战性。".to_string(),
         ];
         let fallback = aligned.clone();
         let repaired = repair_aligned_lines(&parent, &aligned, &fallback, "zh-CN");
@@ -5541,10 +5655,10 @@ mod tests {
     }
 
     #[test]
-    fn step5_align_repair_rewrites_percent_line_without_reversed_numbers() {
+    fn step5_align_repair_does_not_invent_percent_line() {
         let parent = Step5SplitParent {
             parent_segment_id: 191,
-            draft_translation: "如果你拿走总上涨的50%或60%，而不留下太多利润，你更有可能持续地以满意的金额退出那笔交易。".to_string(),
+            draft_translation: "如果你保留总预算的50%或60%，而不留下太多未使用额度，你更有可能持续地以满意的金额完成那项计划。".to_string(),
             parts: vec![
                 Step5SplitPart {
                     part_id: 1,
@@ -5557,34 +5671,37 @@ mod tests {
                     part_id: 2,
                     start: 1.0,
                     end: 2.0,
-                    source: "of that trade at a dollar value that you're".to_string(),
+                    source: "of that plan at a total value that you're".to_string(),
                     tokens: vec![],
                 },
                 Step5SplitPart {
                     part_id: 3,
                     start: 2.0,
                     end: 3.0,
-                    source: "happy with if you're taking 50%or 60%of the total run up without leaving a lot on the table.".to_string(),
+                    source: "happy with if you're keeping 50%or 60%of the total budget without leaving a lot unused.".to_string(),
                     tokens: vec![],
                 },
             ],
         };
         let aligned = vec![
-            "如果你拿走总上涨的50%或60%，".to_string(),
-            "而不留下太多利润，".to_string(),
-            "60 50 你更有可能持续地以满意的金额退出那笔交易。".to_string(),
+            "如果你保留总预算的50%或60%，".to_string(),
+            "而不留下太多未使用额度，".to_string(),
+            "60 50 你更有可能持续地以满意的金额完成那项计划。".to_string(),
         ];
         let fallback = aligned.clone();
         let repaired = repair_aligned_lines(&parent, &aligned, &fallback, "zh-CN");
-        assert!(repaired[2].contains("50%或60%"));
-        assert!(!repaired[2].starts_with("60 50"));
+        assert_eq!(
+            repaired[2],
+            "60 50 你更有可能持续地以满意的金额完成那项计划。"
+        );
+        assert!(!repaired[2].contains("如果你保留"));
     }
 
     #[test]
     fn step5_align_repair_fixes_hua_dayue_fragment_pair() {
         let parent = Step5SplitParent {
             parent_segment_id: 221,
-            draft_translation: "但当我坐下来时，我会先加载交易平台，然后花大约30秒的时间，一个小小的30秒休息，来阅读这些内容并大声念出来。".to_string(),
+            draft_translation: "但当我坐下来时，我会先打开写作工作区，然后花大约30秒的时间，一个小小的30秒休息，来阅读这些内容并大声念出来。".to_string(),
             parts: vec![
                 Step5SplitPart {
                     part_id: 1,
@@ -5597,7 +5714,7 @@ mod tests {
                     part_id: 2,
                     start: 1.0,
                     end: 2.0,
-                    source: "and I sit down,I start loading up my trading platform,".to_string(),
+                    source: "and I sit down,I start opening up my writing workspace,".to_string(),
                     tokens: vec![],
                 },
                 Step5SplitPart {
@@ -5610,7 +5727,7 @@ mod tests {
             ],
         };
         let aligned = vec![
-            "但我坐下时，我会先加载交易平台。".to_string(),
+            "但我坐下时，我会先打开写作工作区。".to_string(),
             "然后花大约".to_string(),
             "30 来阅读这些内容并大声念出来。".to_string(),
         ];
@@ -5621,7 +5738,7 @@ mod tests {
     }
 
     #[test]
-    fn step5_align_repair_rewrites_day_in_minutes_fragment() {
+    fn step5_align_repair_does_not_invent_day_in_minutes_fragment() {
         let parent = Step5SplitParent {
             parent_segment_id: 202,
             draft_translation:
@@ -5649,14 +5766,15 @@ mod tests {
         ];
         let fallback = aligned.clone();
         let repaired = repair_aligned_lines(&parent, &aligned, &fallback, "zh-CN");
-        assert!(repaired[1].contains("一天30分钟"));
+        assert_eq!(repaired[1], "30 或者类似的说法，对吧？");
+        assert!(!repaired[1].contains("一天"));
     }
 
     #[test]
-    fn step5_align_repair_rewrites_trading_platform_and_seconds_fragments() {
+    fn step5_align_repair_does_not_invent_seconds_fragment() {
         let parent = Step5SplitParent {
             parent_segment_id: 221,
-            draft_translation: "但当我坐下来时，我会先加载交易平台，然后花大约30秒的时间，一个小小的30秒休息，来阅读这些内容并大声念出来。".to_string(),
+            draft_translation: "但当我坐下来时，我会先打开写作工作区，然后花大约30秒的时间，一个小小的30秒休息，来阅读这些内容并大声念出来。".to_string(),
             parts: vec![
                 Step5SplitPart {
                     part_id: 1,
@@ -5669,7 +5787,7 @@ mod tests {
                     part_id: 2,
                     start: 1.0,
                     end: 2.0,
-                    source: "and I sit down,I start loading up my trading platform,".to_string(),
+                    source: "and I sit down,I start opening up my writing workspace,".to_string(),
                     tokens: vec![],
                 },
                 Step5SplitPart {
@@ -5682,27 +5800,28 @@ mod tests {
             ],
         };
         let aligned = vec![
-            "但我坐下时，我会先加载交易平台。".to_string(),
+            "但我坐下时，我会先打开写作工作区。".to_string(),
             "然后".to_string(),
             "30 来阅读这些内容并大声念出来。".to_string(),
         ];
         let fallback = aligned.clone();
         let repaired = repair_aligned_lines(&parent, &aligned, &fallback, "zh-CN");
-        assert!(repaired[1].contains("加载交易平台"));
-        assert!(repaired[2].starts_with("花大约30秒"));
+        assert!(repaired.iter().any(|line| line.contains("写作工作区")));
+        assert_eq!(repaired[2], "30 来阅读这些内容并大声念出来。");
+        assert!(!repaired[2].starts_with("花大约"));
     }
 
     #[test]
     fn step5_align_repair_removes_neighbor_number_leak_when_targets_already_covered() {
         let parent = Step5SplitParent {
             parent_segment_id: 1,
-            draft_translation: "如果交易先上涨100点再回撤50点，我的状态可能比稳定拿10点更快下降。".to_string(),
+            draft_translation: "如果文档先增加100行再删掉50行，我的状态可能比稳定增加10行更快下降。".to_string(),
             parts: vec![
                 Step5SplitPart {
                     part_id: 1,
                     start: 0.0,
                     end: 1.0,
-                    source: "if my trade ran up 100 points and starts pulling back".to_string(),
+                    source: "if my document grows by 100 lines and starts shrinking".to_string(),
                     tokens: vec![],
                 },
                 Step5SplitPart {
@@ -5710,19 +5829,19 @@ mod tests {
                     start: 1.0,
                     end: 2.0,
                     source:
-                        "50,my tank might decrease even faster than just taking consistent 10 points"
+                        "50,my focus might decrease even faster than just adding consistent 10 lines"
                             .to_string(),
                     tokens: vec![],
                 },
             ],
         };
         let aligned = vec![
-            "如果交易先上涨100点再回撤50点".to_string(),
-            "50 我的状态可能比稳定拿10点更快下降".to_string(),
+            "如果文档先增加100行再删掉50行".to_string(),
+            "50 我的状态可能比稳定增加10行更快下降".to_string(),
         ];
         let fallback = vec![
-            "如果交易先上涨100点再回撤50点".to_string(),
-            "50 我的状态可能比稳定拿10点更快下降".to_string(),
+            "如果文档先增加100行再删掉50行".to_string(),
+            "50 我的状态可能比稳定增加10行更快下降".to_string(),
         ];
         let repaired = repair_aligned_lines(&parent, &aligned, &fallback, "zh-CN");
         assert!(repaired[0].contains("100"));
@@ -5735,13 +5854,13 @@ mod tests {
     fn step5_align_repair_handles_real_world_parent150_number_leak() {
         let parent = Step5SplitParent {
             parent_segment_id: 150,
-            draft_translation: "如果我持有的交易上涨了100点然后回撤50点，我的油箱可能比只是稳定上涨10点消耗得更快。".to_string(),
+            draft_translation: "如果我的文档增加了100行然后删掉50行，我的精力可能比只是稳定增加10行消耗得更快。".to_string(),
             parts: vec![
                 Step5SplitPart {
                     part_id: 1,
                     start: 574.645,
                     end: 578.005,
-                    source: "If I'm in a trade that ran up 100 points and starts pulling back"
+                    source: "If my document grows by 100 lines and starts shrinking"
                         .to_string(),
                     tokens: vec![],
                 },
@@ -5750,15 +5869,15 @@ mod tests {
                     start: 578.085,
                     end: 582.725,
                     source:
-                        "50,my tank might decrease even faster as opposed to just having consistent 10 points."
+                        "50,my energy might decrease even faster as opposed to just having consistent 10 lines."
                             .to_string(),
                     tokens: vec![],
                 },
             ],
         };
         let aligned = vec![
-            "如果我持有的交易上涨了100点然后回撤50点，".to_string(),
-            "50 我的油箱可能比只是稳定上涨10点消耗得更快。".to_string(),
+            "如果我的文档增加了100行然后删掉50行，".to_string(),
+            "50 我的精力可能比只是稳定增加10行消耗得更快。".to_string(),
         ];
         let fallback = aligned.clone();
         let repaired = repair_aligned_lines(&parent, &aligned, &fallback, "zh-CN");
@@ -5782,7 +5901,7 @@ mod tests {
                 part_id: 2,
                 start: 1.0,
                 end: 2.0,
-                source: "I sit down,I start loading up my trading platform,".to_string(),
+                source: "I sit down,I start opening up my writing workspace,".to_string(),
                 tokens: vec![],
             },
             Step5SplitPart {
@@ -5794,14 +5913,14 @@ mod tests {
             },
         ];
         let lines = heuristic_split_translation(
-            "但当我坐下来时，我会先加载交易平台，然后花大约30秒的时间，一个小小的30秒休息，来阅读这些内容并大声念出来。",
+            "但当我坐下来时，我会先打开写作工作区，然后花大约30秒的时间，一个小小的30秒休息，来阅读这些内容并大声念出来。",
             3,
             Some(&parts),
         );
         assert_eq!(lines.len(), 3);
         assert!(lines.iter().all(|line| !line.trim().is_empty()));
         assert!(!lines.iter().any(|line| line.trim() == "然后花大约"));
-        assert!(lines.iter().any(|line| line.contains("交易平台")));
+        assert!(lines.iter().any(|line| line.contains("写作工作区")));
         assert!(lines.iter().any(|line| line.contains("30秒")));
     }
 
@@ -5809,7 +5928,7 @@ mod tests {
     fn step5_align_prefers_fallback_when_llm_lines_are_fragmented() {
         let parent = Step5SplitParent {
             parent_segment_id: 221,
-            draft_translation: "但当我坐下来时，我会先加载交易平台，然后花大约30秒的时间，一个小小的30秒休息，来阅读这些内容并大声念出来。".to_string(),
+            draft_translation: "但当我坐下来时，我会先打开写作工作区，然后花大约30秒的时间，一个小小的30秒休息，来阅读这些内容并大声念出来。".to_string(),
             parts: vec![
                 Step5SplitPart {
                     part_id: 1,
@@ -5822,7 +5941,7 @@ mod tests {
                     part_id: 2,
                     start: 1.0,
                     end: 2.0,
-                    source: "I sit down,I start loading up my trading platform,".to_string(),
+                    source: "I sit down,I start opening up my writing workspace,".to_string(),
                     tokens: vec![],
                 },
                 Step5SplitPart {
@@ -5835,13 +5954,13 @@ mod tests {
             ],
         };
         let fragmented = vec![
-            "但我坐下来时，我会先加载交易平台。".to_string(),
+            "但我坐下来时，我会先打开写作工作区。".to_string(),
             "然后花大约".to_string(),
             "时间，一个小小的30秒休息，来阅读这些内容并大声念出来。".to_string(),
         ];
         let fallback = vec![
             "但当我坐下来时".to_string(),
-            "我会先加载交易平台，然后花一点时间".to_string(),
+            "我会先打开写作工作区，然后花一点时间".to_string(),
             "进行一个30秒的小休息，来阅读这些内容并大声念出来。".to_string(),
         ];
         let selected = choose_better_alignment(&parent, &fragmented, &fallback, "zh-CN");
@@ -5852,31 +5971,31 @@ mod tests {
     fn step5_align_choice_rejects_fallback_with_next_line_numeric_leak() {
         let parent = Step5SplitParent {
             parent_segment_id: 67,
-            draft_translation: "对于基础命中，当你刚开始时，做一个10点的交易，看着它涨到50点或100点，这很常见也很有挑战。".to_string(),
+            draft_translation: "对于复盘练习，当你刚开始时，写一个10分钟的记录，看着它扩展到50行或100行，这很常见也很有挑战。".to_string(),
             parts: vec![
                 Step5SplitPart {
                     part_id: 1,
                     start: 0.0,
                     end: 1.0,
-                    source: "with base hits it's very common and challenging when you're first starting out".to_string(),
+                    source: "with review practice it's very common and challenging when you're first starting out".to_string(),
                     tokens: vec![],
                 },
                 Step5SplitPart {
                     part_id: 2,
                     start: 1.0,
                     end: 2.0,
-                    source: "to take a 10-point trade and watch it run for 50 points or 100 points".to_string(),
+                    source: "to write a 10-minute note and watch it grow to 50 lines or 100 lines".to_string(),
                     tokens: vec![],
                 },
             ],
         };
         let aligned_without_leak = vec![
-            "对于基础命中，当你刚开始时，这很常见也很有挑战。".to_string(),
-            "做一个10点的交易，看着它涨到50点或100点。".to_string(),
+            "对于复盘练习，当你刚开始时，这很常见也很有挑战。".to_string(),
+            "写一个10分钟的记录，看着它扩展到50行或100行。".to_string(),
         ];
         let fallback_with_leak = vec![
-            "对于基础命中，当你刚开始时，做一个10点的交易。".to_string(),
-            "10 看着它涨到50点或100点，这很常见也很有挑战。".to_string(),
+            "对于复盘练习，当你刚开始时，写一个10分钟的记录。".to_string(),
+            "10 看着它扩展到50行或100行，这很常见也很有挑战。".to_string(),
         ];
         let selected =
             choose_better_alignment(&parent, &aligned_without_leak, &fallback_with_leak, "zh-CN");
@@ -5886,13 +6005,13 @@ mod tests {
     #[test]
     fn step5_source_residue_detection_flags_untranslated_english() {
         assert!(looks_like_source_residue(
-            "and out, take my base hit and trade another day",
-            "and out take my base hit and trade another day",
+            "and out, keep my short note and review another day",
+            "and out keep my short note and review another day",
             "zh-CN"
         ));
         assert!(!looks_like_source_residue(
-            "base hit strategy",
-            "这是我的 base hit 策略",
+            "review strategy",
+            "这是我的 review 策略",
             "zh-CN"
         ));
     }

@@ -559,7 +559,7 @@ fn make_entity_id(prefix: &str, seq: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_saved_settings, HotwordGroup, HotwordTerm, SavedSettings, SubtitleRenderStyle,
+        HotwordGroup, HotwordTerm, SavedSettings, SubtitleRenderStyle, normalize_saved_settings,
     };
 
     fn settings_with_hotwords(groups: Vec<HotwordGroup>) -> SavedSettings {

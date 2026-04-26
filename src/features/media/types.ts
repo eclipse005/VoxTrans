@@ -95,10 +95,8 @@ export type TaskStageCode =
   | "summarizing"
   | "terminology"
   | "translating"
-  | "splitSource"
-  | "alignTranslation"
-  | "polishTranslation"
-  | "qa";
+  | "subtitleLayout"
+  | "finalCheck";
 
 export type TaskStageProgress = {
   code: TaskStageCode | "";
@@ -157,10 +155,8 @@ const TASK_STAGE_SET = new Set<TaskStageCode>([
   "summarizing",
   "terminology",
   "translating",
-  "splitSource",
-  "alignTranslation",
-  "polishTranslation",
-  "qa",
+  "subtitleLayout",
+  "finalCheck",
 ]);
 
 const TASK_STAGE_ORDER: Record<TaskStageCode, number> = {
@@ -171,10 +167,8 @@ const TASK_STAGE_ORDER: Record<TaskStageCode, number> = {
   summarizing: 50,
   terminology: 60,
   translating: 70,
-  splitSource: 80,
-  alignTranslation: 90,
-  polishTranslation: 100,
-  qa: 110,
+  subtitleLayout: 80,
+  finalCheck: 90,
 };
 
 export function normalizeTaskStageCode(value: unknown): TaskStageCode | "" {
