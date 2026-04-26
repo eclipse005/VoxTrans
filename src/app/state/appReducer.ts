@@ -11,7 +11,6 @@ import { reduceQueueState } from "./queueReducer";
 import { reduceSettingsState } from "./settingsReducer";
 import { reduceSubtitleState } from "./subtitleReducer";
 import { createTerminologyGroup } from "../utils/terminology";
-import { createHotwordGroup } from "../utils/hotwords";
 
 export type AppState = {
   queue: QueueItem[];
@@ -34,8 +33,6 @@ export type AppState = {
   draftLlmConcurrencyInput: string;
   draftTerminologyGroups: SavedSettings["terminologyGroups"];
   draftEnableTerminology: boolean;
-  draftHotwordGroups: SavedSettings["hotwordGroups"];
-  draftEnableHotwords: boolean;
   draftEnableSubtitleBeautify: boolean;
   draftAutoBurnHardSubtitle: boolean;
   draftSubtitleBurnMode: SubtitleBurnMode;
@@ -112,8 +109,6 @@ export type SettingsAction =
           | "draftLlmConcurrencyInput"
           | "draftTerminologyGroups"
           | "draftEnableTerminology"
-          | "draftHotwordGroups"
-          | "draftEnableHotwords"
           | "draftEnableSubtitleBeautify"
           | "draftAutoBurnHardSubtitle"
           | "draftSubtitleBurnMode"
@@ -139,8 +134,6 @@ export const defaultSettings: SavedSettings = {
   llmConcurrency: 4,
   terminologyGroups: [createTerminologyGroup()],
   enableTerminology: true,
-  hotwordGroups: [createHotwordGroup()],
-  enableHotwords: true,
   enableSubtitleBeautify: true,
   autoBurnHardSubtitle: false,
   subtitleBurnMode: "bilingualSourceFirst",
@@ -196,8 +189,6 @@ export const initialAppState: AppState = {
   draftLlmConcurrencyInput: String(defaultSettings.llmConcurrency),
   draftTerminologyGroups: defaultSettings.terminologyGroups,
   draftEnableTerminology: defaultSettings.enableTerminology,
-  draftHotwordGroups: defaultSettings.hotwordGroups,
-  draftEnableHotwords: defaultSettings.enableHotwords,
   draftEnableSubtitleBeautify: defaultSettings.enableSubtitleBeautify,
   draftAutoBurnHardSubtitle: defaultSettings.autoBurnHardSubtitle,
   draftSubtitleBurnMode: defaultSettings.subtitleBurnMode,

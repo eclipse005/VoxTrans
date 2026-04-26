@@ -195,8 +195,6 @@ function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown>
     llmConcurrency: settings.llmConcurrency,
     terminologyGroups: settings.terminologyGroups,
     enableTerminology: settings.enableTerminology,
-    hotwordGroups: settings.hotwordGroups,
-    enableHotwords: settings.enableHotwords,
     enableSubtitleBeautify: settings.enableSubtitleBeautify,
   };
 }

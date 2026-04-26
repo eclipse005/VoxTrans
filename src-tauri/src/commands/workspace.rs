@@ -903,10 +903,6 @@ struct Step6FinalCheckPipelineStep {
     source_lang: String,
     target_lang: String,
     segments: Vec<crate::commands::translate::BuildTranslationSegmentCommand>,
-    translate_api_key: String,
-    translate_base_url: String,
-    translate_model: String,
-    llm_concurrency: u32,
     app: AppHandle,
 }
 
@@ -947,10 +943,6 @@ impl PipelineStep for Step6FinalCheckPipelineStep {
                 source_lang: self.source_lang.clone(),
                 target_lang: self.target_lang.clone(),
                 segments: self.segments.clone(),
-                translate_api_key: self.translate_api_key.clone(),
-                translate_base_url: self.translate_base_url.clone(),
-                translate_model: self.translate_model.clone(),
-                llm_concurrency: self.llm_concurrency,
             },
         )
         .await?;
@@ -1427,35 +1419,39 @@ async fn execute_translate_steps(
     >(&output_dir.join(STEP_05_03_TRANSLATION_POLISH_FILE))?
     {
         let step_context = StepContext { output_dir };
-        let step6_exec = execute_step(
+        remove_step6_final_check_artifact(output_dir);
+        let step6_exec = match execute_step(
             &Step6FinalCheckPipelineStep {
                 task_id: task_id.to_string(),
                 media_path: record.item.path.clone(),
                 source_lang: source_lang.clone(),
                 target_lang: target_lang.clone(),
                 segments: step5_existing.segments.clone(),
-                translate_api_key: runtime.translate_api_key.clone(),
-                translate_base_url: runtime.translate_base_url.clone(),
-                translate_model: runtime.translate_model.clone(),
-                llm_concurrency: runtime.llm_concurrency,
                 app: app.clone(),
             },
             &step_context,
         )
         .await
-        .map_err(|err| {
-            let _ = mark_task_failed(app, task_id, &err);
-            err
-        })?;
-        ensure_step6_final_check_passed(&step6_exec.output.quality_summary).map_err(|err| {
-            let _ = mark_task_failed(app, task_id, &err);
-            err
-        })?;
+        {
+            Ok(value) => Some(value),
+            Err(err) => {
+                log_step6_final_check_error_to_main(task_id, &record.item.path, &err);
+                None
+            }
+        };
+        if let Some(step6_exec) = step6_exec {
+            log_step6_final_check_to_main(
+                task_id,
+                &record.item.path,
+                &step6_exec.output,
+                step6_exec.source,
+            );
+        }
         return finish_translate_with_step5(
             app,
             task_id,
             &record.item.path,
-            &step6_exec.output.segments,
+            &step5_existing.segments,
             source_text,
             runtime.enable_subtitle_beautify,
         );
@@ -1662,6 +1658,7 @@ async fn execute_translate_steps(
     }
     let step53_output = step53_exec.output;
 
+    remove_step6_final_check_artifact(output_dir);
     let step6_exec = match execute_step(
         &Step6FinalCheckPipelineStep {
             task_id: task_id.to_string(),
@@ -1669,47 +1666,35 @@ async fn execute_translate_steps(
             source_lang: source_lang.clone(),
             target_lang: target_lang.clone(),
             segments: step53_output.segments.clone(),
-            translate_api_key: runtime.translate_api_key.clone(),
-            translate_base_url: runtime.translate_base_url.clone(),
-            translate_model: runtime.translate_model.clone(),
-            llm_concurrency: runtime.llm_concurrency,
             app: app.clone(),
         },
         &step_context,
     )
     .await
     {
+        Ok(value) => Some(value),
         Err(err) => {
-            mark_task_failed(app, task_id, &err)?;
-            return Err(err);
+            log_step6_final_check_error_to_main(task_id, &record.item.path, &err);
+            None
         }
-        Ok(value) => value,
     };
-    if let Err(err) = ensure_step6_final_check_passed(&step6_exec.output.quality_summary) {
-        mark_task_failed(app, task_id, &err)?;
-        return Err(err);
+    if let Some(step6_exec) = step6_exec {
+        log_step6_final_check_to_main(
+            task_id,
+            &record.item.path,
+            &step6_exec.output,
+            step6_exec.source,
+        );
     }
 
     finish_translate_with_step5(
         app,
         task_id,
         &record.item.path,
-        &step6_exec.output.segments,
+        &step53_output.segments,
         source_text,
         runtime.enable_subtitle_beautify,
     )
-}
-
-fn ensure_step6_final_check_passed(
-    quality_summary: &crate::commands::translate::Step5QualitySummaryCommand,
-) -> Result<(), String> {
-    if quality_summary.passed {
-        return Ok(());
-    }
-    Err(format!(
-        "最终检查未通过: {} 项硬失败",
-        quality_summary.hard_fail_count
-    ))
 }
 
 fn finish_transcribe_only(
@@ -2497,8 +2482,6 @@ fn fallback_saved_settings() -> crate::services::preferences::SavedSettings {
         llm_concurrency: 4,
         terminology_groups: Vec::new(),
         enable_terminology: true,
-        hotword_groups: Vec::new(),
-        enable_hotwords: true,
         enable_subtitle_beautify: true,
         auto_burn_hard_subtitle: false,
         subtitle_burn_mode: "bilingualSourceFirst".to_string(),
@@ -2632,6 +2615,84 @@ fn task_failure_log_payload(error: &str) -> Value {
     })
 }
 
+fn remove_step6_final_check_artifact(output_dir: &Path) {
+    let _ = std::fs::remove_file(output_dir.join(STEP_06_FINAL_CHECK_FILE));
+}
+
+fn log_step6_final_check_to_main(
+    task_id: &str,
+    media_path: &str,
+    response: &crate::commands::translate::BuildStep6FinalCheckCommandResponse,
+    source: StepSource,
+) {
+    let payload = step6_final_check_log_payload(response, source);
+    let logger = if media_path.trim().is_empty() {
+        TaskLogger::main(task_id.to_string())
+    } else {
+        TaskLogger::main_with_media(task_id.to_string(), media_path.to_string())
+    };
+    logger.event(task_log_event::TASK_FINAL_CHECK, Some(&payload));
+}
+
+fn log_step6_final_check_error_to_main(task_id: &str, media_path: &str, error: &str) {
+    let payload = serde_json::json!({
+        "status": "check_failed",
+        "artifact": STEP_06_FINAL_CHECK_FILE,
+        "error": error,
+    });
+    let logger = if media_path.trim().is_empty() {
+        TaskLogger::main(task_id.to_string())
+    } else {
+        TaskLogger::main_with_media(task_id.to_string(), media_path.to_string())
+    };
+    logger.event(task_log_event::TASK_FINAL_CHECK, Some(&payload));
+}
+
+fn step6_final_check_log_payload(
+    response: &crate::commands::translate::BuildStep6FinalCheckCommandResponse,
+    source: StepSource,
+) -> Value {
+    let issues = response
+        .issues
+        .iter()
+        .take(12)
+        .map(|issue| {
+            serde_json::json!({
+                "severity": issue.severity,
+                "ruleId": issue.rule_id,
+                "segmentId": issue.segment_id,
+                "partId": issue.part_id,
+                "message": issue.message,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "status": if response.quality_summary.passed { "passed" } else { "issues_found" },
+        "source": match source {
+            StepSource::Cache => "cache",
+            StepSource::Computed => "computed",
+        },
+        "artifact": STEP_06_FINAL_CHECK_FILE,
+        "summary": {
+            "passed": response.quality_summary.passed,
+            "hardFailCount": response.quality_summary.hard_fail_count,
+            "issueCount": response.quality_summary.issue_count,
+            "softScore": response.quality_summary.soft_score,
+        },
+        "metrics": {
+            "segmentTotal": response.metrics.segment_total,
+            "emptyCount": response.metrics.empty_count,
+            "ellipsisTailCount": response.metrics.ellipsis_tail_count,
+            "numericDriftCount": response.metrics.numeric_drift_count,
+            "crossLineLeakCount": response.metrics.cross_line_leak_count,
+            "gt25Count": response.metrics.gt25_count,
+            "gt32Count": response.metrics.gt32_count,
+        },
+        "issuesPreview": issues,
+        "issuesPreviewLimit": 12,
+    })
+}
+
 fn patch_task_item(
     app: &AppHandle,
     task_id: &str,
@@ -2739,23 +2800,50 @@ fn seconds_to_millis(value: f64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        beautify_subtitle_text, collapse_multiple_spaces, ensure_step6_final_check_passed,
-        is_ascii_word_char, is_cjk_char, need_cjk_ascii_space, task_failure_log_payload,
+        beautify_subtitle_text, collapse_multiple_spaces, is_ascii_word_char, is_cjk_char,
+        need_cjk_ascii_space, step6_final_check_log_payload, task_failure_log_payload,
         trim_bounding_punctuation,
     };
 
     #[test]
-    fn final_check_hard_failure_blocks_completion() {
-        let result = ensure_step6_final_check_passed(
-            &crate::commands::translate::Step5QualitySummaryCommand {
-                passed: false,
-                hard_fail_count: 2,
-                issue_count: 3,
-                soft_score: 60.0,
+    fn final_check_log_payload_records_issues_without_blocking() {
+        let payload = step6_final_check_log_payload(
+            &crate::commands::translate::BuildStep6FinalCheckCommandResponse {
+                task_id: "task".to_string(),
+                media_path: "media.mp4".to_string(),
+                source_lang: "en".to_string(),
+                target_lang: "zh-CN".to_string(),
+                schema_version: 1,
+                pipeline_version: "test".to_string(),
+                artifact_meta: crate::commands::translate::Step5ArtifactMetaCommand::default(),
+                metrics: crate::commands::translate::Step6FinalCheckMetricsCommand {
+                    segment_total: 3,
+                    numeric_drift_count: 1,
+                    ..Default::default()
+                },
+                issues: vec![crate::commands::translate::Step5QualityIssueCommand {
+                    rule_id: "numeric_drift".to_string(),
+                    severity: "hard".to_string(),
+                    segment_id: 7,
+                    part_id: 2,
+                    message: "数字不一致".to_string(),
+                }],
+                quality_summary: crate::commands::translate::Step5QualitySummaryCommand {
+                    passed: false,
+                    hard_fail_count: 1,
+                    issue_count: 1,
+                    soft_score: 75.0,
+                },
+                segments: Vec::new(),
             },
+            crate::services::pipeline::StepSource::Computed,
         );
 
-        assert_eq!(result, Err("最终检查未通过: 2 项硬失败".to_string()));
+        assert_eq!(payload["status"], "issues_found");
+        assert_eq!(payload["artifact"], "step_06_final_check.json");
+        assert_eq!(payload["summary"]["hardFailCount"], 1);
+        assert_eq!(payload["metrics"]["numericDriftCount"], 1);
+        assert_eq!(payload["issuesPreview"][0]["ruleId"], "numeric_drift");
     }
 
     #[test]

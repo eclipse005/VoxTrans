@@ -10,7 +10,6 @@ import type {
 } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import { normalizeTerminologyGroups } from "../utils/terminology";
-import { normalizeHotwordGroups } from "../utils/hotwords";
 
 type DispatchState = (action: AppAction) => void;
 
@@ -52,11 +51,6 @@ export function useAppPersistence(dispatch: DispatchState) {
           : [];
         const terminologyGroups = normalizeTerminologyGroups(terminologyGroupsRaw);
         const enableTerminology = Boolean(res.settings.enableTerminology ?? true);
-        const hotwordGroupsRaw = Array.isArray(res.settings.hotwordGroups)
-          ? res.settings.hotwordGroups
-          : [];
-        const hotwordGroups = normalizeHotwordGroups(hotwordGroupsRaw);
-        const enableHotwords = Boolean(res.settings.enableHotwords ?? true);
         const enableSubtitleBeautify = Boolean(res.settings.enableSubtitleBeautify ?? true);
         const autoBurnHardSubtitle = Boolean(res.settings.autoBurnHardSubtitle ?? false);
         const subtitleBurnModeRaw = String(res.settings.subtitleBurnMode ?? "bilingualSourceFirst");
@@ -124,8 +118,6 @@ export function useAppPersistence(dispatch: DispatchState) {
             llmConcurrency,
             terminologyGroups,
             enableTerminology,
-            hotwordGroups,
-            enableHotwords,
             enableSubtitleBeautify,
             autoBurnHardSubtitle,
             subtitleBurnMode,
@@ -148,8 +140,6 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftLlmConcurrencyInput: String(llmConcurrency),
             draftTerminologyGroups: terminologyGroups,
             draftEnableTerminology: enableTerminology,
-            draftHotwordGroups: hotwordGroups,
-            draftEnableHotwords: enableHotwords,
             draftEnableSubtitleBeautify: enableSubtitleBeautify,
             draftAutoBurnHardSubtitle: autoBurnHardSubtitle,
             draftSubtitleBurnMode: subtitleBurnMode,

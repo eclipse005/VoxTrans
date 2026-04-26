@@ -611,10 +611,6 @@
   margin-bottom: 8px;
 }
 
-.hotwords-add-form {
-  grid-template-columns: minmax(0, 1fr) minmax(108px, 132px) auto;
-}
-
 .terms-input {
   font: inherit;
   border: 1px solid var(--apple-border-light);

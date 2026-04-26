@@ -7,7 +7,6 @@ import SettingsModal from "./components/SettingsModal";
 import SubtitleExportModal from "./components/SubtitleExportModal";
 import SubtitleEditorModal from "./components/SubtitleEditorModal";
 import TerminologyModal from "./components/TerminologyModal";
-import HotwordsModal from "./components/HotwordsModal";
 import Toast from "./components/Toast";
 import UpdateModal from "./components/UpdateModal";
 import UploadPanel from "./components/UploadPanel";
@@ -54,7 +53,6 @@ function saveExportItems(items: ExportSrtItem[]) {
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [showTerminologyModal, setShowTerminologyModal] = useState(false);
-  const [showHotwordsModal, setShowHotwordsModal] = useState(false);
   const [showSubtitleExportModal, setShowSubtitleExportModal] = useState(false);
   const [savedExportItems, setSavedExportItems] = useState<ExportSrtItem[]>(() => loadSavedExportItems());
   const {
@@ -78,8 +76,6 @@ function App() {
     draftLlmConcurrencyInput,
     draftTerminologyGroups,
     draftEnableTerminology,
-    draftHotwordGroups,
-    draftEnableHotwords,
     draftEnableSubtitleBeautify,
     draftAutoBurnHardSubtitle,
     draftSubtitleBurnMode,
@@ -191,7 +187,6 @@ function App() {
     openSettings,
     saveSettings,
     saveTerminologyGroups,
-    saveHotwordGroups,
     testTranslateConnection,
   } = useSettingsController({
     settings,
@@ -208,8 +203,6 @@ function App() {
     draftLlmConcurrencyInput,
     draftTerminologyGroups,
     draftEnableTerminology,
-    draftHotwordGroups,
-    draftEnableHotwords,
     draftEnableSubtitleBeautify,
     draftAutoBurnHardSubtitle,
     draftSubtitleBurnMode,
@@ -240,7 +233,6 @@ function App() {
       <Navbar
         onOpenSettings={openSettings}
         onOpenTerminology={() => setShowTerminologyModal(true)}
-        onOpenHotwords={() => setShowHotwordsModal(true)}
         hasAvailableUpdate={hasAvailableUpdate}
         onOpenUpdateDialog={openUpdateDialog}
       />
@@ -326,7 +318,6 @@ function App() {
         draftTranslateModel={draftTranslateModel}
         draftLlmConcurrencyInput={draftLlmConcurrencyInput}
         draftEnableTerminology={draftEnableTerminology}
-        draftEnableHotwords={draftEnableHotwords}
         draftEnableSubtitleBeautify={draftEnableSubtitleBeautify}
         draftAutoBurnHardSubtitle={draftAutoBurnHardSubtitle}
         draftSubtitleBurnMode={draftSubtitleBurnMode}
@@ -347,7 +338,6 @@ function App() {
         onDraftTranslateModelChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateModel: value } })}
         onDraftLlmConcurrencyInputChange={(value) => dispatch({ type: "set_draft", payload: { draftLlmConcurrencyInput: value } })}
         onDraftEnableTerminologyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableTerminology: value } })}
-        onDraftEnableHotwordsChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableHotwords: value } })}
         onDraftEnableSubtitleBeautifyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableSubtitleBeautify: value } })}
         onDraftAutoBurnHardSubtitleChange={(value) => dispatch({ type: "set_draft", payload: { draftAutoBurnHardSubtitle: value } })}
         onDraftSubtitleBurnModeChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleBurnMode: value } })}
@@ -379,16 +369,6 @@ function App() {
         onChange={(value) => dispatch({ type: "set_draft", payload: { draftTerminologyGroups: value } })}
         onSave={async (groups) => {
           await saveTerminologyGroups(groups);
-        }}
-      />
-
-      <HotwordsModal
-        visible={showHotwordsModal}
-        groups={draftHotwordGroups}
-        onClose={() => setShowHotwordsModal(false)}
-        onChange={(value) => dispatch({ type: "set_draft", payload: { draftHotwordGroups: value } })}
-        onSave={async (groups) => {
-          await saveHotwordGroups(groups);
         }}
       />
 
