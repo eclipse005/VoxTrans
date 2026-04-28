@@ -13,6 +13,9 @@ use crate::services::pipeline::{
     CheckpointPolicy, PipelineStep, StepContext, StepSource, execute_step,
 };
 use crate::services::task_log::{TaskLogger, event as task_log_event};
+use crate::services::workspace_subtitle::{
+    WorkspaceSubtitleSegment, WorkspaceSubtitleWord, serialize_segments,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -466,24 +469,6 @@ impl PipelineStep for Step2SegmentsPipelineStep {
         .await?;
         Ok(step2_response.segments)
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceSubtitleWord {
-    start_ms: u64,
-    end_ms: u64,
-    word: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceSubtitleSegment {
-    start_ms: u64,
-    end_ms: u64,
-    source_text: String,
-    translated_text: String,
-    source_words: Vec<WorkspaceSubtitleWord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1524,7 +1509,7 @@ async fn execute_translate_steps(
     }
     patch_task_item(app, task_id, |task| {
         task.item.result_text = source_text.clone();
-        task.item.subtitle_segments_json = serialize_workspace_subtitle_segments(
+        task.item.subtitle_segments_json = serialize_segments(
             &workspace_subtitle_segments_from_translation_segments(&step4_exec.output.segments),
         );
     })?;
@@ -1567,7 +1552,7 @@ async fn execute_translate_steps(
     }
     patch_task_item(app, task_id, |task| {
         task.item.result_text = source_text.clone();
-        task.item.subtitle_segments_json = serialize_workspace_subtitle_segments(
+        task.item.subtitle_segments_json = serialize_segments(
             &workspace_subtitle_segments_from_step51_parents(&step51_exec.output.parents),
         );
     })?;
@@ -1610,7 +1595,7 @@ async fn execute_translate_steps(
     }
     patch_task_item(app, task_id, |task| {
         task.item.result_text = source_text.clone();
-        task.item.subtitle_segments_json = serialize_workspace_subtitle_segments(
+        task.item.subtitle_segments_json = serialize_segments(
             &workspace_subtitle_segments_from_step52_parents(&step52_exec.output.parents),
         );
     })?;
@@ -1706,8 +1691,8 @@ fn finish_transcribe_only(
     target_lang: &str,
 ) -> Result<(), String> {
     let workspace_segments = workspace_subtitle_segments_from_step2_segments(step2_segments);
-    let subtitle_segments_json = serialize_workspace_subtitle_segments(&workspace_segments);
-    write_step7_srts(
+    let subtitle_segments_json = serialize_segments(&workspace_segments);
+    write_completion_srts(
         task_id,
         media_path,
         &workspace_segments,
@@ -1738,8 +1723,8 @@ fn finish_translate_with_step5(
     target_lang: &str,
 ) -> Result<(), String> {
     let workspace_segments = workspace_subtitle_segments_from_translation_segments(segments);
-    let subtitle_segments_json = serialize_workspace_subtitle_segments(&workspace_segments);
-    write_step7_srts(
+    let subtitle_segments_json = serialize_segments(&workspace_segments);
+    write_completion_srts(
         task_id,
         media_path,
         &workspace_segments,
@@ -1759,7 +1744,7 @@ fn finish_translate_with_step5(
     })
 }
 
-fn write_step7_srts(
+fn write_completion_srts(
     task_id: &str,
     media_path: &str,
     segments: &[WorkspaceSubtitleSegment],
@@ -1768,7 +1753,7 @@ fn write_step7_srts(
     subtitle_length_reference: u32,
     target_lang: &str,
 ) -> Result<(), String> {
-    let mut srt_segments = segments
+    let srt_segments = segments
         .iter()
         .map(
             |segment| crate::services::subtitle_srt::SubtitleSrtSegment {
@@ -1779,28 +1764,16 @@ fn write_step7_srts(
             },
         )
         .collect::<Vec<_>>();
-    if enable_subtitle_beautify {
-        crate::services::subtitle_beautify::beautify_subtitle_srt_segments(
-            &mut srt_segments,
-            subtitle_length_reference,
-            target_lang,
-        );
-    }
-    let items = if include_translation_variants {
-        vec![
-            crate::services::subtitle_srt::ExportSrtItem::Source,
-            crate::services::subtitle_srt::ExportSrtItem::Target,
-            crate::services::subtitle_srt::ExportSrtItem::BilingualSourceFirst,
-            crate::services::subtitle_srt::ExportSrtItem::BilingualTargetFirst,
-        ]
-    } else {
-        vec![crate::services::subtitle_srt::ExportSrtItem::Source]
-    };
-    crate::services::subtitle_srt::write_task_output_variants(
+    crate::services::subtitle_srt::write_task_output_variants_for_completion(
         task_id,
         Path::new(media_path),
-        &srt_segments,
-        &items,
+        srt_segments,
+        include_translation_variants,
+        crate::services::subtitle_srt::SubtitleBeautifyOptions {
+            enabled: enable_subtitle_beautify,
+            subtitle_length_reference,
+            target_lang: target_lang.to_string(),
+        },
     )?;
     Ok(())
 }
@@ -1822,7 +1795,7 @@ fn update_processing_preview_from_step2(
     step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
     source_text: &str,
 ) -> Result<(), String> {
-    let subtitle_segments_json = serialize_workspace_subtitle_segments(
+    let subtitle_segments_json = serialize_segments(
         &workspace_subtitle_segments_from_step2_segments(step2_segments),
     );
     patch_task_item(app, task_id, |task| {
@@ -1927,10 +1900,6 @@ fn workspace_subtitle_segments_from_step52_parents(
         }
     }
     segments
-}
-
-fn serialize_workspace_subtitle_segments(segments: &[WorkspaceSubtitleSegment]) -> String {
-    serde_json::to_string(segments).unwrap_or_else(|_| "[]".to_string())
 }
 
 fn source_text_from_step2_segments(

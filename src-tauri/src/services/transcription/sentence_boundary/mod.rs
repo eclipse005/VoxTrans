@@ -1,16 +1,23 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::services::llm::batch::run_indexed_concurrent_with_progress;
-use crate::services::llm::client::{LlmSemanticValidationError, OpenAiCompatLlmClient};
+use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
+use crate::services::prompts::sentence_boundary::{
+    SemanticBoundaryPromptCandidate,
+    build_semantic_refinement_prompt as build_semantic_refinement_prompt_text,
+};
 use crate::services::transcribe::WordTokenDto;
 use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
 use voxtrans_core::subtitle::segmenter::WordToken;
 use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
+
+mod responses;
+
+use responses::validate_semantic_refinement_response;
 
 const HARD_SPLIT_GAP_MS: u64 = 2_000;
 #[cfg(test)]
@@ -242,7 +249,7 @@ async fn build_split_points_with_optional_semantic_refinement(
                     span_end: end,
                     desired_parts,
                     fallback_splits: fallback_splits.clone(),
-                    prompt: build_semantic_refinement_prompt(
+                    prompt: prepare_semantic_refinement_prompt(
                         &request.source_lang,
                         words,
                         start,
@@ -366,7 +373,7 @@ async fn run_semantic_refinement_tasks(
                             &llm_id,
                             &task.user_prompt,
                             task.response_validator.as_ref(),
-                            |value| parse_semantic_refinement_breaks(value, refinement_task),
+                            |value| validate_semantic_refinement_response(value, refinement_task),
                         )
                         .await
                         .map_err(|err| {
@@ -577,92 +584,6 @@ fn build_llm_semantic_candidates(
     candidates
 }
 
-fn parse_semantic_refinement_breaks(
-    value: Value,
-    task: &SemanticRefinementTask,
-) -> Result<Vec<usize>, LlmSemanticValidationError> {
-    let Some(items) = value
-        .get("breakIds")
-        .or_else(|| value.get("break_ids"))
-        .or_else(|| value.get("boundaryIds"))
-        .or_else(|| value.get("boundaries"))
-        .or_else(|| value.get("splits"))
-        .and_then(|v| v.as_array())
-    else {
-        return Err(LlmSemanticValidationError::retryable(
-            "breakIds array is required",
-        ));
-    };
-
-    let candidate_by_id = task
-        .candidates
-        .iter()
-        .map(|candidate| (candidate.id, candidate.split_after))
-        .collect::<HashMap<_, _>>();
-    let mut selected_splits = Vec::<usize>::new();
-    for item in items {
-        let id = item
-            .as_u64()
-            .map(|v| v as usize)
-            .or_else(|| item.as_str().and_then(|s| s.trim().parse::<usize>().ok()));
-        let Some(id) = id else {
-            continue;
-        };
-        let Some(split_after) = candidate_by_id.get(&id).copied() else {
-            return Err(LlmSemanticValidationError::retryable(format!(
-                "break id {id} is not in candidateBoundaries",
-            )));
-        };
-        selected_splits.push(split_after);
-    }
-
-    selected_splits.sort_unstable();
-    selected_splits.dedup();
-    validate_semantic_splits(&selected_splits, task)
-}
-
-fn validate_semantic_splits(
-    selected_splits: &[usize],
-    task: &SemanticRefinementTask,
-) -> Result<Vec<usize>, LlmSemanticValidationError> {
-    let required_boundaries = task.desired_parts.saturating_sub(1);
-    if selected_splits.len() < required_boundaries {
-        return Err(LlmSemanticValidationError::retryable(format!(
-            "expected at least {required_boundaries} break ids",
-        )));
-    }
-    if selected_splits
-        .iter()
-        .any(|split| *split < task.span_start || *split >= task.span_end)
-    {
-        return Err(LlmSemanticValidationError::retryable(
-            "break ids must stay inside the span",
-        ));
-    }
-
-    let selected_score = score_absolute_splits(
-        selected_splits,
-        task.span_start,
-        task.span_end,
-        task.desired_parts,
-        translation_unit_word_limit_from_span(task.span_start, task.span_end, task.desired_parts),
-    );
-    let fallback_score = score_absolute_splits(
-        &task.fallback_splits,
-        task.span_start,
-        task.span_end,
-        task.desired_parts,
-        translation_unit_word_limit_from_span(task.span_start, task.span_end, task.desired_parts),
-    );
-    if selected_score > fallback_score * 1.6 + 12.0 {
-        return Err(LlmSemanticValidationError::retryable(
-            "selected break ids are much less balanced than local fallback",
-        ));
-    }
-
-    Ok(selected_splits.to_vec())
-}
-
 fn score_absolute_splits(
     splits: &[usize],
     start: usize,
@@ -798,7 +719,7 @@ fn is_structural_boundary(words: &[WordTokenDto], split_after: usize) -> bool {
         || is_semantic_clause_start(&right_word)
 }
 
-fn build_semantic_refinement_prompt(
+fn prepare_semantic_refinement_prompt(
     source_lang: &str,
     words: &[WordTokenDto],
     start: usize,
@@ -810,38 +731,21 @@ fn build_semantic_refinement_prompt(
     let source_text = join_words(words[start..=end].iter().map(|word| word.word.as_str()));
     let candidate_items = candidates
         .iter()
-        .map(|candidate| {
-            serde_json::json!({
-                "id": candidate.id,
-                "splitAfterToken": candidate.split_after - start + 1,
-                "leftPreview": preview_words(words, start, candidate.split_after, 8, false),
-                "rightPreview": preview_words(words, candidate.split_after + 1, end, 8, true),
-                "reason": candidate.reason,
-            })
+        .map(|candidate| SemanticBoundaryPromptCandidate {
+            id: candidate.id,
+            split_after_token: candidate.split_after - start + 1,
+            left_preview: preview_words(words, start, candidate.split_after, 8, false),
+            right_preview: preview_words(words, candidate.split_after + 1, end, 8, true),
+            reason: candidate.reason.clone(),
         })
         .collect::<Vec<_>>();
-
-    serde_json::json!({
-        "task": "refine_long_asr_sentence_boundaries_for_translation",
-        "rule": "Think internally, but output JSON only.",
-        "sourceLanguage": source_lang,
-        "sourceText": source_text,
-        "preferredParts": desired_parts,
-        "softMaxWordsPerPart": word_limit,
-        "candidateBoundaries": candidate_items,
-        "constraints": [
-            "Pick only ids from candidateBoundaries.",
-            "Return breakIds in reading order.",
-            "Split long ASR text into semantically complete translation units.",
-            "Prefer likely missing punctuation and clause boundaries.",
-            "Avoid fragments that start or end with dangling function words.",
-            "Do not rewrite, translate, or add text."
-        ],
-        "output": {
-            "breakIds": [1, 2]
-        }
-    })
-    .to_string()
+    build_semantic_refinement_prompt_text(
+        source_lang,
+        &source_text,
+        word_limit,
+        desired_parts,
+        &candidate_items,
+    )
 }
 
 fn preview_words(

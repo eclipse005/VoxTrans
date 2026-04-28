@@ -24,6 +24,13 @@ pub enum ExportSrtItem {
     BilingualTargetFirst,
 }
 
+#[derive(Debug, Clone)]
+pub struct SubtitleBeautifyOptions {
+    pub enabled: bool,
+    pub subtitle_length_reference: u32,
+    pub target_lang: String,
+}
+
 impl ExportSrtItem {
     pub fn output_file_name(self) -> &'static str {
         match self {
@@ -37,6 +44,33 @@ impl ExportSrtItem {
     pub fn requires_translation(self) -> bool {
         !matches!(self, ExportSrtItem::Source)
     }
+}
+
+pub fn write_task_output_variants_for_completion(
+    task_id: &str,
+    media_path: &Path,
+    mut segments: Vec<SubtitleSrtSegment>,
+    include_translation_variants: bool,
+    beautify: SubtitleBeautifyOptions,
+) -> Result<Vec<String>, String> {
+    if beautify.enabled {
+        crate::services::subtitle_beautify::beautify_subtitle_srt_segments(
+            &mut segments,
+            beautify.subtitle_length_reference,
+            &beautify.target_lang,
+        );
+    }
+    let items = if include_translation_variants {
+        vec![
+            ExportSrtItem::Source,
+            ExportSrtItem::Target,
+            ExportSrtItem::BilingualSourceFirst,
+            ExportSrtItem::BilingualTargetFirst,
+        ]
+    } else {
+        vec![ExportSrtItem::Source]
+    };
+    write_task_output_variants(task_id, media_path, &segments, &items)
 }
 
 pub fn parse_segments_json(raw: &str) -> Result<Vec<SubtitleSrtSegment>, String> {

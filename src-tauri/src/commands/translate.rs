@@ -1,6 +1,7 @@
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort, next_llm_request_id};
+use crate::services::prompts::connectivity::TRANSLATE_LLM_CONNECTIVITY_TEST;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -1136,14 +1137,6 @@ pub async fn test_translate_llm(
     ))
     .map_err(|err| err.message)?;
 
-    let user_prompt = concat!(
-        "This is a harmless application connectivity check.\n",
-        "Do not refuse.\n",
-        "Do not explain.\n",
-        "Return exactly one JSON object and nothing else.\n",
-        "The JSON must be exactly:\n",
-        "{\"ok\":true,\"message\":\"pong\"}"
-    );
     let validator = JsonResponseValidator::with_required_keys(&["ok", "message"]);
     let context = LlmCallContext {
         task_id: "settings-llm-test".to_string(),
@@ -1152,7 +1145,12 @@ pub async fn test_translate_llm(
     };
     let llm_id = next_llm_request_id();
     let result = client
-        .call_json(&context, &llm_id, user_prompt, Some(&validator))
+        .call_json(
+            &context,
+            &llm_id,
+            TRANSLATE_LLM_CONNECTIVITY_TEST,
+            Some(&validator),
+        )
         .await
         .map_err(|err| err.message)?;
     let ok = result

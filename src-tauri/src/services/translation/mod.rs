@@ -1,11 +1,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::Value;
-
 use crate::services::llm::batch::run_indexed_concurrent_with_progress;
-use crate::services::llm::client::{LlmSemanticValidationError, OpenAiCompatLlmClient};
+use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
+use crate::services::prompts::translation::{
+    TranslationPromptLine, TranslationPromptTerm, build_batch_translate_prompt,
+};
+
+mod responses;
+
+use responses::validate_batch_translation_response;
 
 const DEFAULT_BATCH_SIZE: usize = 20;
 const MAX_BATCH_SIZE: usize = 40;
@@ -164,7 +169,7 @@ pub async fn build_translation_layer_with_progress(
                             &llm_id,
                             &task.user_prompt,
                             task.response_validator.as_ref(),
-                            |value| parse_batch_translation(value, &window.local_ids),
+                            |value| validate_batch_translation_response(value, &window.local_ids),
                         )
                         .await
                         .map_err(|err| {
@@ -505,14 +510,38 @@ fn build_batch_windows(
         let next = &segments[batch_end..next_end];
 
         let terms = select_batch_terms(current, terminology_entries, MAX_TERMS_PER_BATCH);
+        let prev_lines = prev
+            .iter()
+            .map(|segment| segment.source.clone())
+            .collect::<Vec<_>>();
+        let current_lines = current
+            .iter()
+            .enumerate()
+            .map(|(index, segment)| TranslationPromptLine {
+                id: index + 1,
+                text: segment.source.clone(),
+            })
+            .collect::<Vec<_>>();
+        let next_lines = next
+            .iter()
+            .map(|segment| segment.source.clone())
+            .collect::<Vec<_>>();
+        let prompt_terms = terms
+            .iter()
+            .map(|term| TranslationPromptTerm {
+                source: term.source.clone(),
+                target: term.target.clone(),
+                note: term.note.clone(),
+            })
+            .collect::<Vec<_>>();
         let prompt = build_batch_translate_prompt(
             source_lang,
             target_lang,
             theme_summary,
-            prev,
-            current,
-            next,
-            &terms,
+            &prev_lines,
+            &current_lines,
+            &next_lines,
+            &prompt_terms,
         );
 
         out.push(BatchWindow {
@@ -574,158 +603,6 @@ fn select_batch_terms(
     matched
 }
 
-fn build_batch_translate_prompt(
-    source_lang: &str,
-    target_lang: &str,
-    theme_summary: &str,
-    prev: &[NormalizedSegment],
-    current: &[NormalizedSegment],
-    next: &[NormalizedSegment],
-    terms: &[TranslationTerminologyEntry],
-) -> String {
-    let prev_lines = prev
-        .iter()
-        .map(|segment| segment.source.clone())
-        .collect::<Vec<_>>();
-    let current_lines = current
-        .iter()
-        .enumerate()
-        .map(|(index, segment)| {
-            serde_json::json!({
-                "id": index + 1,
-                "text": segment.source,
-            })
-        })
-        .collect::<Vec<_>>();
-    let next_lines = next
-        .iter()
-        .map(|segment| segment.source.clone())
-        .collect::<Vec<_>>();
-
-    let prompt_terms = terms
-        .iter()
-        .map(|term| {
-            serde_json::json!({
-                "source": term.source,
-                "target": term.target,
-                "note": term.note,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    serde_json::json!({
-        "task": "translate_segment_batch_with_context",
-        "rule": "Return JSON only.",
-        "sourceLanguage": source_lang,
-        "targetLanguage": target_lang,
-        "theme": theme_summary,
-        "context": {
-            "previousLines": prev_lines,
-            "currentLines": current_lines,
-            "nextLines": next_lines,
-        },
-        "terminology": prompt_terms,
-        "constraints": [
-            "Translate only currentLines.",
-            "Preserve batch-local line id (1..N).",
-            "Keep meaning faithful and natural.",
-            "Apply provided terminology when relevant.",
-            "Prefer one translation line per input line.",
-            "No extra explanations."
-        ],
-        "output": {
-            "translations": [
-                { "id": 1, "text": "translated text" }
-            ]
-        }
-    })
-    .to_string()
-}
-
-fn parse_batch_translation(
-    value: Value,
-    expected_ids: &[usize],
-) -> Result<HashMap<usize, String>, LlmSemanticValidationError> {
-    let mut out = HashMap::<usize, String>::new();
-
-    if let Some(items) = value.get("translations").and_then(|v| v.as_array()) {
-        for item in items {
-            let Some(obj) = item.as_object() else {
-                return Err(LlmSemanticValidationError::retryable(
-                    "translations item must be object",
-                ));
-            };
-            let id = obj
-                .get("id")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as usize)
-                .ok_or_else(|| {
-                    LlmSemanticValidationError::retryable("translation id is required")
-                })?;
-            let text = obj
-                .get("text")
-                .or_else(|| obj.get("translation"))
-                .or_else(|| obj.get("translatedText"))
-                .and_then(|v| v.as_str())
-                .map(normalize_inline_text)
-                .unwrap_or_default();
-            if !expected_ids.contains(&id) {
-                continue;
-            }
-            if text.is_empty() {
-                return Err(LlmSemanticValidationError::retryable(format!(
-                    "translation id {id} must be non-empty"
-                )));
-            }
-            if out.insert(id, text).is_some() {
-                return Err(LlmSemanticValidationError::retryable(format!(
-                    "duplicate translation id {id}"
-                )));
-            }
-        }
-    } else if let Some(obj) = value.as_object() {
-        for (key, item) in obj {
-            let id = key.parse::<usize>().map_err(|_| {
-                LlmSemanticValidationError::retryable("translation map key must be numeric id")
-            })?;
-            let text = item
-                .get("text")
-                .or_else(|| item.get("translation"))
-                .or_else(|| item.get("translatedText"))
-                .and_then(|v| v.as_str())
-                .map(normalize_inline_text)
-                .unwrap_or_default();
-            if !expected_ids.contains(&id) {
-                continue;
-            }
-            if text.is_empty() {
-                return Err(LlmSemanticValidationError::retryable(format!(
-                    "translation id {id} must be non-empty"
-                )));
-            }
-            if out.insert(id, text).is_some() {
-                return Err(LlmSemanticValidationError::retryable(format!(
-                    "duplicate translation id {id}"
-                )));
-            }
-        }
-    } else {
-        return Err(LlmSemanticValidationError::retryable(
-            "translation response root must be object",
-        ));
-    }
-
-    for expected_id in expected_ids {
-        if !out.contains_key(expected_id) {
-            return Err(LlmSemanticValidationError::retryable(format!(
-                "missing translation id {expected_id}"
-            )));
-        }
-    }
-
-    Ok(out)
-}
-
 fn normalize_inline_text(raw: &str) -> String {
     raw.replace('\r', " ")
         .replace('\n', " ")
@@ -738,9 +615,10 @@ fn normalize_inline_text(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::responses::validate_batch_translation_response;
     use super::{
         TranslationSegmentInput, TranslationTerminologyEntry, build_batch_windows,
-        merge_dangling_source_segments, normalize_segments, parse_batch_translation,
+        merge_dangling_source_segments, normalize_segments,
     };
     use serde_json::json;
 
@@ -783,32 +661,33 @@ mod tests {
     }
 
     #[test]
-    fn parse_batch_translation_rejects_missing_expected_id() {
+    fn validate_batch_translation_response_rejects_missing_expected_id() {
         let value = json!({
             "translations": [
                 { "id": 1, "text": "first" }
             ]
         });
 
-        let err = parse_batch_translation(value, &[1, 2]).expect_err("should reject missing id");
+        let err = validate_batch_translation_response(value, &[1, 2])
+            .expect_err("should reject missing id");
         assert!(format!("{err:?}").contains("missing translation id 2"));
     }
 
     #[test]
-    fn parse_batch_translation_rejects_empty_translation_text() {
+    fn validate_batch_translation_response_rejects_empty_translation_text() {
         let value = json!({
             "translations": [
                 { "id": 1, "text": "" }
             ]
         });
 
-        let err =
-            parse_batch_translation(value, &[1]).expect_err("should reject empty translation");
+        let err = validate_batch_translation_response(value, &[1])
+            .expect_err("should reject empty translation");
         assert!(format!("{err:?}").contains("translation id 1 must be non-empty"));
     }
 
     #[test]
-    fn parse_batch_translation_accepts_complete_non_empty_batch() {
+    fn validate_batch_translation_response_accepts_complete_non_empty_batch() {
         let value = json!({
             "translations": [
                 { "id": 1, "text": "first" },
@@ -816,7 +695,8 @@ mod tests {
             ]
         });
 
-        let out = parse_batch_translation(value, &[1, 2]).expect("should parse full batch");
+        let out =
+            validate_batch_translation_response(value, &[1, 2]).expect("should parse full batch");
         assert_eq!(out.get(&1).map(String::as_str), Some("first"));
         assert_eq!(out.get(&2).map(String::as_str), Some("second"));
     }
