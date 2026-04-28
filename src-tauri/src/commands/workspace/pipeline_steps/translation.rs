@@ -1,0 +1,148 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use tauri::AppHandle;
+
+use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
+
+use super::super::progress::report_task_stage;
+use super::super::{STEP_03_TERMINOLOGY_FILE, STEP_04_TRANSLATION_FILE, TaskStage};
+
+#[derive(Debug, Clone)]
+pub(in crate::commands::workspace) struct Step3TerminologyPipelineStep {
+    pub(in crate::commands::workspace) task_id: String,
+    pub(in crate::commands::workspace) media_path: String,
+    pub(in crate::commands::workspace) source_lang: String,
+    pub(in crate::commands::workspace) target_lang: String,
+    pub(in crate::commands::workspace) segments:
+        Vec<crate::commands::translate::SourceSegmentForTerminologyCommand>,
+    pub(in crate::commands::workspace) translate_api_key: String,
+    pub(in crate::commands::workspace) translate_base_url: String,
+    pub(in crate::commands::workspace) translate_model: String,
+    pub(in crate::commands::workspace) llm_concurrency: u32,
+    pub(in crate::commands::workspace) terminology_entries:
+        Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+}
+
+#[async_trait]
+impl PipelineStep for Step3TerminologyPipelineStep {
+    type Output = crate::commands::translate::BuildTerminologyLayerCommandResponse;
+
+    fn name(&self) -> &'static str {
+        "step_03_terminology"
+    }
+
+    fn artifact_file(&self) -> &'static str {
+        STEP_03_TERMINOLOGY_FILE
+    }
+
+    fn policy(&self) -> CheckpointPolicy {
+        CheckpointPolicy::SkipIfExists
+    }
+
+    fn validate(&self, output: &Self::Output) -> Result<(), String> {
+        if output.task_id.trim().is_empty() || output.media_path.trim().is_empty() {
+            return Err("invalid step3 artifact".to_string());
+        }
+        Ok(())
+    }
+
+    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        crate::commands::translate::build_terminology_layer(
+            crate::commands::translate::BuildTerminologyLayerCommandRequest {
+                task_id: self.task_id.clone(),
+                media_path: self.media_path.clone(),
+                source_lang: self.source_lang.clone(),
+                target_lang: self.target_lang.clone(),
+                segments: self.segments.clone(),
+                translate_api_key: self.translate_api_key.clone(),
+                translate_base_url: self.translate_base_url.clone(),
+                translate_model: self.translate_model.clone(),
+                llm_concurrency: self.llm_concurrency,
+                terminology_entries: self.terminology_entries.clone(),
+            },
+        )
+        .await
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::commands::workspace) struct Step4TranslationPipelineStep {
+    pub(in crate::commands::workspace) task_id: String,
+    pub(in crate::commands::workspace) media_path: String,
+    pub(in crate::commands::workspace) source_lang: String,
+    pub(in crate::commands::workspace) target_lang: String,
+    pub(in crate::commands::workspace) segments:
+        Vec<crate::commands::translate::SourceSegmentForTerminologyCommand>,
+    pub(in crate::commands::workspace) theme_summary: String,
+    pub(in crate::commands::workspace) terminology_entries:
+        Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+    pub(in crate::commands::workspace) translate_api_key: String,
+    pub(in crate::commands::workspace) translate_base_url: String,
+    pub(in crate::commands::workspace) translate_model: String,
+    pub(in crate::commands::workspace) llm_concurrency: u32,
+    pub(in crate::commands::workspace) app: AppHandle,
+}
+
+#[async_trait]
+impl PipelineStep for Step4TranslationPipelineStep {
+    type Output = crate::commands::translate::BuildTranslationLayerCommandResponse;
+
+    fn name(&self) -> &'static str {
+        "step_04_translation"
+    }
+
+    fn artifact_file(&self) -> &'static str {
+        STEP_04_TRANSLATION_FILE
+    }
+
+    fn policy(&self) -> CheckpointPolicy {
+        CheckpointPolicy::SkipIfExists
+    }
+
+    fn validate(&self, output: &Self::Output) -> Result<(), String> {
+        if output.task_id.trim().is_empty() || output.media_path.trim().is_empty() {
+            return Err("invalid step4 artifact".to_string());
+        }
+        Ok(())
+    }
+
+    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        let task_id = self.task_id.clone();
+        let app_for_progress = self.app.clone();
+        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
+            Arc::new(move |current, total| {
+                let detail = if total > 0 {
+                    format!("{current}/{total}")
+                } else {
+                    String::new()
+                };
+                let _ = report_task_stage(
+                    &app_for_progress,
+                    &task_id,
+                    TaskStage::Translating,
+                    detail,
+                    current as u32,
+                    total as u32,
+                );
+            });
+        crate::commands::translate::build_translation_layer_with_progress(
+            crate::commands::translate::BuildTranslationLayerCommandRequest {
+                task_id: self.task_id.clone(),
+                media_path: self.media_path.clone(),
+                source_lang: self.source_lang.clone(),
+                target_lang: self.target_lang.clone(),
+                segments: self.segments.clone(),
+                theme_summary: self.theme_summary.clone(),
+                terminology_entries: self.terminology_entries.clone(),
+                translate_api_key: self.translate_api_key.clone(),
+                translate_base_url: self.translate_base_url.clone(),
+                translate_model: self.translate_model.clone(),
+                llm_concurrency: self.llm_concurrency,
+                batch_size: 20,
+            },
+            Some(on_progress),
+        )
+        .await
+    }
+}
