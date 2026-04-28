@@ -93,20 +93,6 @@ pub fn request_cancel(task_id: &str) -> bool {
     }
 }
 
-#[allow(dead_code)]
-pub fn get_progress(task_id: &str) -> UpdateDownloadProgress {
-    progress_snapshots()
-        .lock()
-        .ok()
-        .and_then(|m| m.get(task_id).cloned())
-        .unwrap_or_else(|| UpdateDownloadProgress {
-            downloaded: 0,
-            total: 0,
-            percent: 0.0,
-            speed: 0.0,
-        })
-}
-
 /// 检查更新，带重试（0s, 2s, 4s）
 pub async fn check_update(current_version: &str) -> Result<UpdateInfo, String> {
     let delays_ms = [0, 2000, 4000];

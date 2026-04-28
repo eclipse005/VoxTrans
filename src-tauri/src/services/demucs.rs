@@ -29,7 +29,7 @@ pub struct SeparateVocalsResponse {
 
 pub fn separate_vocals_blocking<F>(
     request: SeparateVocalsRequest,
-    mut on_progress: F,
+    on_progress: F,
 ) -> Result<SeparateVocalsResponse, String>
 where
     F: FnMut(u32),
@@ -89,7 +89,7 @@ where
         &demucs_model_dir,
         &output_root,
         &demucs_input,
-        |percent| on_progress(percent),
+        on_progress,
     ) {
         logger.event(
             "demucs.failed",

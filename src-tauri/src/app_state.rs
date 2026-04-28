@@ -33,20 +33,11 @@ impl Default for ModelDownloadStateSnapshot {
     }
 }
 
+#[derive(Default)]
 pub struct ModelDownloadRuntime {
     pub cancel_flag: Option<Arc<AtomicBool>>,
     pub active_model: Option<String>,
     pub snapshot: ModelDownloadStateSnapshot,
-}
-
-impl Default for ModelDownloadRuntime {
-    fn default() -> Self {
-        Self {
-            cancel_flag: None,
-            active_model: None,
-            snapshot: ModelDownloadStateSnapshot::default(),
-        }
-    }
 }
 
 #[derive(Clone)]

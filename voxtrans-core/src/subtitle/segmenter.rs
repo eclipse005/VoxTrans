@@ -41,12 +41,13 @@ pub fn normalize_word_tokens(raw_words: Vec<WordToken>) -> Vec<WordToken> {
         if text.is_empty() {
             continue;
         }
-        if is_standalone_punctuation_token(&text) && !is_numeric_prefix_symbol(&text) {
-            if let Some(prev) = out.last_mut() {
-                prev.word.push_str(&text);
-                prev.end = prev.end.max(token.end);
-                continue;
-            }
+        if is_standalone_punctuation_token(&text)
+            && !is_numeric_prefix_symbol(&text)
+            && let Some(prev) = out.last_mut()
+        {
+            prev.word.push_str(&text);
+            prev.end = prev.end.max(token.end);
+            continue;
         }
         out.push(WordToken {
             start: token.start,

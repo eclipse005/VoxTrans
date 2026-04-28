@@ -133,11 +133,11 @@ fn normalize_ranges(ranges: &[[f64; 2]], total_duration_sec: f64) -> Vec<(f64, f
 
     let mut merged: Vec<(f64, f64)> = Vec::with_capacity(normalized.len());
     for (start, end) in normalized {
-        if let Some(last) = merged.last_mut() {
-            if start <= last.1 {
-                last.1 = last.1.max(end);
-                continue;
-            }
+        if let Some(last) = merged.last_mut()
+            && start <= last.1
+        {
+            last.1 = last.1.max(end);
+            continue;
         }
         merged.push((start, end));
     }

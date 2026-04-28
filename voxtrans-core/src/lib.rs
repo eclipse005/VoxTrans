@@ -153,12 +153,12 @@ fn default_model_dir() -> PathBuf {
         }
     }
 
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let candidate = exe_dir.join("model").join("parakeet-tdt-0.6b-v2");
-            if candidate.exists() {
-                return candidate;
-            }
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        let candidate = exe_dir.join("model").join("parakeet-tdt-0.6b-v2");
+        if candidate.exists() {
+            return candidate;
         }
     }
 

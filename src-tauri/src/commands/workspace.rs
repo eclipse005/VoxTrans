@@ -57,13 +57,10 @@ pub struct WorkspaceTaskProgressState {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 enum TaskStage {
-    Downloading,
     Preparing,
     Recognizing,
     Segmenting,
-    Summarizing,
     Terminology,
     Translating,
     SubtitleLayout,
@@ -73,11 +70,9 @@ enum TaskStage {
 impl TaskStage {
     fn code(self) -> &'static str {
         match self {
-            TaskStage::Downloading => "downloading",
             TaskStage::Preparing => "preparing",
             TaskStage::Recognizing => "recognizing",
             TaskStage::Segmenting => "segmenting",
-            TaskStage::Summarizing => "summarizing",
             TaskStage::Terminology => "terminology",
             TaskStage::Translating => "translating",
             TaskStage::SubtitleLayout => "subtitleLayout",
@@ -87,11 +82,9 @@ impl TaskStage {
 
     fn label(self) -> &'static str {
         match self {
-            TaskStage::Downloading => "下载中",
             TaskStage::Preparing => "准备中",
             TaskStage::Recognizing => "语音识别中",
             TaskStage::Segmenting => "AI断句中",
-            TaskStage::Summarizing => "总结中",
             TaskStage::Terminology => "术语提取中",
             TaskStage::Translating => "翻译中",
             TaskStage::SubtitleLayout => "",
@@ -101,11 +94,9 @@ impl TaskStage {
 
     fn order(self) -> u32 {
         match self {
-            TaskStage::Downloading => 10,
             TaskStage::Preparing => 20,
             TaskStage::Recognizing => 30,
             TaskStage::Segmenting => 40,
-            TaskStage::Summarizing => 50,
             TaskStage::Terminology => 60,
             TaskStage::Translating => 70,
             TaskStage::SubtitleLayout => 80,

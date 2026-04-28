@@ -101,10 +101,11 @@ fn normalize_cjk_ascii_spacing(text: &str) -> String {
     let mut output = String::new();
     let mut previous = None;
     for ch in text.chars() {
-        if let Some(prev) = previous {
-            if need_cjk_ascii_space(prev, ch) && !output.ends_with(' ') {
-                output.push(' ');
-            }
+        if let Some(prev) = previous
+            && need_cjk_ascii_space(prev, ch)
+            && !output.ends_with(' ')
+        {
+            output.push(' ');
         }
         output.push(ch);
         previous = Some(ch);

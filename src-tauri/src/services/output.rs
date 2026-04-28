@@ -10,10 +10,10 @@ pub fn resolve_output_dir() -> PathBuf {
         return exe_output_dir;
     }
 
-    if let Some(fallback_dir) = platform_fallback_output_dir() {
-        if ensure_writable_dir(&fallback_dir) {
-            return fallback_dir;
-        }
+    if let Some(fallback_dir) = platform_fallback_output_dir()
+        && ensure_writable_dir(&fallback_dir)
+    {
+        return fallback_dir;
     }
 
     exe_output_dir
