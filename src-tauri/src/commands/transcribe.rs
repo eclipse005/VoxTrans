@@ -1,93 +1,14 @@
 use tauri::Emitter;
 use tauri::async_runtime::spawn_blocking;
 
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscribeCommandRequest {
-    pub task_id: String,
-    pub audio_path: String,
-    pub provider: String,
-    pub chunk_target_seconds: u32,
-    pub model_dir: Option<String>,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscribeCommandResponse {
-    pub words: Vec<WordTokenCommandDto>,
-    pub segment_total: usize,
-    pub segment_durations_sec: Vec<f64>,
-    pub audio_duration_sec: f64,
-    pub vad_elapsed_sec: f64,
-    pub transcribe_elapsed_sec: f64,
-    pub execution_provider: String,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct WordTokenCommandDto {
-    pub start: f64,
-    pub end: f64,
-    pub word: String,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct SegmentWithWordsCommandDto {
-    pub start: f64,
-    pub end: f64,
-    pub text: String,
-    pub words: Vec<WordTokenCommandDto>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildSegmentsCommandRequest {
-    pub task_id: String,
-    pub audio_path: String,
-    pub words: Vec<WordTokenCommandDto>,
-    pub subtitle_max_words_per_segment: u32,
-    #[serde(default)]
-    pub segment_mode: String,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildSegmentsCommandResponse {
-    pub text: String,
-    pub srt: String,
-    pub srt_output_path: String,
-    pub segments: Vec<SegmentWithWordsCommandDto>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SeparateVocalsCommandRequest {
-    pub task_id: String,
-    pub audio_path: String,
-    pub model: String,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SeparateVocalsCommandResponse {
-    pub vocals_path: String,
-}
-
-#[derive(Debug, serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct TranscribeProgressEvent {
-    task_id: String,
-    current_segment: usize,
-    total_segments: usize,
-}
-
-#[derive(Debug, serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct SeparateProgressEvent {
-    task_id: String,
-    percent: u32,
-}
+use super::transcribe_mapping::{
+    from_build_segments_response, from_transcribe_response, to_service_word,
+};
+pub use super::transcribe_types::{
+    BuildSegmentsCommandRequest, BuildSegmentsCommandResponse, SeparateVocalsCommandRequest,
+    SeparateVocalsCommandResponse, TranscribeCommandRequest, TranscribeCommandResponse,
+};
+use super::transcribe_types::{SeparateProgressEvent, TranscribeProgressEvent};
 
 #[tauri::command]
 pub async fn transcribe(
@@ -116,15 +37,7 @@ pub async fn transcribe(
                 );
             },
         )
-        .map(|response| TranscribeCommandResponse {
-            words: response.words.into_iter().map(from_service_word).collect(),
-            segment_total: response.segment_total,
-            segment_durations_sec: response.segment_durations_sec,
-            audio_duration_sec: response.audio_duration_sec,
-            vad_elapsed_sec: response.vad_elapsed_sec,
-            transcribe_elapsed_sec: response.transcribe_elapsed_sec,
-            execution_provider: response.execution_provider,
-        })
+        .map(from_transcribe_response)
     })
     .await
     .map_err(|err| err.to_string())?
@@ -143,21 +56,7 @@ pub fn build_segments_from_words(
             segment_mode: request.segment_mode,
         },
     )
-    .map(|response| BuildSegmentsCommandResponse {
-        text: response.text,
-        srt: response.srt,
-        srt_output_path: response.srt_output_path,
-        segments: response
-            .segments
-            .into_iter()
-            .map(|segment| SegmentWithWordsCommandDto {
-                start: segment.start,
-                end: segment.end,
-                text: segment.text,
-                words: segment.words.into_iter().map(from_service_word).collect(),
-            })
-            .collect(),
-    })
+    .map(from_build_segments_response)
 }
 
 #[tauri::command]
@@ -190,20 +89,4 @@ pub async fn separate_vocals(
     })
     .await
     .map_err(|err| err.to_string())?
-}
-
-fn to_service_word(word: WordTokenCommandDto) -> crate::services::transcribe::WordTokenDto {
-    crate::services::transcribe::WordTokenDto {
-        start: word.start,
-        end: word.end,
-        word: word.word,
-    }
-}
-
-fn from_service_word(word: crate::services::transcribe::WordTokenDto) -> WordTokenCommandDto {
-    WordTokenCommandDto {
-        start: word.start,
-        end: word.end,
-        word: word.word,
-    }
 }

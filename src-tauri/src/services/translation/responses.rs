@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::services::llm::client::LlmSemanticValidationError;
 
-use super::normalize_inline_text;
+use super::text::normalize_inline_text;
 
 pub(super) fn validate_batch_translation_response(
     value: Value,

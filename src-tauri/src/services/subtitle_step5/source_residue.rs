@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use super::language_units::is_cjk_char;
+use super::text_utils::normalize_inline_text;
 
 pub(super) fn target_prefers_cjk(target_lang: &str) -> bool {
     let normalized = target_lang.trim().to_ascii_lowercase();
@@ -38,7 +39,7 @@ pub(super) fn looks_like_non_cjk_translation_for_cjk_target(text: &str, target_l
     if !target_prefers_cjk(target_lang) {
         return false;
     }
-    let normalized = super::normalize_inline_text(text);
+    let normalized = normalize_inline_text(text);
     if normalized.is_empty() {
         return false;
     }

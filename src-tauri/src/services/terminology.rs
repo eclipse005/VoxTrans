@@ -1,17 +1,19 @@
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
-
-use crate::services::llm::client::{LlmSemanticValidationError, OpenAiCompatLlmClient};
+use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, next_llm_request_id};
 use crate::services::prompts::terminology::{
     IndexedUserTermPromptItem, build_extract_terms_prompt, build_theme_prompt,
     build_user_filter_prompt,
 };
+use crate::services::terminology_responses::{
+    parse_extracted_terms_response, parse_theme_response, parse_user_term_filter_response,
+};
+use crate::services::terminology_terms::{merge_terms_with_user_priority, normalize_entries};
+use crate::services::terminology_text::{build_context_text, normalize_theme};
 
 const DEFAULT_THEME: &str = "内容围绕一个明确主题展开。";
-const MAX_CONTEXT_CHARS: usize = 8_000;
 const MAX_EXTRACT_TERMS: usize = 24;
 
 #[derive(Debug, Clone)]
@@ -49,67 +51,6 @@ pub struct BuildTerminologyLayerRequest {
 pub struct BuildTerminologyLayerResponse {
     pub theme_summary: String,
     pub terminology_entries: Vec<TerminologyEntry>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ThemeExtraction {
-    #[serde(default)]
-    theme: String,
-    #[serde(default)]
-    output: Option<ThemeOutputExtraction>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UserTermFilterExtraction {
-    #[serde(default)]
-    #[serde(alias = "keep_indexes")]
-    keep_indexes: Vec<usize>,
-    #[serde(default)]
-    output: Option<UserTermFilterOutputExtraction>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ExtractedTermsExtraction {
-    #[serde(default)]
-    terms: Vec<TerminologyEntryExtraction>,
-    #[serde(default)]
-    output: Option<ExtractedTermsOutputExtraction>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ThemeOutputExtraction {
-    #[serde(default)]
-    theme: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UserTermFilterOutputExtraction {
-    #[serde(default)]
-    #[serde(alias = "keep_indexes")]
-    keep_indexes: Vec<usize>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ExtractedTermsOutputExtraction {
-    #[serde(default)]
-    terms: Vec<TerminologyEntryExtraction>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TerminologyEntryExtraction {
-    #[serde(default)]
-    source: String,
-    #[serde(default)]
-    target: String,
-    #[serde(default)]
-    note: String,
 }
 
 pub async fn build_terminology_layer(
@@ -182,11 +123,13 @@ async fn extract_theme(
     let llm_id = next_llm_request_id();
 
     let result = llm_client
-        .call_json_validated(&context, &llm_id, &prompt, Some(&validator), |value| {
-            serde_json::from_value::<ThemeExtraction>(value).map_err(|err| {
-                LlmSemanticValidationError::retryable(format!("theme parse failed: {err}"))
-            })
-        })
+        .call_json_validated(
+            &context,
+            &llm_id,
+            &prompt,
+            Some(&validator),
+            parse_theme_response,
+        )
         .await
         .map_err(|err| {
             format!(
@@ -195,17 +138,7 @@ async fn extract_theme(
             )
         })?;
 
-    let theme_text = if !result.value.theme.trim().is_empty() {
-        result.value.theme
-    } else {
-        result
-            .value
-            .output
-            .as_ref()
-            .map(|item| item.theme.clone())
-            .unwrap_or_default()
-    };
-    let normalized = normalize_theme(&theme_text);
+    let normalized = normalize_theme(&result.value);
     if normalized.is_empty() {
         Ok(DEFAULT_THEME.to_string())
     } else {
@@ -250,13 +183,13 @@ async fn filter_user_terms(
     let llm_id = next_llm_request_id();
 
     let result = llm_client
-        .call_json_validated(&context, &llm_id, &prompt, None, |value| {
-            serde_json::from_value::<UserTermFilterExtraction>(value).map_err(|err| {
-                LlmSemanticValidationError::retryable(format!(
-                    "user term filter parse failed: {err}"
-                ))
-            })
-        })
+        .call_json_validated(
+            &context,
+            &llm_id,
+            &prompt,
+            None,
+            parse_user_term_filter_response,
+        )
         .await
         .map_err(|err| {
             format!(
@@ -267,18 +200,7 @@ async fn filter_user_terms(
 
     let mut selected = Vec::<TerminologyEntry>::new();
     let mut seen = HashSet::<usize>::new();
-    let keep_indexes = if result.value.keep_indexes.is_empty() {
-        result
-            .value
-            .output
-            .as_ref()
-            .map(|item| item.keep_indexes.clone())
-            .unwrap_or_default()
-    } else {
-        result.value.keep_indexes
-    };
-
-    for raw in keep_indexes {
+    for raw in result.value {
         if raw == 0 || raw > user_terms.len() {
             continue;
         }
@@ -312,13 +234,13 @@ async fn extract_terms(
     let llm_id = next_llm_request_id();
 
     let result = llm_client
-        .call_json_validated(&context, &llm_id, &prompt, None, |value| {
-            serde_json::from_value::<ExtractedTermsExtraction>(value).map_err(|err| {
-                LlmSemanticValidationError::retryable(format!(
-                    "term extraction parse failed: {err}"
-                ))
-            })
-        })
+        .call_json_validated(
+            &context,
+            &llm_id,
+            &prompt,
+            None,
+            parse_extracted_terms_response,
+        )
         .await
         .map_err(|err| {
             format!(
@@ -327,123 +249,5 @@ async fn extract_terms(
             )
         })?;
 
-    let extracted = if result.value.terms.is_empty() {
-        result
-            .value
-            .output
-            .as_ref()
-            .map(|item| item.terms.clone())
-            .unwrap_or_default()
-    } else {
-        result.value.terms
-    };
-
-    Ok(normalize_entries(
-        extracted
-            .into_iter()
-            .map(|entry| TerminologyEntry {
-                source: entry.source,
-                target: entry.target,
-                note: entry.note,
-            })
-            .collect(),
-    ))
-}
-
-fn merge_terms_with_user_priority(
-    user_terms: &[TerminologyEntry],
-    extracted_terms: &[TerminologyEntry],
-) -> Vec<TerminologyEntry> {
-    let mut out = Vec::<TerminologyEntry>::new();
-    let mut seen_source = HashSet::<String>::new();
-
-    for entry in user_terms {
-        let key = entry.source.to_ascii_lowercase();
-        if key.is_empty() || !seen_source.insert(key) {
-            continue;
-        }
-        out.push(entry.clone());
-    }
-
-    for entry in extracted_terms {
-        let key = entry.source.to_ascii_lowercase();
-        if key.is_empty() || !seen_source.insert(key) {
-            continue;
-        }
-        out.push(entry.clone());
-    }
-
-    out
-}
-
-fn normalize_entries(entries: Vec<TerminologyEntry>) -> Vec<TerminologyEntry> {
-    let mut out = Vec::<TerminologyEntry>::new();
-    let mut seen = HashSet::<(String, String)>::new();
-
-    for entry in entries {
-        let source = normalize_inline_text(&entry.source);
-        let target = normalize_inline_text(&entry.target);
-        let note = normalize_inline_text(&entry.note);
-        if source.is_empty() || target.is_empty() {
-            continue;
-        }
-        let key = (source.to_ascii_lowercase(), target.to_ascii_lowercase());
-        if !seen.insert(key) {
-            continue;
-        }
-        out.push(TerminologyEntry {
-            source,
-            target,
-            note,
-        });
-    }
-
-    out
-}
-
-fn build_context_text(segments: &[TerminologySegment]) -> String {
-    let lines = segments
-        .iter()
-        .filter_map(|segment| {
-            if !segment.segment.trim().is_empty() {
-                return Some(normalize_inline_text(&segment.segment));
-            }
-            let text = segment
-                .tokens
-                .iter()
-                .map(|token| token.text.trim())
-                .filter(|token| !token.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ");
-            let normalized = normalize_inline_text(&text);
-            if normalized.is_empty() {
-                None
-            } else {
-                Some(normalized)
-            }
-        })
-        .collect::<Vec<_>>();
-
-    truncate_chars(&lines.join("\n"), MAX_CONTEXT_CHARS)
-}
-
-fn normalize_theme(raw: &str) -> String {
-    normalize_inline_text(raw)
-}
-
-fn normalize_inline_text(raw: &str) -> String {
-    raw.replace('\r', " ")
-        .replace('\n', " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim()
-        .to_string()
-}
-
-fn truncate_chars(input: &str, max_chars: usize) -> String {
-    if input.chars().count() <= max_chars {
-        return input.to_string();
-    }
-    input.chars().take(max_chars).collect::<String>()
+    Ok(normalize_entries(result.value))
 }

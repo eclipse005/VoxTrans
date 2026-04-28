@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::services::llm::client::LlmSemanticValidationError;
 
-use super::normalize_inline_text;
+use super::text_utils::normalize_inline_text;
 
 pub(super) fn validate_source_split_response(
     value: Value,

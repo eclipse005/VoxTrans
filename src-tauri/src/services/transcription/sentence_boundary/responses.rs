@@ -4,7 +4,8 @@ use serde_json::Value;
 
 use crate::services::llm::client::LlmSemanticValidationError;
 
-use super::{SemanticRefinementTask, score_absolute_splits, translation_unit_word_limit_from_span};
+use super::semantic::{score_absolute_splits, translation_unit_word_limit_from_span};
+use super::types::SemanticRefinementTask;
 
 pub(super) fn validate_semantic_refinement_response(
     value: Value,

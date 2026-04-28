@@ -1,3 +1,5 @@
+use super::text_utils::normalize_inline_text;
+
 pub(super) fn split_clauses(text: &str) -> Vec<String> {
     let mut out = Vec::<String>::new();
     let mut current = String::new();
@@ -6,14 +8,14 @@ pub(super) fn split_clauses(text: &str) -> Vec<String> {
         let ch = *ch;
         current.push(ch);
         if is_clause_boundary_char(&chars, index) {
-            let chunk = super::normalize_inline_text(&current);
+            let chunk = normalize_inline_text(&current);
             if !chunk.is_empty() {
                 out.push(chunk);
             }
             current.clear();
         }
     }
-    let tail = super::normalize_inline_text(&current);
+    let tail = normalize_inline_text(&current);
     if !tail.is_empty() {
         out.push(tail);
     }

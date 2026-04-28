@@ -1,4 +1,5 @@
 use super::language_units::is_hangul_char;
+use super::text_utils::normalize_inline_text;
 use super::types::Step5Token;
 
 pub(super) fn build_source_from_tokens(tokens: &[Step5Token]) -> String {
@@ -23,7 +24,7 @@ pub(super) fn build_source_from_tokens(tokens: &[Step5Token]) -> String {
         prev_has_spacing_word = next_has_spacing_word;
         prev_allows_space_after = source_token_allows_space_after(text);
     }
-    super::normalize_inline_text(&out)
+    normalize_inline_text(&out)
 }
 
 fn source_token_has_spacing_word(token: &str) -> bool {

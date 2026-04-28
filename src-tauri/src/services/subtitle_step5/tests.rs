@@ -1,12 +1,29 @@
 use std::collections::HashSet;
 
+use super::alignment_repair::repair_aligned_lines;
+use super::alignment_score::choose_better_alignment;
+use super::numbers::extract_numbers;
+use super::polish_repair::repair_polished_translation;
+use super::quality::split_line_quality_score;
+use super::source_residue::looks_like_source_residue;
+use super::source_split::split_token_ranges;
+use super::source_split_readability::{
+    merge_tiny_ranges_for_readability, rebalance_dangling_tail_tokens,
+};
+use super::source_text::build_source_from_tokens;
+use super::terminology_filter::source_contains_terminology_term;
+use super::translation_candidate::{
+    has_tail_ellipsis, is_unusable_translation, trim_before_leaked_number_anchor,
+};
+use super::translation_split::heuristic_split_translation;
+use super::watchability::{
+    is_watchability_fragment_issue, repair_single_watchability_line, repair_watchability_fragments,
+};
+use super::watchability_split::split_watchability_overlong_segments;
 use super::{
     BuildStep5SourceSplitRequest, BuildStep6FinalCheckRequest, Step5DraftSegment,
-    Step5FinalSegment, Step5SplitParent, Step5SplitPart, Step5Token, build_source_from_tokens,
-    build_step_5_1_source_split_with_progress, choose_better_alignment, extract_numbers,
-    has_tail_ellipsis, heuristic_split_translation, is_watchability_fragment_issue,
-    looks_like_source_residue, merge_tiny_ranges_for_readability, rebalance_dangling_tail_tokens,
-    repair_aligned_lines, split_line_quality_score, split_token_ranges,
+    Step5FinalSegment, Step5SplitParent, Step5SplitPart, Step5Token,
+    build_step_5_1_source_split_with_progress,
 };
 
 #[test]
@@ -327,7 +344,7 @@ fn step5_split_quality_penalizes_overlapping_lines() {
 fn step5_trim_before_leaked_number_anchor_trims_head() {
     let mut leaked = HashSet::<String>::new();
     leaked.insert("10".to_string());
-    let trimmed = super::trim_before_leaked_number_anchor(
+    let trimmed = trim_before_leaked_number_anchor(
         "你知道， 对于复盘练习， 当你刚开始时， 做一个10分钟的记录，",
         &leaked,
     );
@@ -339,19 +356,19 @@ fn step5_trim_before_leaked_number_anchor_trims_head() {
 
 #[test]
 fn step5_source_terminology_matcher_uses_boundaries_for_short_ascii_terms() {
-    assert!(!super::source_contains_terminology_term(
+    assert!(!source_contains_terminology_term(
         "this example executes normally",
         "x"
     ));
-    assert!(super::source_contains_terminology_term(
+    assert!(source_contains_terminology_term(
         "this result is 2x higher",
         "x"
     ));
-    assert!(super::source_contains_terminology_term(
+    assert!(source_contains_terminology_term(
         "this result is x higher",
         "x"
     ));
-    assert!(!super::source_contains_terminology_term(
+    assert!(!source_contains_terminology_term(
         "the prefixvalue should not match",
         "fix"
     ));
@@ -470,7 +487,7 @@ fn step5_watchability_repair_does_not_invent_percent_sentence() {
             translation: "60 50 你更有可能持续地以满意的金额完成那项计划。".to_string(),
             tokens: vec![],
         }];
-    super::repair_watchability_fragments(&mut segments, "zh-CN");
+    repair_watchability_fragments(&mut segments, "zh-CN");
     assert_eq!(
         segments[0].translation,
         "60 50 你更有可能持续地以满意的金额完成那项计划。"
@@ -488,13 +505,13 @@ fn step5_watchability_repair_does_not_invent_domain_sentence() {
         translation: "10 看着它增加到50行。".to_string(),
         tokens: vec![],
     }];
-    super::repair_watchability_fragments(&mut segments, "zh-CN");
+    repair_watchability_fragments(&mut segments, "zh-CN");
     assert_eq!(segments[0].translation, "10 看着它增加到50行。");
 }
 
 #[test]
 fn step5_watchability_repair_does_not_invent_domain_phrasing() {
-    let repaired = super::repair_single_watchability_line(
+    let repaired = repair_single_watchability_line(
         "after the 10 minute review we wait for confirmation",
         "10后等待确认",
         "zh-CN",
@@ -513,7 +530,7 @@ fn step5_watchability_repair_does_not_invent_day_phrase() {
         translation: "30分钟，对吧？".to_string(),
         tokens: vec![],
     }];
-    super::repair_watchability_fragments(&mut segments, "zh-CN");
+    repair_watchability_fragments(&mut segments, "zh-CN");
     assert_eq!(segments[0].translation, "30分钟，对吧？");
 }
 
@@ -527,7 +544,7 @@ fn step5_watchability_repair_does_not_invent_seconds_phrase() {
         translation: "30 来阅读这些内容。".to_string(),
         tokens: vec![],
     }];
-    super::repair_watchability_fragments(&mut segments, "zh-CN");
+    repair_watchability_fragments(&mut segments, "zh-CN");
     assert_eq!(segments[0].translation, "30 来阅读这些内容。");
 }
 
@@ -543,7 +560,7 @@ fn step5_watchability_repair_trims_trailing_connector_fragment() {
         translation: "我有这些笔记，而且".to_string(),
         tokens: vec![],
     }];
-    super::repair_watchability_fragments(&mut segments, "zh-CN");
+    repair_watchability_fragments(&mut segments, "zh-CN");
     assert_eq!(segments[0].translation, "我有这些笔记");
 }
 
@@ -558,7 +575,7 @@ fn step5_polish_adds_terminal_punctuation_for_finished_source_sentence() {
         tokens: vec![],
     };
 
-    super::repair_polished_translation(&mut segment);
+    repair_polished_translation(&mut segment);
 
     assert_eq!(segment.translation, "好了，我认为这是本周最后一个。");
     assert!(!is_watchability_fragment_issue(
@@ -584,7 +601,7 @@ fn step5_watchability_split_long_segments_with_source_tokens() {
                 })
                 .collect::<Vec<_>>(),
         }];
-    super::split_watchability_overlong_segments(&mut segments, 15.0, "en-US");
+    split_watchability_overlong_segments(&mut segments, 15.0, "en-US");
     assert!(segments.len() >= 2);
     for segment in &segments {
         assert!(!segment.translation.trim().is_empty());
@@ -603,7 +620,7 @@ fn step5_watchability_split_long_segments_without_tokens() {
         translation: "这个中文句子会被切分以便提升观看体验效果从而更容易理解".to_string(),
         tokens: vec![],
     }];
-    super::split_watchability_overlong_segments(&mut segments, 7.0, "zh-CN");
+    split_watchability_overlong_segments(&mut segments, 7.0, "zh-CN");
     assert!(segments.len() >= 2);
     assert_eq!(segments[0].segment_id, 1);
     assert_eq!(segments[segments.len() - 1].segment_id, segments.len());
@@ -633,11 +650,11 @@ fn step5_watchability_split_rejects_source_residue_fallback_for_cjk() {
         tokens,
     }];
 
-    super::split_watchability_overlong_segments(&mut segments, 8.0, "zh-CN");
+    split_watchability_overlong_segments(&mut segments, 8.0, "zh-CN");
 
     assert!(segments.iter().all(|segment| {
         !looks_like_source_residue(&segment.source, &segment.translation, "zh-CN")
-            && !super::is_unusable_translation(&segment.translation)
+            && !is_unusable_translation(&segment.translation)
     }));
 }
 
