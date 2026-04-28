@@ -1,3 +1,5 @@
+mod download_http;
+mod download_progress;
 mod downloader;
 mod path;
 mod status;

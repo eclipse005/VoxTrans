@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::commands::translate_types::BuildStep6FinalCheckCommandResponse;
 use crate::services::pipeline::StepSource;
 use crate::services::task_log::{TaskLogger, event as task_log_event};
 
@@ -26,7 +27,7 @@ pub(super) fn remove_step6_final_check_artifact(output_dir: &Path) {
 pub(super) fn log_step6_final_check_to_main(
     task_id: &str,
     media_path: &str,
-    response: &crate::commands::translate::BuildStep6FinalCheckCommandResponse,
+    response: &BuildStep6FinalCheckCommandResponse,
     source: StepSource,
 ) {
     let payload = step6_final_check_log_payload(response, source);

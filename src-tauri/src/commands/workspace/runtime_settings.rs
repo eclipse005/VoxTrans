@@ -3,6 +3,8 @@ use std::collections::HashSet;
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::commands::translate_types::TranslateTerminologyEntryCommand;
+
 #[derive(Debug, Clone)]
 pub(super) struct PipelineRuntimeSettings {
     pub(super) provider: String,
@@ -13,8 +15,7 @@ pub(super) struct PipelineRuntimeSettings {
     pub(super) llm_concurrency: u32,
     pub(super) subtitle_max_words_per_segment: u32,
     pub(super) subtitle_length_reference: u32,
-    pub(super) terminology_entries:
-        Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+    pub(super) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
     pub(super) enable_subtitle_beautify: bool,
 }
 
@@ -137,19 +138,17 @@ pub(super) fn resolve_runtime_settings(
 
     let terminology_entries = if enable_terminology {
         let mut seen = HashSet::<(String, String)>::new();
-        let mut out = Vec::<crate::commands::translate::TranslateTerminologyEntryCommand>::new();
+        let mut out = Vec::<TranslateTerminologyEntryCommand>::new();
         let snapshot_entries = snapshot_parsed
             .terminology_groups
             .unwrap_or_default()
             .into_iter()
             .flat_map(|group| group.terms.into_iter())
-            .map(
-                |term| crate::commands::translate::TranslateTerminologyEntryCommand {
-                    source: term.origin.trim().to_string(),
-                    target: term.target.trim().to_string(),
-                    note: term.note.trim().to_string(),
-                },
-            )
+            .map(|term| TranslateTerminologyEntryCommand {
+                source: term.origin.trim().to_string(),
+                target: term.target.trim().to_string(),
+                note: term.note.trim().to_string(),
+            })
             .collect::<Vec<_>>();
 
         for entry in snapshot_entries
@@ -165,13 +164,11 @@ pub(super) fn resolve_runtime_settings(
             if !seen.insert(key) {
                 continue;
             }
-            out.push(
-                crate::commands::translate::TranslateTerminologyEntryCommand {
-                    source,
-                    target,
-                    note: entry.note.trim().to_string(),
-                },
-            );
+            out.push(TranslateTerminologyEntryCommand {
+                source,
+                target,
+                note: entry.note.trim().to_string(),
+            });
         }
         out
     } else {
@@ -216,17 +213,15 @@ pub(super) fn fallback_saved_settings() -> crate::services::preferences::SavedSe
 
 fn saved_terminology_entries(
     saved: &crate::services::preferences::SavedSettings,
-) -> Vec<crate::commands::translate::TranslateTerminologyEntryCommand> {
+) -> Vec<TranslateTerminologyEntryCommand> {
     saved
         .terminology_groups
         .iter()
         .flat_map(|group| group.terms.iter())
-        .map(
-            |term| crate::commands::translate::TranslateTerminologyEntryCommand {
-                source: term.origin.clone(),
-                target: term.target.clone(),
-                note: term.note.clone(),
-            },
-        )
+        .map(|term| TranslateTerminologyEntryCommand {
+            source: term.origin.clone(),
+            target: term.target.clone(),
+            note: term.note.clone(),
+        })
         .collect()
 }

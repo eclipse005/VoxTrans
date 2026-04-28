@@ -1,4 +1,5 @@
 mod alignment_repair;
+mod alignment_repair_neighbors;
 mod alignment_repair_numbers;
 mod alignment_score;
 mod clauses;

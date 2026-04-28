@@ -1,3 +1,7 @@
+use super::download_http::{
+    build_download_client, is_download_success_status, start_modelscope_download,
+};
+use super::download_progress::set_model_download_snapshot;
 use super::{
     ASR_MODEL_DOWNLOAD_FILES, DEMUCS_MODEL_DOWNLOAD_FILES, ModelTarget, REQUIRED_ASR_MODEL_FILES,
     compute_asr_download_bytes, resolve_engine_model_dir, runtime_for_target,
@@ -5,27 +9,13 @@ use super::{
 use crate::app_state::{
     AppState, ModelDownloadPhase, ModelDownloadRuntime, ModelDownloadStateSnapshot,
 };
-use serde::Serialize;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tauri::Emitter;
 
 const DEMUCS_READY_MARKER: &str = ".demucs_ready";
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct ModelDownloadProgressEvent {
-    target: ModelTarget,
-    model: String,
-    phase: ModelDownloadPhase,
-    downloaded_bytes: u64,
-    total_bytes: u64,
-    speed_bytes_per_sec: u64,
-    message: String,
-}
 
 pub fn start_model_download(
     app: tauri::AppHandle,
@@ -147,64 +137,6 @@ fn initial_bytes_for_target(target: ModelTarget, model_dir: &Path, model: &str) 
     }
 }
 
-fn emit_model_download_progress(
-    app: &tauri::AppHandle,
-    target: ModelTarget,
-    model: &str,
-    snapshot: &ModelDownloadStateSnapshot,
-) {
-    let _ = app.emit(
-        "model-download-progress",
-        ModelDownloadProgressEvent {
-            target,
-            model: model.to_string(),
-            phase: snapshot.phase,
-            downloaded_bytes: snapshot.downloaded_bytes,
-            total_bytes: snapshot.total_bytes,
-            speed_bytes_per_sec: snapshot.speed_bytes_per_sec,
-            message: snapshot.message.clone(),
-        },
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn set_model_download_snapshot(
-    app: &tauri::AppHandle,
-    runtime: &Arc<Mutex<ModelDownloadRuntime>>,
-    target: ModelTarget,
-    model: &str,
-    phase: ModelDownloadPhase,
-    downloaded_bytes: u64,
-    total_bytes: u64,
-    speed_bytes_per_sec: u64,
-    message: &str,
-    clear_cancel_flag: bool,
-) -> Result<(), String> {
-    let snapshot = ModelDownloadStateSnapshot {
-        phase,
-        downloaded_bytes,
-        total_bytes,
-        speed_bytes_per_sec,
-        message: message.to_string(),
-    };
-    {
-        let mut guard = runtime
-            .lock()
-            .map_err(|_| "model download state lock poisoned".to_string())?;
-        guard.snapshot = snapshot.clone();
-        guard.active_model = if clear_cancel_flag {
-            None
-        } else {
-            Some(model.to_string())
-        };
-        if clear_cancel_flag {
-            guard.cancel_flag = None;
-        }
-    }
-    emit_model_download_progress(app, target, model, &snapshot);
-    Ok(())
-}
-
 fn download_model_files(
     app: &tauri::AppHandle,
     runtime: &Arc<Mutex<ModelDownloadRuntime>>,
@@ -234,11 +166,7 @@ fn download_asr_model_files(
     let model_dir = resolve_engine_model_dir(ModelTarget::Asr);
     std::fs::create_dir_all(&model_dir).map_err(|err| err.to_string())?;
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) VoxTrans/0.1")
-        .build()
-        .map_err(|err| err.to_string())?;
+    let client = build_download_client()?;
 
     let mut downloaded_bytes: u64 = 0;
     let mut total_bytes: u64 = 0;
@@ -302,27 +230,12 @@ fn download_asr_model_files(
             target.extension().and_then(|s| s.to_str()).unwrap_or("")
         ));
         let part_bytes = std::fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
-        let mut request = client
-            .get(url)
-            .header(reqwest::header::ACCEPT, "*/*")
-            .header(reqwest::header::REFERER, "https://modelscope.cn/");
-        if part_bytes > 0 {
-            request = request.header(reqwest::header::RANGE, format!("bytes={}-", part_bytes));
-        }
-        let mut response = request.send().map_err(|err| err.to_string())?;
-        if response.status() == reqwest::StatusCode::OK && part_bytes > 0 {
-            let _ = std::fs::remove_file(&part_path);
+        let download_start = start_modelscope_download(&client, url, &part_path, part_bytes)?;
+        if download_start.restarted {
             downloaded_bytes = downloaded_bytes.saturating_sub(part_bytes);
-            response = client
-                .get(url)
-                .header(reqwest::header::ACCEPT, "*/*")
-                .header(reqwest::header::REFERER, "https://modelscope.cn/")
-                .send()
-                .map_err(|err| err.to_string())?;
         }
-        if !(response.status().is_success()
-            || response.status() == reqwest::StatusCode::PARTIAL_CONTENT)
-        {
+        let mut response = download_start.response;
+        if !is_download_success_status(response.status()) {
             return Err(format!(
                 "download failed: {} -> {}",
                 file_name,
@@ -496,34 +409,15 @@ fn download_demucs_model_files(
         return Ok(());
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) VoxTrans/0.1")
-        .build()
-        .map_err(|err| err.to_string())?;
+    let client = build_download_client()?;
 
     let part_bytes = std::fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
-    let mut request = client
-        .get(url)
-        .header(reqwest::header::ACCEPT, "*/*")
-        .header(reqwest::header::REFERER, "https://modelscope.cn/");
-    if part_bytes > 0 {
-        request = request.header(reqwest::header::RANGE, format!("bytes={}-", part_bytes));
-    }
-    let mut response = request.send().map_err(|err| err.to_string())?;
-    if response.status() == reqwest::StatusCode::OK && part_bytes > 0 {
-        let _ = std::fs::remove_file(&part_path);
+    let download_start = start_modelscope_download(&client, url, &part_path, part_bytes)?;
+    if download_start.restarted {
         downloaded_bytes = 0;
-        response = client
-            .get(url)
-            .header(reqwest::header::ACCEPT, "*/*")
-            .header(reqwest::header::REFERER, "https://modelscope.cn/")
-            .send()
-            .map_err(|err| err.to_string())?;
     }
-    if !(response.status().is_success()
-        || response.status() == reqwest::StatusCode::PARTIAL_CONTENT)
-    {
+    let mut response = download_start.response;
+    if !is_download_success_status(response.status()) {
         return Err(format!(
             "download failed: {} -> {}",
             file_name,

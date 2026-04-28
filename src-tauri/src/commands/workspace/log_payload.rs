@@ -1,5 +1,6 @@
 use serde_json::Value;
 
+use crate::commands::translate_types::BuildStep6FinalCheckCommandResponse;
 use crate::services::pipeline::StepSource;
 
 use super::STEP_06_FINAL_CHECK_FILE;
@@ -12,7 +13,7 @@ pub(super) fn task_failure_log_payload(error: &str) -> Value {
 }
 
 pub(super) fn step6_final_check_log_payload(
-    response: &crate::commands::translate::BuildStep6FinalCheckCommandResponse,
+    response: &BuildStep6FinalCheckCommandResponse,
     source: StepSource,
 ) -> Value {
     let issues = response
@@ -59,31 +60,35 @@ pub(super) fn step6_final_check_log_payload(
 #[cfg(test)]
 mod tests {
     use super::{step6_final_check_log_payload, task_failure_log_payload};
+    use crate::commands::translate_types::{
+        BuildStep6FinalCheckCommandResponse, Step5ArtifactMetaCommand, Step5QualityIssueCommand,
+        Step5QualitySummaryCommand, Step6FinalCheckMetricsCommand,
+    };
 
     #[test]
     fn final_check_log_payload_records_issues_without_blocking() {
         let payload = step6_final_check_log_payload(
-            &crate::commands::translate::BuildStep6FinalCheckCommandResponse {
+            &BuildStep6FinalCheckCommandResponse {
                 task_id: "task".to_string(),
                 media_path: "media.mp4".to_string(),
                 source_lang: "en".to_string(),
                 target_lang: "zh-CN".to_string(),
                 schema_version: 1,
                 pipeline_version: "test".to_string(),
-                artifact_meta: crate::commands::translate::Step5ArtifactMetaCommand::default(),
-                metrics: crate::commands::translate::Step6FinalCheckMetricsCommand {
+                artifact_meta: Step5ArtifactMetaCommand::default(),
+                metrics: Step6FinalCheckMetricsCommand {
                     segment_total: 3,
                     numeric_drift_count: 1,
                     ..Default::default()
                 },
-                issues: vec![crate::commands::translate::Step5QualityIssueCommand {
+                issues: vec![Step5QualityIssueCommand {
                     rule_id: "numeric_drift".to_string(),
                     severity: "hard".to_string(),
                     segment_id: 7,
                     part_id: 2,
                     message: "数字不一致".to_string(),
                 }],
-                quality_summary: crate::commands::translate::Step5QualitySummaryCommand {
+                quality_summary: Step5QualitySummaryCommand {
                     passed: false,
                     hard_fail_count: 1,
                     issue_count: 1,

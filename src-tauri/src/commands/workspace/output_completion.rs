@@ -2,6 +2,7 @@ use std::path::Path;
 
 use tauri::AppHandle;
 
+use crate::commands::translate_types::BuildTranslationSegmentCommand;
 use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, serialize_segments};
 
 use super::adapters::{
@@ -48,7 +49,7 @@ pub(super) fn finish_translate_with_step5(
     app: &AppHandle,
     task_id: &str,
     media_path: &str,
-    segments: &[crate::commands::translate::BuildTranslationSegmentCommand],
+    segments: &[BuildTranslationSegmentCommand],
     source_text: String,
     enable_subtitle_beautify: bool,
     subtitle_length_reference: u32,

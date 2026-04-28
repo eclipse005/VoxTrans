@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
 use std::fs::OpenOptions;
-use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::path::PathBuf;
@@ -11,6 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::base_url::normalize_base_url;
+use super::cache_key::{compute_cache_key, normalized_required_keys, validator_key};
 use super::json_guard::JsonResponseValidator;
 use super::port::{LlmCallContext, LlmConfig, LlmTokenUsage};
 
@@ -47,38 +47,6 @@ pub struct CacheHit {
 struct CacheFileState {
     loaded: bool,
     by_validator_key: HashMap<(String, String), CacheEntry>,
-}
-
-/// 计算缓存键：hash(phase + model + base_url + normalized_prompts)
-pub fn compute_cache_key(
-    context: &LlmCallContext,
-    config: &LlmConfig,
-    system_prompt: &str,
-    user_prompt: &str,
-) -> String {
-    let mut hasher = DefaultHasher::new();
-    context.phase.hash(&mut hasher);
-    config.model.hash(&mut hasher);
-    normalize_base_url(&config.base_url).hash(&mut hasher);
-    normalize_prompt(system_prompt).hash(&mut hasher);
-    normalize_prompt(user_prompt).hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
-}
-
-/// 规范化 prompt 用于缓存匹配：
-/// - 如果是 JSON，解析后重新序列化（排序键、移除空白）
-/// - 否则去除首尾空白
-fn normalize_prompt(prompt: &str) -> String {
-    let trimmed = prompt.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    // 尝试解析为 JSON，如果是则规范化
-    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-        serde_json::to_string(&value).unwrap_or_else(|_| trimmed.to_string())
-    } else {
-        trimmed.to_string()
-    }
 }
 
 pub fn read_cache_hit(
@@ -198,18 +166,6 @@ fn read_entries(path: &Path) -> Result<Vec<CacheEntry>, String> {
     Ok(entries)
 }
 
-fn normalized_required_keys(response_validator: Option<&JsonResponseValidator>) -> Vec<String> {
-    let mut keys = response_validator
-        .map(|validator| validator.required_top_level_keys.clone())
-        .unwrap_or_default();
-    keys.sort();
-    keys
-}
-
-fn normalize_base_url(base_url: &str) -> String {
-    base_url.trim().trim_end_matches('/').to_string()
-}
-
 fn unix_now_sec() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -278,14 +234,6 @@ fn build_entry_index(entries: Vec<CacheEntry>) -> HashMap<(String, String), Cach
         );
     }
     map
-}
-
-fn validator_key(keys: &[String]) -> String {
-    if keys.is_empty() {
-        String::new()
-    } else {
-        keys.join("\u{1f}")
-    }
 }
 
 fn append_entry_line(path: &Path, entry: &CacheEntry) -> Result<(), String> {

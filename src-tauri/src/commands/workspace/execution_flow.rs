@@ -2,8 +2,7 @@ use std::path::Path;
 
 use tauri::AppHandle;
 
-use crate::services::pipeline::{StepContext, execute_step};
-use crate::services::workspace_subtitle::serialize_segments;
+use crate::services::pipeline::StepContext;
 
 use super::adapters::{
     source_text_from_step2_segments, step2_segments_to_srt,
@@ -11,7 +10,9 @@ use super::adapters::{
 };
 use super::artifact_migration::migrate_legacy_artifacts;
 use super::output_completion::finish_transcribe_only;
+use super::pipeline_runner::execute_workspace_step;
 use super::pipeline_steps::{Step1AsrPipelineStep, Step2SegmentsPipelineStep};
+use super::preview::update_subtitle_preview;
 use super::progress::{mark_task_failed, report_task_stage};
 use super::runtime_settings::resolve_runtime_settings;
 use super::translation_flow::execute_translate_steps;
@@ -51,7 +52,9 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
         task.item.subtitle_segments_json = "[]".to_string();
     })?;
 
-    let step1_exec = match execute_step(
+    let step1_exec = execute_workspace_step(
+        app,
+        task_id,
         &Step1AsrPipelineStep {
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
@@ -62,14 +65,7 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
         },
         &step_context,
     )
-    .await
-    {
-        Ok(value) => value,
-        Err(err) => {
-            mark_task_failed(app, task_id, &err)?;
-            return Err(err);
-        }
-    };
+    .await?;
 
     if !step1_exec.output.source_lang.trim().is_empty() {
         source_lang = step1_exec.output.source_lang.clone();
@@ -88,7 +84,9 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
 
     report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 1)?;
 
-    let step2_exec = match execute_step(
+    let step2_exec = execute_workspace_step(
+        app,
+        task_id,
         &Step2SegmentsPipelineStep {
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
@@ -103,18 +101,16 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
         },
         &step_context,
     )
-    .await
-    {
-        Ok(value) => value,
-        Err(err) => {
-            mark_task_failed(app, task_id, &err)?;
-            return Err(err);
-        }
-    };
+    .await?;
     let step2_segments = step2_exec.output;
     let source_text = source_text_from_step2_segments(&step2_segments);
     let step2_srt = step2_segments_to_srt(&step2_segments);
-    update_processing_preview_from_step2(app, task_id, &step2_segments, &source_text)?;
+    update_subtitle_preview(
+        app,
+        task_id,
+        &source_text,
+        workspace_subtitle_segments_from_step2_segments(&step2_segments),
+    )?;
 
     let run_result = if intent == "TRANSCRIBE_TRANSLATE" {
         execute_translate_steps(
@@ -147,19 +143,4 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
         return Err(err);
     }
     Ok(())
-}
-
-fn update_processing_preview_from_step2(
-    app: &AppHandle,
-    task_id: &str,
-    step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
-    source_text: &str,
-) -> Result<(), String> {
-    let subtitle_segments_json = serialize_segments(
-        &workspace_subtitle_segments_from_step2_segments(step2_segments),
-    );
-    patch_task_item(app, task_id, |task| {
-        task.item.result_text = source_text.to_string();
-        task.item.subtitle_segments_json = subtitle_segments_json.clone();
-    })
 }

@@ -3,6 +3,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tauri::AppHandle;
 
+use crate::commands::translate_terminology::build_terminology_layer;
+use crate::commands::translate_translation::build_translation_layer_with_progress;
+use crate::commands::translate_types::{
+    BuildTerminologyLayerCommandRequest, BuildTerminologyLayerCommandResponse,
+    BuildTranslationLayerCommandRequest, BuildTranslationLayerCommandResponse,
+    SourceSegmentForTerminologyCommand, TranslateTerminologyEntryCommand,
+};
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 
 use super::super::progress::report_task_stage;
@@ -14,19 +21,17 @@ pub(in crate::commands::workspace) struct Step3TerminologyPipelineStep {
     pub(in crate::commands::workspace) media_path: String,
     pub(in crate::commands::workspace) source_lang: String,
     pub(in crate::commands::workspace) target_lang: String,
-    pub(in crate::commands::workspace) segments:
-        Vec<crate::commands::translate::SourceSegmentForTerminologyCommand>,
+    pub(in crate::commands::workspace) segments: Vec<SourceSegmentForTerminologyCommand>,
     pub(in crate::commands::workspace) translate_api_key: String,
     pub(in crate::commands::workspace) translate_base_url: String,
     pub(in crate::commands::workspace) translate_model: String,
     pub(in crate::commands::workspace) llm_concurrency: u32,
-    pub(in crate::commands::workspace) terminology_entries:
-        Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+    pub(in crate::commands::workspace) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
 }
 
 #[async_trait]
 impl PipelineStep for Step3TerminologyPipelineStep {
-    type Output = crate::commands::translate::BuildTerminologyLayerCommandResponse;
+    type Output = BuildTerminologyLayerCommandResponse;
 
     fn name(&self) -> &'static str {
         "step_03_terminology"
@@ -48,20 +53,18 @@ impl PipelineStep for Step3TerminologyPipelineStep {
     }
 
     async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        crate::commands::translate::build_terminology_layer(
-            crate::commands::translate::BuildTerminologyLayerCommandRequest {
-                task_id: self.task_id.clone(),
-                media_path: self.media_path.clone(),
-                source_lang: self.source_lang.clone(),
-                target_lang: self.target_lang.clone(),
-                segments: self.segments.clone(),
-                translate_api_key: self.translate_api_key.clone(),
-                translate_base_url: self.translate_base_url.clone(),
-                translate_model: self.translate_model.clone(),
-                llm_concurrency: self.llm_concurrency,
-                terminology_entries: self.terminology_entries.clone(),
-            },
-        )
+        build_terminology_layer(BuildTerminologyLayerCommandRequest {
+            task_id: self.task_id.clone(),
+            media_path: self.media_path.clone(),
+            source_lang: self.source_lang.clone(),
+            target_lang: self.target_lang.clone(),
+            segments: self.segments.clone(),
+            translate_api_key: self.translate_api_key.clone(),
+            translate_base_url: self.translate_base_url.clone(),
+            translate_model: self.translate_model.clone(),
+            llm_concurrency: self.llm_concurrency,
+            terminology_entries: self.terminology_entries.clone(),
+        })
         .await
     }
 }
@@ -72,11 +75,9 @@ pub(in crate::commands::workspace) struct Step4TranslationPipelineStep {
     pub(in crate::commands::workspace) media_path: String,
     pub(in crate::commands::workspace) source_lang: String,
     pub(in crate::commands::workspace) target_lang: String,
-    pub(in crate::commands::workspace) segments:
-        Vec<crate::commands::translate::SourceSegmentForTerminologyCommand>,
+    pub(in crate::commands::workspace) segments: Vec<SourceSegmentForTerminologyCommand>,
     pub(in crate::commands::workspace) theme_summary: String,
-    pub(in crate::commands::workspace) terminology_entries:
-        Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+    pub(in crate::commands::workspace) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
     pub(in crate::commands::workspace) translate_api_key: String,
     pub(in crate::commands::workspace) translate_base_url: String,
     pub(in crate::commands::workspace) translate_model: String,
@@ -86,7 +87,7 @@ pub(in crate::commands::workspace) struct Step4TranslationPipelineStep {
 
 #[async_trait]
 impl PipelineStep for Step4TranslationPipelineStep {
-    type Output = crate::commands::translate::BuildTranslationLayerCommandResponse;
+    type Output = BuildTranslationLayerCommandResponse;
 
     fn name(&self) -> &'static str {
         "step_04_translation"
@@ -126,8 +127,8 @@ impl PipelineStep for Step4TranslationPipelineStep {
                     total as u32,
                 );
             });
-        crate::commands::translate::build_translation_layer_with_progress(
-            crate::commands::translate::BuildTranslationLayerCommandRequest {
+        build_translation_layer_with_progress(
+            BuildTranslationLayerCommandRequest {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),
                 source_lang: self.source_lang.clone(),

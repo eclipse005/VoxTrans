@@ -1,3 +1,7 @@
+use crate::commands::translate_types::{
+    BuildTranslationSegmentCommand, SegmentTokenForTerminologyCommand,
+    SourceSegmentForTerminologyCommand, Step5AlignedParentCommand, Step5SplitParentCommand,
+};
 use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, WorkspaceSubtitleWord};
 
 pub(super) fn workspace_subtitle_segments_from_step2_segments(
@@ -24,7 +28,7 @@ pub(super) fn workspace_subtitle_segments_from_step2_segments(
 }
 
 pub(super) fn workspace_subtitle_segments_from_translation_segments(
-    segments: &[crate::commands::translate::BuildTranslationSegmentCommand],
+    segments: &[BuildTranslationSegmentCommand],
 ) -> Vec<WorkspaceSubtitleSegment> {
     segments
         .iter()
@@ -47,7 +51,7 @@ pub(super) fn workspace_subtitle_segments_from_translation_segments(
 }
 
 pub(super) fn workspace_subtitle_segments_from_step51_parents(
-    parents: &[crate::commands::translate::Step5SplitParentCommand],
+    parents: &[Step5SplitParentCommand],
 ) -> Vec<WorkspaceSubtitleSegment> {
     let mut segments = Vec::new();
     for parent in parents {
@@ -73,7 +77,7 @@ pub(super) fn workspace_subtitle_segments_from_step51_parents(
 }
 
 pub(super) fn workspace_subtitle_segments_from_step52_parents(
-    parents: &[crate::commands::translate::Step5AlignedParentCommand],
+    parents: &[Step5AlignedParentCommand],
 ) -> Vec<WorkspaceSubtitleSegment> {
     let mut segments = Vec::new();
     for parent in parents {
@@ -131,27 +135,23 @@ pub(super) fn step2_segments_to_srt(
 
 pub(super) fn map_step2_segments_for_translate(
     segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
-) -> Vec<crate::commands::translate::SourceSegmentForTerminologyCommand> {
+) -> Vec<SourceSegmentForTerminologyCommand> {
     segments
         .iter()
-        .map(
-            |segment| crate::commands::translate::SourceSegmentForTerminologyCommand {
-                segment: segment.segment.clone(),
-                start: segment.start,
-                end: segment.end,
-                tokens: segment
-                    .tokens
-                    .iter()
-                    .map(
-                        |token| crate::commands::translate::SegmentTokenForTerminologyCommand {
-                            text: token.text.clone(),
-                            start: token.start,
-                            end: token.end,
-                        },
-                    )
-                    .collect(),
-            },
-        )
+        .map(|segment| SourceSegmentForTerminologyCommand {
+            segment: segment.segment.clone(),
+            start: segment.start,
+            end: segment.end,
+            tokens: segment
+                .tokens
+                .iter()
+                .map(|token| SegmentTokenForTerminologyCommand {
+                    text: token.text.clone(),
+                    start: token.start,
+                    end: token.end,
+                })
+                .collect(),
+        })
         .collect()
 }
 

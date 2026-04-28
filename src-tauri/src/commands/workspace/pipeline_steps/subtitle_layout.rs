@@ -3,6 +3,17 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tauri::AppHandle;
 
+use crate::commands::translate_step5_commands::{
+    build_step_5_1_source_split_with_progress, build_step_5_2_translation_align_with_progress,
+    build_step_5_3_translation_polish_with_progress,
+};
+use crate::commands::translate_types::{
+    BuildStep51SourceSplitCommandRequest, BuildStep51SourceSplitCommandResponse,
+    BuildStep52TranslationAlignCommandRequest, BuildStep52TranslationAlignCommandResponse,
+    BuildStep53TranslationPolishCommandRequest, BuildStep53TranslationPolishCommandResponse,
+    BuildTranslationSegmentCommand, Step5AlignedParentCommand, Step5SplitParentCommand,
+    TranslateTerminologyEntryCommand,
+};
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 
 use super::super::progress::report_task_stage;
@@ -11,14 +22,51 @@ use super::super::{
     STEP_05_03_TRANSLATION_POLISH_FILE, TaskStage,
 };
 
+type ProgressCallback = Arc<dyn Fn(usize, usize) + Send + Sync>;
+
+fn subtitle_layout_progress(
+    app: &AppHandle,
+    task_id: &str,
+    label: &'static str,
+) -> ProgressCallback {
+    let task_id = task_id.to_string();
+    let app_for_progress = app.clone();
+    Arc::new(move |current, total| {
+        let detail = if total > 0 {
+            format!("{current}/{total}")
+        } else {
+            String::new()
+        };
+        let _ = report_task_stage(
+            &app_for_progress,
+            &task_id,
+            TaskStage::SubtitleLayout,
+            format!("{label} {detail}"),
+            current as u32,
+            total as u32,
+        );
+    })
+}
+
+fn validate_step5_artifact(
+    task_id: &str,
+    media_path: &str,
+    has_payload: bool,
+    step_name: &str,
+) -> Result<(), String> {
+    if task_id.trim().is_empty() || media_path.trim().is_empty() || !has_payload {
+        return Err(format!("invalid {step_name} artifact"));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub(in crate::commands::workspace) struct Step51SourceSplitPipelineStep {
     pub(in crate::commands::workspace) task_id: String,
     pub(in crate::commands::workspace) media_path: String,
     pub(in crate::commands::workspace) source_lang: String,
     pub(in crate::commands::workspace) target_lang: String,
-    pub(in crate::commands::workspace) segments:
-        Vec<crate::commands::translate::BuildTranslationSegmentCommand>,
+    pub(in crate::commands::workspace) segments: Vec<BuildTranslationSegmentCommand>,
     pub(in crate::commands::workspace) translate_api_key: String,
     pub(in crate::commands::workspace) translate_base_url: String,
     pub(in crate::commands::workspace) translate_model: String,
@@ -30,7 +78,7 @@ pub(in crate::commands::workspace) struct Step51SourceSplitPipelineStep {
 
 #[async_trait]
 impl PipelineStep for Step51SourceSplitPipelineStep {
-    type Output = crate::commands::translate::BuildStep51SourceSplitCommandResponse;
+    type Output = BuildStep51SourceSplitCommandResponse;
 
     fn name(&self) -> &'static str {
         "step_5_1_source_split"
@@ -45,36 +93,17 @@ impl PipelineStep for Step51SourceSplitPipelineStep {
     }
 
     fn validate(&self, output: &Self::Output) -> Result<(), String> {
-        if output.task_id.trim().is_empty()
-            || output.media_path.trim().is_empty()
-            || output.parents.is_empty()
-        {
-            return Err("invalid step5_1 artifact".to_string());
-        }
-        Ok(())
+        validate_step5_artifact(
+            &output.task_id,
+            &output.media_path,
+            !output.parents.is_empty(),
+            "step5_1",
+        )
     }
 
     async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        let task_id = self.task_id.clone();
-        let app_for_progress = self.app.clone();
-        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
-            Arc::new(move |current, total| {
-                let detail = if total > 0 {
-                    format!("{current}/{total}")
-                } else {
-                    String::new()
-                };
-                let _ = report_task_stage(
-                    &app_for_progress,
-                    &task_id,
-                    TaskStage::SubtitleLayout,
-                    format!("原文切分 {detail}"),
-                    current as u32,
-                    total as u32,
-                );
-            });
-        crate::commands::translate::build_step_5_1_source_split_with_progress(
-            crate::commands::translate::BuildStep51SourceSplitCommandRequest {
+        build_step_5_1_source_split_with_progress(
+            BuildStep51SourceSplitCommandRequest {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),
                 source_lang: self.source_lang.clone(),
@@ -87,7 +116,11 @@ impl PipelineStep for Step51SourceSplitPipelineStep {
                 subtitle_max_words_per_segment: self.subtitle_max_words_per_segment,
                 subtitle_length_reference: self.subtitle_length_reference,
             },
-            Some(on_progress),
+            Some(subtitle_layout_progress(
+                &self.app,
+                &self.task_id,
+                "原文切分",
+            )),
         )
         .await
     }
@@ -100,10 +133,8 @@ pub(in crate::commands::workspace) struct Step52TranslationAlignPipelineStep {
     pub(in crate::commands::workspace) source_lang: String,
     pub(in crate::commands::workspace) target_lang: String,
     pub(in crate::commands::workspace) theme_summary: String,
-    pub(in crate::commands::workspace) parents:
-        Vec<crate::commands::translate::Step5SplitParentCommand>,
-    pub(in crate::commands::workspace) terminology_entries:
-        Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+    pub(in crate::commands::workspace) parents: Vec<Step5SplitParentCommand>,
+    pub(in crate::commands::workspace) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
     pub(in crate::commands::workspace) translate_api_key: String,
     pub(in crate::commands::workspace) translate_base_url: String,
     pub(in crate::commands::workspace) translate_model: String,
@@ -113,7 +144,7 @@ pub(in crate::commands::workspace) struct Step52TranslationAlignPipelineStep {
 
 #[async_trait]
 impl PipelineStep for Step52TranslationAlignPipelineStep {
-    type Output = crate::commands::translate::BuildStep52TranslationAlignCommandResponse;
+    type Output = BuildStep52TranslationAlignCommandResponse;
 
     fn name(&self) -> &'static str {
         "step_5_2_translation_align"
@@ -128,36 +159,17 @@ impl PipelineStep for Step52TranslationAlignPipelineStep {
     }
 
     fn validate(&self, output: &Self::Output) -> Result<(), String> {
-        if output.task_id.trim().is_empty()
-            || output.media_path.trim().is_empty()
-            || output.parents.is_empty()
-        {
-            return Err("invalid step5_2 artifact".to_string());
-        }
-        Ok(())
+        validate_step5_artifact(
+            &output.task_id,
+            &output.media_path,
+            !output.parents.is_empty(),
+            "step5_2",
+        )
     }
 
     async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        let task_id = self.task_id.clone();
-        let app_for_progress = self.app.clone();
-        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
-            Arc::new(move |current, total| {
-                let detail = if total > 0 {
-                    format!("{current}/{total}")
-                } else {
-                    String::new()
-                };
-                let _ = report_task_stage(
-                    &app_for_progress,
-                    &task_id,
-                    TaskStage::SubtitleLayout,
-                    format!("译文对齐 {detail}"),
-                    current as u32,
-                    total as u32,
-                );
-            });
-        crate::commands::translate::build_step_5_2_translation_align_with_progress(
-            crate::commands::translate::BuildStep52TranslationAlignCommandRequest {
+        build_step_5_2_translation_align_with_progress(
+            BuildStep52TranslationAlignCommandRequest {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),
                 source_lang: self.source_lang.clone(),
@@ -170,7 +182,11 @@ impl PipelineStep for Step52TranslationAlignPipelineStep {
                 translate_model: self.translate_model.clone(),
                 llm_concurrency: self.llm_concurrency,
             },
-            Some(on_progress),
+            Some(subtitle_layout_progress(
+                &self.app,
+                &self.task_id,
+                "译文对齐",
+            )),
         )
         .await
     }
@@ -183,10 +199,8 @@ pub(in crate::commands::workspace) struct Step53TranslationPolishPipelineStep {
     pub(in crate::commands::workspace) source_lang: String,
     pub(in crate::commands::workspace) target_lang: String,
     pub(in crate::commands::workspace) theme_summary: String,
-    pub(in crate::commands::workspace) parents:
-        Vec<crate::commands::translate::Step5AlignedParentCommand>,
-    pub(in crate::commands::workspace) terminology_entries:
-        Vec<crate::commands::translate::TranslateTerminologyEntryCommand>,
+    pub(in crate::commands::workspace) parents: Vec<Step5AlignedParentCommand>,
+    pub(in crate::commands::workspace) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
     pub(in crate::commands::workspace) translate_api_key: String,
     pub(in crate::commands::workspace) translate_base_url: String,
     pub(in crate::commands::workspace) translate_model: String,
@@ -197,7 +211,7 @@ pub(in crate::commands::workspace) struct Step53TranslationPolishPipelineStep {
 
 #[async_trait]
 impl PipelineStep for Step53TranslationPolishPipelineStep {
-    type Output = crate::commands::translate::BuildStep53TranslationPolishCommandResponse;
+    type Output = BuildStep53TranslationPolishCommandResponse;
 
     fn name(&self) -> &'static str {
         "step_5_3_translation_polish"
@@ -212,36 +226,17 @@ impl PipelineStep for Step53TranslationPolishPipelineStep {
     }
 
     fn validate(&self, output: &Self::Output) -> Result<(), String> {
-        if output.task_id.trim().is_empty()
-            || output.media_path.trim().is_empty()
-            || output.segments.is_empty()
-        {
-            return Err("invalid step5_3 artifact".to_string());
-        }
-        Ok(())
+        validate_step5_artifact(
+            &output.task_id,
+            &output.media_path,
+            !output.segments.is_empty(),
+            "step5_3",
+        )
     }
 
     async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        let task_id = self.task_id.clone();
-        let app_for_progress = self.app.clone();
-        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
-            Arc::new(move |current, total| {
-                let detail = if total > 0 {
-                    format!("{current}/{total}")
-                } else {
-                    String::new()
-                };
-                let _ = report_task_stage(
-                    &app_for_progress,
-                    &task_id,
-                    TaskStage::SubtitleLayout,
-                    format!("译文润色 {detail}"),
-                    current as u32,
-                    total as u32,
-                );
-            });
-        crate::commands::translate::build_step_5_3_translation_polish_with_progress(
-            crate::commands::translate::BuildStep53TranslationPolishCommandRequest {
+        build_step_5_3_translation_polish_with_progress(
+            BuildStep53TranslationPolishCommandRequest {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),
                 source_lang: self.source_lang.clone(),
@@ -256,7 +251,11 @@ impl PipelineStep for Step53TranslationPolishPipelineStep {
                 subtitle_length_reference: self.subtitle_length_reference,
                 batch_size: 20,
             },
-            Some(on_progress),
+            Some(subtitle_layout_progress(
+                &self.app,
+                &self.task_id,
+                "译文润色",
+            )),
         )
         .await
     }

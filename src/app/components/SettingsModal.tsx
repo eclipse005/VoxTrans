@@ -1,17 +1,17 @@
 import { useEffect, useState } from "react";
-import type { CSSProperties } from "react";
 import type {
   AsrModel,
   DemucsModel,
   ModelStatusResponse,
   Provider,
   SubtitleBurnMode,
-  SubtitleLineStyle,
   SubtitleRenderStyle,
 } from "../../features/media/types";
 import { PROVIDER_OPTIONS } from "../../features/media/provider";
 import { listSystemFonts } from "../api/system";
-import { CheckIcon, CpuIcon, DownloadIcon, FolderIcon, GpuIcon } from "./Icons";
+import { CheckIcon, CpuIcon, GpuIcon } from "./Icons";
+import { ModelDownloadCard } from "./settings/ModelDownloadCard";
+import { SubtitleStylePreview } from "./settings/SubtitleStylePreview";
 import { useDialogA11y } from "./useDialogA11y";
 
 type SettingsModalProps = {
@@ -57,43 +57,6 @@ type SettingsModalProps = {
   onStartModelDownload: (target: "asr" | "demucs") => void | Promise<void>;
   onCancelModelDownload: (target: "asr" | "demucs") => void | Promise<void>;
 };
-
-const SUBTITLE_PREVIEW_BG = "/subtitle-preview-bg.svg";
-
-function formatBytes(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let size = value;
-  let idx = 0;
-  while (size >= 1024 && idx < units.length - 1) {
-    size /= 1024;
-    idx += 1;
-  }
-  return `${size.toFixed(idx === 0 ? 0 : 2)} ${units[idx]}`;
-}
-
-function progressPercent(status: ModelStatusResponse | null): number {
-  const total = status?.download.totalBytes ?? 0;
-  const downloaded = status?.download.downloadedBytes ?? 0;
-  if (total <= 0) return 0;
-  return Math.max(0, Math.min(100, Math.round((downloaded / total) * 100)));
-}
-
-function isReady(status: ModelStatusResponse | null): boolean {
-  if (!status) return false;
-  return status.ready || status.download.phase === "completed";
-}
-
-function formatModelSizeText(status: ModelStatusResponse | null): string {
-  if (!status) return "-";
-  const downloaded = status.download.downloadedBytes;
-  const total = status.download.totalBytes;
-  if (total <= 0) return "-";
-  if (status.download.phase === "downloading") {
-    return `${formatBytes(downloaded)} / ${formatBytes(total)}`;
-  }
-  return formatBytes(total);
-}
 
 export default function SettingsModal(props: SettingsModalProps) {
   const {
@@ -163,12 +126,6 @@ export default function SettingsModal(props: SettingsModalProps) {
 
   if (!visible) return null;
 
-  const asrDownloading = asrStatus?.download.phase === "downloading";
-  const demucsDownloading = demucsStatus?.download.phase === "downloading";
-  const asrReady = isReady(asrStatus);
-  const demucsReady = isReady(demucsStatus);
-  const asrPercent = progressPercent(asrStatus);
-  const demucsPercent = progressPercent(demucsStatus);
   const tabIndex = activeTab === "transcribe"
     ? 0
     : activeTab === "translate"
@@ -176,16 +133,6 @@ export default function SettingsModal(props: SettingsModalProps) {
       : activeTab === "subtitle"
         ? 2
         : 3;
-
-  const asrSizeText = formatModelSizeText(asrStatus);
-  const demucsSizeText = formatModelSizeText(demucsStatus);
-  const previewRows = buildPreviewRows(draftSubtitleBurnMode);
-  const subtitlePreviewStyle = buildSubtitlePreviewStyle(draftSubtitleRenderStyle);
-  const subtitlePreviewClass = draftSubtitleRenderStyle.layout.alignment === 1
-    ? "subtitle-preview-text is-left"
-    : draftSubtitleRenderStyle.layout.alignment === 3
-      ? "subtitle-preview-text is-right"
-      : "subtitle-preview-text is-center";
 
   return (
     <div className="modal-overlay">
@@ -796,143 +743,37 @@ export default function SettingsModal(props: SettingsModalProps) {
                       </select>
                     </div>
                   </div>
-                  <div className="subtitle-style-preview-card">
-                    <div className="subtitle-style-preview-head">实时预览</div>
-                    <div className="subtitle-style-preview-stage">
-                      <img className="subtitle-preview-bg" src={SUBTITLE_PREVIEW_BG} alt="字幕样式预览背景" />
-                      <div className={subtitlePreviewClass} style={subtitlePreviewStyle.wrapper}>
-                        {previewRows.map((row, idx) => (
-                          <div key={`${row.text}-${idx}`} style={row.kind === "source" ? subtitlePreviewStyle.source : subtitlePreviewStyle.target}>
-                            {row.text}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
+                  <SubtitleStylePreview mode={draftSubtitleBurnMode} style={draftSubtitleRenderStyle} />
                 </div>
               </div>
             </div>
           ) : (
             <div className="settings-tab-content model-center-content">
-              <div className="model-task-card">
-                <div className="model-task-card-head">
-                  <h4 className="apple-heading-small">转录模型</h4>
-                  <span className={`model-ready-pill ${asrReady ? "ready" : "not-ready"}`}>
-                    {asrReady ? "已就绪" : "未就绪"}
-                  </span>
-                </div>
-                <p className="apple-body-small">parakeet-tdt-0.6b-v2 支持高质量英文转录，可自动补全标点与大小写并提供准确时间戳。</p>
-                <div className="model-inline-row">
-                  <div className="device-toggle-group model-inline-model" role="group" aria-label="ASR 版本">
-                    <button
-                      type="button"
-                      className={`device-toggle-btn ${draftAsrModel === "parakeet-tdt-0.6b-v2" ? "active" : ""}`}
-                      onClick={() => onDraftAsrModelChange("parakeet-tdt-0.6b-v2")}
-                    >
-                      <span className="model-inline-label">
-                        <span>parakeet-tdt-0.6b-v2</span>
-                        <span className="model-inline-size">{asrSizeText}</span>
-                      </span>
-                    </button>
-                  </div>
-                  <div className="model-task-actions model-task-actions-inline">
-                    <button
-                      className="file-list-icon-btn"
-                      type="button"
-                      title="打开目录"
-                      aria-label="打开 ASR 模型目录"
-                      onClick={() => { void onOpenModelDir("asr"); }}
-                    >
-                      <FolderIcon />
-                    </button>
-                    <button
-                      className={`file-list-icon-btn model-download-state-btn ${asrReady ? "is-ready" : asrDownloading ? "is-downloading" : "is-idle"}`}
-                      type="button"
-                      title={asrDownloading ? "取消下载" : asrReady ? "已就绪" : "下载模型"}
-                      aria-label={asrDownloading ? "取消 ASR 下载" : asrReady ? "ASR 已就绪" : "下载 ASR 模型"}
-                      onClick={() => {
-                        if (asrDownloading) {
-                          void onCancelModelDownload("asr");
-                          return;
-                        }
-                        if (!asrReady) {
-                          void onStartModelDownload("asr");
-                        }
-                      }}
-                      disabled={asrReady}
-                      style={{ ["--ring-progress" as string]: `${asrPercent}%` }}
-                    >
-                      {asrDownloading ? (
-                        <span className="model-progress-ring-inner">{asrPercent}%</span>
-                      ) : asrReady ? (
-                        <CheckIcon />
-                      ) : (
-                        <DownloadIcon />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <ModelDownloadCard
+                target="asr"
+                title="转录模型"
+                description="parakeet-tdt-0.6b-v2 支持高质量英文转录，可自动补全标点与大小写并提供准确时间戳。"
+                modelName="parakeet-tdt-0.6b-v2"
+                selected={draftAsrModel === "parakeet-tdt-0.6b-v2"}
+                status={asrStatus}
+                onSelect={() => onDraftAsrModelChange("parakeet-tdt-0.6b-v2")}
+                onOpenModelDir={onOpenModelDir}
+                onStartModelDownload={onStartModelDownload}
+                onCancelModelDownload={onCancelModelDownload}
+              />
 
-              <div className="model-task-card">
-                <div className="model-task-card-head">
-                  <h4 className="apple-heading-small">人声分离模型</h4>
-                  <span className={`model-ready-pill ${demucsReady ? "ready" : "not-ready"}`}>
-                    {demucsReady ? "已就绪" : "未就绪"}
-                  </span>
-                </div>
-                <p className="apple-body-small">htdemucs_ft 是高保真人声分离模型，能更稳定地提取清晰 vocals、减少伴奏残留。</p>
-                <div className="model-inline-row">
-                  <div className="device-toggle-group model-inline-model" role="group" aria-label="Demucs 版本">
-                    <button
-                      type="button"
-                      className={`device-toggle-btn ${draftDemucsModel === "htdemucs_ft" ? "active" : ""}`}
-                      onClick={() => onDraftDemucsModelChange("htdemucs_ft")}
-                    >
-                      <span className="model-inline-label">
-                        <span>htdemucs_ft</span>
-                        <span className="model-inline-size">{demucsSizeText}</span>
-                      </span>
-                    </button>
-                  </div>
-                  <div className="model-task-actions model-task-actions-inline">
-                    <button
-                      className="file-list-icon-btn"
-                      type="button"
-                      title="打开目录"
-                      aria-label="打开 Demucs 模型目录"
-                      onClick={() => { void onOpenModelDir("demucs"); }}
-                    >
-                      <FolderIcon />
-                    </button>
-                    <button
-                      className={`file-list-icon-btn model-download-state-btn ${demucsReady ? "is-ready" : demucsDownloading ? "is-downloading" : "is-idle"}`}
-                      type="button"
-                      title={demucsDownloading ? "取消下载" : demucsReady ? "已就绪" : "下载模型"}
-                      aria-label={demucsDownloading ? "取消 Demucs 下载" : demucsReady ? "Demucs 已就绪" : "下载 Demucs 模型"}
-                      onClick={() => {
-                        if (demucsDownloading) {
-                          void onCancelModelDownload("demucs");
-                          return;
-                        }
-                        if (!demucsReady) {
-                          void onStartModelDownload("demucs");
-                        }
-                      }}
-                      disabled={demucsReady}
-                      style={{ ["--ring-progress" as string]: `${demucsPercent}%` }}
-                    >
-                      {demucsDownloading ? (
-                        <span className="model-progress-ring-inner">{demucsPercent}%</span>
-                      ) : demucsReady ? (
-                        <CheckIcon />
-                      ) : (
-                        <DownloadIcon />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <ModelDownloadCard
+                target="demucs"
+                title="人声分离模型"
+                description="htdemucs_ft 是高保真人声分离模型，能更稳定地提取清晰 vocals、减少伴奏残留。"
+                modelName="htdemucs_ft"
+                selected={draftDemucsModel === "htdemucs_ft"}
+                status={demucsStatus}
+                onSelect={() => onDraftDemucsModelChange("htdemucs_ft")}
+                onOpenModelDir={onOpenModelDir}
+                onStartModelDownload={onStartModelDownload}
+                onCancelModelDownload={onCancelModelDownload}
+              />
             </div>
           )}
         </div>
@@ -945,86 +786,4 @@ export default function SettingsModal(props: SettingsModalProps) {
       </div>
     </div>
   );
-}
-
-function buildPreviewRows(mode: SubtitleBurnMode): Array<{ kind: "source" | "target"; text: string }> {
-  const source = "The morning rain has settled down.";
-  const target = "清晨的雨已经停了。";
-  if (mode === "source") {
-    return [{ kind: "source", text: source }];
-  }
-  if (mode === "target") {
-    return [{ kind: "target", text: target }];
-  }
-  if (mode === "bilingualTargetFirst") {
-    return [
-      { kind: "target", text: target },
-      { kind: "source", text: source },
-    ];
-  }
-  return [
-    { kind: "source", text: source },
-    { kind: "target", text: target },
-  ];
-}
-
-function buildSubtitlePreviewStyle(style: SubtitleRenderStyle): {
-  wrapper: CSSProperties;
-  source: CSSProperties;
-  target: CSSProperties;
-} {
-  const source = toPreviewLineStyle(style.source);
-  const target = toPreviewLineStyle(style.target);
-  return {
-    wrapper: {
-      bottom: `${style.layout.marginV}px`,
-      gap: `${style.layout.bilingualLineGap}px`,
-    },
-    source,
-    target,
-  };
-}
-
-function toPreviewLineStyle(style: SubtitleLineStyle): CSSProperties {
-  const outline = Math.max(0, style.outline);
-  const shadow = Math.max(0, style.shadow);
-  const borderOpacity = Math.max(0, Math.min(100, style.borderOpacity)) / 100;
-  const outlineColor = hexToRgba(style.outlineColor, borderOpacity);
-  const backColor = hexToRgba(style.backColor, borderOpacity);
-  const textShadows = [
-    `${outline}px 0 0 ${outlineColor}`,
-    `${-outline}px 0 0 ${outlineColor}`,
-    `0 ${outline}px 0 ${outlineColor}`,
-    `0 ${-outline}px 0 ${outlineColor}`,
-    `${shadow}px ${shadow}px 2px ${backColor}`,
-  ];
-  const boxStyle = style.borderStyle === "box"
-    ? {
-      backgroundColor: outlineColor,
-      border: `${Math.max(1, outline)}px solid ${outlineColor}`,
-      borderRadius: "6px",
-      padding: "2px 10px",
-    }
-    : undefined;
-  return {
-    fontFamily: style.fontFamily,
-    fontSize: `${style.fontSize}px`,
-    color: style.primaryColor,
-    textShadow: style.borderStyle === "box" ? `${shadow}px ${shadow}px 2px ${backColor}` : textShadows.join(", "),
-    lineHeight: 1.2,
-    fontWeight: 700,
-    display: "inline-block",
-    ...boxStyle,
-  };
-}
-
-function hexToRgba(raw: string, alpha: number): string {
-  const value = String(raw ?? "").trim();
-  if (!/^#[0-9a-fA-F]{6}$/.test(value)) {
-    return `rgba(0, 0, 0, ${alpha})`;
-  }
-  const r = Number.parseInt(value.slice(1, 3), 16);
-  const g = Number.parseInt(value.slice(3, 5), 16);
-  const b = Number.parseInt(value.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }

@@ -1,51 +1,8 @@
 use serde_json::Value;
 
 use super::error::{LlmError, LlmErrorKind};
-
-#[derive(Debug, Clone)]
-pub struct JsonResponseValidator {
-    pub required_top_level_keys: Vec<String>,
-}
-
-impl JsonResponseValidator {
-    pub fn with_required_keys(keys: &[&str]) -> Self {
-        Self {
-            required_top_level_keys: keys.iter().map(|s| (*s).to_string()).collect(),
-        }
-    }
-
-    pub fn validate(&self, value: &Value) -> Result<(), LlmError> {
-        let obj = value.as_object().ok_or_else(|| {
-            LlmError::new(
-                LlmErrorKind::InvalidSchema,
-                "schema check failed: root JSON is not object",
-            )
-        })?;
-        for key in &self.required_top_level_keys {
-            if !obj.contains_key(key) {
-                return Err(LlmError::new(
-                    LlmErrorKind::InvalidSchema,
-                    format!("schema check failed: missing key `{key}`"),
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub fn describe_constraints(&self) -> String {
-        if self.required_top_level_keys.is_empty() {
-            return "Return one valid JSON value.".to_string();
-        }
-        format!(
-            "Return one valid JSON object containing these top-level keys: {}.",
-            self.required_top_level_keys
-                .iter()
-                .map(|key| format!("`{key}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    }
-}
+use super::json_candidates::collect_json_candidates;
+pub use super::json_validator::JsonResponseValidator;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JsonRepairSource {
@@ -75,26 +32,9 @@ pub struct JsonRepairOutcome {
 }
 
 pub fn extract_and_repair_json_with_outcome(raw: &str) -> Result<JsonRepairOutcome, LlmError> {
-    let mut candidates: Vec<(String, JsonRepairSource)> = Vec::new();
     let mut parse_failures: Vec<String> = Vec::new();
     let trimmed = raw.trim();
-    if !trimmed.is_empty() {
-        candidates.push((trimmed.to_string(), JsonRepairSource::Raw));
-    }
-
-    // 剔除 <thought> 标签后重试
-    if let Some(stripped) = strip_thought_blocks(trimmed) {
-        if !stripped.is_empty() {
-            candidates.push((stripped, JsonRepairSource::ThoughtStripped));
-        }
-    }
-
-    if let Some(fenced) = extract_fenced_json(trimmed) {
-        candidates.push((fenced, JsonRepairSource::FencedJson));
-    }
-    if let Some(balanced) = extract_first_balanced_json(trimmed) {
-        candidates.push((balanced, JsonRepairSource::BalancedJson));
-    }
+    let candidates = collect_json_candidates(trimmed);
 
     for (candidate, source) in candidates {
         match serde_json::from_str::<Value>(&candidate) {
@@ -224,74 +164,6 @@ fn dedup_preserve_order(items: Vec<String>) -> Vec<String> {
     out
 }
 
-fn extract_fenced_json(text: &str) -> Option<String> {
-    let start = text.find("```")?;
-    let after_start = &text[start + 3..];
-    let mut body = after_start;
-    if after_start.trim_start().to_lowercase().starts_with("json") {
-        let idx = after_start.find('\n')?;
-        body = &after_start[idx + 1..];
-    }
-    let end = body.find("```")?;
-    Some(body[..end].trim().to_string())
-}
-
-fn extract_first_balanced_json(text: &str) -> Option<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut start_idx: Option<usize> = None;
-    let mut stack: Vec<char> = Vec::new();
-    let mut in_string = false;
-    let mut escaped = false;
-
-    for (i, ch) in chars.iter().enumerate() {
-        if in_string {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if *ch == '\\' {
-                escaped = true;
-                continue;
-            }
-            if *ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-
-        match *ch {
-            '"' => in_string = true,
-            '{' | '[' => {
-                if start_idx.is_none() {
-                    start_idx = Some(i);
-                }
-                stack.push(*ch);
-            }
-            '}' => {
-                if stack.pop() != Some('{') {
-                    continue;
-                }
-                if stack.is_empty() {
-                    let start = start_idx?;
-                    return Some(chars[start..=i].iter().collect::<String>());
-                }
-            }
-            ']' => {
-                if stack.pop() != Some('[') {
-                    continue;
-                }
-                if stack.is_empty() {
-                    let start = start_idx?;
-                    return Some(chars[start..=i].iter().collect::<String>());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    None
-}
-
 fn repair_common_json_issues(input: &str) -> String {
     let mut out = input
         .replace('\u{feff}', "")
@@ -305,36 +177,4 @@ fn repair_common_json_issues(input: &str) -> String {
     }
 
     out.trim().to_string()
-}
-
-/// 移除 <thought>...</thought> 块，避免思考过程干扰 JSON 提取
-fn strip_thought_blocks(text: &str) -> Option<String> {
-    let mut result = String::new();
-    let mut remaining = text;
-    let mut found_any = false;
-
-    while let Some(start) = remaining.find("<thought>") {
-        found_any = true;
-        // 添加 <thought> 之前的内容
-        result.push_str(&remaining[..start]);
-
-        // 查找 </thought> 结束标签
-        if let Some(end) = remaining[start..].find("</thought>") {
-            // 跳过整个 <thought>...</thought> 块
-            remaining = &remaining[start + end + 10..];
-        } else {
-            // 没有闭合标签，移除从 <thought> 开始的所有内容
-            remaining = "";
-            break;
-        }
-    }
-
-    // 添加剩余部分
-    result.push_str(remaining);
-
-    if found_any {
-        Some(result.trim().to_string())
-    } else {
-        None
-    }
 }
