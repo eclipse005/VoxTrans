@@ -161,8 +161,8 @@ pub fn export_task_srts(request: ExportTaskSrtsRequest) -> Result<Vec<String>, S
     }
 
     let task_item = crate::commands::workspace::get_task_queue_item_for_export(&request.task_id)?;
-    let task_enable_subtitle_beautify =
-        crate::commands::workspace::task_enable_subtitle_beautify(&request.task_id)?;
+    let (task_enable_subtitle_beautify, subtitle_length_reference, target_lang) =
+        crate::commands::workspace::task_subtitle_beautify_context(&request.task_id)?;
     let segments =
         crate::services::subtitle_srt::parse_segments_json(&task_item.subtitle_segments_json)
             .map_err(|err| format!("字幕片段解析失败: {err}"))?;
@@ -171,7 +171,11 @@ pub fn export_task_srts(request: ExportTaskSrtsRequest) -> Result<Vec<String>, S
     }
     let mut segments = segments;
     if task_enable_subtitle_beautify {
-        crate::commands::workspace::beautify_subtitle_srt_segments(&mut segments);
+        crate::services::subtitle_beautify::beautify_subtitle_srt_segments(
+            &mut segments,
+            subtitle_length_reference,
+            &target_lang,
+        );
     }
 
     let output_paths = crate::services::subtitle_srt::write_variants_to_directory(

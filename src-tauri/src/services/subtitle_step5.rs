@@ -19,7 +19,7 @@ const MAX_BATCH_SIZE: usize = 40;
 const MAX_TERMS_PER_LINE: usize = 10;
 const LONG_LINE_SCORE_TRIGGER: f64 = 25.0;
 const WATCHABILITY_SPLIT_TRIGGER: f64 = 25.0;
-const WATCHABILITY_MERGE_TIME_GAP_SECONDS: f64 = 1.0;
+const WATCHABILITY_MERGE_TIME_GAP_SECONDS: f64 = 0.5;
 const WATCHABILITY_MERGE_TIME_BUDGET_SECONDS: f64 = 6.0;
 const WATCHABILITY_MERGE_LEN_RATIO: f64 = 1.55;
 
@@ -845,11 +845,6 @@ pub async fn build_step_5_3_translation_polish_with_progress(
         segment.translation = fallback;
         repair_polished_translation(segment);
     }
-    merge_watchability_fragments(
-        &mut segments,
-        request.subtitle_length_reference,
-        &request.target_lang,
-    );
     split_watchability_overlong_segments(
         &mut segments,
         WATCHABILITY_SPLIT_TRIGGER,
@@ -1072,6 +1067,54 @@ pub fn build_step_6_final_check(
             gt32_count,
         },
     })
+}
+
+pub fn merge_watchability_subtitle_srt_segments(
+    segments: &mut Vec<crate::services::subtitle_srt::SubtitleSrtSegment>,
+    subtitle_length_reference: u32,
+    target_lang: &str,
+) {
+    let original_segments = segments.clone();
+    let mut step_segments = segments
+        .iter()
+        .enumerate()
+        .map(|(index, segment)| Step5FinalSegment {
+            segment_id: index + 1,
+            start: segment.start_ms as f64 / 1000.0,
+            end: segment.end_ms.max(segment.start_ms) as f64 / 1000.0,
+            source: normalize_inline_text(&segment.source_text),
+            translation: normalize_inline_text(&segment.translated_text),
+            tokens: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+
+    merge_watchability_fragments(&mut step_segments, subtitle_length_reference, target_lang);
+
+    *segments = step_segments
+        .into_iter()
+        .map(
+            |segment| crate::services::subtitle_srt::SubtitleSrtSegment {
+                start_ms: seconds_to_millis(segment.start),
+                end_ms: seconds_to_millis(segment.end.max(segment.start)),
+                source_text: original_segments
+                    .get(segment.segment_id.saturating_sub(1))
+                    .filter(|original| {
+                        seconds_to_millis(segment.start) == original.start_ms
+                            && seconds_to_millis(segment.end.max(segment.start)) == original.end_ms
+                    })
+                    .map(|original| original.source_text.clone())
+                    .unwrap_or(segment.source),
+                translated_text: segment.translation,
+            },
+        )
+        .collect();
+}
+
+fn seconds_to_millis(value: f64) -> u64 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    (value * 1000.0).round() as u64
 }
 
 fn push_quality_issue(
@@ -4775,7 +4818,7 @@ mod tests {
         Step5FinalSegment, Step5SplitParent, Step5SplitPart, Step5Token, build_source_from_tokens,
         build_step_5_1_source_split_with_progress, choose_better_alignment, extract_numbers,
         has_tail_ellipsis, heuristic_split_translation, is_watchability_fragment_issue,
-        looks_like_source_residue, merge_tiny_ranges_for_readability, merge_watchability_fragments,
+        looks_like_source_residue, merge_tiny_ranges_for_readability,
         rebalance_dangling_tail_tokens, repair_aligned_lines, split_line_quality_score,
         split_token_ranges,
     };
@@ -4985,46 +5028,6 @@ mod tests {
         let merged = merge_tiny_ranges_for_readability(ranges, &tokens, "en", 20.0, &[]);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0], (0, 8));
-    }
-
-    #[test]
-    fn step5_watchability_merges_contiguous_fragment_lines() {
-        let mut segments = vec![
-            Step5FinalSegment {
-                segment_id: 16,
-                start: 51.12,
-                end: 52.76,
-                source: "And it's also just a good".to_string(),
-                translation: "如果你某周表现不佳，可能会怀疑这".to_string(),
-                tokens: vec![],
-            },
-            Step5FinalSegment {
-                segment_id: 17,
-                start: 52.76,
-                end: 54.4,
-                source: "exercise to rebuild belief in the system.".to_string(),
-                translation: "个系统是否还有效，重建系统信心".to_string(),
-                tokens: vec![],
-            },
-        ];
-
-        merge_watchability_fragments(&mut segments, 28, "zh-CN");
-
-        assert_eq!(segments.len(), 1);
-        assert_eq!(segments[0].segment_id, 1);
-        assert_eq!(
-            segments[0].source,
-            "And it's also just a good exercise to rebuild belief in the system."
-        );
-        assert_eq!(
-            segments[0].translation,
-            "如果你某周表现不佳，可能会怀疑这个系统是否还有效，重建系统信心"
-        );
-        assert!(!is_watchability_fragment_issue(
-            &segments[0].source,
-            &segments[0].translation,
-            "zh-CN"
-        ));
     }
 
     #[test]

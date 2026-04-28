@@ -1392,6 +1392,8 @@ async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), Strin
             step2_srt,
             source_text,
             runtime.enable_subtitle_beautify,
+            runtime.subtitle_length_reference,
+            &target_lang,
         )
     };
     if let Err(err) = run_result {
@@ -1454,6 +1456,8 @@ async fn execute_translate_steps(
             &step5_existing.segments,
             source_text,
             runtime.enable_subtitle_beautify,
+            runtime.subtitle_length_reference,
+            &target_lang,
         );
     }
 
@@ -1694,6 +1698,8 @@ async fn execute_translate_steps(
         &step53_output.segments,
         source_text,
         runtime.enable_subtitle_beautify,
+        runtime.subtitle_length_reference,
+        &target_lang,
     )
 }
 
@@ -1705,6 +1711,8 @@ fn finish_transcribe_only(
     step2_srt: String,
     source_text: String,
     enable_subtitle_beautify: bool,
+    subtitle_length_reference: u32,
+    target_lang: &str,
 ) -> Result<(), String> {
     let workspace_segments = workspace_subtitle_segments_from_step2_segments(step2_segments);
     let subtitle_segments_json = serialize_workspace_subtitle_segments(&workspace_segments);
@@ -1714,6 +1722,8 @@ fn finish_transcribe_only(
         &workspace_segments,
         false,
         enable_subtitle_beautify,
+        subtitle_length_reference,
+        target_lang,
     )?;
 
     patch_task_item(app, task_id, |task| {
@@ -1733,6 +1743,8 @@ fn finish_translate_with_step5(
     segments: &[crate::commands::translate::BuildTranslationSegmentCommand],
     source_text: String,
     enable_subtitle_beautify: bool,
+    subtitle_length_reference: u32,
+    target_lang: &str,
 ) -> Result<(), String> {
     let workspace_segments = workspace_subtitle_segments_from_translation_segments(segments);
     let subtitle_segments_json = serialize_workspace_subtitle_segments(&workspace_segments);
@@ -1742,6 +1754,8 @@ fn finish_translate_with_step5(
         &workspace_segments,
         true,
         enable_subtitle_beautify,
+        subtitle_length_reference,
+        target_lang,
     )?;
 
     patch_task_item(app, task_id, |task| {
@@ -1760,6 +1774,8 @@ fn write_step7_srts(
     segments: &[WorkspaceSubtitleSegment],
     include_translation_variants: bool,
     enable_subtitle_beautify: bool,
+    subtitle_length_reference: u32,
+    target_lang: &str,
 ) -> Result<(), String> {
     let mut srt_segments = segments
         .iter()
@@ -1773,7 +1789,11 @@ fn write_step7_srts(
         )
         .collect::<Vec<_>>();
     if enable_subtitle_beautify {
-        beautify_subtitle_srt_segments(&mut srt_segments);
+        crate::services::subtitle_beautify::beautify_subtitle_srt_segments(
+            &mut srt_segments,
+            subtitle_length_reference,
+            target_lang,
+        );
     }
     let items = if include_translation_variants {
         vec![
@@ -1794,154 +1814,15 @@ fn write_step7_srts(
     Ok(())
 }
 
-pub fn beautify_subtitle_srt_segments(
-    segments: &mut [crate::services::subtitle_srt::SubtitleSrtSegment],
-) {
-    for segment in segments {
-        segment.source_text = beautify_subtitle_text(&segment.source_text);
-        segment.translated_text = beautify_subtitle_text(&segment.translated_text);
-    }
-}
-
-pub fn task_enable_subtitle_beautify(task_id: &str) -> Result<bool, String> {
+pub fn task_subtitle_beautify_context(task_id: &str) -> Result<(bool, u32, String), String> {
     let record = get_task_record(task_id)?;
     let saved = crate::services::preferences::load_saved_settings_from_default_path()
         .unwrap_or_else(|_| fallback_saved_settings());
-    let _ = record;
-    Ok(saved.enable_subtitle_beautify)
-}
-
-fn beautify_subtitle_text(raw: &str) -> String {
-    let normalized = raw.replace('\r', "\n").replace('\n', " ");
-    let normalized = normalized.trim();
-    if normalized.is_empty() {
-        return String::new();
-    }
-
-    let without_edges = trim_bounding_punctuation(normalized);
-    if without_edges.is_empty() {
-        return String::new();
-    }
-    let without_commas = remove_internal_commas_for_subtitle(&without_edges);
-    let with_spacing = normalize_cjk_ascii_spacing(&without_commas);
-    collapse_multiple_spaces(&with_spacing).trim().to_string()
-}
-
-fn trim_bounding_punctuation(text: &str) -> String {
-    let mut chars = text.chars().collect::<Vec<char>>();
-    while matches!(chars.first(), Some(ch) if is_subtitle_boundary_punctuation(*ch)) {
-        let _ = chars.remove(0);
-    }
-    while matches!(chars.last(), Some(ch) if is_subtitle_boundary_punctuation(*ch)) {
-        let _ = chars.pop();
-    }
-    chars.into_iter().collect()
-}
-
-fn is_subtitle_boundary_punctuation(ch: char) -> bool {
-    ch.is_ascii_punctuation()
-        || matches!(
-            ch,
-            '，' | '。'
-                | '、'
-                | '；'
-                | '：'
-                | '！'
-                | '？'
-                | '…'
-                | '「'
-                | '」'
-                | '『'
-                | '』'
-                | '《'
-                | '》'
-                | '“'
-                | '”'
-                | '‘'
-                | '’'
-                | '（'
-                | '）'
-                | '［'
-                | '］'
-                | '【'
-                | '】'
-        )
-}
-
-fn remove_internal_commas_for_subtitle(text: &str) -> String {
-    let chars = text.chars().collect::<Vec<_>>();
-    let mut out = String::new();
-    for idx in 0..chars.len() {
-        let ch = chars[idx];
-        if ch == ',' {
-            let prev = chars.get(idx.wrapping_sub(1)).copied();
-            let next = chars.get(idx + 1).copied();
-            if prev.is_some_and(|value| value.is_ascii_digit())
-                && next.is_some_and(|value| value.is_ascii_digit())
-            {
-                out.push(ch);
-            } else {
-                out.push(' ');
-            }
-            continue;
-        }
-        if ch == '，' {
-            continue;
-        }
-        out.push(ch);
-    }
-    out
-}
-
-fn normalize_cjk_ascii_spacing(text: &str) -> String {
-    let mut output = String::new();
-    let mut previous = None;
-    for ch in text.chars() {
-        if let Some(prev) = previous {
-            if need_cjk_ascii_space(prev, ch) && !output.ends_with(' ') {
-                output.push(' ');
-            }
-        }
-        output.push(ch);
-        previous = Some(ch);
-    }
-    output
-}
-
-fn need_cjk_ascii_space(left: char, right: char) -> bool {
-    (is_cjk_char(left) && is_ascii_word_char(right))
-        || (is_ascii_word_char(left) && is_cjk_char(right))
-}
-
-fn is_ascii_word_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric()
-}
-
-fn is_cjk_char(ch: char) -> bool {
-    let value = ch as u32;
-    (0x3400..=0x4dbf).contains(&value)
-        || (0x4e00..=0x9fff).contains(&value)
-        || (0x20000..=0x2a6df).contains(&value)
-        || (0xf900..=0xfaff).contains(&value)
-        || (0x3040..=0x31ff).contains(&value)
-        || (0xaf00..=0xafff).contains(&value)
-}
-
-fn collapse_multiple_spaces(text: &str) -> String {
-    let mut out = String::new();
-    let mut saw_space = false;
-    for ch in text.chars() {
-        if ch.is_whitespace() {
-            if !saw_space {
-                out.push(' ');
-                saw_space = true;
-            }
-            continue;
-        }
-        out.push(ch);
-        saw_space = false;
-    }
-    out
+    Ok((
+        saved.enable_subtitle_beautify,
+        saved.subtitle_length_reference,
+        record.target_lang,
+    ))
 }
 
 fn update_processing_preview_from_step2(
@@ -2799,11 +2680,7 @@ fn seconds_to_millis(value: f64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        beautify_subtitle_text, collapse_multiple_spaces, is_ascii_word_char, is_cjk_char,
-        need_cjk_ascii_space, step6_final_check_log_payload, task_failure_log_payload,
-        trim_bounding_punctuation,
-    };
+    use super::{step6_final_check_log_payload, task_failure_log_payload};
 
     #[test]
     fn final_check_log_payload_records_issues_without_blocking() {
@@ -2856,30 +2733,5 @@ mod tests {
             payload["error"],
             "step_04_translation failed: missing translation id 20"
         );
-    }
-
-    #[test]
-    fn subtitle_beautify_text_handles_empty() {
-        assert_eq!(beautify_subtitle_text(""), "");
-        assert_eq!(beautify_subtitle_text("   "), "");
-    }
-
-    #[test]
-    fn subtitle_beautify_text_removes_boundary_punctuation_and_commas() {
-        assert_eq!(beautify_subtitle_text(" (Hello, world), "), "Hello world");
-        assert_eq!(
-            beautify_subtitle_text("代码,IPC,sockets"),
-            "代码 IPC sockets"
-        );
-    }
-
-    #[test]
-    fn cjk_ascii_space_helpers() {
-        assert!(is_cjk_char('中'));
-        assert!(is_ascii_word_char('A'));
-        assert!(need_cjk_ascii_space('码', 'v'));
-        assert!(!need_cjk_ascii_space('码', ','));
-        assert_eq!(collapse_multiple_spaces("a   b"), "a b");
-        assert_eq!(trim_bounding_punctuation("「Hello，"), "Hello");
     }
 }
