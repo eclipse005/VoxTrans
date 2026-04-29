@@ -10,7 +10,7 @@ import type { QueueRunMode } from "./queue/useQueueRunner";
 import type { YoutubeDownloadProgressResponse } from "../api/youtube";
 import { cancelYoutubeDownload, downloadYoutubeTask } from "../api/youtube";
 import { addQueueItems, patchQueueItem, removeQueueItem } from "../state/queueDomainActions";
-import { deleteTasks } from "../api/workspace";
+import { deleteTasks, registerTaskUpload } from "../api/workspace";
 import { toUserErrorMessage } from "../utils/errors";
 
 type DispatchState = (action: AppAction) => void;
@@ -242,6 +242,14 @@ export function useYoutubeDownloadWorkflow({
       if (youtubeRemovedTaskIdsRef.current.has(taskId)) {
         return;
       }
+
+      await registerTaskUpload({
+        id: response.task.id,
+        mediaPath: response.task.mediaPath,
+        name: response.task.name,
+        mediaKind: response.task.mediaKind,
+        sizeBytes: response.task.sizeBytes,
+      });
 
       youtubeTrackedTaskIdsRef.current.delete(taskId);
       youtubeTaskUrlRef.current.delete(taskId);

@@ -69,6 +69,12 @@ fn main() {
             commands::updater::download_update,
             commands::updater::cancel_update,
             commands::updater::open_external_url,
+            commands::youtube::download_youtube_to_task_run,
+            commands::youtube::get_youtube_download_progress,
+            commands::youtube::list_youtube_download_progress,
+            commands::youtube::cancel_youtube_download,
+            commands::youtube::get_yt_dlp_version,
+            commands::youtube::update_yt_dlp,
         ])
         .run(tauri::generate_context!())
         .expect("error while running voxtrans desktop");

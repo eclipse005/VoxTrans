@@ -32,3 +32,4 @@ pub mod transcription;
 pub mod translation;
 pub mod updater;
 pub mod workspace_subtitle;
+pub mod youtube;

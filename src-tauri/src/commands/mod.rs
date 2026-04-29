@@ -40,3 +40,26 @@ pub mod translate_translation;
 pub mod translate_types;
 pub mod updater;
 pub mod workspace;
+pub mod youtube;
+
+#[cfg(test)]
+mod command_registration_tests {
+    const MAIN_RS: &str = include_str!("../main.rs");
+
+    #[test]
+    fn youtube_commands_are_registered_in_tauri_handler() {
+        for command in [
+            "commands::youtube::download_youtube_to_task_run",
+            "commands::youtube::get_youtube_download_progress",
+            "commands::youtube::list_youtube_download_progress",
+            "commands::youtube::cancel_youtube_download",
+            "commands::youtube::get_yt_dlp_version",
+            "commands::youtube::update_yt_dlp",
+        ] {
+            assert!(
+                MAIN_RS.contains(command),
+                "{command} must be registered in the Tauri invoke handler"
+            );
+        }
+    }
+}
