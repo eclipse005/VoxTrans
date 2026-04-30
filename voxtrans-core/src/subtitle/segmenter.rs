@@ -502,6 +502,51 @@ mod tests {
     }
 
     #[test]
+    fn abbreviation_with_long_pause_does_not_split_sentence() {
+        let words = vec![
+            WordToken {
+                start: 104.4,
+                end: 104.64,
+                word: "Mr.".to_string(),
+            },
+            WordToken {
+                start: 107.0,
+                end: 107.3,
+                word: "Smith".to_string(),
+            },
+            WordToken {
+                start: 107.4,
+                end: 107.8,
+                word: "arrived.".to_string(),
+            },
+        ];
+
+        let segments = super::split_translate_segments(&words, 20);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text, "Mr. Smith arrived.");
+    }
+
+    #[test]
+    fn am_pm_with_long_pause_does_not_split_sentence() {
+        let words = vec![
+            WordToken {
+                start: 0.0,
+                end: 0.2,
+                word: "p.m.".to_string(),
+            },
+            WordToken {
+                start: 2.5,
+                end: 2.8,
+                word: "tomorrow.".to_string(),
+            },
+        ];
+
+        let segments = super::split_translate_segments(&words, 20);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text, "p.m. tomorrow.");
+    }
+
+    #[test]
     fn merges_thousands_separator_pairs() {
         let words = vec![
             WordToken {

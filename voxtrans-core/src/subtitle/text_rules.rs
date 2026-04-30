@@ -50,6 +50,7 @@ pub fn strip_leading_openers(token: &str) -> &str {
 pub fn is_non_break_terminal_case(token: &str) -> bool {
     is_common_abbreviation(token)
         || is_single_letter_initial(token)
+        || looks_like_dotted_abbreviation(token)
         || looks_like_decimal_number(token)
 }
 
@@ -75,20 +76,72 @@ fn is_common_abbreviation(token: &str) -> bool {
         "mr."
             | "mrs."
             | "ms."
+            | "mx."
             | "dr."
             | "prof."
+            | "rev."
+            | "hon."
+            | "fr."
+            | "pres."
+            | "gov."
+            | "sen."
+            | "rep."
+            | "amb."
             | "sr."
             | "jr."
+            | "esq."
+            | "capt."
+            | "cmdr."
+            | "col."
+            | "gen."
+            | "lt."
+            | "maj."
+            | "sgt."
+            | "adm."
             | "st."
+            | "mt."
+            | "ave."
+            | "blvd."
+            | "rd."
+            | "ln."
+            | "ct."
+            | "pl."
             | "no."
             | "vs."
             | "etc."
+            | "al."
+            | "cf."
+            | "fig."
+            | "figs."
+            | "ed."
+            | "eds."
+            | "vol."
+            | "vols."
+            | "ch."
+            | "pp."
+            | "dept."
+            | "univ."
+            | "assn."
+            | "assoc."
             | "e.g."
             | "i.e."
             | "a.m."
             | "p.m."
             | "u.s."
             | "u.k."
+            | "u.n."
+            | "e.u."
+            | "d.c."
+            | "n.y."
+            | "n.y.c."
+            | "l.a."
+            | "inc."
+            | "ltd."
+            | "co."
+            | "corp."
+            | "bros."
+            | "llc."
+            | "plc."
             | "jan."
             | "feb."
             | "mar."
@@ -107,6 +160,22 @@ fn is_common_abbreviation(token: &str) -> bool {
 fn is_single_letter_initial(token: &str) -> bool {
     let chars: Vec<char> = token.chars().collect();
     chars.len() == 2 && chars[0].is_ascii_alphabetic() && chars[1] == '.'
+}
+
+fn looks_like_dotted_abbreviation(token: &str) -> bool {
+    let lower = token.to_ascii_lowercase();
+    if !lower.ends_with('.') || lower.matches('.').count() < 2 {
+        return false;
+    }
+
+    let mut part_count = 0usize;
+    for part in lower.trim_end_matches('.').split('.') {
+        if part.is_empty() || part.len() > 3 || !part.chars().all(|c| c.is_ascii_alphabetic()) {
+            return false;
+        }
+        part_count += 1;
+    }
+    part_count >= 2
 }
 
 fn looks_like_decimal_number(token: &str) -> bool {
@@ -142,6 +211,25 @@ mod tests {
         assert!(is_non_break_terminal_case("p.m."));
         assert!(!has_break_terminal_punctuation("a.m."));
         assert!(!has_break_terminal_punctuation("p.m."));
+    }
+
+    #[test]
+    fn common_titles_and_business_abbreviations_are_non_break() {
+        for token in [
+            "Mr.", "Mrs.", "Ms.", "Dr.", "Prof.", "Rev.", "Gov.", "Sen.", "Rep.", "Capt.",
+            "Col.", "Gen.", "Lt.", "Sgt.", "Inc.", "Ltd.", "Corp.", "Co.",
+        ] {
+            assert!(is_non_break_terminal_case(token), "{token}");
+            assert!(!has_break_terminal_punctuation(token), "{token}");
+        }
+    }
+
+    #[test]
+    fn dotted_initialisms_are_non_break() {
+        for token in ["U.S.", "U.K.", "U.N.", "E.U.", "D.C.", "N.Y.C.", "Ph.D.", "M.D."] {
+            assert!(is_non_break_terminal_case(token), "{token}");
+            assert!(!has_break_terminal_punctuation(token), "{token}");
+        }
     }
 
     #[test]

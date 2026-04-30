@@ -1,5 +1,7 @@
 use super::WordToken;
-use crate::subtitle::text_rules::should_split_after_terminal_token;
+use crate::subtitle::text_rules::{
+    is_non_break_terminal_case, should_split_after_terminal_token, strip_trailing_closers,
+};
 
 pub(super) fn split_by_semantic_boundary(
     words: &[WordToken],
@@ -14,7 +16,7 @@ pub(super) fn split_by_semantic_boundary(
         let punctuation_break = should_split_after_word(words, idx);
         let pause_break = if idx + 1 < words.len() {
             let pause_ms = (words[idx + 1].start - word.end).max(0.0) * 1000.0;
-            pause_ms >= max_pause_ms
+            pause_ms >= max_pause_ms && can_split_after_pause(word.word.as_str())
         } else {
             false
         };
@@ -39,4 +41,9 @@ fn should_split_after_word(words: &[WordToken], idx: usize) -> bool {
     };
     let next_word = words.get(idx + 1).map(|w| w.word.as_str());
     should_split_after_terminal_token(current_word, next_word)
+}
+
+fn can_split_after_pause(current_word: &str) -> bool {
+    let normalized = strip_trailing_closers(current_word.trim());
+    !is_non_break_terminal_case(normalized)
 }
