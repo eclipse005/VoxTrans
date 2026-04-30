@@ -93,6 +93,7 @@ pub struct SeparateVocalsCommandResponse {
 #[serde(rename_all = "camelCase")]
 pub(super) struct TranscribeProgressEvent {
     pub(super) task_id: String,
+    pub(super) phase: String,
     pub(super) current_segment: usize,
     pub(super) total_segments: usize,
 }

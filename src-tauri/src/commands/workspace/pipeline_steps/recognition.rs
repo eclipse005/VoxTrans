@@ -80,11 +80,19 @@ impl PipelineStep for Step1AsrPipelineStep {
         let transcribe_response = tauri::async_runtime::spawn_blocking(move || {
             crate::services::transcribe::transcribe_blocking(
                 transcribe_request,
-                move |current, total| {
+                move |stage, current, total| {
+                    let task_stage = match stage {
+                        crate::services::transcribe::TranscribeProgressStage::Asr => {
+                            TaskStage::Recognizing
+                        }
+                        crate::services::transcribe::TranscribeProgressStage::Align => {
+                            TaskStage::Aligning
+                        }
+                    };
                     let _ = report_task_stage(
                         &app_for_progress,
                         &task_id_owned,
-                        TaskStage::Recognizing,
+                        task_stage,
                         format!("{current}/{total}"),
                         current as u32,
                         total as u32,

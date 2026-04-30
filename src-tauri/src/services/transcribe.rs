@@ -9,6 +9,7 @@ use voxtrans_core::subtitle::segmenter::{
 use voxtrans_core::subtitle::srt::to_srt_from_segments;
 
 mod asr_align;
+pub(crate) use asr_align::TranscribeProgressStage;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,7 +124,7 @@ pub fn transcribe_blocking<F>(
     mut on_progress: F,
 ) -> Result<TranscribeResponse, String>
 where
-    F: FnMut(usize, usize),
+    F: FnMut(asr_align::TranscribeProgressStage, usize, usize),
 {
     let logger = TaskLogger::main_with_media(request.task_id.clone(), request.audio_path.clone());
     append_transcribe_log(
@@ -148,8 +149,8 @@ where
             chunk_target_seconds: request.chunk_target_seconds.clamp(30, 300),
             model_dir: request.model_dir.as_ref().map(PathBuf::from),
         },
-        |current, total| {
-            on_progress(current, total);
+        |stage, current, total| {
+            on_progress(stage, current, total);
         },
     );
     let output = match output {

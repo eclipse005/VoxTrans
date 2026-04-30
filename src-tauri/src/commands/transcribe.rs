@@ -29,11 +29,19 @@ pub async fn transcribe(
                 chunk_target_seconds: request.chunk_target_seconds,
                 model_dir: request.model_dir,
             },
-            move |current, total| {
+            move |stage, current, total| {
                 let _ = app_handle.emit(
                     "transcribe-progress",
                     TranscribeProgressEvent {
                         task_id: task_id.clone(),
+                        phase: match stage {
+                            crate::services::transcribe::TranscribeProgressStage::Asr => {
+                                "asr".to_string()
+                            }
+                            crate::services::transcribe::TranscribeProgressStage::Align => {
+                                "align".to_string()
+                            }
+                        },
                         current_segment: current,
                         total_segments: total,
                     },

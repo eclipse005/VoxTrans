@@ -49,7 +49,7 @@ pub(super) fn transcribe_with_asr_and_qwen<F>(
     mut on_progress: F,
 ) -> Result<AsrAlignOutput, String>
 where
-    F: FnMut(usize, usize),
+    F: FnMut(TranscribeProgressStage, usize, usize),
 {
     let started_at = Instant::now();
     let chunk_target_seconds = request.chunk_target_seconds.clamp(30, 300) as f64;
@@ -85,7 +85,7 @@ where
 
         let mut transcripts = Vec::new();
         for segment in &prepared.segment_summaries {
-            on_progress(segment.index, total_segments);
+            on_progress(TranscribeProgressStage::Asr, segment.index, total_segments);
             let start_index = ((segment.start_sec * voxtrans_core::TARGET_SAMPLE_RATE as f64)
                 .floor() as usize)
                 .min(sample_len);
@@ -142,15 +142,13 @@ where
         timing.qwen_load_sec = load_started_at.elapsed().as_secs_f64();
 
         let align_started_at = Instant::now();
-        let results = aligner
-            .align_batch(segment_transcripts.iter().map(|segment| {
-                AlignRequest::new(
-                    AudioInput::Path(segment.wav.path.clone()),
-                    TextInput::Text(segment.text.clone()),
-                    aligner_language.clone(),
-                )
-            }))
-            .map_err(|err| format!("qwen alignment failed: {err:#}"))?;
+        let results = align_segments(
+            &aligner,
+            &aligner_language,
+            &segment_transcripts,
+            &mut on_progress,
+        )
+        .map_err(|err| format!("qwen alignment failed: {err:#}"))?;
         timing.qwen_align_sec = align_started_at.elapsed().as_secs_f64();
         let segment_starts = segment_transcripts
             .iter()
@@ -186,6 +184,12 @@ struct SegmentTranscript {
     text: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TranscribeProgressStage {
+    Asr,
+    Align,
+}
+
 struct RuntimeDevice {
     asr_device: Device,
     qwen_device: DeviceRequest,
@@ -195,6 +199,29 @@ struct RuntimeDevice {
 struct AlignmentWordsOutput {
     words: Vec<WordToken>,
     aligned_text: String,
+}
+
+fn align_segments(
+    aligner: &qwen_forced_aligner_rs::Qwen3ForcedAligner,
+    aligner_language: &str,
+    segment_transcripts: &[SegmentTranscript],
+    on_progress: &mut impl FnMut(TranscribeProgressStage, usize, usize),
+) -> Result<Vec<ForcedAlignResult>, String> {
+    let total = segment_transcripts.len();
+    let mut results = Vec::with_capacity(total);
+    for (index, segment) in segment_transcripts.iter().enumerate() {
+        let current = index + 1;
+        on_progress(TranscribeProgressStage::Align, current, total);
+        let result = aligner
+            .align(AlignRequest::new(
+                AudioInput::Path(segment.wav.path.clone()),
+                TextInput::Text(segment.text.clone()),
+                aligner_language.to_string(),
+            ))
+            .map_err(|err| format!("failed align request {current}: {err:#}"))?;
+        results.push(result);
+    }
+    Ok(results)
 }
 
 fn provider_to_device(provider: &str) -> Result<RuntimeDevice, String> {

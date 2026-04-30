@@ -96,6 +96,7 @@ export type TaskStageCode =
   | "downloading"
   | "preparing"
   | "recognizing"
+  | "aligning"
   | "segmenting"
   | "summarizing"
   | "terminology"
@@ -158,6 +159,7 @@ const TASK_STAGE_SET = new Set<TaskStageCode>([
   "downloading",
   "preparing",
   "recognizing",
+  "aligning",
   "segmenting",
   "summarizing",
   "terminology",
@@ -170,6 +172,7 @@ const TASK_STAGE_ORDER: Record<TaskStageCode, number> = {
   downloading: 10,
   preparing: 20,
   recognizing: 30,
+  aligning: 35,
   segmenting: 40,
   summarizing: 50,
   terminology: 60,

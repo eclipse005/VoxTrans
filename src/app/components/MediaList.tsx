@@ -106,6 +106,7 @@ function shouldShowStageCounter(code: QueueItem["taskProgress"]["stage"]["code"]
   switch (code) {
     case "downloading":
     case "recognizing":
+    case "aligning":
     case "segmenting":
     case "translating":
     case "subtitleLayout":
@@ -124,6 +125,8 @@ function resolveStageLabel(code: QueueItem["taskProgress"]["stage"]["code"]): st
       return "准备中";
     case "recognizing":
       return "语音识别中";
+    case "aligning":
+      return "强制对齐中";
     case "segmenting":
       return "AI断句中";
     case "summarizing":
