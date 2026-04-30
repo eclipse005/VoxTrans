@@ -67,13 +67,13 @@ pub fn align_text_to_timestamps(full_text: &str, word_timestamps: &[WordToken]) 
 
             let original_start = clean_to_original[match_start_clean];
             let original_end_exclusive = clean_to_original[match_end_clean - 1] + 1;
-            if let Some(previous_word_idx) = last_matched_word_idx {
-                if original_start > last_attached_original_end {
-                    append_skipped_punctuation(
-                        &mut result[previous_word_idx].word,
-                        &full_chars[last_attached_original_end..original_start],
-                    );
-                }
+            if let Some(previous_word_idx) = last_matched_word_idx
+                && original_start > last_attached_original_end
+            {
+                append_skipped_punctuation(
+                    &mut result[previous_word_idx].word,
+                    &full_chars[last_attached_original_end..original_start],
+                );
             }
 
             let mut following_end = original_end_exclusive;
@@ -115,13 +115,13 @@ pub fn align_text_to_timestamps(full_text: &str, word_timestamps: &[WordToken]) 
         }
     }
 
-    if let Some(previous_word_idx) = last_matched_word_idx {
-        if last_attached_original_end < full_chars.len() {
-            append_skipped_punctuation(
-                &mut result[previous_word_idx].word,
-                &full_chars[last_attached_original_end..],
-            );
-        }
+    if let Some(previous_word_idx) = last_matched_word_idx
+        && last_attached_original_end < full_chars.len()
+    {
+        append_skipped_punctuation(
+            &mut result[previous_word_idx].word,
+            &full_chars[last_attached_original_end..],
+        );
     }
 
     let total = word_timestamps.len() as f64;

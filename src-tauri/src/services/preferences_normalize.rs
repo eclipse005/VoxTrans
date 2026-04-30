@@ -46,8 +46,6 @@ pub(super) fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings
             let trimmed = settings.asr_model.trim();
             if trimmed.is_empty() {
                 crate::services::model::DEFAULT_ASR_MODEL.to_string()
-            } else if trimmed == "parakeet-tdt-0.6b-v2" || trimmed == "cohere-transcribe" {
-                crate::services::model::DEFAULT_ASR_MODEL.to_string()
             } else {
                 trimmed.to_string()
             }

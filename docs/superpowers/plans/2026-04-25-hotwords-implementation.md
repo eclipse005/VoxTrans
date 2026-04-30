@@ -50,7 +50,7 @@ mod tests {
             chunk_target_seconds: 180,
             subtitle_max_words_per_segment: 20,
             subtitle_length_reference: 28,
-            asr_model: "parakeet-tdt-0.6b-v2".to_string(),
+            asr_model: crate::services::model::DEFAULT_ASR_MODEL.to_string(),
             demucs_model: "htdemucs_ft".to_string(),
             enable_vocal_separation: false,
             translate_api_key: String::new(),

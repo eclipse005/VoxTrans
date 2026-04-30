@@ -223,7 +223,7 @@ where
 
 fn normalize_asr_model(raw: &str) -> String {
     let value = raw.trim();
-    if value.is_empty() || value == "parakeet-tdt-0.6b-v2" || value == "cohere-transcribe" {
+    if value.is_empty() {
         crate::services::model::DEFAULT_ASR_MODEL.to_string()
     } else {
         value.to_string()
@@ -377,7 +377,7 @@ fn map_transcribe_error(raw: &str, provider: &str, chunk_target_seconds: u32) ->
     if gpu_oom {
         return format!(
             "转录失败：显存/图形资源不足（{}）。请在设置中将“分段时长”调小后重试（当前 {} 秒，建议 60-120 秒）。",
-            if provider.eq_ignore_ascii_case("cuda") || provider.eq_ignore_ascii_case("directml") {
+            if provider.eq_ignore_ascii_case("cuda") {
                 "GPU"
             } else {
                 provider

@@ -1,5 +1,3 @@
-use crate::TimedToken;
-
 use super::srt::SubtitleSegment;
 
 mod heuristic_cost;
@@ -15,23 +13,6 @@ pub struct WordToken {
     pub start: f64,
     pub end: f64,
     pub word: String,
-}
-
-pub fn words_from_timed_tokens(tokens: &[TimedToken]) -> Vec<WordToken> {
-    tokens
-        .iter()
-        .filter_map(|token| {
-            let word = token.text.trim().to_string();
-            if word.is_empty() {
-                return None;
-            }
-            Some(WordToken {
-                start: round_millis(token.start.max(0.0) as f64),
-                end: round_millis(token.end.max(token.start) as f64),
-                word,
-            })
-        })
-        .collect()
 }
 
 pub fn normalize_word_tokens(raw_words: Vec<WordToken>) -> Vec<WordToken> {
@@ -401,10 +382,6 @@ fn is_numeric_unit_suffix(token: &str) -> bool {
     ];
     let lower = token.trim().to_ascii_lowercase();
     !lower.is_empty() && KNOWN_UNITS.contains(&lower.as_str())
-}
-
-fn round_millis(value: f64) -> f64 {
-    (value * 1000.0).round() / 1000.0
 }
 
 #[cfg(test)]

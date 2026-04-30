@@ -22,7 +22,7 @@ impl Drop for TemporaryAudioFile {
 }
 
 pub(crate) fn prepare_audio_for_transcription(
-    input_path: &PathBuf,
+    input_path: &Path,
 ) -> Result<PreparedAudio, Box<dyn std::error::Error>> {
     let (mono_samples, _ffmpeg_input) =
         load_input_as_16k_mono_f32_with_extractor(input_path, extract_audio_to_wav)?;
@@ -48,11 +48,10 @@ fn load_input_as_16k_mono_f32_with_extractor<F>(
 where
     F: FnMut(&Path) -> Result<TemporaryAudioFile, Box<dyn std::error::Error>>,
 {
-    if is_wav_path(input_path) {
-        match load_wav_as_16k_mono_f32(input_path) {
-            Ok(samples) => return Ok((samples, None)),
-            Err(_) => {}
-        }
+    if is_wav_path(input_path)
+        && let Ok(samples) = load_wav_as_16k_mono_f32(input_path)
+    {
+        return Ok((samples, None));
     }
 
     let ffmpeg_input = extract_audio(input_path)?;

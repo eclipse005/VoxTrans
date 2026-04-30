@@ -94,10 +94,6 @@ pub(crate) fn normalize_model_name(target: ModelTarget, model: Option<&str>) -> 
     let value = model.unwrap_or(fallback).trim();
     if value.is_empty() {
         fallback.to_string()
-    } else if target == ModelTarget::Asr
-        && (value == "parakeet-tdt-0.6b-v2" || value == "cohere-transcribe")
-    {
-        DEFAULT_ASR_MODEL.to_string()
     } else {
         value.to_string()
     }

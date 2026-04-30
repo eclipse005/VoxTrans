@@ -12,9 +12,6 @@ export const PROVIDER_OPTIONS: ReadonlyArray<{
 
 export function normalizeProvider(raw: unknown, fallback: Provider = "cpu"): Provider {
   const normalized = String(raw ?? "").trim().toLowerCase();
-  if (normalized === "directml") {
-    return "cuda";
-  }
   if (PROVIDER_IDS.includes(normalized as Provider)) {
     return normalized as Provider;
   }

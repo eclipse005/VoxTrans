@@ -44,14 +44,6 @@ const initialAsrStatusByModel: AsrStatusByModel = {
   "Qwen3-ASR-1.7B": null,
 };
 
-const initialDownloadState: ModelDownloadStateSnapshot = {
-  phase: "idle",
-  downloadedBytes: 0,
-  totalBytes: 0,
-  speedBytesPerSec: 0,
-  message: "",
-};
-
 export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }: UseModelManagerArgs) {
   const [statusByTarget, setStatusByTarget] = useState<ModelStatusByTarget>(initialModelStatus);
   const [asrStatusByModel, setAsrStatusByModel] = useState<AsrStatusByModel>(initialAsrStatusByModel);
@@ -211,9 +203,6 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
     asrStatusByModel,
     alignStatus: statusByTarget.align,
     demucsStatus: statusByTarget.demucs,
-    getDownloadState: (target: ModelTarget) => statusByTarget[target]?.download ?? initialDownloadState,
-    getReady: (target: ModelTarget) => statusByTarget[target]?.ready ?? false,
-    getModelDir: (target: ModelTarget) => statusByTarget[target]?.modelDir ?? "",
     refreshModelStatus,
     startModelDownload,
     cancelModelDownload,

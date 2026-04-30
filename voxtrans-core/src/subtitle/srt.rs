@@ -1,4 +1,3 @@
-use crate::TimedToken;
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone)]
@@ -197,32 +196,6 @@ pub fn shift_all(cues: &[SrtCue], delta_ms: i64) -> Vec<SrtCue> {
         .collect()
 }
 
-pub fn to_srt_from_sentence_tokens(tokens: &[TimedToken]) -> String {
-    if tokens.is_empty() {
-        return String::new();
-    }
-
-    let cues: Vec<SrtCue> = tokens
-        .iter()
-        .filter_map(|token| {
-            let text = token.text.trim();
-            if text.is_empty() {
-                return None;
-            }
-            let start_ms = seconds_to_ms(token.start.max(0.0));
-            let end_ms = seconds_to_ms(token.end.max(token.start));
-            Some(SrtCue {
-                index: 0,
-                start_ms,
-                end_ms,
-                text: text.to_string(),
-            })
-        })
-        .collect();
-
-    to_srt_from_cues(&cues)
-}
-
 pub fn to_srt_from_segments(segments: &[SubtitleSegment]) -> String {
     let cues: Vec<SrtCue> = segments
         .iter()
@@ -285,10 +258,6 @@ fn format_ms_to_srt_time(total_ms: u64) -> String {
     let seconds = (total_ms % 60_000) / 1_000;
     let millis = total_ms % 1_000;
     format!("{hours:02}:{minutes:02}:{seconds:02},{millis:03}")
-}
-
-fn seconds_to_ms(seconds: f32) -> u64 {
-    (seconds as f64 * 1000.0).round().max(0.0) as u64
 }
 
 fn seconds_f64_to_ms(seconds: f64) -> u64 {

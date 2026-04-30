@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::{DEFAULT_ALIGN_MODEL, ModelTarget, model_definition};
+use super::{ModelTarget, model_definition};
 
 pub fn resolve_models_root() -> PathBuf {
     if let Ok(custom_dir) = std::env::var("VOXTRANS_MODELS_DIR") {
@@ -41,9 +41,4 @@ pub fn open_model_dir(target: ModelTarget, model: Option<String>) -> Result<(), 
     let model_dir = definition.model_dir;
     std::fs::create_dir_all(&model_dir).map_err(|err| err.to_string())?;
     crate::services::system::open_path(&model_dir)
-}
-
-#[allow(dead_code)]
-pub fn default_aligner_model_dir() -> PathBuf {
-    resolve_aligner_model_dir(DEFAULT_ALIGN_MODEL)
 }

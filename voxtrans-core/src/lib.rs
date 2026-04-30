@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 mod audio;
 mod binary;
@@ -6,19 +6,10 @@ mod vad;
 
 pub mod subtitle;
 
-pub use subtitle::srt::to_srt_from_sentence_tokens as to_srt;
-
 use audio::prepare_audio_for_transcription;
 use vad::build_segments_from_vad;
 
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
-
-#[derive(Debug, Clone)]
-pub struct TimedToken {
-    pub text: String,
-    pub start: f32,
-    pub end: f32,
-}
 
 #[derive(Debug, Clone)]
 pub struct SegmentSummary {
@@ -37,7 +28,7 @@ pub struct PreparedAudioSegments {
 }
 
 pub fn prepare_audio_segments_for_asr(
-    audio_path: &PathBuf,
+    audio_path: &Path,
     chunk_target_seconds: f64,
 ) -> Result<PreparedAudioSegments, Box<dyn std::error::Error>> {
     let prepared_audio = prepare_audio_for_transcription(audio_path)?;
