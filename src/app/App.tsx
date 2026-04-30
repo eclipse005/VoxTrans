@@ -13,6 +13,7 @@ import UploadPanel from "./components/UploadPanel";
 import { openTaskOutputDir } from "./api/system";
 import { useAppPersistence } from "./hooks/useAppPersistence";
 import { useAutoUpdateCheck } from "./hooks/useAutoUpdateCheck";
+import { useClickSound } from "./hooks/useClickSound";
 import { useModelManager } from "./hooks/useModelManager";
 import { useQueueWorkflow } from "./hooks/useQueueWorkflow";
 import { useSettingsController } from "./hooks/useSettingsController";
@@ -78,6 +79,7 @@ function App() {
     draftTerminologyGroups,
     draftEnableTerminology,
     draftEnableSubtitleBeautify,
+    draftEnableClickSound,
     draftAutoBurnHardSubtitle,
     draftSubtitleBurnMode,
     draftSubtitleRenderStyle,
@@ -106,6 +108,7 @@ function App() {
   } = useAutoUpdateCheck();
 
   useAppPersistence(dispatch);
+  useClickSound(settings.enableClickSound);
   const { workspaceHydrated } = useWorkspacePersistence({
     dispatch,
   });
@@ -212,6 +215,7 @@ function App() {
     draftTerminologyGroups,
     draftEnableTerminology,
     draftEnableSubtitleBeautify,
+    draftEnableClickSound,
     draftAutoBurnHardSubtitle,
     draftSubtitleBurnMode,
     draftSubtitleRenderStyle,
@@ -330,6 +334,7 @@ function App() {
         draftLlmConcurrencyInput={draftLlmConcurrencyInput}
         draftEnableTerminology={draftEnableTerminology}
         draftEnableSubtitleBeautify={draftEnableSubtitleBeautify}
+        draftEnableClickSound={draftEnableClickSound}
         draftAutoBurnHardSubtitle={draftAutoBurnHardSubtitle}
         draftSubtitleBurnMode={draftSubtitleBurnMode}
         draftSubtitleRenderStyle={draftSubtitleRenderStyle}
@@ -353,6 +358,7 @@ function App() {
         onDraftLlmConcurrencyInputChange={(value) => dispatch({ type: "set_draft", payload: { draftLlmConcurrencyInput: value } })}
         onDraftEnableTerminologyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableTerminology: value } })}
         onDraftEnableSubtitleBeautifyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableSubtitleBeautify: value } })}
+        onDraftEnableClickSoundChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableClickSound: value } })}
         onDraftAutoBurnHardSubtitleChange={(value) => dispatch({ type: "set_draft", payload: { draftAutoBurnHardSubtitle: value } })}
         onDraftSubtitleBurnModeChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleBurnMode: value } })}
         onDraftSubtitleRenderStyleChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleRenderStyle: value } })}

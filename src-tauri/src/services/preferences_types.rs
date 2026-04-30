@@ -105,6 +105,8 @@ pub struct SavedSettings {
     pub enable_terminology: bool,
     #[serde(default = "default_true")]
     pub enable_subtitle_beautify: bool,
+    #[serde(default = "default_true")]
+    pub enable_click_sound: bool,
     #[serde(default)]
     pub auto_burn_hard_subtitle: bool,
     #[serde(default = "default_subtitle_burn_mode")]

@@ -31,6 +31,7 @@ type SettingsModalProps = {
   draftLlmConcurrencyInput: string;
   draftEnableTerminology: boolean;
   draftEnableSubtitleBeautify: boolean;
+  draftEnableClickSound: boolean;
   draftAutoBurnHardSubtitle: boolean;
   draftSubtitleBurnMode: SubtitleBurnMode;
   draftSubtitleRenderStyle: SubtitleRenderStyle;
@@ -54,6 +55,7 @@ type SettingsModalProps = {
   onDraftLlmConcurrencyInputChange: (value: string) => void;
   onDraftEnableTerminologyChange: (value: boolean) => void;
   onDraftEnableSubtitleBeautifyChange: (value: boolean) => void;
+  onDraftEnableClickSoundChange: (value: boolean) => void;
   onDraftAutoBurnHardSubtitleChange: (value: boolean) => void;
   onDraftSubtitleBurnModeChange: (value: SubtitleBurnMode) => void;
   onDraftSubtitleRenderStyleChange: (value: SubtitleRenderStyle) => void;
@@ -80,6 +82,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftLlmConcurrencyInput,
     draftEnableTerminology,
     draftEnableSubtitleBeautify,
+    draftEnableClickSound,
     draftAutoBurnHardSubtitle,
     draftSubtitleBurnMode,
     draftSubtitleRenderStyle,
@@ -103,6 +106,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftLlmConcurrencyInputChange,
     onDraftEnableTerminologyChange,
     onDraftEnableSubtitleBeautifyChange,
+    onDraftEnableClickSoundChange,
     onDraftAutoBurnHardSubtitleChange,
     onDraftSubtitleBurnModeChange,
     onDraftSubtitleRenderStyleChange,
@@ -234,6 +238,19 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <div className="toggle-label">
                       <span className="toggle-title">人声分离</span>
                       <span className="toggle-desc">背景吵杂时请使用，提高转录准确率</span>
+                    </div>
+                    <span className="toggle-switch" />
+                  </label>
+                  <label className="setting-toggle" htmlFor="enable-click-sound">
+                    <input
+                      id="enable-click-sound"
+                      type="checkbox"
+                      checked={draftEnableClickSound}
+                      onChange={(e) => onDraftEnableClickSoundChange(e.target.checked)}
+                    />
+                    <div className="toggle-label">
+                      <span className="toggle-title">点击音效</span>
+                      <span className="toggle-desc">点击按钮和开关时播放轻提示音</span>
                     </div>
                     <span className="toggle-switch" />
                   </label>

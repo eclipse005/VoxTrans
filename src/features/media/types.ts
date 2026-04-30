@@ -64,6 +64,7 @@ export type SavedSettings = {
   terminologyGroups: TerminologyGroup[];
   enableTerminology: boolean;
   enableSubtitleBeautify: boolean;
+  enableClickSound: boolean;
   autoBurnHardSubtitle: boolean;
   subtitleBurnMode: SubtitleBurnMode;
   subtitleRenderStyle: SubtitleRenderStyle;

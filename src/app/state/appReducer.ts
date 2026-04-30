@@ -35,6 +35,7 @@ export type AppState = {
   draftTerminologyGroups: SavedSettings["terminologyGroups"];
   draftEnableTerminology: boolean;
   draftEnableSubtitleBeautify: boolean;
+  draftEnableClickSound: boolean;
   draftAutoBurnHardSubtitle: boolean;
   draftSubtitleBurnMode: SubtitleBurnMode;
   draftSubtitleRenderStyle: SubtitleRenderStyle;
@@ -112,6 +113,7 @@ export type SettingsAction =
           | "draftTerminologyGroups"
           | "draftEnableTerminology"
           | "draftEnableSubtitleBeautify"
+          | "draftEnableClickSound"
           | "draftAutoBurnHardSubtitle"
           | "draftSubtitleBurnMode"
           | "draftSubtitleRenderStyle"
@@ -138,6 +140,7 @@ export const defaultSettings: SavedSettings = {
   terminologyGroups: [createTerminologyGroup()],
   enableTerminology: true,
   enableSubtitleBeautify: true,
+  enableClickSound: true,
   autoBurnHardSubtitle: false,
   subtitleBurnMode: "bilingualSourceFirst",
   subtitleRenderStyle: {
@@ -194,6 +197,7 @@ export const initialAppState: AppState = {
   draftTerminologyGroups: defaultSettings.terminologyGroups,
   draftEnableTerminology: defaultSettings.enableTerminology,
   draftEnableSubtitleBeautify: defaultSettings.enableSubtitleBeautify,
+  draftEnableClickSound: defaultSettings.enableClickSound,
   draftAutoBurnHardSubtitle: defaultSettings.autoBurnHardSubtitle,
   draftSubtitleBurnMode: defaultSettings.subtitleBurnMode,
   draftSubtitleRenderStyle: defaultSettings.subtitleRenderStyle,

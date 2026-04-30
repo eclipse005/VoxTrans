@@ -32,6 +32,7 @@ type UseSettingsControllerArgs = {
   draftTerminologyGroups: SavedSettings["terminologyGroups"];
   draftEnableTerminology: boolean;
   draftEnableSubtitleBeautify: boolean;
+  draftEnableClickSound: boolean;
   draftAutoBurnHardSubtitle: boolean;
   draftSubtitleBurnMode: SavedSettings["subtitleBurnMode"];
   draftSubtitleRenderStyle: SavedSettings["subtitleRenderStyle"];
@@ -57,6 +58,7 @@ export function useSettingsController({
   draftTerminologyGroups,
   draftEnableTerminology,
   draftEnableSubtitleBeautify,
+  draftEnableClickSound,
   draftAutoBurnHardSubtitle,
   draftSubtitleBurnMode,
   draftSubtitleRenderStyle,
@@ -84,6 +86,7 @@ export function useSettingsController({
         draftTerminologyGroups: settings.terminologyGroups,
         draftEnableTerminology: settings.enableTerminology,
         draftEnableSubtitleBeautify: settings.enableSubtitleBeautify,
+        draftEnableClickSound: settings.enableClickSound,
         draftAutoBurnHardSubtitle: settings.autoBurnHardSubtitle,
         draftSubtitleBurnMode: settings.subtitleBurnMode,
         draftSubtitleRenderStyle: settings.subtitleRenderStyle,
@@ -108,6 +111,7 @@ export function useSettingsController({
     settings.terminologyGroups,
     settings.enableTerminology,
     settings.enableSubtitleBeautify,
+    settings.enableClickSound,
     settings.autoBurnHardSubtitle,
     settings.subtitleBurnMode,
     settings.subtitleRenderStyle,
@@ -156,6 +160,7 @@ export function useSettingsController({
       terminologyGroups: normalizeTerminologyGroups(draftTerminologyGroups),
       enableTerminology: draftEnableTerminology,
       enableSubtitleBeautify: draftEnableSubtitleBeautify,
+      enableClickSound: draftEnableClickSound,
       autoBurnHardSubtitle: draftAutoBurnHardSubtitle,
       subtitleBurnMode: draftSubtitleBurnMode,
       subtitleRenderStyle: {
@@ -210,6 +215,7 @@ export function useSettingsController({
         draftTerminologyGroups: nextSettings.terminologyGroups,
         draftEnableTerminology: nextSettings.enableTerminology,
         draftEnableSubtitleBeautify,
+        draftEnableClickSound: nextSettings.enableClickSound,
         draftAutoBurnHardSubtitle: nextSettings.autoBurnHardSubtitle,
         draftSubtitleBurnMode: nextSettings.subtitleBurnMode,
         draftSubtitleRenderStyle: nextSettings.subtitleRenderStyle,
@@ -239,6 +245,7 @@ export function useSettingsController({
     draftLlmConcurrencyInput,
     draftTerminologyGroups,
     draftEnableTerminology,
+    draftEnableClickSound,
     draftAutoBurnHardSubtitle,
     draftSubtitleBurnMode,
     draftSubtitleRenderStyle,

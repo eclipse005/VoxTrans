@@ -228,6 +228,7 @@ pub(super) fn fallback_saved_settings() -> crate::services::preferences::SavedSe
         terminology_groups: Vec::new(),
         enable_terminology: true,
         enable_subtitle_beautify: true,
+        enable_click_sound: true,
         auto_burn_hard_subtitle: false,
         subtitle_burn_mode: "bilingualSourceFirst".to_string(),
         subtitle_render_style: crate::services::preferences::SubtitleRenderStyle::default(),

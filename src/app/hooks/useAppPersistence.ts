@@ -55,6 +55,7 @@ export function useAppPersistence(dispatch: DispatchState) {
         const terminologyGroups = normalizeTerminologyGroups(terminologyGroupsRaw);
         const enableTerminology = Boolean(res.settings.enableTerminology ?? true);
         const enableSubtitleBeautify = Boolean(res.settings.enableSubtitleBeautify ?? true);
+        const enableClickSound = Boolean(res.settings.enableClickSound ?? true);
         const autoBurnHardSubtitle = Boolean(res.settings.autoBurnHardSubtitle ?? false);
         const subtitleBurnModeRaw = String(res.settings.subtitleBurnMode ?? "bilingualSourceFirst");
         const subtitleBurnMode: SubtitleBurnMode = subtitleBurnModeRaw === "source"
@@ -123,6 +124,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             terminologyGroups,
             enableTerminology,
             enableSubtitleBeautify,
+            enableClickSound,
             autoBurnHardSubtitle,
             subtitleBurnMode,
             subtitleRenderStyle,
@@ -146,6 +148,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftTerminologyGroups: terminologyGroups,
             draftEnableTerminology: enableTerminology,
             draftEnableSubtitleBeautify: enableSubtitleBeautify,
+            draftEnableClickSound: enableClickSound,
             draftAutoBurnHardSubtitle: autoBurnHardSubtitle,
             draftSubtitleBurnMode: subtitleBurnMode,
             draftSubtitleRenderStyle: subtitleRenderStyle,
