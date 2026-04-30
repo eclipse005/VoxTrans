@@ -7,6 +7,8 @@ import {
 } from "../api/model";
 import { openModelDir as openModelDirApi } from "../api/system";
 import type {
+  AlignModel,
+  AsrModel,
   DemucsModel,
   ModelDownloadStateSnapshot,
   ModelStatusResponse,
@@ -18,6 +20,8 @@ type PushToast = (message: string, tone?: ToastTone) => void;
 
 type UseModelManagerArgs = {
   pushToast: PushToast;
+  asrModel: AsrModel;
+  alignModel: AlignModel;
   demucsModel: DemucsModel;
 };
 
@@ -27,10 +31,17 @@ type ModelDownloadProgressEvent = ModelDownloadStateSnapshot & {
 };
 
 type ModelStatusByTarget = Record<ModelTarget, ModelStatusResponse | null>;
+type AsrStatusByModel = Record<AsrModel, ModelStatusResponse | null>;
 
 const initialModelStatus: ModelStatusByTarget = {
   asr: null,
+  align: null,
   demucs: null,
+};
+
+const initialAsrStatusByModel: AsrStatusByModel = {
+  "Qwen3-ASR-0.6B": null,
+  "Qwen3-ASR-1.7B": null,
 };
 
 const initialDownloadState: ModelDownloadStateSnapshot = {
@@ -41,22 +52,34 @@ const initialDownloadState: ModelDownloadStateSnapshot = {
   message: "",
 };
 
-export function useModelManager({ pushToast, demucsModel }: UseModelManagerArgs) {
+export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }: UseModelManagerArgs) {
   const [statusByTarget, setStatusByTarget] = useState<ModelStatusByTarget>(initialModelStatus);
+  const [asrStatusByModel, setAsrStatusByModel] = useState<AsrStatusByModel>(initialAsrStatusByModel);
+  const asrModelRef = useRef<AsrModel>(asrModel);
+  const alignModelRef = useRef<AlignModel>(alignModel);
   const demucsModelRef = useRef<DemucsModel>(demucsModel);
   const lastModelStatusRefreshAtRef = useRef<Record<ModelTarget, number>>({
     asr: 0,
+    align: 0,
     demucs: 0,
   });
 
   const refreshModelStatus = useCallback(async () => {
     try {
-      const [asr, demucs] = await Promise.all([
-        getModelStatus("asr"),
+      const [asr06b, asr17b, align, demucs] = await Promise.all([
+        getModelStatus("asr", "Qwen3-ASR-0.6B"),
+        getModelStatus("asr", "Qwen3-ASR-1.7B"),
+        getModelStatus("align", alignModelRef.current),
         getModelStatus("demucs", demucsModelRef.current),
       ]);
+      const nextAsrStatusByModel = {
+        "Qwen3-ASR-0.6B": asr06b,
+        "Qwen3-ASR-1.7B": asr17b,
+      };
+      setAsrStatusByModel(nextAsrStatusByModel);
       setStatusByTarget({
-        asr,
+        asr: nextAsrStatusByModel[asrModelRef.current],
+        align,
         demucs,
       });
     } catch (error) {
@@ -66,12 +89,14 @@ export function useModelManager({ pushToast, demucsModel }: UseModelManagerArgs)
   }, [pushToast]);
 
   useEffect(() => {
+    asrModelRef.current = asrModel;
+    alignModelRef.current = alignModel;
     demucsModelRef.current = demucsModel;
     const timer = setTimeout(() => {
       void refreshModelStatus();
     }, 0);
     return () => clearTimeout(timer);
-  }, [demucsModel, refreshModelStatus]);
+  }, [alignModel, asrModel, demucsModel, refreshModelStatus]);
 
   useEffect(() => {
     let unlisten: undefined | (() => void);
@@ -79,8 +104,31 @@ export function useModelManager({ pushToast, demucsModel }: UseModelManagerArgs)
       const payload = event.payload;
       if (!payload?.target) return;
       const target = payload.target;
+      if (target === "asr" && payload.model !== "Qwen3-ASR-0.6B" && payload.model !== "Qwen3-ASR-1.7B") return;
+      if (target === "align" && payload.model !== alignModelRef.current) return;
       if (target === "demucs" && payload.model !== demucsModelRef.current) return;
+      if (target === "asr") {
+        const model = payload.model as AsrModel;
+        setAsrStatusByModel((prev) => {
+          const current = prev[model];
+          if (!current) return prev;
+          return {
+            ...prev,
+            [model]: {
+              ...current,
+              download: {
+                phase: payload.phase,
+                downloadedBytes: payload.downloadedBytes,
+                totalBytes: payload.totalBytes,
+                speedBytesPerSec: payload.speedBytesPerSec,
+                message: payload.message,
+              },
+            },
+          };
+        });
+      }
       setStatusByTarget((prev) => {
+        if (target === "asr" && payload.model !== asrModelRef.current) return prev;
         const current = prev[target];
         if (!current) return prev;
         return {
@@ -117,11 +165,11 @@ export function useModelManager({ pushToast, demucsModel }: UseModelManagerArgs)
     };
   }, [refreshModelStatus]);
 
-  const startModelDownload = useCallback(async (target: ModelTarget) => {
+  const startModelDownload = useCallback(async (target: ModelTarget, model?: string) => {
     try {
       await startModelDownloadApi(
         target,
-        target === "demucs" ? demucsModelRef.current : undefined,
+        modelForTarget(target, asrModelRef.current, alignModelRef.current, demucsModelRef.current, model),
       );
       pushToast("开始后台下载模型", "info");
       await refreshModelStatus();
@@ -131,11 +179,11 @@ export function useModelManager({ pushToast, demucsModel }: UseModelManagerArgs)
     }
   }, [pushToast, refreshModelStatus]);
 
-  const cancelModelDownload = useCallback(async (target: ModelTarget) => {
+  const cancelModelDownload = useCallback(async (target: ModelTarget, model?: string) => {
     try {
       await cancelModelDownloadApi(
         target,
-        target === "demucs" ? demucsModelRef.current : undefined,
+        modelForTarget(target, asrModelRef.current, alignModelRef.current, demucsModelRef.current, model),
       );
       pushToast("已请求取消下载", "info");
       await refreshModelStatus();
@@ -145,9 +193,12 @@ export function useModelManager({ pushToast, demucsModel }: UseModelManagerArgs)
     }
   }, [pushToast, refreshModelStatus]);
 
-  const openModelDir = useCallback(async (target: ModelTarget) => {
+  const openModelDir = useCallback(async (target: ModelTarget, model?: string) => {
     try {
-      await openModelDirApi(target);
+      await openModelDirApi(
+        target,
+        modelForTarget(target, asrModelRef.current, alignModelRef.current, demucsModelRef.current, model),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "打开模型目录失败";
       pushToast(message, "error");
@@ -157,6 +208,8 @@ export function useModelManager({ pushToast, demucsModel }: UseModelManagerArgs)
   return useMemo(() => ({
     statusByTarget,
     asrStatus: statusByTarget.asr,
+    asrStatusByModel,
+    alignStatus: statusByTarget.align,
     demucsStatus: statusByTarget.demucs,
     getDownloadState: (target: ModelTarget) => statusByTarget[target]?.download ?? initialDownloadState,
     getReady: (target: ModelTarget) => statusByTarget[target]?.ready ?? false,
@@ -166,10 +219,26 @@ export function useModelManager({ pushToast, demucsModel }: UseModelManagerArgs)
     cancelModelDownload,
     openModelDir,
   }), [
+    asrStatusByModel,
     cancelModelDownload,
     openModelDir,
     refreshModelStatus,
     startModelDownload,
     statusByTarget,
   ]);
+}
+
+function modelForTarget(
+  target: ModelTarget,
+  asrModel: AsrModel,
+  alignModel: AlignModel,
+  demucsModel: DemucsModel,
+  overrideModel?: string,
+): AsrModel | AlignModel | DemucsModel {
+  if (target === "asr" && (overrideModel === "Qwen3-ASR-0.6B" || overrideModel === "Qwen3-ASR-1.7B")) {
+    return overrideModel;
+  }
+  if (target === "asr") return asrModel;
+  if (target === "align") return alignModel;
+  return demucsModel;
 }

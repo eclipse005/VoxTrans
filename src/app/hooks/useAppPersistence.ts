@@ -2,6 +2,8 @@ import { useEffect } from "react";
 import { loadUserPreferences } from "../api/preferences";
 import { normalizeProvider } from "../../features/media/provider";
 import type {
+  AlignModel,
+  AsrModel,
   DemucsModel,
   SubtitleBurnMode,
   SubtitleLineStyle,
@@ -30,9 +32,10 @@ export function useAppPersistence(dispatch: DispatchState) {
         const subtitleLengthReference = Number.isFinite(res.settings.subtitleLengthReference)
           ? Math.max(8, Math.min(80, Math.round(res.settings.subtitleLengthReference)))
           : 28;
-        const asrModel = res.settings.asrModel === "parakeet-tdt-0.6b-v2"
-          ? res.settings.asrModel
-          : "parakeet-tdt-0.6b-v2";
+        const asrModel = normalizeAsrModel(res.settings.asrModel);
+        const alignModel = res.settings.alignModel === "Qwen3-ForcedAligner-0.6B"
+          ? res.settings.alignModel as AlignModel
+          : "Qwen3-ForcedAligner-0.6B";
         const demucsModel = res.settings.demucsModel === "htdemucs_ft"
           ? res.settings.demucsModel as DemucsModel
           : "htdemucs_ft";
@@ -110,6 +113,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             subtitleMaxWordsPerSegment,
             subtitleLengthReference,
             asrModel,
+            alignModel,
             demucsModel,
             enableVocalSeparation,
             translateApiKey,
@@ -132,6 +136,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             draftSubtitleMaxWordsInput: String(subtitleMaxWordsPerSegment),
             draftSubtitleLengthReferenceInput: String(subtitleLengthReference),
             draftAsrModel: asrModel,
+            draftAlignModel: alignModel,
             draftDemucsModel: demucsModel,
             draftEnableVocalSeparation: enableVocalSeparation,
             draftTranslateApiKey: translateApiKey,
@@ -155,6 +160,13 @@ export function useAppPersistence(dispatch: DispatchState) {
       cancelled = true;
     };
   }, [dispatch]);
+}
+
+function normalizeAsrModel(value: unknown): AsrModel {
+  if (value === "Qwen3-ASR-0.6B" || value === "Qwen3-ASR-1.7B") {
+    return value;
+  }
+  return "Qwen3-ASR-0.6B";
 }
 
 function normalizeHexColor(raw: unknown, fallback: string): string {

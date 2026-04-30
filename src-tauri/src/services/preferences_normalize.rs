@@ -12,7 +12,8 @@ pub(super) fn default_settings() -> SavedSettings {
         chunk_target_seconds: 180,
         subtitle_max_words_per_segment: 20,
         subtitle_length_reference: 28,
-        asr_model: "parakeet-tdt-0.6b-v2".to_string(),
+        asr_model: crate::services::model::DEFAULT_ASR_MODEL.to_string(),
+        align_model: "Qwen3-ForcedAligner-0.6B".to_string(),
         demucs_model: "htdemucs_ft".to_string(),
         enable_vocal_separation: false,
         translate_api_key: String::new(),
@@ -44,7 +45,17 @@ pub(super) fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings
         asr_model: {
             let trimmed = settings.asr_model.trim();
             if trimmed.is_empty() {
-                "parakeet-tdt-0.6b-v2".to_string()
+                crate::services::model::DEFAULT_ASR_MODEL.to_string()
+            } else if trimmed == "parakeet-tdt-0.6b-v2" || trimmed == "cohere-transcribe" {
+                crate::services::model::DEFAULT_ASR_MODEL.to_string()
+            } else {
+                trimmed.to_string()
+            }
+        },
+        align_model: {
+            let trimmed = settings.align_model.trim();
+            if trimmed.is_empty() {
+                "Qwen3-ForcedAligner-0.6B".to_string()
             } else {
                 trimmed.to_string()
             }

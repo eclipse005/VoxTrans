@@ -6,11 +6,17 @@ import {
 } from "../../api/workspace";
 import {
   normalizeTaskProgress,
+  type SourceLanguage,
+  type TargetLanguage,
   type TaskProgress,
   type TaskStageProgress,
   type QueueItem,
   type SavedSettings,
 } from "../../../features/media/types";
+import {
+  normalizeSourceLanguage,
+  normalizeTargetLanguage,
+} from "../../../features/media/languages";
 import type { AppAction } from "../../state/appReducer";
 import {
   patchQueueItem,
@@ -27,6 +33,8 @@ type TaskStateChangedEvent = {
   name: string;
   mediaKind: string;
   sizeBytes: number;
+  sourceLang?: string;
+  targetLang?: string;
   transcribeStatus: string;
   taskProgress: TaskProgress;
   transcribeError: string;
@@ -102,6 +110,8 @@ export function useQueueRunner({
           name: payload.name,
           mediaKind: payload.mediaKind as "audio" | "video",
           sizeBytes: payload.sizeBytes,
+          sourceLang: normalizeSourceLanguage(payload.sourceLang ?? current.sourceLang),
+          targetLang: normalizeTargetLanguage(payload.targetLang ?? current.targetLang),
           transcribeStatus: payload.transcribeStatus as QueueItem["transcribeStatus"],
           taskProgress: keepCurrentStage ? current.taskProgress : nextProgress,
           transcribeError: payload.transcribeError || "",
@@ -224,8 +234,8 @@ function toEnqueuePayload(
   mediaKind: "audio" | "video";
   sizeBytes: number;
   intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE";
-  sourceLang: string;
-  targetLang: string;
+  sourceLang: SourceLanguage;
+  targetLang: TargetLanguage;
   maxRetries: number;
   settingsSnapshot: Record<string, unknown>;
 } {
@@ -236,8 +246,8 @@ function toEnqueuePayload(
     mediaKind: item.mediaKind,
     sizeBytes: item.sizeBytes,
     intent: toIntent(mode),
-    sourceLang: "auto",
-    targetLang: "zh-CN",
+    sourceLang: normalizeSourceLanguage(item.sourceLang),
+    targetLang: normalizeTargetLanguage(item.targetLang),
     maxRetries: 0,
     settingsSnapshot: buildSettingsSnapshot(settings),
   };
@@ -255,6 +265,7 @@ function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown>
     subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
     subtitleLengthReference: settings.subtitleLengthReference,
     asrModel: settings.asrModel,
+    alignModel: settings.alignModel,
     demucsModel: settings.demucsModel,
     enableVocalSeparation: settings.enableVocalSeparation,
     translateApiKey: settings.translateApiKey,

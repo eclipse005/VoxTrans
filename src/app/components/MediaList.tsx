@@ -1,10 +1,27 @@
 import { useEffect, useRef, useState } from "react";
-import type { QueueItem, QueueStatus } from "../../features/media/types";
+import {
+  DEFAULT_SOURCE_LANGUAGE,
+  DEFAULT_TARGET_LANGUAGE,
+  normalizeSourceLanguage,
+  normalizeTargetLanguage,
+  SOURCE_LANGUAGE_OPTIONS,
+  sourceLanguageOption,
+  TARGET_LANGUAGE_OPTIONS,
+  targetLanguageOption,
+} from "../../features/media/languages";
+import type {
+  QueueItem,
+  QueueStatus,
+  SourceLanguage,
+  TargetLanguage,
+} from "../../features/media/types";
 import { formatBytes, statusLabel } from "../../features/media/utils";
 import { AudioFileIcon, ChevronDownIcon, MicIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
 
 type QueueBatchMode = "transcribe" | "transcribe_translate";
 const QUEUE_BATCH_MODE_KEY = "voxtrans.queueBatchMode.v1";
+const BATCH_LANGUAGE_MENU_ID = "__batch_language__";
+const MIXED_LANGUAGE_VALUE = "__mixed__";
 
 function loadSavedBatchMode(): QueueBatchMode {
   try {
@@ -35,6 +52,15 @@ type MediaListProps = {
   onClearQueue: () => void;
   onProcessSingle: (item: QueueItem) => void | Promise<void>;
   onProcessSingleTranscribeTranslate: (item: QueueItem) => void | Promise<void>;
+  onUpdateTaskLanguages: (
+    item: QueueItem,
+    sourceLang: SourceLanguage,
+    targetLang: TargetLanguage,
+  ) => void | Promise<void>;
+  onUpdateAllTaskLanguages: (
+    sourceLang?: SourceLanguage,
+    targetLang?: TargetLanguage,
+  ) => void | Promise<void>;
   onRemoveItem: (id: string) => void;
 };
 
@@ -47,6 +73,18 @@ function inferMediaKind(item: QueueItem): "audio" | "video" {
 
 function resolvePrimaryStatus(item: QueueItem): QueueStatus {
   return item.transcribeStatus;
+}
+
+function commonSourceLanguage(queue: QueueItem[]): SourceLanguage | null {
+  if (queue.length === 0) return DEFAULT_SOURCE_LANGUAGE;
+  const [first, ...rest] = queue.map((item) => normalizeSourceLanguage(item.sourceLang));
+  return rest.every((value) => value === first) ? first : null;
+}
+
+function commonTargetLanguage(queue: QueueItem[]): TargetLanguage | null {
+  if (queue.length === 0) return DEFAULT_TARGET_LANGUAGE;
+  const [first, ...rest] = queue.map((item) => normalizeTargetLanguage(item.targetLang));
+  return rest.every((value) => value === first) ? first : null;
 }
 
 function getTranscribeProcessingText(item: QueueItem): string {
@@ -114,13 +152,17 @@ export default function MediaList({
   onClearQueue,
   onProcessSingle,
   onProcessSingleTranscribeTranslate,
+  onUpdateTaskLanguages,
+  onUpdateAllTaskLanguages,
   onRemoveItem,
 }: MediaListProps) {
   const listBusy = isProcessing || !workspaceHydrated;
   const [batchMode, setBatchMode] = useState<QueueBatchMode>(() => loadSavedBatchMode());
   const [batchMenuOpen, setBatchMenuOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [languageMenuTaskId, setLanguageMenuTaskId] = useState("");
   const batchMenuRef = useRef<HTMLDivElement | null>(null);
+  const languageMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     saveBatchMode(batchMode);
@@ -140,13 +182,106 @@ export default function MediaList({
     return () => window.removeEventListener("mousedown", onMouseDown);
   }, [batchMenuOpen]);
 
+  useEffect(() => {
+    if (!languageMenuTaskId) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (!languageMenuRef.current) return;
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!languageMenuRef.current.contains(target)) {
+        setLanguageMenuTaskId("");
+      }
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [languageMenuTaskId]);
+
   const modeLabel = batchMode === "transcribe" ? "转录" : "转译";
+  const batchSourceLang = commonSourceLanguage(queue);
+  const batchTargetLang = commonTargetLanguage(queue);
+  const batchSourceOption = sourceLanguageOption(batchSourceLang ?? DEFAULT_SOURCE_LANGUAGE);
+  const batchTargetOption = targetLanguageOption(batchTargetLang ?? DEFAULT_TARGET_LANGUAGE);
+  const batchLanguageMenuOpen = languageMenuTaskId === BATCH_LANGUAGE_MENU_ID;
+  const batchLanguageDisabled = !workspaceHydrated || queue.length === 0;
+  const batchLanguageChipText = batchSourceLang && batchTargetLang
+    ? `${batchSourceOption.short} -> ${batchTargetOption.short}`
+    : "多语言";
 
   return (
     <div className="apple-animate-on-scroll apple-delay-200 file-list-section animated">
       <div className="file-list-header">
         <span className="file-count">{workspaceHydrated ? `共 ${queueCount} 个媒体` : "加载任务中..."}</span>
         <div className="file-list-actions">
+          <div
+            className="task-language-menu task-language-menu-batch"
+            ref={batchLanguageMenuOpen ? languageMenuRef : undefined}
+          >
+            <button
+              className="task-language-chip task-language-chip-batch"
+              disabled={batchLanguageDisabled}
+              title={batchSourceLang && batchTargetLang
+                ? `${batchSourceOption.label} -> ${batchTargetOption.label}`
+                : "批量任务语言"}
+              aria-label="批量设置任务语言"
+              onClick={() => setLanguageMenuTaskId((current) => (
+                current === BATCH_LANGUAGE_MENU_ID ? "" : BATCH_LANGUAGE_MENU_ID
+              ))}
+            >
+              {batchLanguageChipText}
+            </button>
+            {batchLanguageMenuOpen ? (
+              <div className="task-language-popover">
+                <label className="task-language-field">
+                  <span>音频语言</span>
+                  <select
+                    className="task-language-select"
+                    value={batchSourceLang ?? MIXED_LANGUAGE_VALUE}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      if (value === MIXED_LANGUAGE_VALUE) return;
+                      void onUpdateAllTaskLanguages(
+                        normalizeSourceLanguage(value),
+                        undefined,
+                      );
+                    }}
+                  >
+                    {batchSourceLang ? null : (
+                      <option value={MIXED_LANGUAGE_VALUE} disabled>多种语言</option>
+                    )}
+                    {SOURCE_LANGUAGE_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="task-language-field">
+                  <span>翻译语言</span>
+                  <select
+                    className="task-language-select"
+                    value={batchTargetLang ?? MIXED_LANGUAGE_VALUE}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      if (value === MIXED_LANGUAGE_VALUE) return;
+                      void onUpdateAllTaskLanguages(
+                        undefined,
+                        normalizeTargetLanguage(value),
+                      );
+                    }}
+                  >
+                    {batchTargetLang ? null : (
+                      <option value={MIXED_LANGUAGE_VALUE} disabled>多种语言</option>
+                    )}
+                    {TARGET_LANGUAGE_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : null}
+          </div>
           <div className="file-list-split-btn" ref={batchMenuRef}>
             <button
               className="file-list-icon-btn file-list-split-btn-main"
@@ -218,6 +353,10 @@ export default function MediaList({
                 || item.taskProgress.stage.total > 0
               );
             const transcribeProgressText = transcribeProcessing ? getTranscribeProcessingText(item) : "";
+            const sourceOption = sourceLanguageOption(item.sourceLang);
+            const targetOption = targetLanguageOption(item.targetLang);
+            const languageBusy = item.transcribeStatus === "processing" || item.transcribeStatus === "queued";
+            const languageMenuOpen = languageMenuTaskId === item.id;
 
             return (
               <div key={item.id} className={`file-item ${item.id === activeId ? "active" : ""}`} onClick={() => onSetActiveId(item.id)}>
@@ -229,7 +368,70 @@ export default function MediaList({
                     </div>
                     <div className="file-bottom-row">
                       <div className="file-meta-stack">
-                        <div className="file-meta">{formatBytes(item.sizeBytes)}</div>
+                        <div className="file-meta-line">
+                          <span className="file-meta">{formatBytes(item.sizeBytes)}</span>
+                          <div
+                            className="task-language-menu"
+                            ref={languageMenuOpen ? languageMenuRef : undefined}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button
+                              className="task-language-chip"
+                              disabled={languageBusy}
+                              title={`${sourceOption.label} -> ${targetOption.label}`}
+                              aria-label={`${sourceOption.label} 到 ${targetOption.label}`}
+                              onClick={() => setLanguageMenuTaskId((current) => (
+                                current === item.id ? "" : item.id
+                              ))}
+                            >
+                              {sourceOption.short} -&gt; {targetOption.short}
+                            </button>
+                            {languageMenuOpen ? (
+                              <div className="task-language-popover">
+                                <label className="task-language-field">
+                                  <span>音频语言</span>
+                                  <select
+                                    className="task-language-select"
+                                    value={normalizeSourceLanguage(item.sourceLang)}
+                                    onChange={(event) => {
+                                      void onUpdateTaskLanguages(
+                                        item,
+                                        normalizeSourceLanguage(event.currentTarget.value),
+                                        normalizeTargetLanguage(item.targetLang),
+                                      );
+                                    }}
+                                  >
+                                    {SOURCE_LANGUAGE_OPTIONS.map((option) => (
+                                      <option key={option.id} value={option.id}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="task-language-field">
+                                  <span>翻译语言</span>
+                                  <select
+                                    className="task-language-select"
+                                    value={normalizeTargetLanguage(item.targetLang)}
+                                    onChange={(event) => {
+                                      void onUpdateTaskLanguages(
+                                        item,
+                                        normalizeSourceLanguage(item.sourceLang),
+                                        normalizeTargetLanguage(event.currentTarget.value),
+                                      );
+                                    }}
+                                  >
+                                    {TARGET_LANGUAGE_OPTIONS.map((option) => (
+                                      <option key={option.id} value={option.id}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
                         <div className="file-task-info">
                           {transcribeProcessing ? (
                             <span className="task-step task-step-progress">

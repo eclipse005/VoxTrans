@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ModelTarget } from "../../features/media/types";
+import type { AlignModel, AsrModel, DemucsModel, ModelTarget } from "../../features/media/types";
 
 type OpenTaskOutputDirRequest = {
   taskId: string;
@@ -27,9 +27,9 @@ export async function openInExplorer(path: string): Promise<void> {
   await invoke("open_in_explorer", { path });
 }
 
-export async function openModelDir(target: ModelTarget): Promise<void> {
+export async function openModelDir(target: ModelTarget, model: AsrModel | AlignModel | DemucsModel): Promise<void> {
   await invoke("open_model_dir", {
-    request: { target },
+    request: { target, model },
   });
 }
 

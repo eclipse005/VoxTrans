@@ -1,7 +1,8 @@
-export const PROVIDER_IDS = ["cpu", "directml"] as const;
+export const PROVIDER_IDS = ["cpu", "cuda"] as const;
 export type Provider = (typeof PROVIDER_IDS)[number];
-export type ModelTarget = "asr" | "demucs";
-export type AsrModel = "parakeet-tdt-0.6b-v2";
+export type ModelTarget = "asr" | "align" | "demucs";
+export type AsrModel = "Qwen3-ASR-0.6B" | "Qwen3-ASR-1.7B";
+export type AlignModel = "Qwen3-ForcedAligner-0.6B";
 export type DemucsModel = "htdemucs_ft";
 
 export type TerminologyTerm = {
@@ -53,6 +54,7 @@ export type SavedSettings = {
   subtitleMaxWordsPerSegment: number;
   subtitleLengthReference: number;
   asrModel: AsrModel;
+  alignModel: AlignModel;
   demucsModel: DemucsModel;
   enableVocalSeparation: boolean;
   translateApiKey: string;
@@ -69,6 +71,26 @@ export type SavedSettings = {
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
+export type SourceLanguage = "en" | "zh" | "ja" | "ko" | "fr" | "de" | "it" | "es" | "pt";
+export type TargetLanguage =
+  | "zh-CN"
+  | "zh-TW"
+  | "en"
+  | "ja"
+  | "ko"
+  | "fr"
+  | "de"
+  | "es"
+  | "it"
+  | "pt"
+  | "ru"
+  | "ar"
+  | "vi"
+  | "th"
+  | "id"
+  | "tr"
+  | "nl"
+  | "pl";
 export type TaskStageCode =
   | "downloading"
   | "preparing"
@@ -121,6 +143,8 @@ export type QueueItem = {
   name: string;
   mediaKind: "audio" | "video";
   sizeBytes: number;
+  sourceLang: SourceLanguage;
+  targetLang: TargetLanguage;
   transcribeStatus: TranscribeStatus;
   taskProgress: TaskProgress;
   transcribeError: string;
@@ -236,12 +260,38 @@ export type SegmentWithWords = {
 
 export type TranscribeResponse = {
   words: WordToken[];
+  text: string;
+  alignedText: string;
   segmentTotal: number;
   segmentDurationsSec: number[];
   audioDurationSec: number;
   vadElapsedSec: number;
   transcribeElapsedSec: number;
+  timingSec: TranscribeTimingSec;
+  rtfX: number;
+  rtfBreakdownX: TranscribeRtfBreakdownX;
   executionProvider: string;
+};
+
+export type TranscribeTimingSec = {
+  prepareElapsedSec: number;
+  vadElapsedSec: number;
+  tempWavWriteSec: number;
+  asrLoadSec: number;
+  asrTranscribeSec: number;
+  qwenLoadSec: number;
+  qwenAlignSec: number;
+  punctuationMapSec: number;
+  totalElapsedSec: number;
+};
+
+export type TranscribeRtfBreakdownX = {
+  total: number;
+  asrStage: number;
+  asrTranscribe: number;
+  qwenStage: number;
+  qwenAlign: number;
+  modelOnly: number;
 };
 
 export type BuildSegmentsRequest = {

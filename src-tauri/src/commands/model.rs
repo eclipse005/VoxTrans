@@ -73,14 +73,15 @@ pub fn cancel_model_download(
 #[tauri::command]
 pub fn open_model_dir(request: ModelTargetCommandRequest) -> Result<(), String> {
     let target = to_service_target(&request.target)?;
-    model::open_model_dir(target)
+    model::open_model_dir(target, request.model)
 }
 
 fn to_service_target(target: &str) -> Result<model::ModelTarget, String> {
     match target.trim().to_ascii_lowercase().as_str() {
         "asr" => Ok(model::ModelTarget::Asr),
+        "align" => Ok(model::ModelTarget::Align),
         "demucs" => Ok(model::ModelTarget::Demucs),
-        _ => Err("target must be asr or demucs".to_string()),
+        _ => Err("target must be asr, align, or demucs".to_string()),
     }
 }
 
@@ -88,6 +89,7 @@ fn from_service_model_status(response: model::ModelStatusResponse) -> ModelStatu
     ModelStatusCommandResponse {
         target: match response.target {
             model::ModelTarget::Asr => "asr".to_string(),
+            model::ModelTarget::Align => "align".to_string(),
             model::ModelTarget::Demucs => "demucs".to_string(),
         },
         model: response.model,

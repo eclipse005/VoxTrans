@@ -1,4 +1,4 @@
-use parakeet_rs::TimedToken;
+use crate::TimedToken;
 
 use super::srt::SubtitleSegment;
 

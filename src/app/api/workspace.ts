@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { QueueItem, WorkspaceStateResponse } from "../../features/media/types";
+import type {
+  QueueItem,
+  SourceLanguage,
+  TargetLanguage,
+  WorkspaceStateResponse,
+} from "../../features/media/types";
 
 type DeleteTasksRequest = {
   taskId: string | null;
@@ -34,10 +39,16 @@ type EnqueueTaskRunRequest = {
   mediaKind: "audio" | "video";
   sizeBytes: number;
   intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE";
-  sourceLang?: string;
-  targetLang?: string;
+  sourceLang?: SourceLanguage;
+  targetLang?: TargetLanguage;
   maxRetries?: number;
   settingsSnapshot?: Record<string, unknown>;
+};
+
+type UpdateTaskLanguagesRequest = {
+  taskId: string;
+  sourceLang: SourceLanguage;
+  targetLang: TargetLanguage;
 };
 
 type RegisterTaskUploadRequest = {
@@ -83,6 +94,10 @@ export async function enqueueTaskRun(request: EnqueueTaskRunRequest): Promise<vo
 
 export async function registerTaskUpload(request: RegisterTaskUploadRequest): Promise<void> {
   await invoke("register_task_upload", { request });
+}
+
+export async function updateTaskLanguages(request: UpdateTaskLanguagesRequest): Promise<void> {
+  await invoke("update_task_languages", { request });
 }
 
 export async function enqueueAndExecuteTaskBatch(

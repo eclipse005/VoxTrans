@@ -16,23 +16,18 @@ use super::preview::update_subtitle_preview;
 use super::progress::{mark_task_failed, report_task_stage};
 use super::runtime_settings::resolve_runtime_settings;
 use super::translation_flow::execute_translate_steps;
-use super::{TaskStage, get_task_record, normalize_intent, patch_task_item};
+use super::{
+    TaskStage, get_task_record, normalize_intent, normalize_task_source_lang,
+    normalize_task_target_lang, patch_task_item,
+};
 
 pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), String> {
     let record = get_task_record(task_id)?;
     let intent = normalize_intent(&record.intent).to_string();
     let runtime =
         resolve_runtime_settings(&record.settings_snapshot, intent == "TRANSCRIBE_TRANSLATE")?;
-    let mut source_lang = if record.source_lang.trim().is_empty() {
-        "auto".to_string()
-    } else {
-        record.source_lang.trim().to_string()
-    };
-    let target_lang = if record.target_lang.trim().is_empty() {
-        "zh-CN".to_string()
-    } else {
-        record.target_lang.trim().to_string()
-    };
+    let mut source_lang = normalize_task_source_lang(&record.source_lang);
+    let target_lang = normalize_task_target_lang(&record.target_lang);
     let task_output_dir =
         crate::services::task_path::task_output_dir(task_id, Path::new(&record.item.path));
     std::fs::create_dir_all(&task_output_dir).map_err(|err| err.to_string())?;
@@ -59,6 +54,8 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
             source_lang: source_lang.clone(),
+            asr_model: runtime.asr_model.clone(),
+            align_model: runtime.align_model.clone(),
             provider: runtime.provider.clone(),
             chunk_target_seconds: runtime.chunk_target_seconds,
             app: app.clone(),

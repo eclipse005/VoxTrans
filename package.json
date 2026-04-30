@@ -9,7 +9,10 @@
     "build:release": "powershell -ExecutionPolicy Bypass -File .\\build-release.ps1",
     "lint": "eslint .",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev:cuda": "powershell -ExecutionPolicy Bypass -File .\\scripts\\tauri-cuda.ps1 dev",
+    "tauri:build:cuda": "powershell -ExecutionPolicy Bypass -File .\\scripts\\tauri-cuda.ps1 build",
+    "cargo:check:cuda": "powershell -ExecutionPolicy Bypass -File .\\scripts\\tauri-cuda.ps1 check"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { deleteTasks, enqueueTaskRun } from "../../api/workspace";
 import { createEmptyTaskProgress, type QueueItem, type SavedSettings } from "../../../features/media/types";
+import {
+  normalizeSourceLanguage,
+  normalizeTargetLanguage,
+} from "../../../features/media/languages";
 import type { AppAction } from "../../state/appReducer";
 import type { QueueRunMode } from "./useQueueRunner";
 import {
@@ -59,8 +63,8 @@ export function useQueueScheduler({
         intent: mode === "transcribe_translate"
             ? "TRANSCRIBE_TRANSLATE"
             : "TRANSCRIBE",
-        sourceLang: "auto",
-        targetLang: "zh-CN",
+        sourceLang: normalizeSourceLanguage(item.sourceLang),
+        targetLang: normalizeTargetLanguage(item.targetLang),
         maxRetries: 0,
         settingsSnapshot: buildSettingsSnapshot(settings),
       });
@@ -187,6 +191,7 @@ function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown>
     subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
     subtitleLengthReference: settings.subtitleLengthReference,
     asrModel: settings.asrModel,
+    alignModel: settings.alignModel,
     demucsModel: settings.demucsModel,
     enableVocalSeparation: settings.enableVocalSeparation,
     translateApiKey: settings.translateApiKey,

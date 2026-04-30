@@ -1,7 +1,7 @@
 import type { ModelStatusResponse } from "../../../features/media/types";
 import { CheckIcon, DownloadIcon, FolderIcon } from "../Icons";
 
-type ModelDownloadTarget = "asr" | "demucs";
+type ModelDownloadTarget = "asr" | "align" | "demucs";
 
 type ModelDownloadCardProps = {
   target: ModelDownloadTarget;
@@ -11,9 +11,9 @@ type ModelDownloadCardProps = {
   selected: boolean;
   status: ModelStatusResponse | null;
   onSelect: () => void;
-  onOpenModelDir: (target: ModelDownloadTarget) => void | Promise<void>;
-  onStartModelDownload: (target: ModelDownloadTarget) => void | Promise<void>;
-  onCancelModelDownload: (target: ModelDownloadTarget) => void | Promise<void>;
+  onOpenModelDir: (target: ModelDownloadTarget, model?: string) => void | Promise<void>;
+  onStartModelDownload: (target: ModelDownloadTarget, model?: string) => void | Promise<void>;
+  onCancelModelDownload: (target: ModelDownloadTarget, model?: string) => void | Promise<void>;
 };
 
 function formatBytes(value: number): string {
@@ -67,7 +67,7 @@ export function ModelDownloadCard({
   const downloading = status?.download.phase === "downloading";
   const percent = progressPercent(status);
   const sizeText = formatModelSizeText(status);
-  const targetLabel = target === "asr" ? "ASR" : "Demucs";
+  const targetLabel = target === "asr" ? "ASR" : target === "align" ? "Align" : "Demucs";
 
   return (
     <div className="model-task-card">
@@ -97,7 +97,7 @@ export function ModelDownloadCard({
             type="button"
             title="打开目录"
             aria-label={`打开 ${targetLabel} 模型目录`}
-            onClick={() => { void onOpenModelDir(target); }}
+            onClick={() => { void onOpenModelDir(target, modelName); }}
           >
             <FolderIcon />
           </button>
@@ -108,11 +108,11 @@ export function ModelDownloadCard({
             aria-label={downloading ? `取消 ${targetLabel} 下载` : ready ? `${targetLabel} 已就绪` : `下载 ${targetLabel} 模型`}
             onClick={() => {
               if (downloading) {
-                void onCancelModelDownload(target);
+                void onCancelModelDownload(target, modelName);
                 return;
               }
               if (!ready) {
-                void onStartModelDownload(target);
+                void onStartModelDownload(target, modelName);
               }
             }}
             disabled={ready}

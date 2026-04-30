@@ -7,11 +7,14 @@ export const PROVIDER_OPTIONS: ReadonlyArray<{
   kind: "cpu" | "gpu";
 }> = [
   { id: "cpu", label: "CPU", title: "CPU", kind: "cpu" },
-  { id: "directml", label: "GPU", title: "GPU", kind: "gpu" },
+  { id: "cuda", label: "CUDA", title: "NVIDIA CUDA", kind: "gpu" },
 ];
 
 export function normalizeProvider(raw: unknown, fallback: Provider = "cpu"): Provider {
   const normalized = String(raw ?? "").trim().toLowerCase();
+  if (normalized === "directml") {
+    return "cuda";
+  }
   if (PROVIDER_IDS.includes(normalized as Provider)) {
     return normalized as Provider;
   }

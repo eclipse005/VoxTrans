@@ -22,6 +22,7 @@ type UseSettingsControllerArgs = {
   draftSubtitleMaxWordsInput: string;
   draftSubtitleLengthReferenceInput: string;
   draftAsrModel: SavedSettings["asrModel"];
+  draftAlignModel: SavedSettings["alignModel"];
   draftDemucsModel: SavedSettings["demucsModel"];
   draftEnableVocalSeparation: boolean;
   draftTranslateApiKey: string;
@@ -46,6 +47,7 @@ export function useSettingsController({
   draftSubtitleMaxWordsInput,
   draftSubtitleLengthReferenceInput,
   draftAsrModel,
+  draftAlignModel,
   draftDemucsModel,
   draftEnableVocalSeparation,
   draftTranslateApiKey,
@@ -72,6 +74,7 @@ export function useSettingsController({
         draftSubtitleMaxWordsInput: String(settings.subtitleMaxWordsPerSegment),
         draftSubtitleLengthReferenceInput: String(settings.subtitleLengthReference),
         draftAsrModel: settings.asrModel,
+        draftAlignModel: settings.alignModel,
         draftDemucsModel: settings.demucsModel,
         draftEnableVocalSeparation: settings.enableVocalSeparation,
         draftTranslateApiKey: settings.translateApiKey,
@@ -92,6 +95,7 @@ export function useSettingsController({
     refreshModelStatus,
     settings.chunkTargetSeconds,
     settings.demucsModel,
+    settings.alignModel,
     settings.enableVocalSeparation,
     settings.provider,
     settings.asrModel,
@@ -142,6 +146,7 @@ export function useSettingsController({
       subtitleMaxWordsPerSegment: clampedSubtitleWords,
       subtitleLengthReference: clampedSubtitleLengthReference,
       asrModel: draftAsrModel,
+      alignModel: draftAlignModel,
       demucsModel: draftDemucsModel,
       enableVocalSeparation: draftEnableVocalSeparation,
       translateApiKey: draftTranslateApiKey.trim(),
@@ -195,6 +200,7 @@ export function useSettingsController({
         draftSubtitleMaxWordsInput: String(clampedSubtitleWords),
         draftSubtitleLengthReferenceInput: String(clampedSubtitleLengthReference),
         draftAsrModel,
+        draftAlignModel,
         draftDemucsModel,
         draftEnableVocalSeparation,
         draftTranslateApiKey: nextSettings.translateApiKey,
@@ -221,6 +227,7 @@ export function useSettingsController({
     dispatch,
     draftChunkInput,
     draftDemucsModel,
+    draftAlignModel,
     draftEnableVocalSeparation,
     draftProvider,
     draftAsrModel,

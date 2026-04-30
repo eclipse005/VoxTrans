@@ -25,6 +25,7 @@ export type AppState = {
   draftSubtitleMaxWordsInput: string;
   draftSubtitleLengthReferenceInput: string;
   draftAsrModel: SavedSettings["asrModel"];
+  draftAlignModel: SavedSettings["alignModel"];
   draftDemucsModel: SavedSettings["demucsModel"];
   draftEnableVocalSeparation: boolean;
   draftTranslateApiKey: string;
@@ -101,6 +102,7 @@ export type SettingsAction =
           | "draftSubtitleMaxWordsInput"
           | "draftSubtitleLengthReferenceInput"
           | "draftAsrModel"
+          | "draftAlignModel"
           | "draftDemucsModel"
           | "draftEnableVocalSeparation"
           | "draftTranslateApiKey"
@@ -125,7 +127,8 @@ export const defaultSettings: SavedSettings = {
   chunkTargetSeconds: 180,
   subtitleMaxWordsPerSegment: 20,
   subtitleLengthReference: 28,
-  asrModel: "parakeet-tdt-0.6b-v2",
+  asrModel: "Qwen3-ASR-0.6B",
+  alignModel: "Qwen3-ForcedAligner-0.6B",
   demucsModel: "htdemucs_ft",
   enableVocalSeparation: false,
   translateApiKey: "",
@@ -181,6 +184,7 @@ export const initialAppState: AppState = {
   draftSubtitleMaxWordsInput: String(defaultSettings.subtitleMaxWordsPerSegment),
   draftSubtitleLengthReferenceInput: String(defaultSettings.subtitleLengthReference),
   draftAsrModel: defaultSettings.asrModel,
+  draftAlignModel: defaultSettings.alignModel,
   draftDemucsModel: defaultSettings.demucsModel,
   draftEnableVocalSeparation: defaultSettings.enableVocalSeparation,
   draftTranslateApiKey: defaultSettings.translateApiKey,

@@ -43,5 +43,6 @@ pub struct ModelDownloadRuntime {
 #[derive(Clone)]
 pub struct AppState {
     pub asr_model_download: Arc<Mutex<ModelDownloadRuntime>>,
+    pub align_model_download: Arc<Mutex<ModelDownloadRuntime>>,
     pub demucs_model_download: Arc<Mutex<ModelDownloadRuntime>>,
 }

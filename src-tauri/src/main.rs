@@ -20,6 +20,9 @@ fn main() {
                 asr_model_download: Arc::new(std::sync::Mutex::new(
                     app_state::ModelDownloadRuntime::default(),
                 )),
+                align_model_download: Arc::new(std::sync::Mutex::new(
+                    app_state::ModelDownloadRuntime::default(),
+                )),
                 demucs_model_download: Arc::new(std::sync::Mutex::new(
                     app_state::ModelDownloadRuntime::default(),
                 )),
@@ -58,6 +61,7 @@ fn main() {
             commands::workspace::delete_tasks,
             commands::workspace::register_task_upload,
             commands::workspace::enqueue_task_run,
+            commands::workspace::update_task_languages,
             commands::workspace::execute_task_run,
             commands::workspace::execute_task_batch,
             commands::workspace::enqueue_and_execute_task_batch,

@@ -68,6 +68,7 @@ function App() {
     draftSubtitleMaxWordsInput,
     draftSubtitleLengthReferenceInput,
     draftAsrModel,
+    draftAlignModel,
     draftDemucsModel,
     draftEnableVocalSeparation,
     draftTranslateApiKey,
@@ -116,6 +117,8 @@ function App() {
     processQueue,
     processSingle,
     processSingleTranscribeTranslate,
+    updateTaskLanguages,
+    updateAllTaskLanguages,
     clearQueue,
     removeItem,
     downloadYoutube,
@@ -157,6 +160,8 @@ function App() {
   );
   const {
     asrStatus,
+    asrStatusByModel,
+    alignStatus,
     demucsStatus,
     refreshModelStatus,
     startModelDownload,
@@ -164,6 +169,8 @@ function App() {
     openModelDir,
   } = useModelManager({
     pushToast,
+    asrModel: draftAsrModel,
+    alignModel: draftAlignModel,
     demucsModel: draftDemucsModel,
   });
   const {
@@ -195,6 +202,7 @@ function App() {
     draftSubtitleMaxWordsInput,
     draftSubtitleLengthReferenceInput,
     draftAsrModel,
+    draftAlignModel,
     draftDemucsModel,
     draftEnableVocalSeparation,
     draftTranslateApiKey,
@@ -267,6 +275,8 @@ function App() {
             onClearQueue={clearQueue}
             onProcessSingle={processSingle}
             onProcessSingleTranscribeTranslate={processSingleTranscribeTranslate}
+            onUpdateTaskLanguages={updateTaskLanguages}
+            onUpdateAllTaskLanguages={updateAllTaskLanguages}
             onRemoveItem={removeItem}
           />
         </section>
@@ -311,6 +321,7 @@ function App() {
         draftSubtitleMaxWordsInput={draftSubtitleMaxWordsInput}
         draftSubtitleLengthReferenceInput={draftSubtitleLengthReferenceInput}
         draftAsrModel={draftAsrModel}
+        draftAlignModel={draftAlignModel}
         draftDemucsModel={draftDemucsModel}
         draftEnableVocalSeparation={draftEnableVocalSeparation}
         draftTranslateApiKey={draftTranslateApiKey}
@@ -323,6 +334,8 @@ function App() {
         draftSubtitleBurnMode={draftSubtitleBurnMode}
         draftSubtitleRenderStyle={draftSubtitleRenderStyle}
         asrStatus={asrStatus}
+        asrStatusByModel={asrStatusByModel}
+        alignStatus={alignStatus}
         demucsStatus={demucsStatus}
         onClose={() => dispatch({ type: "set_ui", payload: { showSettings: false } })}
         onSave={saveSettings}
@@ -331,6 +344,7 @@ function App() {
         onDraftSubtitleMaxWordsInputChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleMaxWordsInput: value } })}
         onDraftSubtitleLengthReferenceInputChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleLengthReferenceInput: value } })}
         onDraftAsrModelChange={(value) => dispatch({ type: "set_draft", payload: { draftAsrModel: value } })}
+        onDraftAlignModelChange={(value) => dispatch({ type: "set_draft", payload: { draftAlignModel: value } })}
         onDraftDemucsModelChange={(value) => dispatch({ type: "set_draft", payload: { draftDemucsModel: value } })}
         onDraftEnableVocalSeparationChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableVocalSeparation: value } })}
         onDraftTranslateApiKeyChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateApiKey: value } })}

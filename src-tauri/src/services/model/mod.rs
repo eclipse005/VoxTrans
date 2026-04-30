@@ -1,3 +1,4 @@
+mod catalog;
 mod download_http;
 mod download_progress;
 mod downloader;
@@ -6,62 +7,56 @@ mod status;
 
 use crate::app_state::{AppState, ModelDownloadRuntime};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+pub(crate) use catalog::{ModelDefinition, model_definition};
 pub use downloader::{cancel_model_download, start_model_download};
-pub use path::{open_model_dir, resolve_engine_model_dir};
+pub use path::{
+    open_model_dir, resolve_aligner_model_dir, resolve_asr_model_dir, resolve_engine_model_dir,
+    resolve_model_dir,
+};
 pub use status::{ModelStatusResponse, get_model_status};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelTarget {
     Asr,
+    Align,
     Demucs,
 }
 
 impl ModelTarget {
     pub fn dir_name(self) -> &'static str {
         match self {
-            Self::Asr => "parakeet-tdt-0.6b-v2",
+            Self::Asr => DEFAULT_ASR_MODEL,
+            Self::Align => DEFAULT_ALIGN_MODEL,
             Self::Demucs => "demucs",
         }
     }
 }
 
-pub(crate) const REQUIRED_ASR_MODEL_FILES: [&str; 4] = [
-    "encoder-model.onnx",
-    "encoder-model.onnx.data",
-    "decoder_joint-model.onnx",
-    "vocab.txt",
+pub(crate) const DEFAULT_ASR_MODEL: &str = QWEN3_ASR_06B_MODEL;
+pub(crate) const QWEN3_ASR_06B_MODEL: &str = "Qwen3-ASR-0.6B";
+pub(crate) const QWEN3_ASR_17B_MODEL: &str = "Qwen3-ASR-1.7B";
+pub(crate) const DEFAULT_ALIGN_MODEL: &str = "Qwen3-ForcedAligner-0.6B";
+
+pub(crate) const REQUIRED_QWEN3_ASR_06B_MODEL_FILES: [&str; 3] =
+    ["config.json", "model.safetensors", "tokenizer.json"];
+
+pub(crate) const REQUIRED_QWEN3_ASR_17B_MODEL_FILES: [&str; 5] = [
+    "config.json",
+    "model-00001-of-00002.safetensors",
+    "model-00002-of-00002.safetensors",
+    "model.safetensors.index.json",
+    "tokenizer.json",
 ];
 
-pub(crate) const ASR_MODEL_DOWNLOAD_FILES: [(&str, &str, u64); 5] = [
-    (
-        "decoder_joint-model.onnx",
-        "https://modelscope.cn/models/eclipse005/parakeet-tdt-0.6b-v2-onnx/resolve/master/decoder_joint-model.onnx",
-        35_790_000,
-    ),
-    (
-        "encoder-model.onnx",
-        "https://modelscope.cn/models/eclipse005/parakeet-tdt-0.6b-v2-onnx/resolve/master/encoder-model.onnx",
-        41_770_000,
-    ),
-    (
-        "encoder-model.onnx.data",
-        "https://modelscope.cn/models/eclipse005/parakeet-tdt-0.6b-v2-onnx/resolve/master/encoder-model.onnx.data",
-        2_440_000_000,
-    ),
-    (
-        "vocab.txt",
-        "https://modelscope.cn/models/eclipse005/parakeet-tdt-0.6b-v2-onnx/resolve/master/vocab.txt",
-        9_380,
-    ),
-    (
-        "config.json",
-        "https://modelscope.cn/models/eclipse005/parakeet-tdt-0.6b-v2-onnx/resolve/master/config.json",
-        97,
-    ),
+pub(crate) const REQUIRED_QWEN_ALIGNER_MODEL_FILES: [&str; 5] = [
+    "config.json",
+    "merges.txt",
+    "model.safetensors",
+    "tokenizer_config.json",
+    "vocab.json",
 ];
 
 pub(crate) const DEMUCS_MODEL_DOWNLOAD_FILES: [(&str, &str, u64); 1] = [(
@@ -70,29 +65,42 @@ pub(crate) const DEMUCS_MODEL_DOWNLOAD_FILES: [(&str, &str, u64); 1] = [(
     349_312_000,
 )];
 
-pub(crate) fn compute_asr_download_bytes(model_dir: &Path) -> (u64, u64) {
-    let mut downloaded_bytes: u64 = 0;
-    let mut total_bytes: u64 = 0;
-    for (file_name, _url, expected_size) in ASR_MODEL_DOWNLOAD_FILES {
-        let target = model_dir.join(file_name);
-        let part = model_dir.join(format!("{}.part", file_name));
-        let current = if target.exists() {
-            std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0)
-        } else {
-            std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0)
-        };
-        downloaded_bytes = downloaded_bytes.saturating_add(current.min(expected_size));
-        total_bytes = total_bytes.saturating_add(expected_size);
-    }
-    (downloaded_bytes, total_bytes)
-}
-
 pub(crate) fn runtime_for_target(
     state: &AppState,
     target: ModelTarget,
 ) -> Arc<Mutex<ModelDownloadRuntime>> {
     match target {
         ModelTarget::Asr => state.asr_model_download.clone(),
+        ModelTarget::Align => state.align_model_download.clone(),
         ModelTarget::Demucs => state.demucs_model_download.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_keeps_asr_and_aligner_as_independent_models() {
+        let asr =
+            model_definition(ModelTarget::Asr, Some(QWEN3_ASR_06B_MODEL)).expect("asr definition");
+        let align = model_definition(ModelTarget::Align, Some("Qwen3-ForcedAligner-0.6B"))
+            .expect("align definition");
+
+        assert_eq!(asr.model, QWEN3_ASR_06B_MODEL);
+        assert_eq!(align.model, "Qwen3-ForcedAligner-0.6B");
+        assert!(
+            asr.required_files
+                .iter()
+                .all(|file| !file.contains("ForcedAligner"))
+        );
+        assert!(
+            align
+                .required_files
+                .iter()
+                .all(|file| !file.contains("ASR"))
+        );
+        assert!(!asr.download_files.is_empty());
+        assert!(!align.download_files.is_empty());
     }
 }

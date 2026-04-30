@@ -3,6 +3,10 @@ import { loadWorkspaceState } from "../api/workspace";
 import { normalizeTranscribeStatus } from "../../features/media/stateMachine";
 import { normalizeSubtitleSegmentsJson } from "../../features/media/subtitleSegments";
 import {
+  normalizeSourceLanguage,
+  normalizeTargetLanguage,
+} from "../../features/media/languages";
+import {
   createEmptyTaskProgress,
   normalizeTaskProgress,
   type QueueItem,
@@ -63,6 +67,8 @@ function dedupeById(items: QueueItem[]): QueueItem[] {
 function normalizeQueueItem(item: QueueItem): QueueItem {
   return recoverTransientStates({
     ...item,
+    sourceLang: normalizeSourceLanguage(item.sourceLang),
+    targetLang: normalizeTargetLanguage(item.targetLang),
     transcribeStatus: normalizeTranscribeStatus(item.transcribeStatus),
     taskProgress: normalizeTaskProgress(item.taskProgress),
     transcribeError: item.transcribeError || "",

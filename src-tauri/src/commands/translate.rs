@@ -2,6 +2,7 @@
 use super::translate_artifacts::{
     default_task_id_from_path, parse_step2_segments_artifact_for_input,
 };
+#[cfg(test)]
 use super::translate_terms::{count_source_tokens, normalize_command_terminology_entries};
 
 pub use super::translate_final_check::build_step_6_final_check;

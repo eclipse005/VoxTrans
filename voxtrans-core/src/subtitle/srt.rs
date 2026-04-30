@@ -1,4 +1,4 @@
-use parakeet_rs::TimedToken;
+use crate::TimedToken;
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone)]

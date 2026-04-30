@@ -6,7 +6,8 @@ use serde_json::Value;
 
 use super::{
     TASK_META_FILE_NAME, WorkspaceQueueItem, WorkspaceTaskProgressState, WorkspaceTaskRecord,
-    lock_workspace_hydrated, lock_workspace_store, normalize_intent,
+    lock_workspace_hydrated, lock_workspace_store, normalize_intent, normalize_task_source_lang,
+    normalize_task_target_lang,
 };
 use crate::commands::workspace::json_files::{read_json_file_if_exists, write_json_file};
 
@@ -114,19 +115,25 @@ fn load_task_meta_artifacts() -> Result<Vec<WorkspaceTaskMetaArtifact>, String> 
 }
 
 fn workspace_record_from_meta(artifact: WorkspaceTaskMetaArtifact) -> WorkspaceTaskRecord {
+    let mut item = artifact.item;
+    let source_lang = if artifact.source_lang.trim().is_empty() {
+        normalize_task_source_lang(&item.source_lang)
+    } else {
+        normalize_task_source_lang(&artifact.source_lang)
+    };
+    let target_lang = if artifact.target_lang.trim().is_empty() {
+        normalize_task_target_lang(&item.target_lang)
+    } else {
+        normalize_task_target_lang(&artifact.target_lang)
+    };
+    item.source_lang = source_lang.clone();
+    item.target_lang = target_lang.clone();
+
     WorkspaceTaskRecord {
-        item: artifact.item,
+        item,
         intent: normalize_intent(&artifact.intent).to_string(),
-        source_lang: if artifact.source_lang.trim().is_empty() {
-            "auto".to_string()
-        } else {
-            artifact.source_lang
-        },
-        target_lang: if artifact.target_lang.trim().is_empty() {
-            "zh-CN".to_string()
-        } else {
-            artifact.target_lang
-        },
+        source_lang,
+        target_lang,
         max_retries: artifact.max_retries,
         settings_snapshot: artifact.settings_snapshot,
     }

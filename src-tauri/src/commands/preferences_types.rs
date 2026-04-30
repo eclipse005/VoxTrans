@@ -89,6 +89,8 @@ pub struct SavedSettingsCommand {
     pub subtitle_max_words_per_segment: u32,
     pub subtitle_length_reference: u32,
     pub asr_model: String,
+    #[serde(default = "default_align_model")]
+    pub align_model: String,
     pub demucs_model: String,
     pub enable_vocal_separation: bool,
     pub translate_api_key: String,
@@ -123,6 +125,10 @@ pub struct SaveAppSettingsCommandRequest {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_align_model() -> String {
+    "Qwen3-ForcedAligner-0.6B".to_string()
 }
 
 fn default_subtitle_burn_mode() -> String {

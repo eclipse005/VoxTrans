@@ -7,8 +7,10 @@ use super::task_logs::log_task_failure_to_main;
 use super::{
     DeleteTasksCommandRequest, EnqueueTaskRunCommandRequest, ExecuteTaskBatchCommandResponse,
     ExecuteTaskBatchFailedItem, ExecuteTaskRunCommandRequest, RegisterTaskUploadCommandRequest,
-    WorkspaceQueueItem, WorkspaceTaskProgressState, WorkspaceTaskRecord, emit_task_state_changed,
-    find_task_mut, lock_workspace_store, normalize_intent, normalize_media_kind, patch_task_item,
+    UpdateTaskLanguagesCommandRequest, WorkspaceQueueItem, WorkspaceTaskProgressState,
+    WorkspaceTaskRecord, default_task_source_lang, default_task_target_lang,
+    emit_task_state_changed, find_task_mut, lock_workspace_store, normalize_intent,
+    normalize_media_kind, normalize_task_source_lang, normalize_task_target_lang, patch_task_item,
 };
 
 pub(super) fn register_task_upload_internal(
@@ -46,8 +48,8 @@ pub(super) fn register_task_upload_internal(
                     "pending",
                 ),
                 intent: "TRANSCRIBE".to_string(),
-                source_lang: "auto".to_string(),
-                target_lang: "zh-CN".to_string(),
+                source_lang: default_task_source_lang(),
+                target_lang: default_task_target_lang(),
                 max_retries: 0,
                 settings_snapshot: Value::Null,
             };
@@ -139,18 +141,31 @@ pub(super) fn enqueue_task_run_internal(
             persist_task_meta(existing)?;
             existing.item.clone()
         } else {
+            let source_lang = request
+                .source_lang
+                .as_deref()
+                .map(normalize_task_source_lang)
+                .unwrap_or_else(default_task_source_lang);
+            let target_lang = request
+                .target_lang
+                .as_deref()
+                .map(normalize_task_target_lang)
+                .unwrap_or_else(default_task_target_lang);
+            let mut item = new_workspace_queue_item(
+                id,
+                media_path,
+                request.name,
+                &request.media_kind,
+                request.size_bytes,
+                "queued",
+            );
+            item.source_lang = source_lang.clone();
+            item.target_lang = target_lang.clone();
             let record = WorkspaceTaskRecord {
-                item: new_workspace_queue_item(
-                    id,
-                    media_path,
-                    request.name,
-                    &request.media_kind,
-                    request.size_bytes,
-                    "queued",
-                ),
+                item,
                 intent: normalize_intent(&request.intent).to_string(),
-                source_lang: request.source_lang.unwrap_or_else(|| "auto".to_string()),
-                target_lang: request.target_lang.unwrap_or_else(|| "zh-CN".to_string()),
+                source_lang,
+                target_lang,
                 max_retries: request.max_retries.unwrap_or(0),
                 settings_snapshot: request.settings_snapshot.unwrap_or(Value::Null),
             };
@@ -161,6 +176,38 @@ pub(super) fn enqueue_task_run_internal(
         }
     };
     emit_task_state_changed(app, &queued_item);
+    Ok(())
+}
+
+pub(super) fn update_task_languages_internal(
+    app: &AppHandle,
+    request: UpdateTaskLanguagesCommandRequest,
+) -> Result<(), String> {
+    ensure_workspace_hydrated_from_disk()?;
+    let task_id = request.task_id.trim();
+    if task_id.is_empty() {
+        return Err("taskId is required".to_string());
+    }
+
+    let source_lang = normalize_task_source_lang(&request.source_lang);
+    let target_lang = normalize_task_target_lang(&request.target_lang);
+    let updated_item = {
+        let mut store = lock_workspace_store()?;
+        let Some(task) = find_task_mut(&mut store, task_id) else {
+            return Err(format!("task not found: {task_id}"));
+        };
+        if task.item.transcribe_status == "processing" || task.item.transcribe_status == "queued" {
+            return Err("任务正在处理或排队，不能修改语言".to_string());
+        }
+
+        task.source_lang = source_lang.clone();
+        task.target_lang = target_lang.clone();
+        task.item.source_lang = source_lang;
+        task.item.target_lang = target_lang;
+        persist_task_meta(task)?;
+        task.item.clone()
+    };
+    emit_task_state_changed(app, &updated_item);
     Ok(())
 }
 
@@ -219,6 +266,8 @@ fn new_workspace_queue_item(
         name,
         media_kind: normalize_media_kind(media_kind).to_string(),
         size_bytes,
+        source_lang: default_task_source_lang(),
+        target_lang: default_task_target_lang(),
         transcribe_status: status.to_string(),
         task_progress: WorkspaceTaskProgressState::default(),
         transcribe_error: String::new(),
@@ -261,14 +310,36 @@ fn apply_enqueue_request(record: &mut WorkspaceTaskRecord, request: EnqueueTaskR
     record.intent = normalize_intent(&request.intent).to_string();
     record.source_lang = request
         .source_lang
-        .unwrap_or_else(|| "auto".to_string())
-        .trim()
-        .to_string();
+        .as_deref()
+        .map(normalize_task_source_lang)
+        .unwrap_or_else(default_task_source_lang);
     record.target_lang = request
         .target_lang
-        .unwrap_or_else(|| "zh-CN".to_string())
-        .trim()
-        .to_string();
+        .as_deref()
+        .map(normalize_task_target_lang)
+        .unwrap_or_else(default_task_target_lang);
+    record.item.source_lang = record.source_lang.clone();
+    record.item.target_lang = record.target_lang.clone();
     record.max_retries = request.max_retries.unwrap_or(0);
     record.settings_snapshot = request.settings_snapshot.unwrap_or(Value::Null);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_queue_items_expose_default_task_languages() {
+        let item = new_workspace_queue_item(
+            "task-1",
+            "D:\\media\\demo.mp4",
+            "demo.mp4".to_string(),
+            "video",
+            123,
+            "pending",
+        );
+
+        assert_eq!(item.source_lang, "en");
+        assert_eq!(item.target_lang, "zh-CN");
+    }
 }

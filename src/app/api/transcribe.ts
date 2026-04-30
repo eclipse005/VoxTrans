@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AlignModel,
+  AsrModel,
   DemucsModel,
   Provider,
+  SourceLanguage,
   TranscribeResponse,
 } from "../../features/media/types";
 
@@ -15,6 +18,9 @@ type AppendTaskLogRequest = {
 type TranscribeRequest = {
   taskId: string;
   audioPath: string;
+  sourceLang: SourceLanguage;
+  asrModel?: AsrModel;
+  alignModel?: AlignModel;
   provider: Provider;
   chunkTargetSeconds: number;
 };

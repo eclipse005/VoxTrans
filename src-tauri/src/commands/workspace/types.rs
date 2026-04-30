@@ -9,6 +9,10 @@ pub struct WorkspaceQueueItem {
     pub name: String,
     pub media_kind: String,
     pub size_bytes: u64,
+    #[serde(default = "default_source_lang")]
+    pub source_lang: String,
+    #[serde(default = "default_target_lang")]
+    pub target_lang: String,
     pub transcribe_status: String,
     pub task_progress: WorkspaceTaskProgressState,
     pub transcribe_error: String,
@@ -17,6 +21,14 @@ pub struct WorkspaceQueueItem {
     pub subtitle_segments_json: String,
     #[serde(default)]
     pub llm_total_tokens: u64,
+}
+
+fn default_source_lang() -> String {
+    "en".to_string()
+}
+
+fn default_target_lang() -> String {
+    "zh-CN".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -85,6 +97,14 @@ pub struct EnqueueTaskRunCommandRequest {
     pub max_retries: Option<u32>,
     #[serde(default)]
     pub settings_snapshot: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTaskLanguagesCommandRequest {
+    pub task_id: String,
+    pub source_lang: String,
+    pub target_lang: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

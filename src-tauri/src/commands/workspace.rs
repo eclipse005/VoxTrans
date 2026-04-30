@@ -23,7 +23,7 @@ mod types;
 use meta::{ensure_workspace_hydrated_from_disk, persist_task_meta};
 use queue_ops::{
     delete_tasks_internal, enqueue_task_run_internal, execute_task_batch_internal,
-    register_task_upload_internal,
+    register_task_upload_internal, update_task_languages_internal,
 };
 use runtime_settings::fallback_saved_settings;
 pub use types::*;
@@ -164,6 +164,14 @@ pub async fn enqueue_task_run(
     request: EnqueueTaskRunCommandRequest,
 ) -> Result<(), String> {
     enqueue_task_run_internal(&app, request)
+}
+
+#[tauri::command]
+pub async fn update_task_languages(
+    app: AppHandle,
+    request: UpdateTaskLanguagesCommandRequest,
+) -> Result<(), String> {
+    update_task_languages_internal(&app, request)
 }
 
 #[tauri::command]
@@ -313,6 +321,38 @@ fn normalize_intent(raw: &str) -> &str {
     match raw.trim() {
         "TRANSCRIBE_TRANSLATE" => "TRANSCRIBE_TRANSLATE",
         _ => "TRANSCRIBE",
+    }
+}
+
+fn default_task_source_lang() -> String {
+    "en".to_string()
+}
+
+fn default_task_target_lang() -> String {
+    "zh-CN".to_string()
+}
+
+fn normalize_task_source_lang(raw: &str) -> String {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "en" | "en-us" | "english" => "en".to_string(),
+        "zh" | "zh-cn" | "zh-hans" | "chinese" | "mandarin" => "zh".to_string(),
+        "ja" | "ja-jp" | "japanese" => "ja".to_string(),
+        "ko" | "ko-kr" | "korean" => "ko".to_string(),
+        "fr" | "fr-fr" | "french" => "fr".to_string(),
+        "de" | "de-de" | "german" => "de".to_string(),
+        "it" | "it-it" | "italian" => "it".to_string(),
+        "es" | "es-es" | "spanish" => "es".to_string(),
+        "pt" | "pt-pt" | "pt-br" | "portuguese" => "pt".to_string(),
+        _ => default_task_source_lang(),
+    }
+}
+
+fn normalize_task_target_lang(raw: &str) -> String {
+    let value = raw.trim();
+    if value.is_empty() {
+        default_task_target_lang()
+    } else {
+        value.to_string()
     }
 }
 

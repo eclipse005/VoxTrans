@@ -31,7 +31,7 @@ dist-ssr
 target/
 src-tauri/target/
 src-tauri/gen/
-model/
+/model/
 runtime/
 output/
 src-tauri/output/

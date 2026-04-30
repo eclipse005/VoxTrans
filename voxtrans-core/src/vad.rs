@@ -5,7 +5,19 @@ use std::time::Instant;
 use serde::Deserialize;
 
 use crate::binary::resolve_bundled_or_path;
-use crate::transcribe_engine::AudioSegment;
+
+#[derive(Debug, Clone)]
+pub(crate) struct AudioSegment {
+    pub index: usize,
+    pub start_sec: f64,
+    pub end_sec: f64,
+}
+
+impl AudioSegment {
+    pub fn duration_sec(&self) -> f64 {
+        self.end_sec - self.start_sec
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct VadOutput {

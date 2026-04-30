@@ -5,6 +5,10 @@ import {
   createTaskProgress,
   type QueueItem,
 } from "../../features/media/types";
+import {
+  DEFAULT_SOURCE_LANGUAGE,
+  DEFAULT_TARGET_LANGUAGE,
+} from "../../features/media/languages";
 import type { AppAction } from "../state/appReducer";
 import type { QueueRunMode } from "./queue/useQueueRunner";
 import type { YoutubeDownloadProgressResponse } from "../api/youtube";
@@ -72,6 +76,8 @@ function createYoutubePlaceholderTask(
     name,
     mediaKind: "video",
     sizeBytes,
+    sourceLang: DEFAULT_SOURCE_LANGUAGE,
+    targetLang: DEFAULT_TARGET_LANGUAGE,
     transcribeStatus: "processing",
     taskProgress: createTaskProgress({
       code: "downloading",
@@ -261,6 +267,8 @@ export function useYoutubeDownloadWorkflow({
           name: response.task.name,
           mediaKind: response.task.mediaKind,
           sizeBytes: response.task.sizeBytes,
+          sourceLang: item.sourceLang,
+          targetLang: item.targetLang,
           transcribeStatus: "pending",
           taskProgress: createEmptyTaskProgress(),
           transcribeError: "",
@@ -272,6 +280,8 @@ export function useYoutubeDownloadWorkflow({
           name: response.task.name,
           mediaKind: response.task.mediaKind,
           sizeBytes: response.task.sizeBytes,
+          sourceLang: DEFAULT_SOURCE_LANGUAGE,
+          targetLang: DEFAULT_TARGET_LANGUAGE,
           transcribeStatus: "pending",
           taskProgress: createEmptyTaskProgress(),
           transcribeError: "",
@@ -291,6 +301,8 @@ export function useYoutubeDownloadWorkflow({
           name: response.task.name,
           mediaKind: response.task.mediaKind,
           sizeBytes: response.task.sizeBytes,
+          sourceLang: DEFAULT_SOURCE_LANGUAGE,
+          targetLang: DEFAULT_TARGET_LANGUAGE,
           transcribeStatus: "pending",
           taskProgress: createEmptyTaskProgress(),
           transcribeError: "",

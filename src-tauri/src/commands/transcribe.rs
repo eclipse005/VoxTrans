@@ -22,6 +22,9 @@ pub async fn transcribe(
             crate::services::transcribe::TranscribeRequest {
                 task_id: request.task_id,
                 audio_path: request.audio_path,
+                source_lang: request.source_lang,
+                asr_model: request.asr_model,
+                align_model: request.align_model,
                 provider: request.provider,
                 chunk_target_seconds: request.chunk_target_seconds,
                 model_dir: request.model_dir,

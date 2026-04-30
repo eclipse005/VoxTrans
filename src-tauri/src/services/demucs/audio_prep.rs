@@ -29,8 +29,6 @@ fn extract_audio_with_ffmpeg(input_path: &Path, output_wav: &Path) -> Result<(),
         .arg("-i")
         .arg(input_path)
         .arg("-vn")
-        .arg("-ac")
-        .arg("1")
         .arg("-c:a")
         .arg("pcm_s16le")
         .arg(output_wav)

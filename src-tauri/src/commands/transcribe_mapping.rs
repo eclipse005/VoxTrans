@@ -18,11 +18,16 @@ pub(super) fn from_transcribe_response(
 ) -> TranscribeCommandResponse {
     TranscribeCommandResponse {
         words: response.words.into_iter().map(from_service_word).collect(),
+        text: response.text,
+        aligned_text: response.aligned_text,
         segment_total: response.segment_total,
         segment_durations_sec: response.segment_durations_sec,
         audio_duration_sec: response.audio_duration_sec,
         vad_elapsed_sec: response.vad_elapsed_sec,
         transcribe_elapsed_sec: response.transcribe_elapsed_sec,
+        timing_sec: response.timing_sec,
+        rtf_x: response.rtf_x,
+        rtf_breakdown_x: response.rtf_breakdown_x,
         execution_provider: response.execution_provider,
     }
 }

@@ -15,6 +15,10 @@ pub(in crate::commands::workspace) struct Step1AsrArtifact {
     pub(in crate::commands::workspace) task_id: String,
     pub(in crate::commands::workspace) media_path: String,
     pub(in crate::commands::workspace) source_lang: String,
+    #[serde(default)]
+    pub(in crate::commands::workspace) text: String,
+    #[serde(default)]
+    pub(in crate::commands::workspace) aligned_text: String,
     pub(in crate::commands::workspace) words:
         Vec<crate::commands::transcription::WordTokenCommandDto>,
 }
@@ -24,6 +28,8 @@ pub(in crate::commands::workspace) struct Step1AsrPipelineStep {
     pub(in crate::commands::workspace) task_id: String,
     pub(in crate::commands::workspace) media_path: String,
     pub(in crate::commands::workspace) source_lang: String,
+    pub(in crate::commands::workspace) asr_model: String,
+    pub(in crate::commands::workspace) align_model: String,
     pub(in crate::commands::workspace) provider: String,
     pub(in crate::commands::workspace) chunk_target_seconds: u32,
     pub(in crate::commands::workspace) app: AppHandle,
@@ -64,6 +70,9 @@ impl PipelineStep for Step1AsrPipelineStep {
         let transcribe_request = crate::services::transcribe::TranscribeRequest {
             task_id: task_id_owned.clone(),
             audio_path: media_path.clone(),
+            source_lang: self.source_lang.clone(),
+            asr_model: self.asr_model.clone(),
+            align_model: self.align_model.clone(),
             provider,
             chunk_target_seconds,
             model_dir: None,
@@ -99,6 +108,8 @@ impl PipelineStep for Step1AsrPipelineStep {
             task_id: self.task_id.clone(),
             media_path: self.media_path.clone(),
             source_lang: self.source_lang.clone(),
+            text: transcribe_response.text,
+            aligned_text: transcribe_response.aligned_text,
             words,
         })
     }

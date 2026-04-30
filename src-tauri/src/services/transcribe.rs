@@ -4,31 +4,81 @@ use serde_json::json;
 use std::path::PathBuf;
 use voxtrans_core::subtitle::segmenter::{
     WordToken, normalize_word_tokens, plain_text_from_segments, split_english_segments,
-    split_translate_segments, words_from_timed_tokens,
+    split_translate_segments,
 };
 use voxtrans_core::subtitle::srt::to_srt_from_segments;
-use voxtrans_core::{Provider, TimestampKind, TranscribeOptions};
+
+mod asr_align;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscribeRequest {
     pub task_id: String,
     pub audio_path: String,
+    pub source_lang: String,
+    #[serde(default = "default_asr_model")]
+    pub asr_model: String,
+    #[serde(default = "default_align_model")]
+    pub align_model: String,
     pub provider: String,
     pub chunk_target_seconds: u32,
     pub model_dir: Option<String>,
+}
+
+fn default_asr_model() -> String {
+    crate::services::model::DEFAULT_ASR_MODEL.to_string()
+}
+
+fn default_align_model() -> String {
+    "Qwen3-ForcedAligner-0.6B".to_string()
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscribeResponse {
     pub words: Vec<WordTokenDto>,
+    pub text: String,
+    pub aligned_text: String,
     pub segment_total: usize,
     pub segment_durations_sec: Vec<f64>,
     pub audio_duration_sec: f64,
     pub vad_elapsed_sec: f64,
     pub transcribe_elapsed_sec: f64,
+    pub timing_sec: TranscribeTimingSecDto,
+    pub rtf_x: f64,
+    pub rtf_breakdown_x: TranscribeRtfBreakdownDto,
     pub execution_provider: String,
+}
+
+#[derive(Debug, Serialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscribeTimingSecDto {
+    pub prepare_elapsed_sec: f64,
+    pub vad_elapsed_sec: f64,
+    pub temp_wav_write_sec: f64,
+    pub asr_load_sec: f64,
+    pub asr_transcribe_sec: f64,
+    pub qwen_load_sec: f64,
+    pub qwen_align_sec: f64,
+    pub punctuation_map_sec: f64,
+    pub total_elapsed_sec: f64,
+}
+
+#[derive(Debug, Serialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscribeRtfBreakdownDto {
+    pub total: f64,
+    pub asr_stage: f64,
+    pub asr_transcribe: f64,
+    pub qwen_stage: f64,
+    pub qwen_align: f64,
+    pub model_only: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TranscribePhaseMetrics {
+    timing_sec: TranscribeTimingSecDto,
+    rtf_x: TranscribeRtfBreakdownDto,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -80,39 +130,25 @@ where
         &logger,
         event::TRANSCRIBE_STARTED,
         json!({
+            "asrModel": request.asr_model,
+            "alignModel": request.align_model,
             "chunkTargetSeconds": request.chunk_target_seconds,
             "provider": request.provider,
             "mediaPath": request.audio_path,
         }),
     );
 
-    let mut options = TranscribeOptions::default();
-    let audio_path = PathBuf::from(&request.audio_path);
-    options.audio_path = audio_path;
-    options.provider = match Provider::from_id(&request.provider) {
-        Some(provider) => provider,
-        None => {
-            let err = format!(
-                "unsupported provider: {} (supported: {})",
-                request.provider,
-                Provider::supported_ids().join(", ")
-            );
-            append_transcribe_log(&logger, event::TRANSCRIBE_FAILED, json!({ "error": err }));
-            return Err(err);
-        }
-    };
-    options.timestamp_mode = TimestampKind::Words;
-    options.chunk_target_seconds = request.chunk_target_seconds.clamp(30, 300) as f64;
-    options.model_dir =
-        crate::services::model::resolve_engine_model_dir(crate::services::model::ModelTarget::Asr);
-
-    if let Some(model_dir) = request.model_dir.as_ref() {
-        options.model_dir = PathBuf::from(model_dir);
-    }
-
-    let output = voxtrans_core::transcribe_with_parakeet_v2_with_progress(
-        &options,
-        |current, total, _start_sec, _end_sec| {
+    let output = asr_align::transcribe_with_asr_and_qwen(
+        asr_align::AsrAlignRequest {
+            audio_path: PathBuf::from(&request.audio_path),
+            source_lang: request.source_lang.clone(),
+            asr_model: normalize_asr_model(&request.asr_model),
+            align_model: normalize_align_model(&request.align_model),
+            provider: request.provider.clone(),
+            chunk_target_seconds: request.chunk_target_seconds.clamp(30, 300),
+            model_dir: request.model_dir.as_ref().map(PathBuf::from),
+        },
+        |current, total| {
             on_progress(current, total);
         },
     );
@@ -122,8 +158,11 @@ where
             let technical = format!(
                 "{} (audio: {}, modelDir: {})",
                 raw_err,
-                options.audio_path.display(),
-                options.model_dir.display()
+                request.audio_path,
+                request
+                    .model_dir
+                    .as_deref()
+                    .unwrap_or("<resolved model directory>")
             );
             let user_message =
                 map_transcribe_error(&technical, &request.provider, request.chunk_target_seconds);
@@ -138,10 +177,15 @@ where
             return Err(user_message);
         }
     };
-    let words = normalize_word_tokens(words_from_timed_tokens(&output.tokens));
+    let metrics = build_phase_metrics(output.audio_duration_sec, output.timing);
+    let text = output.text;
+    let aligned_text = output.aligned_text;
+    let words = normalize_word_tokens(output.words);
 
     let response = TranscribeResponse {
         words: words.iter().map(word_to_dto).collect(),
+        text,
+        aligned_text,
         segment_total: output.segment_summaries.len(),
         segment_durations_sec: output
             .segment_summaries
@@ -151,6 +195,9 @@ where
         audio_duration_sec: output.audio_duration_sec,
         vad_elapsed_sec: output.vad_elapsed_sec,
         transcribe_elapsed_sec: output.transcribe_elapsed_sec,
+        timing_sec: metrics.timing_sec,
+        rtf_x: metrics.rtf_x.total,
+        rtf_breakdown_x: metrics.rtf_x,
         execution_provider: output.execution_provider.to_string(),
     };
 
@@ -165,11 +212,31 @@ where
             "audioDurationSec": round2(response.audio_duration_sec),
             "vadElapsedSec": round2(response.vad_elapsed_sec),
             "transcribeElapsedSec": round2(response.transcribe_elapsed_sec),
-            "rtfX": round2(calculate_rtf_x(response.audio_duration_sec, response.transcribe_elapsed_sec)),
+            "timingSec": &response.timing_sec,
+            "rtfX": response.rtf_x,
+            "rtfBreakdownX": &response.rtf_breakdown_x,
         }),
     );
 
     Ok(response)
+}
+
+fn normalize_asr_model(raw: &str) -> String {
+    let value = raw.trim();
+    if value.is_empty() || value == "parakeet-tdt-0.6b-v2" || value == "cohere-transcribe" {
+        crate::services::model::DEFAULT_ASR_MODEL.to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn normalize_align_model(raw: &str) -> String {
+    let value = raw.trim();
+    if value.is_empty() {
+        "Qwen3-ForcedAligner-0.6B".to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 pub fn build_segments_from_words(
@@ -261,26 +328,94 @@ fn calculate_rtf_x(audio_duration_sec: f64, transcribe_elapsed_sec: f64) -> f64 
     audio_duration_sec / transcribe_elapsed_sec
 }
 
+fn build_phase_metrics(
+    audio_duration_sec: f64,
+    timing: asr_align::AsrAlignTiming,
+) -> TranscribePhaseMetrics {
+    let asr_stage_sec = timing.asr_load_sec + timing.temp_wav_write_sec + timing.asr_transcribe_sec;
+    let qwen_stage_sec = timing.qwen_load_sec + timing.qwen_align_sec + timing.punctuation_map_sec;
+    let model_only_sec = timing.asr_transcribe_sec + timing.qwen_align_sec;
+
+    TranscribePhaseMetrics {
+        timing_sec: TranscribeTimingSecDto {
+            prepare_elapsed_sec: round2(timing.prepare_elapsed_sec),
+            vad_elapsed_sec: round2(timing.vad_elapsed_sec),
+            temp_wav_write_sec: round2(timing.temp_wav_write_sec),
+            asr_load_sec: round2(timing.asr_load_sec),
+            asr_transcribe_sec: round2(timing.asr_transcribe_sec),
+            qwen_load_sec: round2(timing.qwen_load_sec),
+            qwen_align_sec: round2(timing.qwen_align_sec),
+            punctuation_map_sec: round2(timing.punctuation_map_sec),
+            total_elapsed_sec: round2(timing.total_elapsed_sec),
+        },
+        rtf_x: TranscribeRtfBreakdownDto {
+            total: round2(calculate_rtf_x(
+                audio_duration_sec,
+                timing.total_elapsed_sec,
+            )),
+            asr_stage: round2(calculate_rtf_x(audio_duration_sec, asr_stage_sec)),
+            asr_transcribe: round2(calculate_rtf_x(
+                audio_duration_sec,
+                timing.asr_transcribe_sec,
+            )),
+            qwen_stage: round2(calculate_rtf_x(audio_duration_sec, qwen_stage_sec)),
+            qwen_align: round2(calculate_rtf_x(audio_duration_sec, timing.qwen_align_sec)),
+            model_only: round2(calculate_rtf_x(audio_duration_sec, model_only_sec)),
+        },
+    }
+}
+
 fn map_transcribe_error(raw: &str, provider: &str, chunk_target_seconds: u32) -> String {
     let lowered = raw.to_lowercase();
-    let directml_oom = lowered.contains("887a0006")
+    let gpu_oom = lowered.contains("887a0006")
         || lowered.contains("dmlexecutionprovider")
         || lowered.contains("onnx runtime error")
             && lowered.contains("gpu")
             && lowered.contains("invalid")
         || lowered.contains("lstm node");
 
-    if directml_oom {
+    if gpu_oom {
         return format!(
             "转录失败：显存/图形资源不足（{}）。请在设置中将“分段时长”调小后重试（当前 {} 秒，建议 60-120 秒）。",
-            if provider.eq_ignore_ascii_case("directml") {
-                "DirectML"
-            } else {
+            if provider.eq_ignore_ascii_case("cuda") || provider.eq_ignore_ascii_case("directml") {
                 "GPU"
+            } else {
+                provider
             },
             chunk_target_seconds.clamp(30, 300)
         );
     }
 
     raw.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn phase_metrics_include_timing_and_rtf_breakdowns() {
+        let metrics = build_phase_metrics(
+            200.0,
+            asr_align::AsrAlignTiming {
+                prepare_elapsed_sec: 5.0,
+                vad_elapsed_sec: 0.5,
+                temp_wav_write_sec: 2.0,
+                asr_load_sec: 3.0,
+                asr_transcribe_sec: 10.0,
+                qwen_load_sec: 4.0,
+                qwen_align_sec: 20.0,
+                punctuation_map_sec: 1.0,
+                total_elapsed_sec: 50.0,
+            },
+        );
+
+        assert_eq!(metrics.timing_sec.total_elapsed_sec, 50.0);
+        assert_eq!(metrics.rtf_x.total, 4.0);
+        assert_eq!(metrics.rtf_x.asr_transcribe, 20.0);
+        assert_eq!(metrics.rtf_x.qwen_align, 10.0);
+        assert_eq!(metrics.rtf_x.model_only, 6.67);
+        assert_eq!(metrics.rtf_x.asr_stage, 13.33);
+        assert_eq!(metrics.rtf_x.qwen_stage, 8.0);
+    }
 }

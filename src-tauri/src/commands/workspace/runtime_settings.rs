@@ -7,6 +7,8 @@ use crate::commands::translate_types::TranslateTerminologyEntryCommand;
 
 #[derive(Debug, Clone)]
 pub(super) struct PipelineRuntimeSettings {
+    pub(super) asr_model: String,
+    pub(super) align_model: String,
     pub(super) provider: String,
     pub(super) chunk_target_seconds: u32,
     pub(super) translate_api_key: String,
@@ -22,6 +24,10 @@ pub(super) struct PipelineRuntimeSettings {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct SettingsSnapshotInput {
+    #[serde(default)]
+    asr_model: Option<String>,
+    #[serde(default)]
+    align_model: Option<String>,
     #[serde(default)]
     provider: Option<String>,
     #[serde(default)]
@@ -84,6 +90,20 @@ pub(super) fn resolve_runtime_settings(
         .chunk_target_seconds
         .unwrap_or(saved.chunk_target_seconds)
         .clamp(30, 300);
+    let asr_model = snapshot_parsed
+        .asr_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| saved.asr_model.clone());
+    let align_model = snapshot_parsed
+        .align_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| saved.align_model.clone());
 
     let translate_api_key = snapshot_parsed
         .translate_api_key
@@ -176,6 +196,8 @@ pub(super) fn resolve_runtime_settings(
     };
 
     Ok(PipelineRuntimeSettings {
+        asr_model,
+        align_model,
         provider,
         chunk_target_seconds,
         translate_api_key,
@@ -195,7 +217,8 @@ pub(super) fn fallback_saved_settings() -> crate::services::preferences::SavedSe
         chunk_target_seconds: 180,
         subtitle_max_words_per_segment: 20,
         subtitle_length_reference: 28,
-        asr_model: "parakeet-tdt-0.6b-v2".to_string(),
+        asr_model: crate::services::model::DEFAULT_ASR_MODEL.to_string(),
+        align_model: "Qwen3-ForcedAligner-0.6B".to_string(),
         demucs_model: "htdemucs_ft".to_string(),
         enable_vocal_separation: false,
         translate_api_key: String::new(),
@@ -224,4 +247,27 @@ fn saved_terminology_entries(
             note: term.note.clone(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn runtime_settings_preserve_asr_model_from_snapshot() {
+        let settings = resolve_runtime_settings(
+            &json!({
+                "asrModel": "Qwen3-ASR-1.7B",
+                "alignModel": "Qwen3-ForcedAligner-0.6B",
+                "provider": "cuda",
+                "chunkTargetSeconds": 120
+            }),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(settings.asr_model, "Qwen3-ASR-1.7B");
+        assert_eq!(settings.align_model, "Qwen3-ForcedAligner-0.6B");
+    }
 }

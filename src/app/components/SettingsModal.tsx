@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type {
+  AlignModel,
   AsrModel,
   DemucsModel,
   ModelStatusResponse,
@@ -21,6 +22,7 @@ type SettingsModalProps = {
   draftSubtitleMaxWordsInput: string;
   draftSubtitleLengthReferenceInput: string;
   draftAsrModel: AsrModel;
+  draftAlignModel: AlignModel;
   draftDemucsModel: DemucsModel;
   draftEnableVocalSeparation: boolean;
   draftTranslateApiKey: string;
@@ -33,6 +35,8 @@ type SettingsModalProps = {
   draftSubtitleBurnMode: SubtitleBurnMode;
   draftSubtitleRenderStyle: SubtitleRenderStyle;
   asrStatus: ModelStatusResponse | null;
+  asrStatusByModel: Record<AsrModel, ModelStatusResponse | null>;
+  alignStatus: ModelStatusResponse | null;
   demucsStatus: ModelStatusResponse | null;
   onClose: () => void;
   onSave: () => void | Promise<void>;
@@ -41,6 +45,7 @@ type SettingsModalProps = {
   onDraftSubtitleMaxWordsInputChange: (value: string) => void;
   onDraftSubtitleLengthReferenceInputChange: (value: string) => void;
   onDraftAsrModelChange: (value: AsrModel) => void;
+  onDraftAlignModelChange: (value: AlignModel) => void;
   onDraftDemucsModelChange: (value: DemucsModel) => void;
   onDraftEnableVocalSeparationChange: (value: boolean) => void;
   onDraftTranslateApiKeyChange: (value: string) => void;
@@ -53,9 +58,9 @@ type SettingsModalProps = {
   onDraftSubtitleBurnModeChange: (value: SubtitleBurnMode) => void;
   onDraftSubtitleRenderStyleChange: (value: SubtitleRenderStyle) => void;
   onTestTranslateConnection: () => void | Promise<void>;
-  onOpenModelDir: (target: "asr" | "demucs") => void | Promise<void>;
-  onStartModelDownload: (target: "asr" | "demucs") => void | Promise<void>;
-  onCancelModelDownload: (target: "asr" | "demucs") => void | Promise<void>;
+  onOpenModelDir: (target: "asr" | "align" | "demucs", model?: string) => void | Promise<void>;
+  onStartModelDownload: (target: "asr" | "align" | "demucs", model?: string) => void | Promise<void>;
+  onCancelModelDownload: (target: "asr" | "align" | "demucs", model?: string) => void | Promise<void>;
 };
 
 export default function SettingsModal(props: SettingsModalProps) {
@@ -66,6 +71,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftSubtitleMaxWordsInput,
     draftSubtitleLengthReferenceInput,
     draftAsrModel,
+    draftAlignModel,
     draftDemucsModel,
     draftEnableVocalSeparation,
     draftTranslateApiKey,
@@ -78,6 +84,8 @@ export default function SettingsModal(props: SettingsModalProps) {
     draftSubtitleBurnMode,
     draftSubtitleRenderStyle,
     asrStatus,
+    asrStatusByModel,
+    alignStatus,
     demucsStatus,
     onClose,
     onSave,
@@ -86,6 +94,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     onDraftSubtitleMaxWordsInputChange,
     onDraftSubtitleLengthReferenceInputChange,
     onDraftAsrModelChange,
+    onDraftAlignModelChange,
     onDraftDemucsModelChange,
     onDraftEnableVocalSeparationChange,
     onDraftTranslateApiKeyChange,
@@ -751,12 +760,38 @@ export default function SettingsModal(props: SettingsModalProps) {
             <div className="settings-tab-content model-center-content">
               <ModelDownloadCard
                 target="asr"
-                title="转录模型"
-                description="parakeet-tdt-0.6b-v2 支持高质量英文转录，可自动补全标点与大小写并提供准确时间戳。"
-                modelName="parakeet-tdt-0.6b-v2"
-                selected={draftAsrModel === "parakeet-tdt-0.6b-v2"}
-                status={asrStatus}
-                onSelect={() => onDraftAsrModelChange("parakeet-tdt-0.6b-v2")}
+                title="ASR 模型"
+                description="Qwen3-ASR-0.6B 负责从音频生成纯文本，时间戳由独立对齐模型处理。"
+                modelName="Qwen3-ASR-0.6B"
+                selected={draftAsrModel === "Qwen3-ASR-0.6B"}
+                status={asrStatusByModel["Qwen3-ASR-0.6B"] ?? (draftAsrModel === "Qwen3-ASR-0.6B" ? asrStatus : null)}
+                onSelect={() => onDraftAsrModelChange("Qwen3-ASR-0.6B")}
+                onOpenModelDir={onOpenModelDir}
+                onStartModelDownload={onStartModelDownload}
+                onCancelModelDownload={onCancelModelDownload}
+              />
+
+              <ModelDownloadCard
+                target="asr"
+                title="ASR 模型"
+                description="Qwen3-ASR-1.7B 负责从音频生成纯文本，时间戳由独立对齐模型处理。"
+                modelName="Qwen3-ASR-1.7B"
+                selected={draftAsrModel === "Qwen3-ASR-1.7B"}
+                status={asrStatusByModel["Qwen3-ASR-1.7B"] ?? (draftAsrModel === "Qwen3-ASR-1.7B" ? asrStatus : null)}
+                onSelect={() => onDraftAsrModelChange("Qwen3-ASR-1.7B")}
+                onOpenModelDir={onOpenModelDir}
+                onStartModelDownload={onStartModelDownload}
+                onCancelModelDownload={onCancelModelDownload}
+              />
+
+              <ModelDownloadCard
+                target="align"
+                title="对齐模型"
+                description="Qwen3 Forced Aligner 负责把转录文本对齐回音频，生成词级时间戳。"
+                modelName="Qwen3-ForcedAligner-0.6B"
+                selected={draftAlignModel === "Qwen3-ForcedAligner-0.6B"}
+                status={alignStatus}
+                onSelect={() => onDraftAlignModelChange("Qwen3-ForcedAligner-0.6B")}
                 onOpenModelDir={onOpenModelDir}
                 onStartModelDownload={onStartModelDownload}
                 onCancelModelDownload={onCancelModelDownload}

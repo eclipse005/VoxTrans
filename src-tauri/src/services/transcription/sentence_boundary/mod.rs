@@ -20,10 +20,9 @@ mod words;
 use assembly::{
     build_boundaries_from_split_points, build_micro_chunks, build_sentences_from_word_spans,
 };
-use semantic::{
-    build_split_points_with_optional_semantic_refinement, split_points_to_spans,
-    translation_unit_word_limit,
-};
+#[cfg(test)]
+use semantic::translation_unit_word_limit;
+use semantic::{build_split_points_with_optional_semantic_refinement, split_points_to_spans};
 #[cfg(test)]
 use semantic::{should_refine_semantic_span, should_split_semantic_span};
 #[cfg(test)]
