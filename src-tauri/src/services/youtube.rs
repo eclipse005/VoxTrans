@@ -232,6 +232,7 @@ fn run_ytdlp_download(
     let mut command = build_yt_dlp_command();
     command
         .arg("--newline")
+        .arg("--progress")
         .arg("--no-playlist")
         .arg("--merge-output-format")
         .arg("mp4")
@@ -712,6 +713,12 @@ mod tests {
         let old_id_suffix = ["[", "%(id)s", "]"].join("");
         assert!(YOUTUBE_RS.contains(".arg(\"%(title).200B.%(ext)s\")"));
         assert!(!YOUTUBE_RS.contains(&old_id_suffix));
+    }
+
+    #[test]
+    fn download_command_forces_progress_when_printing_final_path() {
+        assert!(YOUTUBE_RS.contains(".arg(\"--print\")"));
+        assert!(YOUTUBE_RS.contains(".arg(\"--progress\")"));
     }
 
     #[test]
