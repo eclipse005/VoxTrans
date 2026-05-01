@@ -42,10 +42,6 @@ pub fn task_output_dir_by_id(task_id: &str) -> PathBuf {
     crate::services::output::resolve_output_dir().join(safe_task_id)
 }
 
-pub fn task_srt_output_path(task_id: &str, audio_path: &Path) -> PathBuf {
-    task_src_srt_output_path(task_id, audio_path)
-}
-
 pub fn task_artifacts_dir(task_id: &str, audio_path: &Path) -> PathBuf {
     task_output_dir(task_id, audio_path).join(ARTIFACTS_DIR_NAME)
 }

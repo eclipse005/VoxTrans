@@ -2,24 +2,84 @@ use std::collections::HashSet;
 
 use super::alignment_repair::repair_aligned_lines;
 use super::alignment_score::choose_better_alignment;
+use super::language_units::text_length_units;
 use super::numbers::extract_numbers;
-use super::polish_repair::repair_polished_translation;
 use super::quality::split_line_quality_score;
 use super::source_residue::looks_like_source_residue;
 use super::terminology_filter::source_contains_terminology_term;
-use super::translation_candidate::{
-    has_tail_ellipsis, is_unusable_translation, trim_before_leaked_number_anchor,
-};
+use super::translation_candidate::{has_tail_ellipsis, trim_before_leaked_number_anchor};
 use super::translation_split::heuristic_split_translation;
-use super::watchability::{
-    is_watchability_fragment_issue, repair_single_watchability_line, repair_watchability_fragments,
-};
-use super::watchability_split::split_watchability_overlong_segments;
-use super::{
-    BuildStep6FinalCheckRequest, Step5FinalSegment, Step5SplitParent, Step5SplitPart, Step5Token,
+use super::watchability::repair_single_watchability_line;
+use super::{Step5SplitParent, Step5SplitPart};
+use crate::services::subtitle_length::{
+    SubtitleLengthPreset, effective_subtitle_limits, normalize_subtitle_length_preset,
 };
 
 mod source_split_tests;
+
+#[test]
+fn subtitle_length_presets_cover_supported_source_and_target_languages() {
+    let source_langs = ["en", "zh", "yue", "ja", "ko", "fr", "de", "it", "es", "pt"];
+    let target_langs = [
+        "zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "it", "pt", "ru", "ar", "vi", "th",
+        "id", "tr", "nl", "pl",
+    ];
+
+    for source_lang in source_langs {
+        for target_lang in target_langs {
+            let short =
+                effective_subtitle_limits(source_lang, target_lang, SubtitleLengthPreset::Short);
+            let standard =
+                effective_subtitle_limits(source_lang, target_lang, SubtitleLengthPreset::Standard);
+            let loose =
+                effective_subtitle_limits(source_lang, target_lang, SubtitleLengthPreset::Loose);
+
+            assert!(
+                short.source_limit < standard.source_limit
+                    && standard.source_limit < loose.source_limit,
+                "source limits should increase for {source_lang}"
+            );
+            assert!(
+                short.target_limit < standard.target_limit
+                    && standard.target_limit < loose.target_limit,
+                "target limits should increase for {target_lang}"
+            );
+        }
+    }
+}
+
+#[test]
+fn subtitle_length_preset_normalization_accepts_three_ui_modes() {
+    assert_eq!(normalize_subtitle_length_preset("short"), "short");
+    assert_eq!(normalize_subtitle_length_preset("standard"), "standard");
+    assert_eq!(normalize_subtitle_length_preset("loose"), "loose");
+    assert_eq!(normalize_subtitle_length_preset("unexpected"), "standard");
+}
+
+#[test]
+fn subtitle_length_limits_are_language_aware_for_source_and_target() {
+    let english_to_chinese =
+        effective_subtitle_limits("en", "zh-CN", SubtitleLengthPreset::Standard);
+    assert_eq!(english_to_chinese.source_limit, 20);
+    assert_eq!(english_to_chinese.target_limit, 28);
+
+    let chinese_to_english = effective_subtitle_limits("zh", "en", SubtitleLengthPreset::Standard);
+    assert_eq!(chinese_to_english.source_limit, 28);
+    assert_eq!(chinese_to_english.target_limit, 16);
+
+    let cantonese_to_english =
+        effective_subtitle_limits("yue", "en", SubtitleLengthPreset::Standard);
+    assert_eq!(cantonese_to_english.source_limit, 28);
+    assert_eq!(cantonese_to_english.target_limit, 16);
+
+    let english_to_thai = effective_subtitle_limits("en", "th", SubtitleLengthPreset::Standard);
+    assert!(english_to_thai.target_limit > english_to_chinese.target_limit);
+}
+
+#[test]
+fn subtitle_length_units_count_thai_as_char_units() {
+    assert!(text_length_units("นี่คือข้อความภาษาไทย", "th") > 5.0);
+}
 
 #[test]
 fn step5_split_quality_penalizes_overlapping_lines() {
@@ -99,108 +159,24 @@ fn step5_align_repair_fills_empty_lines() {
 }
 
 #[test]
-fn step6_final_check_detects_hard_issues() {
-    let report = super::build_step_6_final_check(BuildStep6FinalCheckRequest {
-        target_lang: "zh-CN".to_string(),
-        segments: vec![
-            Step5FinalSegment {
-                segment_id: 1,
-                start: 0.0,
-                end: 1.0,
-                source: "the invoice was 1037 units".to_string(),
-                translation: "".to_string(),
-                tokens: vec![],
-            },
-            Step5FinalSegment {
-                segment_id: 2,
-                start: 1.0,
-                end: 2.0,
-                source: "be patient and disciplined".to_string(),
-                translation: "要保持耐心，而且...".to_string(),
-                tokens: vec![],
-            },
-        ],
-    })
-    .expect("final check");
-    assert!(!report.passed);
-    assert!(report.hard_fail_count >= 2);
-}
-
-#[test]
-fn step6_final_check_flags_watchability_fragment_issue() {
-    let report = super::build_step_6_final_check(BuildStep6FinalCheckRequest {
-        target_lang: "zh-CN".to_string(),
-        segments: vec![Step5FinalSegment {
-            segment_id: 1,
-            start: 0.0,
-            end: 1.0,
-            source: "and I sit down, I start loading up my writing workspace".to_string(),
-            translation: "然后花大约".to_string(),
-            tokens: vec![],
-        }],
-    })
-    .expect("final check");
-    assert!(
-        report
-            .issues
-            .iter()
-            .any(|issue| issue.rule_id == "watchability_fragment")
-    );
-}
-
-#[test]
-fn step6_final_check_does_not_report_terminology_drift() {
-    let report = super::build_step_6_final_check(BuildStep6FinalCheckRequest {
-        target_lang: "zh-CN".to_string(),
-        segments: vec![Step5FinalSegment {
-            segment_id: 1,
-            start: 0.0,
-            end: 1.0,
-            source: "This mentions a single-letter term.".to_string(),
-            translation: "这里提到了一个单字母术语。".to_string(),
-            tokens: vec![],
-        }],
-    })
-    .expect("final check");
-    assert!(report.passed);
-    assert!(
-        !report
-            .issues
-            .iter()
-            .any(|issue| issue.rule_id == "terminology_drift")
-    );
-}
-
-#[test]
 fn step5_watchability_repair_does_not_invent_percent_sentence() {
-    let mut segments = vec![Step5FinalSegment {
-            segment_id: 1,
-            start: 0.0,
-            end: 1.0,
-            source: "happy with if you're keeping 50%or 60%of the total budget without leaving a lot unused.".to_string(),
-            translation: "60 50 你更有可能持续地以满意的金额完成那项计划。".to_string(),
-            tokens: vec![],
-        }];
-    repair_watchability_fragments(&mut segments, "zh-CN");
-    assert_eq!(
-        segments[0].translation,
-        "60 50 你更有可能持续地以满意的金额完成那项计划。"
+    let repaired = repair_single_watchability_line(
+        "happy with if you're keeping 50%or 60%of the total budget without leaving a lot unused.",
+        "60 50 你更有可能持续地以满意的金额完成那项计划。",
+        "zh-CN",
     );
-    assert!(!segments[0].translation.contains("如果你拿走"));
+    assert_eq!(repaired, "60 50 你更有可能持续地以满意的金额完成那项计划。");
+    assert!(!repaired.contains("如果你拿走"));
 }
 
 #[test]
 fn step5_watchability_repair_does_not_invent_domain_sentence() {
-    let mut segments = vec![Step5FinalSegment {
-        segment_id: 1,
-        start: 0.0,
-        end: 1.0,
-        source: "to take a 10-minute note and watch it grow to 50 lines".to_string(),
-        translation: "10 看着它增加到50行。".to_string(),
-        tokens: vec![],
-    }];
-    repair_watchability_fragments(&mut segments, "zh-CN");
-    assert_eq!(segments[0].translation, "10 看着它增加到50行。");
+    let repaired = repair_single_watchability_line(
+        "to take a 10-minute note and watch it grow to 50 lines",
+        "10 看着它增加到50行。",
+        "zh-CN",
+    );
+    assert_eq!(repaired, "10 看着它增加到50行。");
 }
 
 #[test]
@@ -216,140 +192,32 @@ fn step5_watchability_repair_does_not_invent_domain_phrasing() {
 
 #[test]
 fn step5_watchability_repair_does_not_invent_day_phrase() {
-    let mut segments = vec![Step5FinalSegment {
-        segment_id: 1,
-        start: 0.0,
-        end: 1.0,
-        source: "a day in 30 minutes or whatever it is, right?".to_string(),
-        translation: "30分钟，对吧？".to_string(),
-        tokens: vec![],
-    }];
-    repair_watchability_fragments(&mut segments, "zh-CN");
-    assert_eq!(segments[0].translation, "30分钟，对吧？");
+    let repaired = repair_single_watchability_line(
+        "a day in 30 minutes or whatever it is, right?",
+        "30分钟，对吧？",
+        "zh-CN",
+    );
+    assert_eq!(repaired, "30分钟，对吧？");
 }
 
 #[test]
 fn step5_watchability_repair_does_not_invent_seconds_phrase() {
-    let mut segments = vec![Step5FinalSegment {
-        segment_id: 1,
-        start: 0.0,
-        end: 1.0,
-        source: "and I just take like 30 seconds to read these".to_string(),
-        translation: "30 来阅读这些内容。".to_string(),
-        tokens: vec![],
-    }];
-    repair_watchability_fragments(&mut segments, "zh-CN");
-    assert_eq!(segments[0].translation, "30 来阅读这些内容。");
+    let repaired = repair_single_watchability_line(
+        "and I just take like 30 seconds to read these",
+        "30 来阅读这些内容。",
+        "zh-CN",
+    );
+    assert_eq!(repaired, "30 来阅读这些内容。");
 }
 
 #[test]
 fn step5_watchability_repair_trims_trailing_connector_fragment() {
-    let mut segments = vec![Step5FinalSegment {
-        segment_id: 1,
-        start: 0.0,
-        end: 1.0,
-        source:
-            "I have these notes open and when they get outdated I rewrite them and put them back up"
-                .to_string(),
-        translation: "我有这些笔记，而且".to_string(),
-        tokens: vec![],
-    }];
-    repair_watchability_fragments(&mut segments, "zh-CN");
-    assert_eq!(segments[0].translation, "我有这些笔记");
-}
-
-#[test]
-fn step5_polish_adds_terminal_punctuation_for_finished_source_sentence() {
-    let mut segment = Step5FinalSegment {
-        segment_id: 190,
-        start: 0.0,
-        end: 1.0,
-        source: "Alright, I believe this is the last one for the week.".to_string(),
-        translation: "好了，我认为这是本周最后一个".to_string(),
-        tokens: vec![],
-    };
-
-    repair_polished_translation(&mut segment);
-
-    assert_eq!(segment.translation, "好了，我认为这是本周最后一个。");
-    assert!(!is_watchability_fragment_issue(
-        &segment.source,
-        &segment.translation,
-        "zh-CN"
-    ));
-}
-
-#[test]
-fn step5_watchability_split_long_segments_with_source_tokens() {
-    let mut segments = vec![Step5FinalSegment {
-            segment_id: 1,
-            start: 0.0,
-            end: 12.0,
-            source: "I want to share a deeper note for this part and make it easier for review.".to_string(),
-            translation: "I want to share a deeper note for this part and make it easier for review while keeping enough context".to_string(),
-            tokens: (0..16)
-                .map(|index| Step5Token {
-                    text: format!("w{index}"),
-                    start: index as f64 * 0.2,
-                    end: (index as f64 + 1.0) * 0.2,
-                })
-                .collect::<Vec<_>>(),
-        }];
-    split_watchability_overlong_segments(&mut segments, 15.0, "en-US");
-    assert!(segments.len() >= 2);
-    for segment in &segments {
-        assert!(!segment.translation.trim().is_empty());
-        assert!(!segment.source.trim().is_empty());
-        assert!(segment.end >= segment.start);
-    }
-}
-
-#[test]
-fn step5_watchability_split_long_segments_without_tokens() {
-    let mut segments = vec![Step5FinalSegment {
-        segment_id: 1,
-        start: 0.0,
-        end: 10.0,
-        source: "这个中文句子会被切分以便提升观看体验".to_string(),
-        translation: "这个中文句子会被切分以便提升观看体验效果从而更容易理解".to_string(),
-        tokens: vec![],
-    }];
-    split_watchability_overlong_segments(&mut segments, 7.0, "zh-CN");
-    assert!(segments.len() >= 2);
-    assert_eq!(segments[0].segment_id, 1);
-    assert_eq!(segments[segments.len() - 1].segment_id, segments.len());
-    assert!(segments[0].end <= segments[1].end);
-}
-
-#[test]
-fn step5_watchability_split_rejects_source_residue_fallback_for_cjk() {
-    let source = "Then we switch to the one minute review window, wait for the paragraph to match the highlighted note, which was";
-    let words = source.split_whitespace().collect::<Vec<_>>();
-    let tokens = words
-        .iter()
-        .enumerate()
-        .map(|(index, word)| Step5Token {
-            text: (*word).to_string(),
-            start: index as f64 * 0.4,
-            end: (index as f64 + 1.0) * 0.4,
-        })
-        .collect::<Vec<_>>();
-    let mut segments = vec![Step5FinalSegment {
-        segment_id: 1,
-        start: 82.56,
-        end: 87.52,
-        source: source.to_string(),
-        translation: "然后我们切换到一分钟复盘窗口，等待段落匹配高亮笔记（即，高亮笔记 / 关注区"
-            .to_string(),
-        tokens,
-    }];
-
-    split_watchability_overlong_segments(&mut segments, 8.0, "zh-CN");
-
-    assert!(segments.iter().all(|segment| {
-        !looks_like_source_residue(&segment.source, &segment.translation, "zh-CN")
-            && !is_unusable_translation(&segment.translation)
-    }));
+    let repaired = repair_single_watchability_line(
+        "I have these notes open and when they get outdated I rewrite them and put them back up",
+        "我有这些笔记，而且",
+        "zh-CN",
+    );
+    assert_eq!(repaired, "我有这些笔记");
 }
 
 #[test]

@@ -128,7 +128,7 @@ function resolveStageLabel(code: QueueItem["taskProgress"]["stage"]["code"]): st
     case "aligning":
       return "强制对齐中";
     case "segmenting":
-      return "AI断句中";
+      return "断句中";
     case "summarizing":
       return "总结中";
     case "terminology":

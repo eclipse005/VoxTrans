@@ -86,8 +86,7 @@ impl Default for SubtitleRenderStyleCommand {
 pub struct SavedSettingsCommand {
     pub provider: String,
     pub chunk_target_seconds: u32,
-    pub subtitle_max_words_per_segment: u32,
-    pub subtitle_length_reference: u32,
+    pub subtitle_length_preset: String,
     pub asr_model: String,
     #[serde(default = "default_align_model")]
     pub align_model: String,

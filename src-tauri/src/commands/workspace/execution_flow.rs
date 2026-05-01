@@ -79,7 +79,7 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
         })
         .collect::<Vec<_>>();
 
-    report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 1)?;
+    report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 0)?;
 
     let step2_exec = execute_workspace_step(
         app,
@@ -88,13 +88,9 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
             source_lang: source_lang.clone(),
+            subtitle_length_preset: runtime.subtitle_length_preset.clone(),
+            use_subtitle_layout_split: intent != "TRANSCRIBE_TRANSLATE",
             words: step2_words,
-            subtitle_max_words_per_segment: runtime.subtitle_max_words_per_segment,
-            translate_api_key: runtime.translate_api_key.clone(),
-            translate_base_url: runtime.translate_base_url.clone(),
-            translate_model: runtime.translate_model.clone(),
-            llm_concurrency: runtime.llm_concurrency,
-            app: app.clone(),
         },
         &step_context,
     )
@@ -131,7 +127,7 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
             step2_srt,
             source_text,
             runtime.enable_subtitle_beautify,
-            runtime.subtitle_length_reference,
+            &runtime.subtitle_length_preset,
             &target_lang,
         )
     };

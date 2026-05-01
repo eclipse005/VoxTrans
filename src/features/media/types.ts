@@ -48,11 +48,12 @@ export type SubtitleRenderStyle = {
   layout: SubtitleLayoutStyle;
 };
 
+export type SubtitleLengthPreset = "short" | "standard" | "loose";
+
 export type SavedSettings = {
   provider: Provider;
   chunkTargetSeconds: number;
-  subtitleMaxWordsPerSegment: number;
-  subtitleLengthReference: number;
+  subtitleLengthPreset: SubtitleLengthPreset;
   asrModel: AsrModel;
   alignModel: AlignModel;
   demucsModel: DemucsModel;
@@ -72,7 +73,7 @@ export type SavedSettings = {
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
-export type SourceLanguage = "en" | "zh" | "ja" | "ko" | "fr" | "de" | "it" | "es" | "pt";
+export type SourceLanguage = "en" | "zh" | "yue" | "ja" | "ko" | "fr" | "de" | "it" | "es" | "pt";
 export type TargetLanguage =
   | "zh-CN"
   | "zh-TW"
@@ -255,13 +256,6 @@ export type WordToken = {
   word: string;
 };
 
-export type SegmentWithWords = {
-  start: number;
-  end: number;
-  text: string;
-  words: WordToken[];
-};
-
 export type TranscribeResponse = {
   words: WordToken[];
   text: string;
@@ -296,21 +290,6 @@ export type TranscribeRtfBreakdownX = {
   qwenStage: number;
   qwenAlign: number;
   modelOnly: number;
-};
-
-export type BuildSegmentsRequest = {
-  taskId: string;
-  audioPath: string;
-  words: WordToken[];
-  subtitleMaxWordsPerSegment: number;
-  segmentMode?: "transcribe" | "translate_source";
-};
-
-export type BuildSegmentsResponse = {
-  text: string;
-  srt: string;
-  srtOutputPath: string;
-  segments: SegmentWithWords[];
 };
 
 export type SubtitleSaveRequest = {

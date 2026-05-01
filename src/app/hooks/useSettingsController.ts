@@ -3,7 +3,7 @@ import {
   saveAppSettings as saveAppSettingsApi,
   testTranslateLlmConnection,
 } from "../api/settings";
-import type { SavedSettings } from "../../features/media/types";
+import type { SavedSettings, SubtitleLengthPreset } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { ToastTone } from "../types";
 import { normalizeTerminologyGroups } from "../utils/terminology";
@@ -19,8 +19,7 @@ type UseSettingsControllerArgs = {
   settings: SavedSettings;
   draftProvider: SavedSettings["provider"];
   draftChunkInput: string;
-  draftSubtitleMaxWordsInput: string;
-  draftSubtitleLengthReferenceInput: string;
+  draftSubtitleLengthPreset: SubtitleLengthPreset;
   draftAsrModel: SavedSettings["asrModel"];
   draftAlignModel: SavedSettings["alignModel"];
   draftDemucsModel: SavedSettings["demucsModel"];
@@ -45,8 +44,7 @@ export function useSettingsController({
   settings,
   draftProvider,
   draftChunkInput,
-  draftSubtitleMaxWordsInput,
-  draftSubtitleLengthReferenceInput,
+  draftSubtitleLengthPreset,
   draftAsrModel,
   draftAlignModel,
   draftDemucsModel,
@@ -73,8 +71,7 @@ export function useSettingsController({
       payload: {
         draftProvider: settings.provider,
         draftChunkInput: String(settings.chunkTargetSeconds),
-        draftSubtitleMaxWordsInput: String(settings.subtitleMaxWordsPerSegment),
-        draftSubtitleLengthReferenceInput: String(settings.subtitleLengthReference),
+        draftSubtitleLengthPreset: settings.subtitleLengthPreset,
         draftAsrModel: settings.asrModel,
         draftAlignModel: settings.alignModel,
         draftDemucsModel: settings.demucsModel,
@@ -102,8 +99,7 @@ export function useSettingsController({
     settings.enableVocalSeparation,
     settings.provider,
     settings.asrModel,
-    settings.subtitleMaxWordsPerSegment,
-    settings.subtitleLengthReference,
+    settings.subtitleLengthPreset,
     settings.translateApiKey,
     settings.translateBaseUrl,
     settings.translateModel,
@@ -123,20 +119,8 @@ export function useSettingsController({
       pushToast("分段时长必须是数字", "error");
       return;
     }
-    const clamped = Math.max(30, Math.min(300, parsed));
+    const clamped = Math.max(30, Math.min(60, parsed));
 
-    const parsedSubtitleWords = Number.parseInt(draftSubtitleMaxWordsInput.trim(), 10);
-    if (!Number.isFinite(parsedSubtitleWords)) {
-      pushToast("原文长度必须是数字", "error");
-      return;
-    }
-    const clampedSubtitleWords = Math.max(8, Math.min(40, parsedSubtitleWords));
-    const parsedSubtitleLengthReference = Number.parseInt(draftSubtitleLengthReferenceInput.trim(), 10);
-    if (!Number.isFinite(parsedSubtitleLengthReference)) {
-      pushToast("译文长度必须是数字", "error");
-      return;
-    }
-    const clampedSubtitleLengthReference = Math.max(8, Math.min(80, parsedSubtitleLengthReference));
     const parsedConcurrency = Number.parseInt(draftLlmConcurrencyInput.trim(), 10);
     if (!Number.isFinite(parsedConcurrency)) {
       pushToast("并发数必须是数字", "error");
@@ -147,8 +131,7 @@ export function useSettingsController({
     const nextSettings = {
       provider: draftProvider,
       chunkTargetSeconds: clamped,
-      subtitleMaxWordsPerSegment: clampedSubtitleWords,
-      subtitleLengthReference: clampedSubtitleLengthReference,
+      subtitleLengthPreset: draftSubtitleLengthPreset,
       asrModel: draftAsrModel,
       alignModel: draftAlignModel,
       demucsModel: draftDemucsModel,
@@ -202,8 +185,7 @@ export function useSettingsController({
       type: "set_draft",
       payload: {
         draftChunkInput: String(clamped),
-        draftSubtitleMaxWordsInput: String(clampedSubtitleWords),
-        draftSubtitleLengthReferenceInput: String(clampedSubtitleLengthReference),
+        draftSubtitleLengthPreset: nextSettings.subtitleLengthPreset,
         draftAsrModel,
         draftAlignModel,
         draftDemucsModel,
@@ -237,8 +219,7 @@ export function useSettingsController({
     draftEnableVocalSeparation,
     draftProvider,
     draftAsrModel,
-    draftSubtitleMaxWordsInput,
-    draftSubtitleLengthReferenceInput,
+    draftSubtitleLengthPreset,
     draftTranslateApiKey,
     draftTranslateBaseUrl,
     draftTranslateModel,

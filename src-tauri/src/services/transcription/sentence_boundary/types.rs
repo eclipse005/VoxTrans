@@ -8,12 +8,9 @@ pub struct SentenceBoundaryRequest {
     pub task_id: String,
     pub media_path: String,
     pub source_lang: String,
+    pub subtitle_length_preset: String,
+    pub use_subtitle_layout_split: bool,
     pub words: Vec<WordTokenDto>,
-    pub subtitle_max_words_per_segment: u32,
-    pub translate_api_key: String,
-    pub translate_base_url: String,
-    pub translate_model: String,
-    pub llm_concurrency: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -86,26 +83,5 @@ pub enum BoundaryDecisionKind {
 pub(super) enum SplitReason {
     TerminalPunctuation,
     HardPause,
-    LengthFallback,
-    LlmSemanticRefinement,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct SemanticBoundaryCandidate {
-    pub(super) id: usize,
-    pub(super) split_after: usize,
-    pub(super) reason: String,
-    pub(super) score: f64,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct SemanticRefinementTask {
-    pub(super) task_id: usize,
-    pub(super) span_index: usize,
-    pub(super) span_start: usize,
-    pub(super) span_end: usize,
-    pub(super) desired_parts: usize,
-    pub(super) fallback_splits: Vec<usize>,
-    pub(super) candidates: Vec<SemanticBoundaryCandidate>,
-    pub(super) prompt: String,
+    SubtitleLayout,
 }

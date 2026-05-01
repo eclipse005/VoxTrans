@@ -66,8 +66,7 @@ function App() {
     settings,
     draftProvider,
     draftChunkInput,
-    draftSubtitleMaxWordsInput,
-    draftSubtitleLengthReferenceInput,
+    draftSubtitleLengthPreset,
     draftAsrModel,
     draftAlignModel,
     draftDemucsModel,
@@ -202,8 +201,7 @@ function App() {
     settings,
     draftProvider,
     draftChunkInput,
-    draftSubtitleMaxWordsInput,
-    draftSubtitleLengthReferenceInput,
+    draftSubtitleLengthPreset,
     draftAsrModel,
     draftAlignModel,
     draftDemucsModel,
@@ -322,8 +320,7 @@ function App() {
         visible={showSettings}
         draftProvider={draftProvider}
         draftChunkInput={draftChunkInput}
-        draftSubtitleMaxWordsInput={draftSubtitleMaxWordsInput}
-        draftSubtitleLengthReferenceInput={draftSubtitleLengthReferenceInput}
+        draftSubtitleLengthPreset={draftSubtitleLengthPreset}
         draftAsrModel={draftAsrModel}
         draftAlignModel={draftAlignModel}
         draftDemucsModel={draftDemucsModel}
@@ -346,8 +343,7 @@ function App() {
         onSave={saveSettings}
         onDraftProviderChange={(value) => dispatch({ type: "set_draft", payload: { draftProvider: value } })}
         onDraftChunkInputChange={(value) => dispatch({ type: "set_draft", payload: { draftChunkInput: value } })}
-        onDraftSubtitleMaxWordsInputChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleMaxWordsInput: value } })}
-        onDraftSubtitleLengthReferenceInputChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleLengthReferenceInput: value } })}
+        onDraftSubtitleLengthPresetChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleLengthPreset: value } })}
         onDraftAsrModelChange={(value) => dispatch({ type: "set_draft", payload: { draftAsrModel: value } })}
         onDraftAlignModelChange={(value) => dispatch({ type: "set_draft", payload: { draftAlignModel: value } })}
         onDraftDemucsModelChange={(value) => dispatch({ type: "set_draft", payload: { draftDemucsModel: value } })}

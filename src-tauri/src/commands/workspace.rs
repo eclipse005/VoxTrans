@@ -37,7 +37,6 @@ enum TaskStage {
     Terminology,
     Translating,
     SubtitleLayout,
-    FinalCheck,
 }
 
 impl TaskStage {
@@ -50,7 +49,6 @@ impl TaskStage {
             TaskStage::Terminology => "terminology",
             TaskStage::Translating => "translating",
             TaskStage::SubtitleLayout => "subtitleLayout",
-            TaskStage::FinalCheck => "finalCheck",
         }
     }
 
@@ -59,11 +57,10 @@ impl TaskStage {
             TaskStage::Preparing => "准备中",
             TaskStage::Recognizing => "语音识别中",
             TaskStage::Aligning => "强制对齐中",
-            TaskStage::Segmenting => "AI断句中",
+            TaskStage::Segmenting => "断句中",
             TaskStage::Terminology => "术语提取中",
             TaskStage::Translating => "翻译中",
             TaskStage::SubtitleLayout => "",
-            TaskStage::FinalCheck => "本地最终检查中",
         }
     }
 
@@ -76,7 +73,6 @@ impl TaskStage {
             TaskStage::Terminology => 60,
             TaskStage::Translating => 70,
             TaskStage::SubtitleLayout => 80,
-            TaskStage::FinalCheck => 90,
         }
     }
 }
@@ -105,8 +101,6 @@ const STEP_03_TERMINOLOGY_FILE: &str = "step_03_terminology.json";
 const STEP_04_TRANSLATION_FILE: &str = "step_04_translation.json";
 const STEP_05_01_SOURCE_SPLIT_FILE: &str = "step_05_01_source_split.json";
 const STEP_05_02_TRANSLATION_ALIGN_FILE: &str = "step_05_02_translation_align.json";
-const STEP_05_03_TRANSLATION_POLISH_FILE: &str = "step_05_03_translation_polish.json";
-const STEP_06_FINAL_CHECK_FILE: &str = "step_06_final_check.json";
 
 fn workspace_store() -> &'static Mutex<WorkspaceStore> {
     WORKSPACE_STORE.get_or_init(|| Mutex::new(WorkspaceStore::default()))
@@ -224,13 +218,13 @@ pub async fn enqueue_and_execute_task_batch(
     Ok(response)
 }
 
-pub fn task_subtitle_beautify_context(task_id: &str) -> Result<(bool, u32, String), String> {
+pub fn task_subtitle_beautify_context(task_id: &str) -> Result<(bool, String, String), String> {
     let record = get_task_record(task_id)?;
     let saved = crate::services::preferences::load_saved_settings_from_default_path()
         .unwrap_or_else(|_| fallback_saved_settings());
     Ok((
         saved.enable_subtitle_beautify,
-        saved.subtitle_length_reference,
+        saved.subtitle_length_preset,
         record.target_lang,
     ))
 }
@@ -340,6 +334,9 @@ fn normalize_task_source_lang(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
         "en" | "en-us" | "english" => "en".to_string(),
         "zh" | "zh-cn" | "zh-hans" | "chinese" | "mandarin" => "zh".to_string(),
+        "yue" | "yue-hk" | "zh-yue" | "cantonese" | "粤语" | "廣東話" | "广东话" => {
+            "yue".to_string()
+        }
         "ja" | "ja-jp" | "japanese" => "ja".to_string(),
         "ko" | "ko-kr" | "korean" => "ko".to_string(),
         "fr" | "fr-fr" | "french" => "fr".to_string(),
@@ -362,4 +359,24 @@ fn normalize_task_target_lang(raw: &str) -> String {
 
 fn emit_task_state_changed(app: &AppHandle, item: &WorkspaceQueueItem) {
     let _ = app.emit("task-state-changed", item);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_cantonese_source_language_aliases() {
+        for alias in [
+            "yue",
+            "yue-HK",
+            "zh-yue",
+            "Cantonese",
+            "粤语",
+            "廣東話",
+            "广东话",
+        ] {
+            assert_eq!(normalize_task_source_lang(alias), "yue");
+        }
+    }
 }

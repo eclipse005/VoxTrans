@@ -31,7 +31,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::transcribe::transcribe,
-            commands::transcribe::build_segments_from_words,
             commands::transcribe::separate_vocals,
             commands::file::save_srt,
             commands::file::export_srt,
@@ -41,8 +40,6 @@ fn main() {
             commands::translate_translation::build_translation_layer,
             commands::translate_step5_commands::build_step_5_1_source_split,
             commands::translate_step5_commands::build_step_5_2_translation_align,
-            commands::translate_step5_commands::build_step_5_3_translation_polish,
-            commands::translate_final_check::build_step_6_final_check,
             commands::translate_connectivity::test_translate_llm,
             commands::file::get_file_size,
             commands::system::open_in_explorer,

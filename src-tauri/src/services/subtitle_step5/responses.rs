@@ -8,7 +8,8 @@ use super::text_utils::normalize_inline_text;
 
 pub(super) fn validate_source_split_response(
     value: Value,
-    min_parts: usize,
+    source_text: &str,
+    require_split: bool,
 ) -> Result<Vec<String>, LlmSemanticValidationError> {
     let Some(items) = value
         .get("sourceParts")
@@ -30,15 +31,36 @@ pub(super) fn validate_source_split_response(
             out.push(text);
         }
     }
-    if out.len() < min_parts.max(2) {
+    if out.is_empty() {
         return Err(LlmSemanticValidationError::retryable(
             "sourceParts has too few items",
         ));
     }
-    if out.len() > min_parts.max(2) {
-        out.truncate(min_parts.max(2));
+    if out.len() > 2 {
+        return Err(LlmSemanticValidationError::retryable(
+            "sourceParts must contain at most two items",
+        ));
+    }
+    if require_split && out.len() < 2 {
+        return Err(LlmSemanticValidationError::retryable(
+            "sourceParts must contain two items for this overlong sourceText",
+        ));
+    }
+    let expected = compact_for_split_match(source_text);
+    let actual = compact_for_split_match(&out.join(""));
+    if !expected.is_empty() && expected != actual {
+        return Err(LlmSemanticValidationError::retryable(
+            "sourceParts must concatenate back to sourceText",
+        ));
     }
     Ok(out)
+}
+
+pub(super) fn compact_for_split_match(text: &str) -> String {
+    normalize_inline_text(text)
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect()
 }
 
 pub(super) fn validate_align_response(
@@ -73,14 +95,4 @@ pub(super) fn validate_align_response(
         out.entry(*expected_id).or_insert_with(String::new);
     }
     Ok(out)
-}
-
-pub(super) fn validate_polish_response(value: Value) -> Result<String, LlmSemanticValidationError> {
-    let text = value
-        .get("text")
-        .or_else(|| value.get("translation"))
-        .and_then(|v| v.as_str())
-        .map(normalize_inline_text)
-        .unwrap_or_default();
-    Ok(text)
 }

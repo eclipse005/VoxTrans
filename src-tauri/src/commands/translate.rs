@@ -5,10 +5,8 @@ use super::translate_artifacts::{
 #[cfg(test)]
 use super::translate_terms::{count_source_tokens, normalize_command_terminology_entries};
 
-pub use super::translate_final_check::build_step_6_final_check;
 pub use super::translate_step5_commands::{
     build_step_5_1_source_split, build_step_5_2_translation_align,
-    build_step_5_3_translation_polish,
 };
 pub use super::translate_terminology::build_terminology_layer;
 pub use super::translate_translation::build_translation_layer;

@@ -27,7 +27,7 @@ pub enum ExportSrtItem {
 #[derive(Debug, Clone)]
 pub struct SubtitleBeautifyOptions {
     pub enabled: bool,
-    pub subtitle_length_reference: u32,
+    pub subtitle_length_preset: String,
     pub target_lang: String,
 }
 
@@ -56,7 +56,7 @@ pub fn write_task_output_variants_for_completion(
     if beautify.enabled {
         crate::services::subtitle_beautify::beautify_subtitle_srt_segments(
             &mut segments,
-            beautify.subtitle_length_reference,
+            &beautify.subtitle_length_preset,
             &beautify.target_lang,
         );
     }

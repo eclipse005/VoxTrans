@@ -161,7 +161,7 @@ pub fn export_task_srts(request: ExportTaskSrtsRequest) -> Result<Vec<String>, S
     }
 
     let task_item = crate::commands::workspace::get_task_queue_item_for_export(&request.task_id)?;
-    let (task_enable_subtitle_beautify, subtitle_length_reference, target_lang) =
+    let (task_enable_subtitle_beautify, subtitle_length_preset, target_lang) =
         crate::commands::workspace::task_subtitle_beautify_context(&request.task_id)?;
     let segments =
         crate::services::subtitle_srt::parse_segments_json(&task_item.subtitle_segments_json)
@@ -173,7 +173,7 @@ pub fn export_task_srts(request: ExportTaskSrtsRequest) -> Result<Vec<String>, S
     if task_enable_subtitle_beautify {
         crate::services::subtitle_beautify::beautify_subtitle_srt_segments(
             &mut segments,
-            subtitle_length_reference,
+            &subtitle_length_preset,
             &target_lang,
         );
     }

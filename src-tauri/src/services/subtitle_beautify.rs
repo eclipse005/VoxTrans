@@ -2,7 +2,7 @@ use crate::services::subtitle_srt::SubtitleSrtSegment;
 
 pub fn beautify_subtitle_srt_segments(
     segments: &mut Vec<SubtitleSrtSegment>,
-    subtitle_length_reference: u32,
+    subtitle_length_preset: &str,
     target_lang: &str,
 ) {
     for segment in &mut *segments {
@@ -10,7 +10,7 @@ pub fn beautify_subtitle_srt_segments(
     }
     crate::services::subtitle_step5::merge_watchability_subtitle_srt_segments(
         segments,
-        subtitle_length_reference,
+        subtitle_length_preset,
         target_lang,
     );
 }
@@ -181,7 +181,7 @@ mod tests {
             translated_text: " (你好，世界), ".to_string(),
         }];
 
-        beautify_subtitle_srt_segments(&mut segments, 28, "zh-CN");
+        beautify_subtitle_srt_segments(&mut segments, "standard", "zh-CN");
 
         assert_eq!(segments[0].source_text, " (Hello, world), ");
         assert_eq!(segments[0].translated_text, "你好世界");
@@ -204,7 +204,7 @@ mod tests {
             },
         ];
 
-        beautify_subtitle_srt_segments(&mut segments, 28, "zh-CN");
+        beautify_subtitle_srt_segments(&mut segments, "standard", "zh-CN");
 
         assert_eq!(segments.len(), 1);
         assert_eq!(
@@ -234,7 +234,35 @@ mod tests {
             },
         ];
 
-        beautify_subtitle_srt_segments(&mut segments, 28, "zh-CN");
+        beautify_subtitle_srt_segments(&mut segments, "standard", "zh-CN");
+
+        assert_eq!(segments.len(), 2);
+    }
+
+    #[test]
+    fn subtitle_beautify_srt_segments_respects_short_word_target_limit_when_merging() {
+        let mut segments = vec![
+            SubtitleSrtSegment {
+                start_ms: 0,
+                end_ms: 2000,
+                source_text: "This source line is long enough to count as a real fragment"
+                    .to_string(),
+                translated_text:
+                    "this local subtitle line is still clearly incomplete near the edge and"
+                        .to_string(),
+            },
+            SubtitleSrtSegment {
+                start_ms: 2000,
+                end_ms: 3500,
+                source_text: "the continuation should not make the short preset too wide"
+                    .to_string(),
+                translated_text:
+                    "the continuation adds several more words for viewing comfort today again now"
+                        .to_string(),
+            },
+        ];
+
+        beautify_subtitle_srt_segments(&mut segments, "short", "en");
 
         assert_eq!(segments.len(), 2);
     }

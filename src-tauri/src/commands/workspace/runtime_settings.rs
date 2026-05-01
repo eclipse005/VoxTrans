@@ -15,13 +15,12 @@ pub(super) struct PipelineRuntimeSettings {
     pub(super) translate_base_url: String,
     pub(super) translate_model: String,
     pub(super) llm_concurrency: u32,
-    pub(super) subtitle_max_words_per_segment: u32,
-    pub(super) subtitle_length_reference: u32,
+    pub(super) subtitle_length_preset: String,
     pub(super) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
     pub(super) enable_subtitle_beautify: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SettingsSnapshotInput {
     #[serde(default)]
@@ -40,10 +39,7 @@ struct SettingsSnapshotInput {
     translate_model: Option<String>,
     #[serde(default)]
     llm_concurrency: Option<u32>,
-    #[serde(default)]
-    subtitle_max_words_per_segment: Option<u32>,
-    #[serde(default)]
-    subtitle_length_reference: Option<u32>,
+    subtitle_length_preset: String,
     #[serde(default)]
     terminology_groups: Option<Vec<SettingsSnapshotTerminologyGroup>>,
     #[serde(default)]
@@ -74,8 +70,8 @@ pub(super) fn resolve_runtime_settings(
     snapshot: &Value,
     require_translate_llm: bool,
 ) -> Result<PipelineRuntimeSettings, String> {
-    let snapshot_parsed =
-        serde_json::from_value::<SettingsSnapshotInput>(snapshot.clone()).unwrap_or_default();
+    let snapshot_parsed = serde_json::from_value::<SettingsSnapshotInput>(snapshot.clone())
+        .map_err(|err| format!("invalid settings snapshot: {err}"))?;
     let saved = crate::services::preferences::load_saved_settings_from_default_path()
         .unwrap_or_else(|_| fallback_saved_settings());
 
@@ -89,7 +85,7 @@ pub(super) fn resolve_runtime_settings(
     let chunk_target_seconds = snapshot_parsed
         .chunk_target_seconds
         .unwrap_or(saved.chunk_target_seconds)
-        .clamp(30, 300);
+        .clamp(30, 60);
     let asr_model = snapshot_parsed
         .asr_model
         .as_deref()
@@ -141,14 +137,9 @@ pub(super) fn resolve_runtime_settings(
         .llm_concurrency
         .unwrap_or(saved.llm_concurrency)
         .clamp(1, 16);
-    let subtitle_max_words_per_segment = snapshot_parsed
-        .subtitle_max_words_per_segment
-        .unwrap_or(saved.subtitle_max_words_per_segment)
-        .clamp(8, 40);
-    let subtitle_length_reference = snapshot_parsed
-        .subtitle_length_reference
-        .unwrap_or(saved.subtitle_length_reference)
-        .clamp(8, 80);
+    let subtitle_length_preset = crate::services::subtitle_length::normalize_subtitle_length_preset(
+        &snapshot_parsed.subtitle_length_preset,
+    );
     let enable_terminology = snapshot_parsed
         .enable_terminology
         .unwrap_or(saved.enable_terminology);
@@ -204,8 +195,7 @@ pub(super) fn resolve_runtime_settings(
         translate_base_url,
         translate_model,
         llm_concurrency,
-        subtitle_max_words_per_segment,
-        subtitle_length_reference,
+        subtitle_length_preset,
         terminology_entries,
         enable_subtitle_beautify,
     })
@@ -214,9 +204,9 @@ pub(super) fn resolve_runtime_settings(
 pub(super) fn fallback_saved_settings() -> crate::services::preferences::SavedSettings {
     crate::services::preferences::SavedSettings {
         provider: "cpu".to_string(),
-        chunk_target_seconds: 180,
-        subtitle_max_words_per_segment: 20,
-        subtitle_length_reference: 28,
+        chunk_target_seconds: 45,
+        subtitle_length_preset: crate::services::subtitle_length::DEFAULT_SUBTITLE_LENGTH_PRESET
+            .to_string(),
         asr_model: crate::services::model::DEFAULT_ASR_MODEL.to_string(),
         align_model: "Qwen3-ForcedAligner-0.6B".to_string(),
         demucs_model: "htdemucs_ft".to_string(),
@@ -262,7 +252,8 @@ mod tests {
                 "asrModel": "Qwen3-ASR-1.7B",
                 "alignModel": "Qwen3-ForcedAligner-0.6B",
                 "provider": "cuda",
-                "chunkTargetSeconds": 120
+                "chunkTargetSeconds": 61,
+                "subtitleLengthPreset": "standard"
             }),
             false,
         )
@@ -270,5 +261,22 @@ mod tests {
 
         assert_eq!(settings.asr_model, "Qwen3-ASR-1.7B");
         assert_eq!(settings.align_model, "Qwen3-ForcedAligner-0.6B");
+        assert_eq!(settings.chunk_target_seconds, 60);
+    }
+
+    #[test]
+    fn runtime_settings_require_subtitle_length_preset_from_snapshot() {
+        let err = resolve_runtime_settings(
+            &json!({
+                "asrModel": "Qwen3-ASR-1.7B",
+                "alignModel": "Qwen3-ForcedAligner-0.6B",
+                "provider": "cuda",
+                "chunkTargetSeconds": 120
+            }),
+            false,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("subtitleLengthPreset"));
     }
 }

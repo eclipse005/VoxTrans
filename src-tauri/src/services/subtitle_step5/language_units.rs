@@ -11,7 +11,12 @@ pub(super) fn text_length_units(text: &str, lang: &str) -> f64 {
 
 pub(super) fn use_char_units(lang: &str, text: &str) -> bool {
     let lower = lang.trim().to_ascii_lowercase();
-    if lower.starts_with("zh") || lower.starts_with("ja") || lower.starts_with("ko") {
+    if lower.starts_with("zh")
+        || lower.starts_with("yue")
+        || lower.starts_with("ja")
+        || lower.starts_with("ko")
+        || lower.starts_with("th")
+    {
         return true;
     }
     if lower.is_empty() || lower == "auto" {

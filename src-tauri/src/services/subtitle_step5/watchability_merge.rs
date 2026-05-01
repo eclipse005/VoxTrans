@@ -2,7 +2,7 @@ use crate::services::subtitle_srt::SubtitleSrtSegment;
 
 use super::constants::{
     WATCHABILITY_MERGE_LEN_RATIO, WATCHABILITY_MERGE_TIME_BUDGET_SECONDS,
-    WATCHABILITY_MERGE_TIME_GAP_SECONDS, WATCHABILITY_SPLIT_TRIGGER,
+    WATCHABILITY_MERGE_TIME_GAP_SECONDS,
 };
 use super::language_units::{text_length_units, use_char_units};
 use super::quality::{ends_with_short_dangling_fragment, is_terminal_punctuation};
@@ -14,7 +14,7 @@ use super::watchability::{is_watchability_fragment_issue, repair_single_watchabi
 
 pub fn merge_watchability_subtitle_srt_segments(
     segments: &mut Vec<SubtitleSrtSegment>,
-    subtitle_length_reference: u32,
+    subtitle_length_preset: &str,
     target_lang: &str,
 ) {
     let original_segments = segments.clone();
@@ -31,7 +31,11 @@ pub fn merge_watchability_subtitle_srt_segments(
         })
         .collect::<Vec<_>>();
 
-    merge_watchability_fragments(&mut step_segments, subtitle_length_reference, target_lang);
+    let target_limit = crate::services::subtitle_length::target_limit_for_preset(
+        target_lang,
+        subtitle_length_preset,
+    );
+    merge_watchability_fragments(&mut step_segments, target_limit, target_lang);
 
     *segments = step_segments
         .into_iter()
@@ -53,16 +57,14 @@ pub fn merge_watchability_subtitle_srt_segments(
 
 fn merge_watchability_fragments(
     segments: &mut Vec<Step5FinalSegment>,
-    subtitle_length_reference: u32,
+    target_limit: u32,
     target_lang: &str,
 ) {
     if segments.len() < 2 {
         return;
     }
 
-    let max_watch_units = (f64::from(subtitle_length_reference.max(1))
-        * WATCHABILITY_MERGE_LEN_RATIO)
-        .max(WATCHABILITY_SPLIT_TRIGGER);
+    let max_watch_units = f64::from(target_limit.max(1)) * WATCHABILITY_MERGE_LEN_RATIO;
     let mut merged = Vec::<Step5FinalSegment>::with_capacity(segments.len());
     let mut index = 0usize;
 

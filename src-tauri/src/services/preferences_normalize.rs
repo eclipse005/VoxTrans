@@ -9,9 +9,9 @@ use super::preferences_types::{
 pub(super) fn default_settings() -> SavedSettings {
     SavedSettings {
         provider: "cpu".to_string(),
-        chunk_target_seconds: 180,
-        subtitle_max_words_per_segment: 20,
-        subtitle_length_reference: 28,
+        chunk_target_seconds: 45,
+        subtitle_length_preset: crate::services::subtitle_length::DEFAULT_SUBTITLE_LENGTH_PRESET
+            .to_string(),
         asr_model: crate::services::model::DEFAULT_ASR_MODEL.to_string(),
         align_model: "Qwen3-ForcedAligner-0.6B".to_string(),
         demucs_model: "htdemucs_ft".to_string(),
@@ -40,9 +40,10 @@ pub(super) fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings
                 trimmed.to_string()
             }
         },
-        chunk_target_seconds: settings.chunk_target_seconds.clamp(30, 300),
-        subtitle_max_words_per_segment: settings.subtitle_max_words_per_segment.clamp(8, 40),
-        subtitle_length_reference: settings.subtitle_length_reference.clamp(8, 80),
+        chunk_target_seconds: settings.chunk_target_seconds.clamp(30, 60),
+        subtitle_length_preset: crate::services::subtitle_length::normalize_subtitle_length_preset(
+            &settings.subtitle_length_preset,
+        ),
         asr_model: {
             let trimmed = settings.asr_model.trim();
             if trimmed.is_empty() {
@@ -265,4 +266,24 @@ fn make_entity_id(prefix: &str, seq: usize) -> String {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     format!("{prefix}-{millis}-{seq}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_chunk_target_seconds_is_forty_five() {
+        assert_eq!(default_settings().chunk_target_seconds, 45);
+    }
+
+    #[test]
+    fn normalize_saved_settings_clamps_chunk_target_upper_bound() {
+        let mut settings = default_settings();
+        settings.chunk_target_seconds = 61;
+
+        let normalized = normalize_saved_settings(settings);
+
+        assert_eq!(normalized.chunk_target_seconds, 60);
+    }
 }

@@ -1,12 +1,10 @@
 use tauri::Emitter;
 use tauri::async_runtime::spawn_blocking;
 
-use super::transcribe_mapping::{
-    from_build_segments_response, from_transcribe_response, to_service_word,
-};
+use super::transcribe_mapping::from_transcribe_response;
 pub use super::transcribe_types::{
-    BuildSegmentsCommandRequest, BuildSegmentsCommandResponse, SeparateVocalsCommandRequest,
-    SeparateVocalsCommandResponse, TranscribeCommandRequest, TranscribeCommandResponse,
+    SeparateVocalsCommandRequest, SeparateVocalsCommandResponse, TranscribeCommandRequest,
+    TranscribeCommandResponse,
 };
 use super::transcribe_types::{SeparateProgressEvent, TranscribeProgressEvent};
 
@@ -52,22 +50,6 @@ pub async fn transcribe(
     })
     .await
     .map_err(|err| err.to_string())?
-}
-
-#[tauri::command]
-pub fn build_segments_from_words(
-    request: BuildSegmentsCommandRequest,
-) -> Result<BuildSegmentsCommandResponse, String> {
-    crate::services::transcribe::build_segments_from_words(
-        crate::services::transcribe::BuildSegmentsRequest {
-            task_id: request.task_id,
-            audio_path: request.audio_path,
-            words: request.words.into_iter().map(to_service_word).collect(),
-            subtitle_max_words_per_segment: request.subtitle_max_words_per_segment,
-            segment_mode: request.segment_mode,
-        },
-    )
-    .map(from_build_segments_response)
 }
 
 #[tauri::command]

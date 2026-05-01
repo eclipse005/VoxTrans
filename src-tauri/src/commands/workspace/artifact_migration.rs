@@ -2,8 +2,7 @@ use std::path::Path;
 
 use super::{
     STEP_01_ASR_FILE, STEP_02_SEGMENTS_FILE, STEP_03_TERMINOLOGY_FILE, STEP_04_TRANSLATION_FILE,
-    STEP_05_01_SOURCE_SPLIT_FILE, STEP_05_02_TRANSLATION_ALIGN_FILE,
-    STEP_05_03_TRANSLATION_POLISH_FILE, STEP_06_FINAL_CHECK_FILE, TASK_META_FILE_NAME,
+    STEP_05_01_SOURCE_SPLIT_FILE, STEP_05_02_TRANSLATION_ALIGN_FILE, TASK_META_FILE_NAME,
 };
 
 pub(super) fn migrate_legacy_artifacts(
@@ -91,8 +90,6 @@ fn migrate_target_artifact_name(name: &str) -> Option<&'static str> {
         "step_04_translation.json" => Some(STEP_04_TRANSLATION_FILE),
         "step_05_01_source_split.json" => Some(STEP_05_01_SOURCE_SPLIT_FILE),
         "step_05_02_translation_align.json" => Some(STEP_05_02_TRANSLATION_ALIGN_FILE),
-        "step_05_03_translation_polish.json" => Some(STEP_05_03_TRANSLATION_POLISH_FILE),
-        "step_06_final_check.json" => Some(STEP_06_FINAL_CHECK_FILE),
         "gpt.log" => Some("gpt.log"),
         "task_meta.json" => Some(TASK_META_FILE_NAME),
         _ => None,

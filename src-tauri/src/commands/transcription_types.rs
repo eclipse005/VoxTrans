@@ -53,17 +53,14 @@ pub struct BuildSourceSentencesCommandRequest {
     pub task_id: String,
     pub audio_path: String,
     pub source_lang: String,
+    pub subtitle_length_preset: String,
+    #[serde(default = "default_use_subtitle_layout_split")]
+    pub use_subtitle_layout_split: bool,
     pub words: Vec<WordTokenCommandDto>,
-    #[serde(default = "default_subtitle_max_words_per_segment")]
-    pub subtitle_max_words_per_segment: u32,
-    #[serde(default)]
-    pub translate_api_key: String,
-    #[serde(default)]
-    pub translate_base_url: String,
-    #[serde(default)]
-    pub translate_model: String,
-    #[serde(default = "default_llm_concurrency")]
-    pub llm_concurrency: u32,
+}
+
+fn default_use_subtitle_layout_split() -> bool {
+    true
 }
 
 #[derive(Debug, serde::Serialize, Clone)]
@@ -95,12 +92,4 @@ pub struct GroupedSentenceSegmentCommandDto {
     pub start: f64,
     pub end: f64,
     pub tokens: Vec<GroupedSentenceTokenCommandDto>,
-}
-
-pub(super) fn default_llm_concurrency() -> u32 {
-    4
-}
-
-pub(super) fn default_subtitle_max_words_per_segment() -> u32 {
-    20
 }

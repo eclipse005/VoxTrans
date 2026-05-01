@@ -20,7 +20,7 @@ pub(super) fn finish_transcribe_only(
     step2_srt: String,
     source_text: String,
     enable_subtitle_beautify: bool,
-    subtitle_length_reference: u32,
+    subtitle_length_preset: &str,
     target_lang: &str,
 ) -> Result<(), String> {
     let workspace_segments = workspace_subtitle_segments_from_step2_segments(step2_segments);
@@ -31,7 +31,7 @@ pub(super) fn finish_transcribe_only(
         &workspace_segments,
         false,
         enable_subtitle_beautify,
-        subtitle_length_reference,
+        subtitle_length_preset,
         target_lang,
     )?;
 
@@ -52,7 +52,7 @@ pub(super) fn finish_translate_with_step5(
     segments: &[BuildTranslationSegmentCommand],
     source_text: String,
     enable_subtitle_beautify: bool,
-    subtitle_length_reference: u32,
+    subtitle_length_preset: &str,
     target_lang: &str,
 ) -> Result<(), String> {
     let workspace_segments = workspace_subtitle_segments_from_translation_segments(segments);
@@ -63,7 +63,7 @@ pub(super) fn finish_translate_with_step5(
         &workspace_segments,
         true,
         enable_subtitle_beautify,
-        subtitle_length_reference,
+        subtitle_length_preset,
         target_lang,
     )?;
 
@@ -83,7 +83,7 @@ fn write_completion_srts(
     segments: &[WorkspaceSubtitleSegment],
     include_translation_variants: bool,
     enable_subtitle_beautify: bool,
-    subtitle_length_reference: u32,
+    subtitle_length_preset: &str,
     target_lang: &str,
 ) -> Result<(), String> {
     let srt_segments = segments
@@ -104,7 +104,7 @@ fn write_completion_srts(
         include_translation_variants,
         crate::services::subtitle_srt::SubtitleBeautifyOptions {
             enabled: enable_subtitle_beautify,
-            subtitle_length_reference,
+            subtitle_length_preset: subtitle_length_preset.to_string(),
             target_lang: target_lang.to_string(),
         },
     )?;

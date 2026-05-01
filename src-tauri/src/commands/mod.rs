@@ -28,7 +28,6 @@ pub mod translate_cli_terminology;
 pub mod translate_cli_translation;
 pub mod translate_connectivity;
 pub mod translate_defaults;
-pub mod translate_final_check;
 pub mod translate_llm_settings;
 pub mod translate_quality;
 pub mod translate_step5_commands;
@@ -61,5 +60,13 @@ mod command_registration_tests {
                 "{command} must be registered in the Tauri invoke handler"
             );
         }
+    }
+
+    #[test]
+    fn final_check_command_is_not_registered_in_tauri_handler() {
+        assert!(
+            !MAIN_RS.contains("commands::translate_final_check::build_step_6_final_check"),
+            "Step6 final check should not be exposed as a Tauri command"
+        );
     }
 }

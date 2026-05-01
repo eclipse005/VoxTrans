@@ -1,10 +1,9 @@
-use super::text::ends_with_terminal_punctuation;
 use super::{
-    BoundaryDecisionKind, DEFAULT_SUBTITLE_MAX_WORDS_PER_SEGMENT, HARD_SPLIT_GAP_MS,
-    build_deterministic_sentence_spans, build_micro_chunks,
-    build_source_sentences_from_words_with_progress,
+    BoundaryDecisionKind, HARD_SPLIT_GAP_MS, build_deterministic_sentence_spans,
+    build_micro_chunks, build_source_sentences_from_words_with_progress,
 };
 use crate::services::transcribe::WordTokenDto;
+use voxtrans_core::subtitle::text_rules::ends_with_terminal_punctuation;
 
 fn w(index: usize, text: &str) -> WordTokenDto {
     let start = index as f64 * 0.5;
@@ -16,16 +15,30 @@ fn w(index: usize, text: &str) -> WordTokenDto {
 }
 
 fn request(words: Vec<WordTokenDto>) -> super::SentenceBoundaryRequest {
+    request_with_lang_and_preset(words, "en", "standard")
+}
+
+fn request_with_lang_and_preset(
+    words: Vec<WordTokenDto>,
+    source_lang: &str,
+    subtitle_length_preset: &str,
+) -> super::SentenceBoundaryRequest {
+    request_with_lang_preset_and_layout(words, source_lang, subtitle_length_preset, true)
+}
+
+fn request_with_lang_preset_and_layout(
+    words: Vec<WordTokenDto>,
+    source_lang: &str,
+    subtitle_length_preset: &str,
+    use_subtitle_layout_split: bool,
+) -> super::SentenceBoundaryRequest {
     super::SentenceBoundaryRequest {
         task_id: "task-1".to_string(),
         media_path: "demo.mp4".to_string(),
-        source_lang: "en".to_string(),
+        source_lang: source_lang.to_string(),
+        subtitle_length_preset: subtitle_length_preset.to_string(),
+        use_subtitle_layout_split,
         words,
-        subtitle_max_words_per_segment: DEFAULT_SUBTITLE_MAX_WORDS_PER_SEGMENT,
-        translate_api_key: String::new(),
-        translate_base_url: String::new(),
-        translate_model: String::new(),
-        llm_concurrency: 16,
     }
 }
 
@@ -44,7 +57,7 @@ fn deterministic_spans_split_on_terminal_punctuation() {
 }
 
 #[test]
-fn length_fallback_still_splits_overlong_terminal_sentence() {
+fn overlong_terminal_sentence_stays_intact_until_terminal_punctuation() {
     let words = "All right, in this video, we're going to be talking about daily review habits and how they affect your focus and your planning mindset."
         .split_whitespace()
         .enumerate()
@@ -53,15 +66,11 @@ fn length_fallback_still_splits_overlong_terminal_sentence() {
 
     let spans = build_deterministic_sentence_spans(&words);
 
-    assert!(
-        spans.len() > 1,
-        "overlong terminal sentence should still be shortened before translation"
-    );
-    assert!(spans.iter().all(|(start, end)| end - start < 20));
+    assert_eq!(spans, vec![(0, words.len() - 1)]);
 }
 
 #[test]
-fn length_fallback_prefers_soft_punctuation_for_very_long_runs() {
+fn soft_punctuation_does_not_create_extra_step2_split() {
     let words = (0..45)
         .map(|index| {
             let token = if index == 29 { "checkpoint," } else { "word" };
@@ -71,11 +80,11 @@ fn length_fallback_prefers_soft_punctuation_for_very_long_runs() {
 
     let spans = build_deterministic_sentence_spans(&words);
 
-    assert_eq!(spans, vec![(0, 19), (20, 29), (30, 44)]);
+    assert_eq!(spans, vec![(0, 44)]);
 }
 
 #[test]
-fn duration_fallback_splits_slow_unpunctuated_runs_under_word_limit() {
+fn duration_fallback_does_not_split_without_hard_pause() {
     let words = (0..30)
         .map(|index| WordTokenDto {
             start: index as f64,
@@ -86,24 +95,22 @@ fn duration_fallback_splits_slow_unpunctuated_runs_under_word_limit() {
 
     let spans = build_deterministic_sentence_spans(&words);
 
-    assert_eq!(spans, vec![(0, 14), (15, 29)]);
+    assert_eq!(spans, vec![(0, 29)]);
 }
 
 #[test]
-fn deterministic_spans_split_long_unpunctuated_runs_without_llm() {
+fn long_unpunctuated_runs_stay_intact_without_hard_pause() {
     let words = (0..45)
         .map(|index| w(index, &format!("w{index}")))
         .collect::<Vec<_>>();
 
     let spans = build_deterministic_sentence_spans(&words);
 
-    assert!(spans.len() > 1, "long unpunctuated ASR run should be split");
-    assert_eq!(spans.first(), Some(&(0, 19)));
-    assert_eq!(spans.last(), Some(&(30, 44)));
+    assert_eq!(spans, vec![(0, 44)]);
 }
 
 #[test]
-fn long_missing_punctuation_span_is_split_before_step4_translation() {
+fn long_missing_punctuation_span_stays_intact_for_later_llm_layout() {
     let text = "It's something I've been trying to do every week just to get a good idea of how I'm performing against the reference list of literally reviewing every high quality example that I see because sometimes your execution slips, you might skip examples due to hesitation or maybe you choose weaker examples because you're not thinking straight.";
     let words = text
         .split_whitespace()
@@ -119,102 +126,40 @@ fn long_missing_punctuation_span_is_split_before_step4_translation() {
         })
         .collect::<Vec<_>>();
 
-    assert!(
-        texts.len() >= 3,
-        "long ASR span should be refined before translation"
-    );
-    assert!(
-        texts
-            .iter()
-            .all(|text| text.split_whitespace().count() <= 25),
-        "step4 should not receive very long translation units: {texts:?}"
-    );
-    assert!(
-        !texts
-            .first()
-            .map(|text| text.contains("hesitation"))
-            .unwrap_or(false),
-        "first translation unit should not absorb the next idea: {texts:?}"
-    );
-    assert!(
-        !texts
-            .first()
-            .map(|text| text.ends_with(','))
-            .unwrap_or(false),
-        "first translation unit should not be a comma-hanging half sentence: {texts:?}"
-    );
+    assert_eq!(texts, vec![text.to_string()]);
 }
 
 #[test]
-fn long_punctuation_sparse_span_uses_llm_refinement_when_available() {
+fn terminal_punctuation_still_splits_long_runs() {
     let text = "This long sentence has no useful internal punctuation it keeps running through several separate ideas the recognizer only produced a final period";
-    let words = text
+    let mut words = text
         .split_whitespace()
         .enumerate()
         .map(|(index, token)| w(index, token))
         .collect::<Vec<_>>();
-    let word_limit = super::translation_unit_word_limit(DEFAULT_SUBTITLE_MAX_WORDS_PER_SEGMENT);
+    words[6].word = "punctuation.".to_string();
 
-    assert!(super::should_split_semantic_span(
-        &words,
-        0,
-        words.len() - 1,
-        word_limit
-    ));
-    assert!(super::should_refine_semantic_span(
-        &words,
-        0,
-        words.len() - 1,
-        word_limit
-    ));
+    let spans = build_deterministic_sentence_spans(&words);
+
+    assert_eq!(spans, vec![(0, 6), (7, words.len() - 1)]);
 }
 
 #[test]
-fn long_punctuation_rich_span_stays_on_local_boundaries() {
-    let text = "First we check the outline, then we confirm the references, because timing still matters, and finally we wait for a clean draft before sending feedback.";
-    let words = text
-        .split_whitespace()
-        .enumerate()
-        .map(|(index, token)| w(index, token))
-        .collect::<Vec<_>>();
-    let word_limit = super::translation_unit_word_limit(DEFAULT_SUBTITLE_MAX_WORDS_PER_SEGMENT);
+fn broad_terminal_punctuation_splits_step2_sentences() {
+    let words = vec![w(0, "你好．"), w(1, "Next⁉"), w(2, "Again")];
 
-    assert!(super::should_split_semantic_span(
-        &words,
-        0,
-        words.len() - 1,
-        word_limit
-    ));
-    assert!(!super::should_refine_semantic_span(
-        &words,
-        0,
-        words.len() - 1,
-        word_limit
-    ));
+    let spans = build_deterministic_sentence_spans(&words);
+
+    assert_eq!(spans, vec![(0, 0), (1, 1), (2, 2)]);
 }
 
 #[test]
-fn short_span_skips_semantic_splitting_and_refinement() {
-    let text = "This short sentence is already fine.";
-    let words = text
-        .split_whitespace()
-        .enumerate()
-        .map(|(index, token)| w(index, token))
-        .collect::<Vec<_>>();
-    let word_limit = super::translation_unit_word_limit(DEFAULT_SUBTITLE_MAX_WORDS_PER_SEGMENT);
+fn abbreviation_terminal_punctuation_does_not_split_step2_sentence() {
+    let words = vec![w(0, "Mr."), w(1, "Smith"), w(2, "arrived.")];
 
-    assert!(!super::should_split_semantic_span(
-        &words,
-        0,
-        words.len() - 1,
-        word_limit
-    ));
-    assert!(!super::should_refine_semantic_span(
-        &words,
-        0,
-        words.len() - 1,
-        word_limit
-    ));
+    let spans = build_deterministic_sentence_spans(&words);
+
+    assert_eq!(spans, vec![(0, 2)]);
 }
 
 #[test]
@@ -309,4 +254,101 @@ fn standalone_ascii_punctuation_keeps_following_space() {
     .expect("step2 should build sentence");
 
     assert_eq!(response.translation_sentences[0].text, "Alright, welcome.");
+}
+
+#[test]
+fn local_subtitle_layout_splits_long_semantic_sentence_near_punctuation() {
+    let text = "Today the local transcription pipeline keeps complete semantic sentences for accurate review, but it should split long subtitle lines near punctuation for comfortable offline viewing.";
+    let words = text
+        .split_whitespace()
+        .enumerate()
+        .map(|(index, token)| w(index, token))
+        .collect::<Vec<_>>();
+
+    let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
+        request_with_lang_and_preset(words, "en", "short"),
+        None,
+    ))
+    .expect("step2 should build local subtitle layout");
+
+    assert_eq!(response.sentence_total, 2);
+    assert_eq!(
+        response.translation_sentences[0].text,
+        "Today the local transcription pipeline keeps complete semantic sentences for accurate review,"
+    );
+    assert_eq!(
+        response.translation_sentences[1].text,
+        "but it should split long subtitle lines near punctuation for comfortable offline viewing."
+    );
+    assert!(
+        response
+            .boundaries
+            .iter()
+            .any(|boundary| boundary.reason_tag == "subtitle_layout")
+    );
+}
+
+#[test]
+fn translation_mode_keeps_long_semantic_sentence_without_layout_split() {
+    let text = "Today the translation pipeline keeps complete semantic sentences for accurate review, but it should leave subtitle readability splitting to the later LLM alignment stage.";
+    let words = text
+        .split_whitespace()
+        .enumerate()
+        .map(|(index, token)| w(index, token))
+        .collect::<Vec<_>>();
+
+    let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
+        request_with_lang_preset_and_layout(words, "en", "short", false),
+        None,
+    ))
+    .expect("step2 should build translation source sentences");
+
+    assert_eq!(response.sentence_total, 1);
+    assert_eq!(
+        response.translation_sentences[0].text,
+        "Today the translation pipeline keeps complete semantic sentences for accurate review, but it should leave subtitle readability splitting to the later LLM alignment stage."
+    );
+    assert!(
+        response
+            .boundaries
+            .iter()
+            .all(|boundary| boundary.reason_tag != "subtitle_layout")
+    );
+}
+
+#[test]
+fn local_subtitle_layout_never_crosses_hard_pause() {
+    let words = vec![
+        WordTokenDto {
+            start: 0.0,
+            end: 0.2,
+            word: "Before".to_string(),
+        },
+        WordTokenDto {
+            start: 0.3,
+            end: 0.5,
+            word: "pause".to_string(),
+        },
+        WordTokenDto {
+            start: 2.8,
+            end: 3.0,
+            word: "after".to_string(),
+        },
+        WordTokenDto {
+            start: 3.1,
+            end: 3.3,
+            word: "pause".to_string(),
+        },
+    ];
+
+    let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
+        request_with_lang_and_preset(words, "en", "short"),
+        None,
+    ))
+    .expect("step2 should preserve hard pause boundary");
+
+    assert_eq!(response.sentence_total, 2);
+    assert_eq!(response.translation_sentences[0].text, "Before pause");
+    assert_eq!(response.translation_sentences[1].text, "after pause");
+    assert_eq!(response.boundaries[1].reason_tag, "hard_pause".to_string());
 }

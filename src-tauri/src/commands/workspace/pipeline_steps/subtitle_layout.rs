@@ -5,22 +5,16 @@ use tauri::AppHandle;
 
 use crate::commands::translate_step5_commands::{
     build_step_5_1_source_split_with_progress, build_step_5_2_translation_align_with_progress,
-    build_step_5_3_translation_polish_with_progress,
 };
 use crate::commands::translate_types::{
     BuildStep51SourceSplitCommandRequest, BuildStep51SourceSplitCommandResponse,
     BuildStep52TranslationAlignCommandRequest, BuildStep52TranslationAlignCommandResponse,
-    BuildStep53TranslationPolishCommandRequest, BuildStep53TranslationPolishCommandResponse,
-    BuildTranslationSegmentCommand, Step5AlignedParentCommand, Step5SplitParentCommand,
-    TranslateTerminologyEntryCommand,
+    BuildTranslationSegmentCommand, Step5SplitParentCommand, TranslateTerminologyEntryCommand,
 };
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 
 use super::super::progress::report_task_stage;
-use super::super::{
-    STEP_05_01_SOURCE_SPLIT_FILE, STEP_05_02_TRANSLATION_ALIGN_FILE,
-    STEP_05_03_TRANSLATION_POLISH_FILE, TaskStage,
-};
+use super::super::{STEP_05_01_SOURCE_SPLIT_FILE, STEP_05_02_TRANSLATION_ALIGN_FILE, TaskStage};
 
 type ProgressCallback = Arc<dyn Fn(usize, usize) + Send + Sync>;
 
@@ -71,8 +65,7 @@ pub(in crate::commands::workspace) struct Step51SourceSplitPipelineStep {
     pub(in crate::commands::workspace) translate_base_url: String,
     pub(in crate::commands::workspace) translate_model: String,
     pub(in crate::commands::workspace) llm_concurrency: u32,
-    pub(in crate::commands::workspace) subtitle_max_words_per_segment: u32,
-    pub(in crate::commands::workspace) subtitle_length_reference: u32,
+    pub(in crate::commands::workspace) subtitle_length_preset: String,
     pub(in crate::commands::workspace) app: AppHandle,
 }
 
@@ -113,8 +106,7 @@ impl PipelineStep for Step51SourceSplitPipelineStep {
                 translate_base_url: self.translate_base_url.clone(),
                 translate_model: self.translate_model.clone(),
                 llm_concurrency: self.llm_concurrency,
-                subtitle_max_words_per_segment: self.subtitle_max_words_per_segment,
-                subtitle_length_reference: self.subtitle_length_reference,
+                subtitle_length_preset: self.subtitle_length_preset.clone(),
             },
             Some(subtitle_layout_progress(
                 &self.app,
@@ -135,6 +127,7 @@ pub(in crate::commands::workspace) struct Step52TranslationAlignPipelineStep {
     pub(in crate::commands::workspace) theme_summary: String,
     pub(in crate::commands::workspace) parents: Vec<Step5SplitParentCommand>,
     pub(in crate::commands::workspace) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
+    pub(in crate::commands::workspace) subtitle_length_preset: String,
     pub(in crate::commands::workspace) translate_api_key: String,
     pub(in crate::commands::workspace) translate_base_url: String,
     pub(in crate::commands::workspace) translate_model: String,
@@ -177,6 +170,7 @@ impl PipelineStep for Step52TranslationAlignPipelineStep {
                 theme_summary: self.theme_summary.clone(),
                 parents: self.parents.clone(),
                 terminology_entries: self.terminology_entries.clone(),
+                subtitle_length_preset: self.subtitle_length_preset.clone(),
                 translate_api_key: self.translate_api_key.clone(),
                 translate_base_url: self.translate_base_url.clone(),
                 translate_model: self.translate_model.clone(),
@@ -186,75 +180,6 @@ impl PipelineStep for Step52TranslationAlignPipelineStep {
                 &self.app,
                 &self.task_id,
                 "译文对齐",
-            )),
-        )
-        .await
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::commands::workspace) struct Step53TranslationPolishPipelineStep {
-    pub(in crate::commands::workspace) task_id: String,
-    pub(in crate::commands::workspace) media_path: String,
-    pub(in crate::commands::workspace) source_lang: String,
-    pub(in crate::commands::workspace) target_lang: String,
-    pub(in crate::commands::workspace) theme_summary: String,
-    pub(in crate::commands::workspace) parents: Vec<Step5AlignedParentCommand>,
-    pub(in crate::commands::workspace) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
-    pub(in crate::commands::workspace) translate_api_key: String,
-    pub(in crate::commands::workspace) translate_base_url: String,
-    pub(in crate::commands::workspace) translate_model: String,
-    pub(in crate::commands::workspace) llm_concurrency: u32,
-    pub(in crate::commands::workspace) subtitle_length_reference: u32,
-    pub(in crate::commands::workspace) app: AppHandle,
-}
-
-#[async_trait]
-impl PipelineStep for Step53TranslationPolishPipelineStep {
-    type Output = BuildStep53TranslationPolishCommandResponse;
-
-    fn name(&self) -> &'static str {
-        "step_5_3_translation_polish"
-    }
-
-    fn artifact_file(&self) -> &'static str {
-        STEP_05_03_TRANSLATION_POLISH_FILE
-    }
-
-    fn policy(&self) -> CheckpointPolicy {
-        CheckpointPolicy::SkipIfExists
-    }
-
-    fn validate(&self, output: &Self::Output) -> Result<(), String> {
-        validate_step5_artifact(
-            &output.task_id,
-            &output.media_path,
-            !output.segments.is_empty(),
-            "step5_3",
-        )
-    }
-
-    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        build_step_5_3_translation_polish_with_progress(
-            BuildStep53TranslationPolishCommandRequest {
-                task_id: self.task_id.clone(),
-                media_path: self.media_path.clone(),
-                source_lang: self.source_lang.clone(),
-                target_lang: self.target_lang.clone(),
-                theme_summary: self.theme_summary.clone(),
-                terminology_entries: self.terminology_entries.clone(),
-                parents: self.parents.clone(),
-                translate_api_key: self.translate_api_key.clone(),
-                translate_base_url: self.translate_base_url.clone(),
-                translate_model: self.translate_model.clone(),
-                llm_concurrency: self.llm_concurrency,
-                subtitle_length_reference: self.subtitle_length_reference,
-                batch_size: 20,
-            },
-            Some(subtitle_layout_progress(
-                &self.app,
-                &self.task_id,
-                "译文润色",
             )),
         )
         .await

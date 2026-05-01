@@ -9,8 +9,7 @@ pub(super) fn to_service_settings(
     crate::services::preferences::SavedSettings {
         provider: settings.provider,
         chunk_target_seconds: settings.chunk_target_seconds,
-        subtitle_max_words_per_segment: settings.subtitle_max_words_per_segment,
-        subtitle_length_reference: settings.subtitle_length_reference,
+        subtitle_length_preset: settings.subtitle_length_preset,
         asr_model: settings.asr_model,
         align_model: settings.align_model,
         demucs_model: settings.demucs_model,
@@ -52,8 +51,7 @@ pub(super) fn from_service_settings(
     SavedSettingsCommand {
         provider: settings.provider,
         chunk_target_seconds: settings.chunk_target_seconds,
-        subtitle_max_words_per_segment: settings.subtitle_max_words_per_segment,
-        subtitle_length_reference: settings.subtitle_length_reference,
+        subtitle_length_preset: settings.subtitle_length_preset,
         asr_model: settings.asr_model,
         align_model: settings.align_model,
         demucs_model: settings.demucs_model,

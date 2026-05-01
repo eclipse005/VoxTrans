@@ -2,11 +2,7 @@ use crate::services::task_log::{TaskLogger, event};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
-use voxtrans_core::subtitle::segmenter::{
-    WordToken, normalize_word_tokens, plain_text_from_segments, split_english_segments,
-    split_translate_segments,
-};
-use voxtrans_core::subtitle::srt::to_srt_from_segments;
+use voxtrans_core::subtitle::segmenter::{WordToken, normalize_word_tokens};
 
 mod asr_align;
 pub(crate) use asr_align::TranscribeProgressStage;
@@ -90,35 +86,6 @@ pub struct WordTokenDto {
     pub word: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct SegmentWithWordsDto {
-    pub start: f64,
-    pub end: f64,
-    pub text: String,
-    pub words: Vec<WordTokenDto>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildSegmentsRequest {
-    pub task_id: String,
-    pub audio_path: String,
-    pub words: Vec<WordTokenDto>,
-    pub subtitle_max_words_per_segment: u32,
-    #[serde(default)]
-    pub segment_mode: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildSegmentsResponse {
-    pub text: String,
-    pub srt: String,
-    pub srt_output_path: String,
-    pub segments: Vec<SegmentWithWordsDto>,
-}
-
 pub fn transcribe_blocking<F>(
     request: TranscribeRequest,
     mut on_progress: F,
@@ -127,13 +94,14 @@ where
     F: FnMut(asr_align::TranscribeProgressStage, usize, usize),
 {
     let logger = TaskLogger::main_with_media(request.task_id.clone(), request.audio_path.clone());
+    let chunk_target_seconds = request.chunk_target_seconds.clamp(30, 60);
     append_transcribe_log(
         &logger,
         event::TRANSCRIBE_STARTED,
         json!({
             "asrModel": request.asr_model,
             "alignModel": request.align_model,
-            "chunkTargetSeconds": request.chunk_target_seconds,
+            "chunkTargetSeconds": chunk_target_seconds,
             "provider": request.provider,
             "mediaPath": request.audio_path,
         }),
@@ -146,7 +114,7 @@ where
             asr_model: normalize_asr_model(&request.asr_model),
             align_model: normalize_align_model(&request.align_model),
             provider: request.provider.clone(),
-            chunk_target_seconds: request.chunk_target_seconds.clamp(30, 300),
+            chunk_target_seconds,
             model_dir: request.model_dir.as_ref().map(PathBuf::from),
         },
         |stage, current, total| {
@@ -166,7 +134,7 @@ where
                     .unwrap_or("<resolved model directory>")
             );
             let user_message =
-                map_transcribe_error(&technical, &request.provider, request.chunk_target_seconds);
+                map_transcribe_error(&technical, &request.provider, chunk_target_seconds);
             append_transcribe_log(
                 &logger,
                 event::TRANSCRIBE_FAILED,
@@ -240,70 +208,11 @@ fn normalize_align_model(raw: &str) -> String {
     }
 }
 
-pub fn build_segments_from_words(
-    request: BuildSegmentsRequest,
-) -> Result<BuildSegmentsResponse, String> {
-    let audio_path = PathBuf::from(&request.audio_path);
-    let srt_output_path =
-        crate::services::task_path::task_srt_output_path(&request.task_id, &audio_path);
-
-    let words: Vec<WordToken> = request.words.into_iter().map(dto_to_word).collect();
-    let segment_mode = request.segment_mode.trim().to_lowercase();
-    let segments = if segment_mode == "translate_source" {
-        split_translate_segments(&words, request.subtitle_max_words_per_segment as usize)
-    } else {
-        split_english_segments(&words, request.subtitle_max_words_per_segment as usize)
-    };
-    let srt = to_srt_from_segments(&segments);
-    let text = plain_text_from_segments(&segments);
-
-    if let Some(parent) = srt_output_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-    }
-
-    let segments_response: Vec<SegmentWithWordsDto> =
-        segments.iter().map(segment_to_response).collect();
-
-    Ok(BuildSegmentsResponse {
-        text,
-        srt,
-        srt_output_path: srt_output_path.display().to_string(),
-        segments: segments_response,
-    })
-}
-
-fn dto_to_word(response: WordTokenDto) -> WordToken {
-    WordToken {
-        start: response.start,
-        end: response.end,
-        word: response.word,
-    }
-}
-
 fn word_to_dto(word: &WordToken) -> WordTokenDto {
     WordTokenDto {
         start: word.start,
         end: word.end,
         word: word.word.clone(),
-    }
-}
-
-fn segment_to_response(
-    segment: &voxtrans_core::subtitle::srt::SubtitleSegment,
-) -> SegmentWithWordsDto {
-    SegmentWithWordsDto {
-        start: segment.start_sec,
-        end: segment.end_sec,
-        text: segment.text.clone(),
-        words: segment
-            .words
-            .iter()
-            .map(|w| WordTokenDto {
-                start: w.start,
-                end: w.end,
-                word: w.word.clone(),
-            })
-            .collect(),
     }
 }
 
@@ -377,13 +286,13 @@ fn map_transcribe_error(raw: &str, provider: &str, chunk_target_seconds: u32) ->
 
     if gpu_oom {
         return format!(
-            "转录失败：显存/图形资源不足（{}）。请在设置中将“分段时长”调小后重试（当前 {} 秒，建议 60-120 秒）。",
+            "转录失败：显存/图形资源不足（{}）。请在设置中将“分段时长”调小后重试（当前 {} 秒，建议 30-60 秒）。",
             if provider.eq_ignore_ascii_case("cuda") {
                 "GPU"
             } else {
                 provider
             },
-            chunk_target_seconds.clamp(30, 300)
+            chunk_target_seconds.clamp(30, 60)
         );
     }
 

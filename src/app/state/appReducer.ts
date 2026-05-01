@@ -22,8 +22,7 @@ export type AppState = {
   settings: SavedSettings;
   draftProvider: SavedSettings["provider"];
   draftChunkInput: string;
-  draftSubtitleMaxWordsInput: string;
-  draftSubtitleLengthReferenceInput: string;
+  draftSubtitleLengthPreset: SavedSettings["subtitleLengthPreset"];
   draftAsrModel: SavedSettings["asrModel"];
   draftAlignModel: SavedSettings["alignModel"];
   draftDemucsModel: SavedSettings["demucsModel"];
@@ -100,8 +99,7 @@ export type SettingsAction =
           AppState,
           | "draftProvider"
           | "draftChunkInput"
-          | "draftSubtitleMaxWordsInput"
-          | "draftSubtitleLengthReferenceInput"
+          | "draftSubtitleLengthPreset"
           | "draftAsrModel"
           | "draftAlignModel"
           | "draftDemucsModel"
@@ -126,9 +124,8 @@ export type AppAction = UiAction | QueueAction | SubtitleAction | SettingsAction
 
 export const defaultSettings: SavedSettings = {
   provider: normalizeProvider(undefined),
-  chunkTargetSeconds: 180,
-  subtitleMaxWordsPerSegment: 20,
-  subtitleLengthReference: 28,
+  chunkTargetSeconds: 45,
+  subtitleLengthPreset: "standard",
   asrModel: "Qwen3-ASR-0.6B",
   alignModel: "Qwen3-ForcedAligner-0.6B",
   demucsModel: "htdemucs_ft",
@@ -184,8 +181,7 @@ export const initialAppState: AppState = {
   settings: defaultSettings,
   draftProvider: defaultSettings.provider,
   draftChunkInput: String(defaultSettings.chunkTargetSeconds),
-  draftSubtitleMaxWordsInput: String(defaultSettings.subtitleMaxWordsPerSegment),
-  draftSubtitleLengthReferenceInput: String(defaultSettings.subtitleLengthReference),
+  draftSubtitleLengthPreset: defaultSettings.subtitleLengthPreset,
   draftAsrModel: defaultSettings.asrModel,
   draftAlignModel: defaultSettings.alignModel,
   draftDemucsModel: defaultSettings.demucsModel,

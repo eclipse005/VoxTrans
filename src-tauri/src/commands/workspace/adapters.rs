@@ -102,6 +102,25 @@ pub(super) fn workspace_subtitle_segments_from_step52_parents(
     segments
 }
 
+pub(super) fn translation_segments_from_step52_parents(
+    parents: &[Step5AlignedParentCommand],
+) -> Vec<BuildTranslationSegmentCommand> {
+    let mut segments = Vec::new();
+    for parent in parents {
+        for part in &parent.parts {
+            segments.push(BuildTranslationSegmentCommand {
+                segment_id: segments.len() + 1,
+                start: part.start,
+                end: part.end,
+                source: part.source.clone(),
+                translation: part.translation.clone(),
+                tokens: part.tokens.clone(),
+            });
+        }
+    }
+    segments
+}
+
 pub(super) fn source_text_from_step2_segments(
     segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
 ) -> String {

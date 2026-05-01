@@ -1,16 +1,10 @@
-pub fn should_split_after_terminal_token(current_token: &str, next_token: Option<&str>) -> bool {
+pub fn should_split_after_terminal_token(current_token: &str, _next_token: Option<&str>) -> bool {
     let normalized = strip_trailing_closers(current_token.trim());
     if normalized.is_empty() || !ends_with_terminal_punctuation(normalized) {
         return false;
     }
     if is_non_break_terminal_case(normalized) {
         return false;
-    }
-    if let Some(next) = next_token {
-        let next_token = strip_leading_openers(next.trim());
-        if starts_with_lowercase(next_token) {
-            return false;
-        }
     }
     true
 }
@@ -33,16 +27,25 @@ pub fn strip_trailing_closers(token: &str) -> &str {
     token.trim_end_matches(|c: char| {
         matches!(
             c,
-            '"' | '\'' | ')' | ']' | '}' | '”' | '’' | '》' | '」' | '』'
-        )
-    })
-}
-
-pub fn strip_leading_openers(token: &str) -> &str {
-    token.trim_start_matches(|c: char| {
-        matches!(
-            c,
-            '"' | '\'' | '(' | '[' | '{' | '“' | '‘' | '《' | '「' | '『'
+            '"' | '\''
+                | ')'
+                | ']'
+                | '}'
+                | '”'
+                | '’'
+                | '»'
+                | '›'
+                | '）'
+                | '】'
+                | '｝'
+                | '〉'
+                | '》'
+                | '」'
+                | '』'
+                | '〕'
+                | '〗'
+                | '〙'
+                | '〛'
         )
     })
 }
@@ -54,18 +57,32 @@ pub fn is_non_break_terminal_case(token: &str) -> bool {
         || looks_like_decimal_number(token)
 }
 
-pub fn starts_with_lowercase(token: &str) -> bool {
-    token
-        .chars()
-        .find(|c| c.is_alphabetic())
-        .map(|c| c.is_lowercase())
-        .unwrap_or(false)
-}
-
 fn is_terminal_punctuation(c: char) -> bool {
     matches!(
         c,
-        '.' | '!' | '?' | '。' | '！' | '？' | '｡' | '؟' | '۔' | '።' | '။' | '…'
+        '.' | '!'
+            | '?'
+            | '。'
+            | '！'
+            | '？'
+            | '｡'
+            | '．'
+            | '﹒'
+            | '…'
+            | '‥'
+            | '‼'
+            | '⁇'
+            | '⁈'
+            | '⁉'
+            | '؟'
+            | '۔'
+            | '።'
+            | '፧'
+            | '፨'
+            | '။'
+            | '।'
+            | '॥'
+            | '։'
     )
 }
 
@@ -216,8 +233,8 @@ mod tests {
     #[test]
     fn common_titles_and_business_abbreviations_are_non_break() {
         for token in [
-            "Mr.", "Mrs.", "Ms.", "Dr.", "Prof.", "Rev.", "Gov.", "Sen.", "Rep.", "Capt.",
-            "Col.", "Gen.", "Lt.", "Sgt.", "Inc.", "Ltd.", "Corp.", "Co.",
+            "Mr.", "Mrs.", "Ms.", "Dr.", "Prof.", "Rev.", "Gov.", "Sen.", "Rep.", "Capt.", "Col.",
+            "Gen.", "Lt.", "Sgt.", "Inc.", "Ltd.", "Corp.", "Co.",
         ] {
             assert!(is_non_break_terminal_case(token), "{token}");
             assert!(!has_break_terminal_punctuation(token), "{token}");
@@ -226,7 +243,9 @@ mod tests {
 
     #[test]
     fn dotted_initialisms_are_non_break() {
-        for token in ["U.S.", "U.K.", "U.N.", "E.U.", "D.C.", "N.Y.C.", "Ph.D.", "M.D."] {
+        for token in [
+            "U.S.", "U.K.", "U.N.", "E.U.", "D.C.", "N.Y.C.", "Ph.D.", "M.D.",
+        ] {
             assert!(is_non_break_terminal_case(token), "{token}");
             assert!(!has_break_terminal_punctuation(token), "{token}");
         }
@@ -245,7 +264,29 @@ mod tests {
     }
 
     #[test]
-    fn lowercase_next_word_suppresses_break() {
-        assert!(!should_split_after_terminal_token("hello.", Some("world")));
+    fn supported_terminal_punctuation_breaks() {
+        for token in [
+            "done!",
+            "done?",
+            "结束。",
+            "終わり｡",
+            "終わり．",
+            "끝！",
+            "끝？",
+            "fin…",
+            "fin‥",
+            "really⁈",
+            "really⁉",
+            "حسنا؟",
+            "끝。」",
+            "fin.»",
+        ] {
+            assert!(has_break_terminal_punctuation(token), "{token}");
+        }
+    }
+
+    #[test]
+    fn lowercase_next_word_still_breaks_after_real_terminal_punctuation() {
+        assert!(should_split_after_terminal_token("hello.", Some("world")));
     }
 }

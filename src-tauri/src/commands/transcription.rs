@@ -7,9 +7,6 @@ pub use super::transcription_types::{
     GroupedSentenceTokenCommandDto, MicroChunkCommandDto, SourceSentenceCommandDto,
     WordTokenCommandDto,
 };
-pub(super) use super::transcription_types::{
-    default_llm_concurrency, default_subtitle_max_words_per_segment,
-};
 
 #[tauri::command]
 pub async fn build_source_sentences(
@@ -28,12 +25,9 @@ pub async fn build_source_sentences_with_progress(
             task_id: request.task_id,
             media_path: request.audio_path,
             source_lang: request.source_lang,
+            subtitle_length_preset: request.subtitle_length_preset,
+            use_subtitle_layout_split: request.use_subtitle_layout_split,
             words: request.words.into_iter().map(to_service_word).collect(),
-            subtitle_max_words_per_segment: request.subtitle_max_words_per_segment,
-            translate_api_key: request.translate_api_key,
-            translate_base_url: request.translate_base_url,
-            translate_model: request.translate_model,
-            llm_concurrency: request.llm_concurrency,
         },
         on_progress,
     )

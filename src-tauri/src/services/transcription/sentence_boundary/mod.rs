@@ -5,11 +5,8 @@ use crate::services::transcribe::WordTokenDto;
 use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
 
 mod assembly;
-mod refinement;
-mod responses;
 mod semantic;
-mod semantic_boundaries;
-mod semantic_candidates;
+mod subtitle_layout;
 #[cfg(test)]
 mod tests;
 mod text;
@@ -20,11 +17,8 @@ mod words;
 use assembly::{
     build_boundaries_from_split_points, build_micro_chunks, build_sentences_from_word_spans,
 };
-#[cfg(test)]
-use semantic::translation_unit_word_limit;
-use semantic::{build_split_points_with_optional_semantic_refinement, split_points_to_spans};
-#[cfg(test)]
-use semantic::{should_refine_semantic_span, should_split_semantic_span};
+use semantic::{build_split_points_from_hard_boundaries, split_points_to_spans};
+use subtitle_layout::build_subtitle_layout_split_points;
 #[cfg(test)]
 use text::join_words;
 use types::SourceSentenceStep2;
@@ -34,24 +28,13 @@ pub use assembly::source_sentences_to_srt;
 pub use types::{BoundaryDecisionKind, SentenceBoundaryRequest};
 
 const HARD_SPLIT_GAP_MS: u64 = 2_000;
-#[cfg(test)]
-const DEFAULT_SUBTITLE_MAX_WORDS_PER_SEGMENT: u32 = 20;
-const MAX_UNPUNCTUATED_DURATION_MS: u64 = 24_000;
-const SOFT_SPLIT_GAP_MS: u64 = 350;
-const MIN_SEMANTIC_SEGMENT_WORDS: usize = 5;
-const MAX_LLM_SEMANTIC_CANDIDATES: usize = 16;
 
 pub async fn build_source_sentences_from_words_with_progress(
     request: SentenceBoundaryRequest,
-    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+    _on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> Result<SourceSentenceStep2, String> {
     if request.words.is_empty() {
         return Err("words is empty".to_string());
-    }
-
-    let total = 4usize;
-    if let Some(callback) = on_progress.as_ref() {
-        callback(0, total);
     }
 
     let normalized_words = from_core_words(beautify_words_for_subtitle(to_core_words(
@@ -60,33 +43,34 @@ pub async fn build_source_sentences_from_words_with_progress(
     if normalized_words.is_empty() {
         return Err("words is empty".to_string());
     }
-    if let Some(callback) = on_progress.as_ref() {
-        callback(1, total);
-    }
 
     let micro_chunks = build_micro_chunks(&normalized_words);
     if micro_chunks.is_empty() {
         return Err("failed to build micro chunks".to_string());
     }
-    if let Some(callback) = on_progress.as_ref() {
-        callback(2, total);
-    }
 
-    let split_points =
-        build_split_points_with_optional_semantic_refinement(&request, &normalized_words).await;
+    let hard_split_points = build_split_points_from_hard_boundaries(&normalized_words);
+    let split_points = if request.use_subtitle_layout_split {
+        let semantic_spans = split_points_to_spans(normalized_words.len(), &hard_split_points);
+        merge_split_points(
+            hard_split_points,
+            build_subtitle_layout_split_points(
+                &normalized_words,
+                &semantic_spans,
+                &request.source_lang,
+                &request.subtitle_length_preset,
+            ),
+        )
+    } else {
+        hard_split_points
+    };
     let spans = split_points_to_spans(normalized_words.len(), &split_points);
     if spans.is_empty() {
         return Err("failed to build sentence spans".to_string());
     }
-    if let Some(callback) = on_progress.as_ref() {
-        callback(3, total);
-    }
 
     let translation_sentences = build_sentences_from_word_spans(&normalized_words, &spans);
     let boundaries = build_boundaries_from_split_points(&micro_chunks, &split_points);
-    if let Some(callback) = on_progress.as_ref() {
-        callback(4, total);
-    }
 
     Ok(SourceSentenceStep2 {
         task_id: request.task_id,
@@ -102,19 +86,31 @@ pub async fn build_source_sentences_from_words_with_progress(
     })
 }
 
+fn merge_split_points(
+    mut base: Vec<(usize, types::SplitReason)>,
+    extra: Vec<(usize, types::SplitReason)>,
+) -> Vec<(usize, types::SplitReason)> {
+    base.extend(extra);
+    base.sort_by_key(|(index, reason)| (*index, split_reason_priority(*reason)));
+    base.dedup_by_key(|(index, _)| *index);
+    base
+}
+
+fn split_reason_priority(reason: types::SplitReason) -> u8 {
+    match reason {
+        types::SplitReason::HardPause => 0,
+        types::SplitReason::TerminalPunctuation => 1,
+        types::SplitReason::SubtitleLayout => 2,
+    }
+}
+
 #[cfg(test)]
 fn build_deterministic_sentence_spans(words: &[WordTokenDto]) -> Vec<(usize, usize)> {
-    let split_points = build_deterministic_split_points(
-        words,
-        translation_unit_word_limit(DEFAULT_SUBTITLE_MAX_WORDS_PER_SEGMENT),
-    );
+    let split_points = build_deterministic_split_points(words);
     split_points_to_spans(words.len(), &split_points)
 }
 
 #[cfg(test)]
-fn build_deterministic_split_points(
-    words: &[WordTokenDto],
-    length_fallback_word_limit: usize,
-) -> Vec<(usize, types::SplitReason)> {
-    semantic::build_deterministic_split_points(words, length_fallback_word_limit)
+fn build_deterministic_split_points(words: &[WordTokenDto]) -> Vec<(usize, types::SplitReason)> {
+    semantic::build_deterministic_split_points(words)
 }

@@ -1,6 +1,5 @@
 use super::transcription::{
     BuildSourceSentencesCommandRequest, WordTokenCommandDto, build_source_sentences,
-    default_llm_concurrency, default_subtitle_max_words_per_segment,
 };
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -62,10 +61,8 @@ pub fn maybe_run_build_source_sentences_mode_from_args() -> bool {
 fn run_build_source_sentences_mode_from_args(args: &[String]) -> Result<(), String> {
     let mut asr_path = String::new();
     let mut output_path = String::new();
-    let mut translate_api_key = String::new();
-    let mut translate_base_url = String::new();
-    let mut translate_model = String::new();
-    let mut llm_concurrency = default_llm_concurrency();
+    let mut srt_output_path = String::new();
+    let mut subtitle_length_preset = None::<String>;
 
     let mut idx = 0usize;
     while idx < args.len() {
@@ -78,22 +75,33 @@ fn run_build_source_sentences_mode_from_args(args: &[String]) -> Result<(), Stri
                 idx += 1;
                 output_path = required_cli_value(args, idx, "--output-path")?;
             }
+            "--srt-output-path" => {
+                idx += 1;
+                srt_output_path = required_cli_value(args, idx, "--srt-output-path")?;
+            }
+            "--subtitle-length-preset" => {
+                idx += 1;
+                subtitle_length_preset = Some(
+                    crate::services::subtitle_length::normalize_subtitle_length_preset(
+                        &required_cli_value(args, idx, "--subtitle-length-preset")?,
+                    ),
+                );
+            }
             "--api-key" => {
                 idx += 1;
-                translate_api_key = required_cli_value(args, idx, "--api-key")?;
+                let _ = required_cli_value(args, idx, "--api-key")?;
             }
             "--base-url" => {
                 idx += 1;
-                translate_base_url = required_cli_value(args, idx, "--base-url")?;
+                let _ = required_cli_value(args, idx, "--base-url")?;
             }
             "--model" => {
                 idx += 1;
-                translate_model = required_cli_value(args, idx, "--model")?;
+                let _ = required_cli_value(args, idx, "--model")?;
             }
             "--llm-concurrency" => {
                 idx += 1;
-                let raw = required_cli_value(args, idx, "--llm-concurrency")?;
-                llm_concurrency = raw
+                required_cli_value(args, idx, "--llm-concurrency")?
                     .parse::<u32>()
                     .map_err(|_| "--llm-concurrency requires integer".to_string())?;
             }
@@ -105,24 +113,8 @@ fn run_build_source_sentences_mode_from_args(args: &[String]) -> Result<(), Stri
     if asr_path.trim().is_empty() {
         return Err("--asr-path is required".to_string());
     }
-    if translate_api_key.trim().is_empty()
-        || translate_base_url.trim().is_empty()
-        || translate_model.trim().is_empty()
-    {
-        let settings = crate::services::preferences::load_saved_settings_from_default_path()?;
-        if translate_api_key.trim().is_empty() {
-            translate_api_key = settings.translate_api_key;
-        }
-        if translate_base_url.trim().is_empty() {
-            translate_base_url = settings.translate_base_url;
-        }
-        if translate_model.trim().is_empty() {
-            translate_model = settings.translate_model;
-        }
-        if llm_concurrency == default_llm_concurrency() {
-            llm_concurrency = settings.llm_concurrency;
-        }
-    }
+    let subtitle_length_preset =
+        subtitle_length_preset.ok_or_else(|| "--subtitle-length-preset is required".to_string())?;
 
     let raw = std::fs::read_to_string(&asr_path).map_err(|err| err.to_string())?;
     let asr = parse_asr_artifact_for_sentence_cli(&raw, &asr_path)?;
@@ -131,12 +123,9 @@ fn run_build_source_sentences_mode_from_args(args: &[String]) -> Result<(), Stri
             task_id: asr.task_id.clone(),
             audio_path: asr.media_path.clone(),
             source_lang: asr.source_lang.clone(),
+            subtitle_length_preset,
+            use_subtitle_layout_split: true,
             words: asr.words,
-            subtitle_max_words_per_segment: default_subtitle_max_words_per_segment(),
-            translate_api_key,
-            translate_base_url,
-            translate_model,
-            llm_concurrency,
         },
     ))?;
     let output_path = if output_path.trim().is_empty() {
@@ -150,6 +139,9 @@ fn run_build_source_sentences_mode_from_args(args: &[String]) -> Result<(), Stri
     let segments_payload =
         serde_json::to_string_pretty(&response.segments).map_err(|err| err.to_string())?;
     std::fs::write(&output_path, segments_payload.as_bytes()).map_err(|err| err.to_string())?;
+    if !srt_output_path.trim().is_empty() {
+        std::fs::write(&srt_output_path, response.srt.as_bytes()).map_err(|err| err.to_string())?;
+    }
 
     println!("{}", output_path.display());
     Ok(())

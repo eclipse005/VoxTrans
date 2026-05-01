@@ -52,7 +52,7 @@ where
     F: FnMut(TranscribeProgressStage, usize, usize),
 {
     let started_at = Instant::now();
-    let chunk_target_seconds = request.chunk_target_seconds.clamp(30, 300) as f64;
+    let chunk_target_seconds = request.chunk_target_seconds.clamp(30, 60) as f64;
     let prepare_started_at = Instant::now();
     let prepared =
         voxtrans_core::prepare_audio_segments_for_asr(&request.audio_path, chunk_target_seconds)
@@ -264,6 +264,9 @@ fn asr_language(source_lang: &str) -> Result<String, String> {
         "it" | "it-it" | "italian" => "italian",
         "es" | "es-es" | "spanish" => "spanish",
         "pt" | "pt-pt" | "pt-br" | "portuguese" => "portuguese",
+        "yue" | "yue-hk" | "zh-yue" | "cantonese" | "粤语" | "廣東話" | "广东话" => {
+            "cantonese"
+        }
         _ => return Err(format!("unsupported source language: {source_lang}")),
     };
     Ok(language.to_string())
@@ -281,6 +284,9 @@ fn qwen_language(source_lang: &str) -> Result<String, String> {
         "es" | "spanish" => "Spanish",
         "it" | "italian" => "Italian",
         "pt" | "portuguese" => "Portuguese",
+        "yue" | "yue-hk" | "zh-yue" | "cantonese" | "粤语" | "廣東話" | "广东话" => {
+            "Cantonese"
+        }
         _ => return Err(format!("unsupported source language: {source_lang}")),
     };
     Ok(language.to_string())
@@ -566,6 +572,9 @@ mod tests {
             ("it", "italian", "Italian"),
             ("es", "spanish", "Spanish"),
             ("pt", "portuguese", "Portuguese"),
+            ("yue", "cantonese", "Cantonese"),
+            ("Cantonese", "cantonese", "Cantonese"),
+            ("广东话", "cantonese", "Cantonese"),
         ];
 
         for (source, asr, qwen) in cases {
@@ -576,7 +585,7 @@ mod tests {
 
     #[test]
     fn unsupported_source_languages_are_rejected() {
-        for source in ["", "auto", "ru", "ar", "vi", "nl", "pl", "el", "Cantonese"] {
+        for source in ["", "auto", "ru", "ar", "vi", "nl", "pl", "el"] {
             assert!(asr_language(source).is_err());
             assert!(qwen_language(source).is_err());
         }

@@ -5,6 +5,7 @@ import type {
   AlignModel,
   AsrModel,
   DemucsModel,
+  SubtitleLengthPreset,
   SubtitleBurnMode,
   SubtitleLineStyle,
   SubtitleRenderStyle,
@@ -24,14 +25,9 @@ export function useAppPersistence(dispatch: DispatchState) {
         if (cancelled) return;
         const provider = normalizeProvider(res.settings.provider);
         const chunkTargetSeconds = Number.isFinite(res.settings.chunkTargetSeconds)
-          ? Math.max(30, Math.min(300, Math.round(res.settings.chunkTargetSeconds)))
-          : 300;
-        const subtitleMaxWordsPerSegment = Number.isFinite(res.settings.subtitleMaxWordsPerSegment)
-          ? Math.max(8, Math.min(40, Math.round(res.settings.subtitleMaxWordsPerSegment)))
-          : 20;
-        const subtitleLengthReference = Number.isFinite(res.settings.subtitleLengthReference)
-          ? Math.max(8, Math.min(80, Math.round(res.settings.subtitleLengthReference)))
-          : 28;
+          ? Math.max(30, Math.min(60, Math.round(res.settings.chunkTargetSeconds)))
+          : 45;
+        const subtitleLengthPreset = normalizeSubtitleLengthPreset(res.settings.subtitleLengthPreset);
         const asrModel = normalizeAsrModel(res.settings.asrModel);
         const alignModel = res.settings.alignModel === "Qwen3-ForcedAligner-0.6B"
           ? res.settings.alignModel as AlignModel
@@ -111,8 +107,7 @@ export function useAppPersistence(dispatch: DispatchState) {
           settings: {
             provider,
             chunkTargetSeconds,
-            subtitleMaxWordsPerSegment,
-            subtitleLengthReference,
+            subtitleLengthPreset,
             asrModel,
             alignModel,
             demucsModel,
@@ -135,8 +130,7 @@ export function useAppPersistence(dispatch: DispatchState) {
           payload: {
             draftProvider: provider,
             draftChunkInput: String(chunkTargetSeconds),
-            draftSubtitleMaxWordsInput: String(subtitleMaxWordsPerSegment),
-            draftSubtitleLengthReferenceInput: String(subtitleLengthReference),
+            draftSubtitleLengthPreset: subtitleLengthPreset,
             draftAsrModel: asrModel,
             draftAlignModel: alignModel,
             draftDemucsModel: demucsModel,
@@ -163,6 +157,10 @@ export function useAppPersistence(dispatch: DispatchState) {
       cancelled = true;
     };
   }, [dispatch]);
+}
+
+function normalizeSubtitleLengthPreset(value: unknown): SubtitleLengthPreset {
+  return value === "short" || value === "standard" || value === "loose" ? value : "standard";
 }
 
 function normalizeAsrModel(value: unknown): AsrModel {

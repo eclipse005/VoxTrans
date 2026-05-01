@@ -113,19 +113,12 @@ pub(super) fn build_boundaries_from_split_points(
                         1.0,
                         "hard_pause",
                     ),
-                    Some(SplitReason::LengthFallback) => (
+                    Some(SplitReason::SubtitleLayout) => (
                         BoundaryDecisionKind::Split,
                         BoundaryDecisionKind::Unknown,
                         BoundaryDecisionKind::Split,
-                        0.82,
-                        "length_fallback",
-                    ),
-                    Some(SplitReason::LlmSemanticRefinement) => (
-                        BoundaryDecisionKind::Unsure,
-                        BoundaryDecisionKind::Split,
-                        BoundaryDecisionKind::Split,
                         0.9,
-                        "llm_semantic_refine",
+                        "subtitle_layout",
                     ),
                     None => (
                         BoundaryDecisionKind::Merge,

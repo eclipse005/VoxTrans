@@ -13,9 +13,6 @@ pub(super) struct Step51SplitWorkItem {
     pub(super) segment: Step5DraftSegment,
     pub(super) draft_translation: String,
     pub(super) mandatory_boundaries: Vec<usize>,
-    pub(super) fallback_boundaries: Vec<usize>,
-    pub(super) over_length: bool,
-    pub(super) min_parts: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -24,8 +21,8 @@ pub(super) struct Step51LlmSplitTask {
     pub(super) work_index: usize,
     pub(super) source_lang: String,
     pub(super) tokens: Vec<Step5Token>,
-    pub(super) mandatory_boundaries: Vec<usize>,
-    pub(super) fallback_boundaries: Vec<usize>,
-    pub(super) min_parts: usize,
+    pub(super) range: (usize, usize),
+    pub(super) source_text: String,
+    pub(super) require_split: bool,
     pub(super) prompt: String,
 }

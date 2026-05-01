@@ -6,6 +6,7 @@ import type {
   ModelStatusResponse,
   Provider,
   SubtitleBurnMode,
+  SubtitleLengthPreset,
   SubtitleRenderStyle,
 } from "../../features/media/types";
 import { PROVIDER_OPTIONS } from "../../features/media/provider";
@@ -15,12 +16,26 @@ import { ModelDownloadCard } from "./settings/ModelDownloadCard";
 import { SubtitleStylePreview } from "./settings/SubtitleStylePreview";
 import { useDialogA11y } from "./useDialogA11y";
 
+const SUBTITLE_LENGTH_PRESETS = [
+  {
+    id: "short",
+    label: "短",
+  },
+  {
+    id: "standard",
+    label: "标准",
+  },
+  {
+    id: "loose",
+    label: "宽松",
+  },
+] as const;
+
 type SettingsModalProps = {
   visible: boolean;
   draftProvider: Provider;
   draftChunkInput: string;
-  draftSubtitleMaxWordsInput: string;
-  draftSubtitleLengthReferenceInput: string;
+  draftSubtitleLengthPreset: SubtitleLengthPreset;
   draftAsrModel: AsrModel;
   draftAlignModel: AlignModel;
   draftDemucsModel: DemucsModel;
@@ -43,8 +58,7 @@ type SettingsModalProps = {
   onSave: () => void | Promise<void>;
   onDraftProviderChange: (value: Provider) => void;
   onDraftChunkInputChange: (value: string) => void;
-  onDraftSubtitleMaxWordsInputChange: (value: string) => void;
-  onDraftSubtitleLengthReferenceInputChange: (value: string) => void;
+  onDraftSubtitleLengthPresetChange: (value: SubtitleLengthPreset) => void;
   onDraftAsrModelChange: (value: AsrModel) => void;
   onDraftAlignModelChange: (value: AlignModel) => void;
   onDraftDemucsModelChange: (value: DemucsModel) => void;
@@ -70,8 +84,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     visible,
     draftProvider,
     draftChunkInput,
-    draftSubtitleMaxWordsInput,
-    draftSubtitleLengthReferenceInput,
+    draftSubtitleLengthPreset,
     draftAsrModel,
     draftAlignModel,
     draftDemucsModel,
@@ -94,8 +107,7 @@ export default function SettingsModal(props: SettingsModalProps) {
     onSave,
     onDraftProviderChange,
     onDraftChunkInputChange,
-    onDraftSubtitleMaxWordsInputChange,
-    onDraftSubtitleLengthReferenceInputChange,
+    onDraftSubtitleLengthPresetChange,
     onDraftAsrModelChange,
     onDraftAlignModelChange,
     onDraftDemucsModelChange,
@@ -146,6 +158,19 @@ export default function SettingsModal(props: SettingsModalProps) {
       : activeTab === "subtitle"
         ? 2
         : 3;
+  const subtitleLengthPresetIndex = SUBTITLE_LENGTH_PRESETS.findIndex((preset) => preset.id === draftSubtitleLengthPreset);
+  const handleSubtitleLengthPresetChange = (preset: (typeof SUBTITLE_LENGTH_PRESETS)[number]) => {
+    onDraftSubtitleLengthPresetChange(preset.id);
+  };
+  const handleChunkInputChange = (value: string) => {
+    const digits = value.replace(/[^0-9]/g, "");
+    if (!digits) {
+      onDraftChunkInputChange("");
+      return;
+    }
+    const nextValue = Math.min(60, Number.parseInt(digits, 10));
+    onDraftChunkInputChange(String(nextValue));
+  };
 
   return (
     <div className="modal-overlay">
@@ -219,13 +244,19 @@ export default function SettingsModal(props: SettingsModalProps) {
                     </div>
                     <div className="form-group">
                       <label>分段时长（秒）</label>
-                      <input
-                        className="apple-input"
-                        inputMode="numeric"
-                        value={draftChunkInput}
-                        onChange={(e) => onDraftChunkInputChange(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder="建议：4G=60秒，8G=180秒"
-                      />
+                      <div className="bounded-number-field">
+                        <input
+                          className="apple-input"
+                          type="number"
+                          inputMode="numeric"
+                          min={30}
+                          max={60}
+                          value={draftChunkInput}
+                          onChange={(e) => handleChunkInputChange(e.target.value)}
+                          placeholder="30 - 60"
+                        />
+                        <span className="bounded-number-hint">30-60</span>
+                      </div>
                     </div>
                   </div>
                   <label className="setting-toggle" htmlFor="enable-vocal-separation">
@@ -331,25 +362,30 @@ export default function SettingsModal(props: SettingsModalProps) {
               <div className="settings-section">
                 <div className="api-config-form">
                   <div className="form-row">
-                    <div className="form-group">
-                      <label>原文长度（词）</label>
-                      <input
-                        className="apple-input"
-                        inputMode="numeric"
-                        value={draftSubtitleMaxWordsInput}
-                        onChange={(e) => onDraftSubtitleMaxWordsInputChange(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder="8 - 40"
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>译文长度（字）</label>
-                      <input
-                        className="apple-input"
-                        inputMode="numeric"
-                        value={draftSubtitleLengthReferenceInput}
-                        onChange={(e) => onDraftSubtitleLengthReferenceInputChange(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder="8 - 80（软约束）"
-                      />
+                    <div className="form-group subtitle-length-group">
+                      <div className="subtitle-length-card">
+                        <span className="toggle-title">字幕长度</span>
+                        <div
+                          className="subtitle-length-slider"
+                          role="radiogroup"
+                          aria-label="字幕长度"
+                          style={{ ["--subtitle-length-index" as string]: subtitleLengthPresetIndex }}
+                        >
+                          <span className="subtitle-length-slider-thumb" aria-hidden="true" />
+                          {SUBTITLE_LENGTH_PRESETS.map((preset) => (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              className={`subtitle-length-option ${draftSubtitleLengthPreset === preset.id ? "active" : ""}`}
+                              onClick={() => handleSubtitleLengthPresetChange(preset)}
+                              role="radio"
+                              aria-checked={draftSubtitleLengthPreset === preset.id}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div className="subtitle-toggle-row">

@@ -6,7 +6,6 @@ use super::quality::{
 };
 use super::text_utils::normalize_inline_text;
 use super::translation_candidate::{leading_number_anchor, sanitize_translation_candidate};
-use super::types::Step5FinalSegment;
 
 pub(super) fn is_watchability_fragment_issue(
     source: &str,
@@ -44,39 +43,6 @@ pub(super) fn is_watchability_fragment_issue(
     let fragment_penalty = line_fragment_penalty(&normalized);
     let line_units = text_length_units(&normalized, target_lang);
     fragment_penalty >= 8 && line_units <= 14.0
-}
-
-pub(super) fn repair_watchability_fragments(segments: &mut [Step5FinalSegment], target_lang: &str) {
-    if segments.is_empty() {
-        return;
-    }
-    let source_lines = segments
-        .iter()
-        .map(|segment| segment.source.clone())
-        .collect::<Vec<_>>();
-    let mut translation_lines = segments
-        .iter()
-        .map(|segment| segment.translation.clone())
-        .collect::<Vec<_>>();
-    repair_watchability_lines(&source_lines, &mut translation_lines, target_lang);
-    for (segment, translation) in segments.iter_mut().zip(translation_lines.into_iter()) {
-        segment.translation = translation;
-    }
-}
-
-pub(super) fn apply_residual_watchability_overrides(
-    segments: &mut [Step5FinalSegment],
-    target_lang: &str,
-) {
-    for segment in segments.iter_mut() {
-        let mut updated = sanitize_translation_candidate(&segment.translation);
-        if is_watchability_fragment_issue(&segment.source, &updated, target_lang) {
-            if let Some(trimmed) = trim_trailing_connector_fragment(&updated) {
-                updated = trimmed;
-            }
-        }
-        segment.translation = updated;
-    }
 }
 
 pub(super) fn repair_watchability_lines(

@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use super::constants::SOFT_SPLIT_GAP_SECONDS;
 use super::language_units::text_length_units;
+use super::responses::compact_for_split_match;
+use super::source_text::build_source_from_tokens;
 use super::split_parts::{boundary_ids_to_ranges, ranges_to_boundary_ids};
 use super::text_utils::ends_with_sentence_punctuation;
 use super::types::Step5Token;
@@ -117,6 +119,9 @@ pub(super) fn map_source_parts_to_boundaries(
     if source_parts.len() <= 1 || tokens.len() <= 1 {
         return Vec::new();
     }
+    if let Some(boundaries) = map_source_parts_to_exact_boundaries(source_parts, tokens) {
+        return boundaries;
+    }
     let token_units = tokens
         .iter()
         .map(|token| text_length_units(&token.text, source_lang).max(0.5))
@@ -195,6 +200,42 @@ pub(super) fn map_source_parts_to_boundaries(
     boundaries.sort_unstable();
     boundaries.dedup();
     boundaries
+}
+
+fn map_source_parts_to_exact_boundaries(
+    source_parts: &[String],
+    tokens: &[Step5Token],
+) -> Option<Vec<usize>> {
+    let full = compact_for_split_match(&build_source_from_tokens(tokens));
+    let parts_joined = compact_for_split_match(&source_parts.join(""));
+    if full.is_empty() || full != parts_joined {
+        return None;
+    }
+
+    let mut out = Vec::<usize>::new();
+    let mut consumed = String::new();
+    for part in source_parts
+        .iter()
+        .take(source_parts.len().saturating_sub(1))
+    {
+        consumed.push_str(&compact_for_split_match(part));
+        if consumed.is_empty() {
+            return None;
+        }
+        let mut matched = None::<usize>;
+        for boundary in 1..tokens.len() {
+            let prefix = compact_for_split_match(&build_source_from_tokens(&tokens[..boundary]));
+            if prefix == consumed {
+                matched = Some(boundary);
+                break;
+            }
+        }
+        let boundary = matched?;
+        out.push(boundary);
+    }
+    out.sort_unstable();
+    out.dedup();
+    Some(out)
 }
 
 pub(super) fn ensure_min_split_ranges(

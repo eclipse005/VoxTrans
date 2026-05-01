@@ -2,31 +2,25 @@ use std::path::Path;
 
 use tauri::AppHandle;
 
-use crate::commands::translate_types::{
-    BuildStep53TranslationPolishCommandResponse, BuildTranslationSegmentCommand,
-};
-use crate::services::pipeline::{StepContext, StepSource, execute_step};
+use crate::commands::translate_types::BuildTranslationSegmentCommand;
+use crate::services::pipeline::{StepContext, StepSource};
 
 use super::adapters::{
-    map_step2_segments_for_translate, workspace_subtitle_segments_from_step51_parents,
+    map_step2_segments_for_translate, translation_segments_from_step52_parents,
+    workspace_subtitle_segments_from_step51_parents,
     workspace_subtitle_segments_from_step52_parents,
     workspace_subtitle_segments_from_translation_segments,
 };
 use super::output_completion::finish_translate_with_step5;
 use super::pipeline_runner::execute_workspace_step;
 use super::pipeline_steps::{
-    Step3TerminologyPipelineStep, Step4TranslationPipelineStep, Step6FinalCheckPipelineStep,
-    Step51SourceSplitPipelineStep, Step52TranslationAlignPipelineStep,
-    Step53TranslationPolishPipelineStep,
+    Step3TerminologyPipelineStep, Step4TranslationPipelineStep, Step51SourceSplitPipelineStep,
+    Step52TranslationAlignPipelineStep,
 };
 use super::preview::update_subtitle_preview;
 use super::progress::report_task_stage;
 use super::runtime_settings::PipelineRuntimeSettings;
-use super::task_logs::{
-    log_step6_final_check_error_to_main, log_step6_final_check_to_main,
-    remove_step6_final_check_artifact,
-};
-use super::{STEP_05_03_TRANSLATION_POLISH_FILE, TaskStage, WorkspaceTaskRecord, json_files};
+use super::{TaskStage, WorkspaceTaskRecord};
 
 pub(super) async fn execute_translate_steps(
     app: &AppHandle,
@@ -40,28 +34,6 @@ pub(super) async fn execute_translate_steps(
     source_text: String,
 ) -> Result<(), String> {
     let step_context = StepContext { output_dir };
-    // Checkpoint contract:
-    // Existing step53 layout is treated as user-selected input. Delete the file to rebuild it.
-    if let Some(step5_existing) = json_files::read_json_file_if_exists::<
-        BuildStep53TranslationPolishCommandResponse,
-    >(&output_dir.join(STEP_05_03_TRANSLATION_POLISH_FILE))?
-    {
-        return finalize_translate_with_step5(
-            app,
-            task_id,
-            record,
-            &source_lang,
-            &target_lang,
-            output_dir,
-            &step_context,
-            &step5_existing.segments,
-            source_text,
-            runtime.enable_subtitle_beautify,
-            runtime.subtitle_length_reference,
-        )
-        .await;
-    }
-
     report_task_stage(app, task_id, TaskStage::Terminology, "", 0, 1)?;
 
     let terminology_segments = map_step2_segments_for_translate(step2_segments);
@@ -141,8 +113,7 @@ pub(super) async fn execute_translate_steps(
             translate_base_url: runtime.translate_base_url.clone(),
             translate_model: runtime.translate_model.clone(),
             llm_concurrency: runtime.llm_concurrency,
-            subtitle_max_words_per_segment: runtime.subtitle_max_words_per_segment,
-            subtitle_length_reference: runtime.subtitle_length_reference,
+            subtitle_length_preset: runtime.subtitle_length_preset.clone(),
             app: app.clone(),
         },
         &step_context,
@@ -177,6 +148,7 @@ pub(super) async fn execute_translate_steps(
             theme_summary: step3_response.theme_summary.clone(),
             parents: step51_exec.output.parents.clone(),
             terminology_entries: step3_response.terminology_entries.clone(),
+            subtitle_length_preset: runtime.subtitle_length_preset.clone(),
             translate_api_key: runtime.translate_api_key.clone(),
             translate_base_url: runtime.translate_base_url.clone(),
             translate_model: runtime.translate_model.clone(),
@@ -203,52 +175,17 @@ pub(super) async fn execute_translate_steps(
         &source_text,
         workspace_subtitle_segments_from_step52_parents(&step52_exec.output.parents),
     )?;
-
-    let step53_exec = execute_workspace_step(
-        app,
-        task_id,
-        &Step53TranslationPolishPipelineStep {
-            task_id: task_id.to_string(),
-            media_path: record.item.path.clone(),
-            source_lang: source_lang.clone(),
-            target_lang: target_lang.clone(),
-            theme_summary: step3_response.theme_summary,
-            parents: step52_exec.output.parents,
-            terminology_entries: step3_response.terminology_entries,
-            translate_api_key: runtime.translate_api_key.clone(),
-            translate_base_url: runtime.translate_base_url.clone(),
-            translate_model: runtime.translate_model.clone(),
-            llm_concurrency: runtime.llm_concurrency,
-            subtitle_length_reference: runtime.subtitle_length_reference,
-            app: app.clone(),
-        },
-        &step_context,
-    )
-    .await?;
-    if step53_exec.source == StepSource::Cache {
-        report_task_stage(
-            app,
-            task_id,
-            TaskStage::SubtitleLayout,
-            "译文润色缓存命中",
-            1,
-            1,
-        )?;
-    }
-    let step53_output = step53_exec.output;
+    let step5_segments = translation_segments_from_step52_parents(&step52_exec.output.parents);
 
     finalize_translate_with_step5(
         app,
         task_id,
         record,
-        &source_lang,
         &target_lang,
-        output_dir,
-        &step_context,
-        &step53_output.segments,
+        &step5_segments,
         source_text,
         runtime.enable_subtitle_beautify,
-        runtime.subtitle_length_reference,
+        &runtime.subtitle_length_preset,
     )
     .await
 }
@@ -257,27 +194,12 @@ async fn finalize_translate_with_step5(
     app: &AppHandle,
     task_id: &str,
     record: &WorkspaceTaskRecord,
-    source_lang: &str,
     target_lang: &str,
-    output_dir: &Path,
-    step_context: &StepContext<'_>,
     segments: &[BuildTranslationSegmentCommand],
     source_text: String,
     enable_subtitle_beautify: bool,
-    subtitle_length_reference: u32,
+    subtitle_length_preset: &str,
 ) -> Result<(), String> {
-    run_step6_final_check(
-        app,
-        task_id,
-        record,
-        source_lang,
-        target_lang,
-        output_dir,
-        step_context,
-        segments.to_vec(),
-    )
-    .await;
-
     finish_translate_with_step5(
         app,
         task_id,
@@ -285,47 +207,7 @@ async fn finalize_translate_with_step5(
         segments,
         source_text,
         enable_subtitle_beautify,
-        subtitle_length_reference,
+        subtitle_length_preset,
         target_lang,
     )
-}
-
-async fn run_step6_final_check(
-    app: &AppHandle,
-    task_id: &str,
-    record: &WorkspaceTaskRecord,
-    source_lang: &str,
-    target_lang: &str,
-    output_dir: &Path,
-    step_context: &StepContext<'_>,
-    segments: Vec<BuildTranslationSegmentCommand>,
-) {
-    remove_step6_final_check_artifact(output_dir);
-    let step6_exec = match execute_step(
-        &Step6FinalCheckPipelineStep {
-            task_id: task_id.to_string(),
-            media_path: record.item.path.clone(),
-            source_lang: source_lang.to_string(),
-            target_lang: target_lang.to_string(),
-            segments,
-            app: app.clone(),
-        },
-        step_context,
-    )
-    .await
-    {
-        Ok(value) => Some(value),
-        Err(err) => {
-            log_step6_final_check_error_to_main(task_id, &record.item.path, &err);
-            None
-        }
-    };
-    if let Some(step6_exec) = step6_exec {
-        log_step6_final_check_to_main(
-            task_id,
-            &record.item.path,
-            &step6_exec.output,
-            step6_exec.source,
-        );
-    }
 }

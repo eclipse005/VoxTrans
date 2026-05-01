@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -128,14 +126,10 @@ pub(in crate::commands::workspace) struct Step2SegmentsPipelineStep {
     pub(in crate::commands::workspace) task_id: String,
     pub(in crate::commands::workspace) media_path: String,
     pub(in crate::commands::workspace) source_lang: String,
+    pub(in crate::commands::workspace) subtitle_length_preset: String,
+    pub(in crate::commands::workspace) use_subtitle_layout_split: bool,
     pub(in crate::commands::workspace) words:
         Vec<crate::commands::transcription::WordTokenCommandDto>,
-    pub(in crate::commands::workspace) subtitle_max_words_per_segment: u32,
-    pub(in crate::commands::workspace) translate_api_key: String,
-    pub(in crate::commands::workspace) translate_base_url: String,
-    pub(in crate::commands::workspace) translate_model: String,
-    pub(in crate::commands::workspace) llm_concurrency: u32,
-    pub(in crate::commands::workspace) app: AppHandle,
 }
 
 #[async_trait]
@@ -162,38 +156,17 @@ impl PipelineStep for Step2SegmentsPipelineStep {
     }
 
     async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        let task_id = self.task_id.clone();
-        let app_for_progress = self.app.clone();
-        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
-            Arc::new(move |current, total| {
-                let detail = if total > 0 {
-                    format!("{current}/{total}")
-                } else {
-                    String::new()
-                };
-                let _ = report_task_stage(
-                    &app_for_progress,
-                    &task_id,
-                    TaskStage::Segmenting,
-                    detail,
-                    current as u32,
-                    total as u32,
-                );
-            });
         let step2_request = crate::commands::transcription::BuildSourceSentencesCommandRequest {
             task_id: self.task_id.clone(),
             audio_path: self.media_path.clone(),
             source_lang: self.source_lang.clone(),
+            subtitle_length_preset: self.subtitle_length_preset.clone(),
+            use_subtitle_layout_split: self.use_subtitle_layout_split,
             words: self.words.clone(),
-            subtitle_max_words_per_segment: self.subtitle_max_words_per_segment,
-            translate_api_key: self.translate_api_key.clone(),
-            translate_base_url: self.translate_base_url.clone(),
-            translate_model: self.translate_model.clone(),
-            llm_concurrency: self.llm_concurrency,
         };
         let step2_response = crate::commands::transcription::build_source_sentences_with_progress(
             step2_request,
-            Some(on_progress),
+            None,
         )
         .await?;
         Ok(step2_response.segments)

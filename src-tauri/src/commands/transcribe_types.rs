@@ -46,35 +46,6 @@ pub struct WordTokenCommandDto {
     pub word: String,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct SegmentWithWordsCommandDto {
-    pub start: f64,
-    pub end: f64,
-    pub text: String,
-    pub words: Vec<WordTokenCommandDto>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildSegmentsCommandRequest {
-    pub task_id: String,
-    pub audio_path: String,
-    pub words: Vec<WordTokenCommandDto>,
-    pub subtitle_max_words_per_segment: u32,
-    #[serde(default)]
-    pub segment_mode: String,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildSegmentsCommandResponse {
-    pub text: String,
-    pub srt: String,
-    pub srt_output_path: String,
-    pub segments: Vec<SegmentWithWordsCommandDto>,
-}
-
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SeparateVocalsCommandRequest {

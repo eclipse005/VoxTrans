@@ -1,18 +1,13 @@
 use super::translate::{
-    BuildStep6FinalCheckCommandRequest, BuildStep51SourceSplitCommandRequest,
-    BuildStep52TranslationAlignCommandRequest, BuildStep53TranslationPolishCommandRequest,
+    BuildStep51SourceSplitCommandRequest, BuildStep52TranslationAlignCommandRequest,
     build_step_5_1_source_split, build_step_5_2_translation_align,
-    build_step_5_3_translation_polish, build_step_6_final_check,
 };
 use super::translate_artifacts::{
     default_task_id_from_path, normalize_artifact_dir, parse_step3_terminology_artifact_for_input,
     parse_step4_translation_artifact_for_input,
 };
 use super::translate_cli_args::required_cli_value;
-use super::translate_defaults::{
-    default_batch_size, default_llm_concurrency, default_subtitle_length_reference,
-    default_subtitle_max_words_per_segment,
-};
+use super::translate_defaults::default_llm_concurrency;
 pub(super) fn run_build_step5_mode_from_args(args: &[String]) -> Result<(), String> {
     let mut translation_path = String::new();
     let mut terminology_path = String::new();
@@ -25,8 +20,7 @@ pub(super) fn run_build_step5_mode_from_args(args: &[String]) -> Result<(), Stri
     let mut translate_base_url = String::new();
     let mut translate_model = String::new();
     let mut llm_concurrency_arg = None::<u32>;
-    let mut subtitle_max_words_per_segment_arg = None::<u32>;
-    let mut subtitle_length_reference_arg = None::<u32>;
+    let mut subtitle_length_preset_arg = None::<String>;
 
     let mut idx = 0usize;
     while idx < args.len() {
@@ -79,20 +73,11 @@ pub(super) fn run_build_step5_mode_from_args(args: &[String]) -> Result<(), Stri
                         .map_err(|_| "--llm-concurrency requires integer".to_string())?,
                 );
             }
-            "--subtitle-length-reference" => {
+            "--subtitle-length-preset" => {
                 idx += 1;
-                let raw = required_cli_value(args, idx, "--subtitle-length-reference")?;
-                subtitle_length_reference_arg = Some(
-                    raw.parse::<u32>()
-                        .map_err(|_| "--subtitle-length-reference requires integer".to_string())?,
-                );
-            }
-            "--subtitle-max-words-per-segment" => {
-                idx += 1;
-                let raw = required_cli_value(args, idx, "--subtitle-max-words-per-segment")?;
-                subtitle_max_words_per_segment_arg = Some(raw.parse::<u32>().map_err(|_| {
-                    "--subtitle-max-words-per-segment requires integer".to_string()
-                })?);
+                let raw = required_cli_value(args, idx, "--subtitle-length-preset")?;
+                subtitle_length_preset_arg =
+                    Some(crate::services::subtitle_length::normalize_subtitle_length_preset(&raw));
             }
             other => return Err(format!("unknown step5 arg: {other}")),
         }
@@ -156,14 +141,12 @@ pub(super) fn run_build_step5_mode_from_args(args: &[String]) -> Result<(), Stri
     }
 
     let mut llm_concurrency = llm_concurrency_arg;
-    let mut subtitle_max_words_per_segment = subtitle_max_words_per_segment_arg;
-    let mut subtitle_length_reference = subtitle_length_reference_arg;
+    let mut subtitle_length_preset = subtitle_length_preset_arg;
     if translate_api_key.trim().is_empty()
         || translate_base_url.trim().is_empty()
         || translate_model.trim().is_empty()
         || llm_concurrency.is_none()
-        || subtitle_max_words_per_segment.is_none()
-        || subtitle_length_reference.is_none()
+        || subtitle_length_preset.is_none()
     {
         let settings = crate::services::preferences::load_saved_settings_from_default_path()?;
         if translate_api_key.trim().is_empty() {
@@ -176,14 +159,12 @@ pub(super) fn run_build_step5_mode_from_args(args: &[String]) -> Result<(), Stri
             translate_model = settings.translate_model;
         }
         llm_concurrency.get_or_insert(settings.llm_concurrency);
-        subtitle_max_words_per_segment.get_or_insert(settings.subtitle_max_words_per_segment);
-        subtitle_length_reference.get_or_insert(settings.subtitle_length_reference);
+        subtitle_length_preset.get_or_insert(settings.subtitle_length_preset);
     }
     let llm_concurrency = llm_concurrency.unwrap_or(default_llm_concurrency()).max(1);
-    let subtitle_max_words_per_segment =
-        subtitle_max_words_per_segment.unwrap_or(default_subtitle_max_words_per_segment());
-    let subtitle_length_reference =
-        subtitle_length_reference.unwrap_or(default_subtitle_length_reference());
+    let subtitle_length_preset = subtitle_length_preset.ok_or_else(|| {
+        "--subtitle-length-preset is required when settings are unavailable".to_string()
+    })?;
 
     let step51 = tauri::async_runtime::block_on(build_step_5_1_source_split(
         BuildStep51SourceSplitCommandRequest {
@@ -196,8 +177,7 @@ pub(super) fn run_build_step5_mode_from_args(args: &[String]) -> Result<(), Stri
             translate_base_url: translate_base_url.clone(),
             translate_model: translate_model.clone(),
             llm_concurrency,
-            subtitle_max_words_per_segment,
-            subtitle_length_reference,
+            subtitle_length_preset: subtitle_length_preset.clone(),
         },
     ))?;
     std::fs::create_dir_all(&artifact_dir).map_err(|err| err.to_string())?;
@@ -217,6 +197,7 @@ pub(super) fn run_build_step5_mode_from_args(args: &[String]) -> Result<(), Stri
             theme_summary: terminology.theme_summary.clone(),
             parents: step51.parents.clone(),
             terminology_entries: terminology.terminology_entries.clone(),
+            subtitle_length_preset,
             translate_api_key: translate_api_key.clone(),
             translate_base_url: translate_base_url.clone(),
             translate_model: translate_model.clone(),
@@ -230,44 +211,6 @@ pub(super) fn run_build_step5_mode_from_args(args: &[String]) -> Result<(), Stri
     )
     .map_err(|err| err.to_string())?;
 
-    let step53 = tauri::async_runtime::block_on(build_step_5_3_translation_polish(
-        BuildStep53TranslationPolishCommandRequest {
-            task_id: task_id.clone(),
-            media_path: media_path.clone(),
-            source_lang: source_lang.clone(),
-            target_lang: target_lang.clone(),
-            theme_summary: terminology.theme_summary,
-            terminology_entries: terminology.terminology_entries,
-            parents: step52.parents,
-            translate_api_key: translate_api_key.clone(),
-            translate_base_url: translate_base_url.clone(),
-            translate_model: translate_model.clone(),
-            llm_concurrency,
-            subtitle_length_reference,
-            batch_size: default_batch_size(),
-        },
-    ))?;
-    let step53_path = artifact_dir.join("step_05_03_translation_polish.json");
-    std::fs::write(
-        &step53_path,
-        serde_json::to_string_pretty(&step53).map_err(|err| err.to_string())?,
-    )
-    .map_err(|err| err.to_string())?;
-    let step6 = tauri::async_runtime::block_on(build_step_6_final_check(
-        BuildStep6FinalCheckCommandRequest {
-            task_id,
-            media_path,
-            source_lang,
-            target_lang,
-            segments: step53.segments.clone(),
-        },
-    ))?;
-    let step6_path = artifact_dir.join("step_06_final_check.json");
-    std::fs::write(
-        &step6_path,
-        serde_json::to_string_pretty(&step6).map_err(|err| err.to_string())?,
-    )
-    .map_err(|err| err.to_string())?;
-    println!("{}", step6_path.display());
+    println!("{}", step52_path.display());
     Ok(())
 }

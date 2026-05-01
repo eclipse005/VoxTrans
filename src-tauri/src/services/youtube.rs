@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -55,6 +55,16 @@ pub struct UpdateYtDlpResponse {
     pub output: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct YoutubeVideoMetadata {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    filesize: Option<u64>,
+    #[serde(default)]
+    filesize_approx: Option<u64>,
+}
+
 static YOUTUBE_PROGRESS: OnceLock<Mutex<HashMap<String, YoutubeDownloadProgressResponse>>> =
     OnceLock::new();
 static YOUTUBE_CANCEL_FLAGS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
@@ -89,22 +99,61 @@ pub fn download_youtube_to_task(
         return Err("taskId is invalid".to_string());
     }
 
-    let output_dir = resolve_output_dir().join(format!("youtube_{safe_task_id}"));
-    std::fs::create_dir_all(&output_dir).map_err(|err| format!("创建下载目录失败: {err}"))?;
-
     let cancel = Arc::new(AtomicBool::new(false));
     cancel_flags()
         .lock()
         .map_err(|_| "youtube cancel state lock poisoned".to_string())?
         .insert(task_id.clone(), cancel.clone());
 
-    let mut snapshot = new_progress(&task_id, "starting", "准备下载");
+    let mut snapshot = new_progress(&task_id, "starting", "解析视频信息");
+    set_progress(app, snapshot.clone());
+
+    let metadata = match fetch_youtube_metadata(&url) {
+        Ok(value) => value,
+        Err(err) => {
+            snapshot.phase = "failed".to_string();
+            snapshot.message = err.clone();
+            set_progress(app, snapshot);
+            remove_cancel_flag(&task_id);
+            return Err(err);
+        }
+    };
+    if cancel.load(Ordering::SeqCst) {
+        snapshot.phase = "cancelled".to_string();
+        snapshot.message = "YouTube 下载已取消".to_string();
+        set_progress(app, snapshot);
+        remove_cancel_flag(&task_id);
+        return Err("YouTube 下载已取消".to_string());
+    }
+    let output_dir =
+        match youtube_output_dir_for_title(&resolve_output_dir(), &metadata.title, &task_id) {
+            Ok(value) => value,
+            Err(err) => {
+                snapshot.phase = "failed".to_string();
+                snapshot.message = err.clone();
+                set_progress(app, snapshot);
+                remove_cancel_flag(&task_id);
+                return Err(err);
+            }
+        };
+    if let Err(err) = std::fs::create_dir_all(&output_dir) {
+        let message = format!("创建下载目录失败: {err}");
+        snapshot.phase = "failed".to_string();
+        snapshot.message = message.clone();
+        set_progress(app, snapshot);
+        remove_cancel_flag(&task_id);
+        return Err(message);
+    }
+
+    snapshot.title = metadata.title.clone();
+    if let Some(size_bytes) = metadata_size_bytes(&metadata) {
+        snapshot.total_size = format_size_bytes(size_bytes);
+    }
+    snapshot.message = "准备下载".to_string();
     set_progress(app, snapshot.clone());
 
     let result = run_ytdlp_download(app, &task_id, &url, &output_dir, &cancel, &mut snapshot);
-    let _ = cancel_flags()
-        .lock()
-        .map(|mut flags| flags.remove(&task_id));
+    remove_cancel_flag(&task_id);
     result
 }
 
@@ -297,6 +346,68 @@ fn build_yt_dlp_command() -> Command {
     let mut command = Command::new(resolve_tool("yt-dlp"));
     configure_background_command(&mut command);
     command
+}
+
+fn fetch_youtube_metadata(url: &str) -> Result<YoutubeVideoMetadata, String> {
+    let output = build_yt_dlp_command()
+        .arg("--no-playlist")
+        .arg("--skip-download")
+        .arg("--dump-single-json")
+        .arg(url)
+        .output()
+        .map_err(|err| format!("解析 YouTube 信息失败: {err}"))?;
+    if !output.status.success() {
+        return Err(command_output_message("解析 YouTube 信息失败", &output));
+    }
+    let mut metadata = serde_json::from_slice::<YoutubeVideoMetadata>(&output.stdout)
+        .map_err(|err| format!("解析 YouTube 信息失败: {err}"))?;
+    metadata.title = metadata.title.trim().to_string();
+    if metadata.title.is_empty() {
+        return Err("解析 YouTube 信息失败: 未获取到视频标题".to_string());
+    }
+    Ok(metadata)
+}
+
+fn youtube_output_dir_for_title(
+    output_root: &Path,
+    title: &str,
+    task_id: &str,
+) -> Result<PathBuf, String> {
+    let safe_title = sanitize_filename_component(title);
+    if safe_title.is_empty() {
+        return Err("解析 YouTube 信息失败: 未获取到视频标题".to_string());
+    }
+    let safe_task_id = sanitize_filename_component(task_id);
+    if safe_task_id.is_empty() {
+        return Err("taskId is invalid".to_string());
+    }
+    Ok(output_root.join(format!("{safe_title}_{safe_task_id}")))
+}
+
+fn metadata_size_bytes(metadata: &YoutubeVideoMetadata) -> Option<u64> {
+    metadata
+        .filesize
+        .or(metadata.filesize_approx)
+        .filter(|value| *value > 0)
+}
+
+fn format_size_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit_index = 0usize;
+    while value >= 1024.0 && unit_index + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit_index += 1;
+    }
+    if unit_index == 0 {
+        format!("{bytes}B")
+    } else {
+        format!("{value:.2}{}", UNITS[unit_index])
+    }
+}
+
+fn remove_cancel_flag(task_id: &str) {
+    let _ = cancel_flags().lock().map(|mut flags| flags.remove(task_id));
 }
 
 fn resolve_tool(program: &str) -> PathBuf {
@@ -607,5 +718,21 @@ mod tests {
     fn progress_line_is_not_treated_as_downloaded_path() {
         let line = "[download]  42.5% of 12.34MiB at 1.23MiB/s ETA 00:05";
         assert!(extract_path_from_line(line, Path::new("C:\\output")).is_none());
+    }
+
+    #[test]
+    fn youtube_output_dir_uses_parsed_title_and_task_id() {
+        let dir =
+            super::youtube_output_dir_for_title(Path::new("C:\\output"), "Video Title", "yt-123")
+                .expect("output dir");
+
+        assert_eq!(dir, Path::new("C:\\output").join("Video Title_yt-123"));
+    }
+
+    #[test]
+    fn youtube_output_dir_rejects_empty_parsed_title() {
+        let result = super::youtube_output_dir_for_title(Path::new("C:\\output"), "...", "yt-123");
+
+        assert!(result.is_err());
     }
 }

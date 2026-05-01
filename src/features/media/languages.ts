@@ -13,6 +13,7 @@ export const DEFAULT_TARGET_LANGUAGE: TargetLanguage = "zh-CN";
 export const SOURCE_LANGUAGE_OPTIONS: LanguageOption<SourceLanguage>[] = [
   { id: "en", short: "EN", label: "English", promptLabel: "English" },
   { id: "zh", short: "ZH", label: "中文普通话", promptLabel: "Mandarin Chinese" },
+  { id: "yue", short: "粤", label: "粤语", promptLabel: "Cantonese" },
   { id: "ja", short: "JA", label: "日本語", promptLabel: "Japanese" },
   { id: "ko", short: "KO", label: "한국어", promptLabel: "Korean" },
   { id: "fr", short: "FR", label: "Français", promptLabel: "French" },
@@ -55,6 +56,17 @@ export function normalizeSourceLanguage(value: unknown): SourceLanguage {
   const lower = normalized.toLowerCase();
   if (lower === "zh-cn" || lower === "zh-hans" || lower === "chinese" || lower === "mandarin") {
     return "zh";
+  }
+  if (
+    lower === "yue"
+    || lower === "yue-hk"
+    || lower === "zh-yue"
+    || lower === "cantonese"
+    || lower === "粤语"
+    || lower === "廣東話"
+    || lower === "广东话"
+  ) {
+    return "yue";
   }
   if (lower === "english") return "en";
   if (lower === "japanese") return "ja";

@@ -63,24 +63,6 @@ pub(super) fn command_segments_to_step5_draft(
         .collect()
 }
 
-pub(super) fn command_segments_to_step5_final(
-    segments: &[BuildTranslationSegmentCommand],
-) -> Vec<crate::services::subtitle_step5::Step5FinalSegment> {
-    segments
-        .iter()
-        .map(
-            |segment| crate::services::subtitle_step5::Step5FinalSegment {
-                segment_id: segment.segment_id,
-                start: segment.start,
-                end: segment.end,
-                source: segment.source.clone(),
-                translation: segment.translation.clone(),
-                tokens: command_tokens_to_step5(&segment.tokens),
-            },
-        )
-        .collect()
-}
-
 pub(super) fn step5_split_parents_to_command(
     parents: Vec<crate::services::subtitle_step5::Step5SplitParent>,
 ) -> Vec<Step5SplitParentCommand> {
@@ -146,47 +128,6 @@ pub(super) fn step5_aligned_parents_to_command(
                     tokens: step5_tokens_to_command(part.tokens),
                 })
                 .collect(),
-        })
-        .collect()
-}
-
-pub(super) fn command_aligned_parents_to_step5(
-    parents: &[Step5AlignedParentCommand],
-) -> Vec<crate::services::subtitle_step5::Step5AlignedParent> {
-    parents
-        .iter()
-        .map(
-            |parent| crate::services::subtitle_step5::Step5AlignedParent {
-                parent_segment_id: parent.parent_segment_id,
-                parts: parent
-                    .parts
-                    .iter()
-                    .map(|part| crate::services::subtitle_step5::Step5AlignedPart {
-                        part_id: part.part_id,
-                        start: part.start,
-                        end: part.end,
-                        source: part.source.clone(),
-                        translation: part.translation.clone(),
-                        tokens: command_tokens_to_step5(&part.tokens),
-                    })
-                    .collect(),
-            },
-        )
-        .collect()
-}
-
-pub(super) fn step5_final_segments_to_command(
-    segments: Vec<crate::services::subtitle_step5::Step5FinalSegment>,
-) -> Vec<BuildTranslationSegmentCommand> {
-    segments
-        .into_iter()
-        .map(|segment| BuildTranslationSegmentCommand {
-            segment_id: segment.segment_id,
-            start: segment.start,
-            end: segment.end,
-            source: segment.source,
-            translation: segment.translation,
-            tokens: step5_tokens_to_command(segment.tokens),
         })
         .collect()
 }

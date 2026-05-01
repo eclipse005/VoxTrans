@@ -1,13 +1,3 @@
-use super::srt::SubtitleSegment;
-
-mod heuristic_cost;
-mod semantic_split;
-mod text_assembly;
-
-use heuristic_cost::recursive_balance_split;
-use semantic_split::split_by_semantic_boundary;
-use text_assembly::{plain_text_from_segments as assemble_plain_text, segment_from_words};
-
 #[derive(Debug, Clone)]
 pub struct WordToken {
     pub start: f64,
@@ -41,51 +31,6 @@ pub fn normalize_word_tokens(raw_words: Vec<WordToken>) -> Vec<WordToken> {
     let out = merge_prefixed_numeric_tokens(out);
     let out = merge_compound_numeric_tokens(out);
     merge_numeric_unit_suffix_tokens(out)
-}
-
-pub fn split_english_segments(
-    words: &[WordToken],
-    max_words_per_segment: usize,
-) -> Vec<SubtitleSegment> {
-    if words.is_empty() {
-        return Vec::new();
-    }
-
-    let max_words = max_words_per_segment.clamp(8, 40);
-    let semantic_segments = split_by_semantic_boundary(words, 2000.0);
-    let mut balanced: Vec<Vec<WordToken>> = Vec::new();
-    for segment in semantic_segments {
-        balanced.extend(recursive_balance_split(&segment, max_words));
-    }
-
-    balanced
-        .into_iter()
-        .filter(|group| !group.is_empty())
-        .map(|group| segment_from_words(&group))
-        .collect()
-}
-
-pub fn split_translate_segments(
-    words: &[WordToken],
-    _subtitle_max_words_per_segment: usize,
-) -> Vec<SubtitleSegment> {
-    if words.is_empty() {
-        return Vec::new();
-    }
-
-    // 翻译断句：只按停顿(>2s)和结束符号断句，保持完整句子
-    // 不做逗号/连接词再分割，保留完整上下文供翻译
-    let semantic_segments = split_by_semantic_boundary(words, 2000.0);
-
-    semantic_segments
-        .into_iter()
-        .filter(|group| !group.is_empty())
-        .map(|group| segment_from_words(&group))
-        .collect()
-}
-
-pub fn plain_text_from_segments(segments: &[SubtitleSegment]) -> String {
-    assemble_plain_text(segments)
 }
 
 fn is_standalone_punctuation_token(token: &str) -> bool {
@@ -499,51 +444,6 @@ mod tests {
         assert_eq!(normalized[0].word, "12:30:45");
         assert_eq!(normalized[0].start, 0.0);
         assert_eq!(normalized[0].end, 0.4);
-    }
-
-    #[test]
-    fn abbreviation_with_long_pause_does_not_split_sentence() {
-        let words = vec![
-            WordToken {
-                start: 104.4,
-                end: 104.64,
-                word: "Mr.".to_string(),
-            },
-            WordToken {
-                start: 107.0,
-                end: 107.3,
-                word: "Smith".to_string(),
-            },
-            WordToken {
-                start: 107.4,
-                end: 107.8,
-                word: "arrived.".to_string(),
-            },
-        ];
-
-        let segments = super::split_translate_segments(&words, 20);
-        assert_eq!(segments.len(), 1);
-        assert_eq!(segments[0].text, "Mr. Smith arrived.");
-    }
-
-    #[test]
-    fn am_pm_with_long_pause_does_not_split_sentence() {
-        let words = vec![
-            WordToken {
-                start: 0.0,
-                end: 0.2,
-                word: "p.m.".to_string(),
-            },
-            WordToken {
-                start: 2.5,
-                end: 2.8,
-                word: "tomorrow.".to_string(),
-            },
-        ];
-
-        let segments = super::split_translate_segments(&words, 20);
-        assert_eq!(segments.len(), 1);
-        assert_eq!(segments[0].text, "p.m. tomorrow.");
     }
 
     #[test]

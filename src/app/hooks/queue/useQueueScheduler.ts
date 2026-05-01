@@ -188,8 +188,7 @@ function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown>
   return {
     provider: settings.provider,
     chunkTargetSeconds: settings.chunkTargetSeconds,
-    subtitleMaxWordsPerSegment: settings.subtitleMaxWordsPerSegment,
-    subtitleLengthReference: settings.subtitleLengthReference,
+    subtitleLengthPreset: settings.subtitleLengthPreset,
     asrModel: settings.asrModel,
     alignModel: settings.alignModel,
     demucsModel: settings.demucsModel,
