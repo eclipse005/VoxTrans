@@ -1,22 +1,18 @@
+<!-- notice_version: 2026.05.10 -->
+
 # PropFirmHelper 公告
 
-notice_version: 2026.05.10
-show: true
+## 当前版本
 
-## 最新版本
-
-当前推荐版本：v0.1.1
+v0.1.0
 
 ## 更新记录
 
-- 修复 xxx
-- 优化 xxx
-- 新增 xxx
+- PropFirmHelper 初始版本，MT5 风险提醒工具
 
 ## 下载地址
 
-蓝奏云：https://example.com  
-百度网盘：https://example.com 提取码：abcd
+蓝奏云：https://wwbxg.lanzouq.com/b00jf8g9ti  密码:5lpr
 
 ## 说明
 
