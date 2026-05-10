@@ -1,0 +1,20 @@
+{
+  "notice_version": "2026.05.10",
+  "title": "PropFirmHelper 公告",
+  "current_version": "v0.1.0",
+  "changelog": [
+    "发布 PropFirmHelper 初始版本，提供 MT5 账户风险监控工作台。",
+    "支持读取本机 MT5 账户数据，展示余额、净值、浮亏、保证金等关键指标。",
+    "支持配置 Prop Firm 挑战规则，包括每日亏损、最大亏损、交易天数和持仓限制。",
+    "内置风险提醒机制，在账户接近或触发规则风险时给出提示。",
+    "提供新闻日历与高影响事件提醒，辅助规避重要行情时段风险。"
+  ],
+  "downloads": [
+    {
+      "label": "蓝奏云",
+      "url": "https://wwbxg.lanzouq.com/b00jf8g9ti",
+      "extra": "密码:5lpr"
+    }
+  ],
+  "notes": "下载新版安装包后，关闭当前程序再安装即可。"
+}
