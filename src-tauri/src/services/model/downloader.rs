@@ -304,8 +304,10 @@ mod tests {
 
     #[test]
     fn placeholder_downloads_keep_asr_and_align_entrypoints_active() {
-        let asr = model_definition(ModelTarget::Asr, None).unwrap();
-        let align = model_definition(ModelTarget::Align, None).unwrap();
+        let asr = model_definition(ModelTarget::Asr, None)
+            .expect("ASR model definition should be valid");
+        let align = model_definition(ModelTarget::Align, None)
+            .expect("align model definition should be valid");
 
         assert_eq!(asr.download_files.len(), asr.required_files.len());
         assert_eq!(align.download_files.len(), align.required_files.len());

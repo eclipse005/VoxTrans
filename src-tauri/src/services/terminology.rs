@@ -86,7 +86,7 @@ pub async fn build_terminology_layer(
         request.translate_api_key.clone(),
         request.translate_model.clone(),
     ))
-    .map_err(|err| err.message)?;
+    ?;
 
     let context_text = build_context_text(&request.segments);
     if context_text.trim().is_empty() {

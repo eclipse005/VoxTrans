@@ -88,8 +88,9 @@ pub fn read_json_if_exists<T: DeserializeOwned>(path: &Path) -> Result<Option<T>
         return Ok(None);
     }
     let raw = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
-    let parsed = serde_json::from_str::<T>(&raw).ok();
-    Ok(parsed)
+    let parsed = serde_json::from_str::<T>(&raw)
+        .map_err(|err| format!("failed to parse {}: {}", path.display(), err))?;
+    Ok(Some(parsed))
 }
 
 pub fn write_json<T: Serialize>(path: &Path, payload: &T) -> Result<(), String> {

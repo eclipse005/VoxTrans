@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LlmErrorKind {
@@ -21,7 +21,8 @@ impl LlmErrorKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
+#[error("{message}")]
 pub struct LlmError {
     pub kind: LlmErrorKind,
     pub message: String,
@@ -36,10 +37,8 @@ impl LlmError {
     }
 }
 
-impl Display for LlmError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
+impl From<LlmError> for String {
+    fn from(err: LlmError) -> Self {
+        err.to_string()
     }
 }
-
-impl std::error::Error for LlmError {}

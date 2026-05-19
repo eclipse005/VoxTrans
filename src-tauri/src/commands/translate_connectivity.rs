@@ -24,8 +24,7 @@ pub async fn test_translate_llm(
         request.base_url.trim().to_string(),
         request.api_key.trim().to_string(),
         request.model.trim().to_string(),
-    ))
-    .map_err(|err| err.message)?;
+    ))?;
 
     let validator = JsonResponseValidator::with_required_keys(&["ok", "message"]);
     let context = LlmCallContext {
@@ -41,8 +40,7 @@ pub async fn test_translate_llm(
             TRANSLATE_LLM_CONNECTIVITY_TEST,
             Some(&validator),
         )
-        .await
-        .map_err(|err| err.message)?;
+        .await?;
     let ok = result
         .json
         .get("ok")

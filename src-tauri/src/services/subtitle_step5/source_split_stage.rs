@@ -89,8 +89,7 @@ pub async fn build_step_5_1_source_split_with_progress(
                     request.translate_base_url.clone(),
                     request.translate_api_key.clone(),
                     request.translate_model.clone(),
-                ))
-                .map_err(|err| err.message)?,
+                ))?,
             );
         }
         if let Some(client) = llm_client.as_ref() {

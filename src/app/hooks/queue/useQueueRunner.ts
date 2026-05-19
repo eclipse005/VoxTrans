@@ -5,83 +5,29 @@ import {
   executeTaskBatch,
 } from "../../api/workspace";
 import {
-  normalizeTaskProgress,
-  type SourceLanguage,
-  type TargetLanguage,
-  type TaskProgress,
-  type TaskStageProgress,
   type QueueItem,
 } from "../../../features/media/types";
-import {
-  normalizeSourceLanguage,
-  normalizeTargetLanguage,
-} from "../../../features/media/languages";
 import type { AppAction } from "../../state/appReducer";
 import {
   patchQueueItem,
 } from "../../state/queueDomainActions";
 import { reportError, toUserErrorMessage } from "../../utils/errors";
+import {
+  mergeTaskStateChanged,
+  toEnqueuePayload,
+  type QueueRunMode,
+} from "../../../features/media/queueUtils";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
-
-// Task state changed event from backend - full state replacement
-type TaskStateChangedEvent = {
-  id: string;
-  path: string;
-  name: string;
-  mediaKind: string;
-  sizeBytes: number;
-  sourceLang?: string;
-  targetLang?: string;
-  transcribeStatus: string;
-  taskProgress: TaskProgress;
-  transcribeError: string;
-  resultText: string;
-  resultSrt: string;
-  subtitleSegmentsJson: string;
-};
-
-function stageOrder(stage: Partial<TaskStageProgress> | null | undefined): number {
-  if (!stage) return 0;
-  const value = Number(stage.order ?? 0);
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.round(value));
-}
-
-function stageRatio(stage: Partial<TaskStageProgress> | null | undefined): number {
-  if (!stage) return 0;
-  const current = Number(stage.current ?? 0);
-  const total = Number(stage.total ?? 0);
-  if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return 0;
-  return Math.max(0, Math.min(1, current / total));
-}
-
-function shouldKeepCurrentProcessingStage(
-  current: QueueItem,
-  incoming: TaskStateChangedEvent,
-): boolean {
-  if (current.transcribeStatus !== "processing" || incoming.transcribeStatus !== "processing") {
-    return false;
-  }
-  const currentOrder = stageOrder(current.taskProgress.stage);
-  const incomingOrder = stageOrder(incoming.taskProgress?.stage);
-  if (incomingOrder > 0 && currentOrder > incomingOrder) {
-    return true;
-  }
-  if (incomingOrder > 0 && currentOrder === incomingOrder) {
-    return stageRatio(incoming.taskProgress?.stage) < stageRatio(current.taskProgress.stage);
-  }
-  return false;
-}
-
-export type QueueRunMode = "transcribe" | "transcribe_translate";
 
 type UseQueueRunnerArgs = {
   dispatch: DispatchState;
   pushToast: PushToast;
   isTaskPresent: (taskId: string) => boolean;
 };
+
+export type { QueueRunMode };
 
 export function useQueueRunner({
   dispatch,
@@ -93,30 +39,25 @@ export function useQueueRunner({
     let disposed = false;
     let unlistenTaskStateChanged: undefined | (() => void);
 
-    listen<TaskStateChangedEvent>("task-state-changed", (event) => {
+    listen<{
+      id: string;
+      path: string;
+      name: string;
+      mediaKind: string;
+      sizeBytes: number;
+      sourceLang?: string;
+      targetLang?: string;
+      transcribeStatus: string;
+      taskProgress: import("../../../features/media/types").TaskProgress;
+      transcribeError: string;
+      resultText: string;
+      resultSrt: string;
+      subtitleSegmentsJson: string;
+    }>("task-state-changed", (event) => {
       const payload = event.payload;
       if (!payload?.id) return;
       if (!isTaskPresent(payload.id)) return;
-      // Backend is the single source of truth - replace local state directly
-      patchQueueItem(dispatch, payload.id, (current) => {
-        const keepCurrentStage = shouldKeepCurrentProcessingStage(current, payload);
-        const nextProgress = normalizeTaskProgress(payload.taskProgress);
-        return {
-          id: payload.id,
-          path: payload.path,
-          name: payload.name,
-          mediaKind: payload.mediaKind as "audio" | "video",
-          sizeBytes: payload.sizeBytes,
-          sourceLang: normalizeSourceLanguage(payload.sourceLang ?? current.sourceLang),
-          targetLang: normalizeTargetLanguage(payload.targetLang ?? current.targetLang),
-          transcribeStatus: payload.transcribeStatus as QueueItem["transcribeStatus"],
-          taskProgress: keepCurrentStage ? current.taskProgress : nextProgress,
-          transcribeError: payload.transcribeError || "",
-          resultText: payload.resultText || "",
-          resultSrt: payload.resultSrt || "",
-          subtitleSegmentsJson: payload.subtitleSegmentsJson || "",
-        };
-      });
+      patchQueueItem(dispatch, payload.id, (current) => mergeTaskStateChanged(current, payload));
     })
       .then((fn) => {
         if (disposed) {
@@ -140,7 +81,6 @@ export function useQueueRunner({
       const response = await enqueueAndExecuteTaskBatch({
         items: [toEnqueuePayload(item, mode)],
       });
-      // State is updated via task-state-changed event from backend
 
       const failed = response.failed.find((entry) => entry.taskId === item.id);
       if (failed) {
@@ -190,7 +130,6 @@ function useRunBatch(
     const response = await enqueueAndExecuteTaskBatch({
       items: items.map((task) => toEnqueuePayload(task.item, task.mode)),
     });
-    // State is updated via task-state-changed event from backend
 
     if (response.failed.length > 0) {
       const first = response.failed[0];
@@ -216,36 +155,4 @@ function useRunQueuedByTaskIds(
       pushToast(`部分任务失败：${first.taskId}，${first.error}`, "error");
     }
   }, [pushToast, isTaskPresent]);
-}
-
-function toEnqueuePayload(
-  item: QueueItem,
-  mode: QueueRunMode,
-): {
-  id: string;
-  mediaPath: string;
-  name: string;
-  mediaKind: "audio" | "video";
-  sizeBytes: number;
-  intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE";
-  sourceLang: SourceLanguage;
-  targetLang: TargetLanguage;
-  maxRetries: number;
-} {
-  return {
-    id: item.id,
-    mediaPath: item.path,
-    name: item.name,
-    mediaKind: item.mediaKind,
-    sizeBytes: item.sizeBytes,
-    intent: toIntent(mode),
-    sourceLang: normalizeSourceLanguage(item.sourceLang),
-    targetLang: normalizeTargetLanguage(item.targetLang),
-    maxRetries: 0,
-  };
-}
-
-function toIntent(mode: QueueRunMode): "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" {
-  if (mode === "transcribe_translate") return "TRANSCRIBE_TRANSLATE";
-  return "TRANSCRIBE";
 }

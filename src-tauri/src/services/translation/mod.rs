@@ -42,7 +42,7 @@ pub async fn build_translation_layer_with_progress(
         request.translate_api_key.clone(),
         request.translate_model.clone(),
     ))
-    .map_err(|err| err.message)?;
+    ?;
 
     let batch_size = request
         .batch_size

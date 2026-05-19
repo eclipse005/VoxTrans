@@ -257,7 +257,7 @@ mod tests {
             }),
             false,
         )
-        .unwrap();
+        .expect("resolve_runtime_settings should not fail with valid snapshot");
 
         assert_eq!(settings.asr_model, "Qwen3-ASR-1.7B");
         assert_eq!(settings.align_model, "Qwen3-ForcedAligner-0.6B");

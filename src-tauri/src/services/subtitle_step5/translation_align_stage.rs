@@ -36,7 +36,7 @@ pub async fn build_step_5_2_translation_align_with_progress(
         request.translate_api_key.clone(),
         request.translate_model.clone(),
     ))
-    .map_err(|err| err.message)?;
+    ?;
 
     let first_pass_total = request.parents.len().max(1);
     let second_pass_budget = estimate_second_pass_budget(&request.parents);

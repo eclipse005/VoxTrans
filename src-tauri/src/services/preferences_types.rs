@@ -153,13 +153,13 @@ mod ts_export_tests {
 
     #[test]
     fn export_preference_types() {
-        TerminologyTerm::export_all().unwrap();
-        TerminologyGroup::export_all().unwrap();
-        SubtitleLineStyle::export_all().unwrap();
-        SubtitleLayoutStyle::export_all().unwrap();
-        SubtitleRenderStyle::export_all().unwrap();
-        SavedSettings::export_all().unwrap();
-        UserPreferencesResponse::export_all().unwrap();
-        SaveAppSettingsRequest::export_all().unwrap();
+        TerminologyTerm::export_all().expect("export TerminologyTerm");
+        TerminologyGroup::export_all().expect("export TerminologyGroup");
+        SubtitleLineStyle::export_all().expect("export SubtitleLineStyle");
+        SubtitleLayoutStyle::export_all().expect("export SubtitleLayoutStyle");
+        SubtitleRenderStyle::export_all().expect("export SubtitleRenderStyle");
+        SavedSettings::export_all().expect("export SavedSettings");
+        UserPreferencesResponse::export_all().expect("export UserPreferencesResponse");
+        SaveAppSettingsRequest::export_all().expect("export SaveAppSettingsRequest");
     }
 }
