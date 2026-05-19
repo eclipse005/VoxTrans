@@ -88,12 +88,11 @@ pub(super) fn repair_neighbor_number_leaks(
                     .filter(|value| left_numbers_after.contains(*value))
                     .cloned()
                     .collect::<HashSet<_>>();
-                if !remaining.is_empty() {
-                    if let Some(trimmed) = trim_before_leaked_number_anchor(&left_text, &remaining)
+                if !remaining.is_empty()
+                    && let Some(trimmed) = trim_before_leaked_number_anchor(&left_text, &remaining)
                     {
                         left_text = trimmed;
                     }
-                }
             }
 
             let missing_on_left = left_source_numbers
@@ -125,12 +124,11 @@ pub(super) fn repair_neighbor_number_leaks(
                     .filter(|value| right_numbers_after.contains(*value))
                     .cloned()
                     .collect::<HashSet<_>>();
-                if !remaining.is_empty() {
-                    if let Some(trimmed) = trim_before_leaked_number_anchor(&right_text, &remaining)
+                if !remaining.is_empty()
+                    && let Some(trimmed) = trim_before_leaked_number_anchor(&right_text, &remaining)
                     {
                         right_text = trimmed;
                     }
-                }
             }
         }
 

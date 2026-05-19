@@ -3,9 +3,9 @@ use std::sync::{Mutex, OnceLock};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
+use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::domain::task::stage::TaskStage;
 
-mod adapters;
 mod artifact_migration;
 mod execution_flow;
 mod json_files;
@@ -17,7 +17,6 @@ mod pipeline_steps;
 mod preview;
 mod progress;
 mod queue_ops;
-mod runtime_settings;
 mod task_logs;
 mod translation_flow;
 mod types;
@@ -27,7 +26,7 @@ use queue_ops::{
     delete_tasks_internal, enqueue_task_run_internal, execute_task_batch_internal,
     register_task_upload_internal, update_task_languages_internal,
 };
-use runtime_settings::fallback_saved_settings;
+use crate::domain::task::runtime_settings::fallback_saved_settings;
 pub use types::*;
 
 #[derive(Debug, Clone)]
@@ -59,17 +58,17 @@ fn workspace_store() -> &'static Mutex<WorkspaceStore> {
     WORKSPACE_STORE.get_or_init(|| Mutex::new(WorkspaceStore::default()))
 }
 
-fn lock_workspace_store() -> Result<std::sync::MutexGuard<'static, WorkspaceStore>, String> {
+fn lock_workspace_store() -> WorkspaceResult<std::sync::MutexGuard<'static, WorkspaceStore>> {
     workspace_store()
         .lock()
-        .map_err(|_| "workspace store lock poisoned".to_string())
+        .map_err(|_| WorkspaceError::LockPoisoned)
 }
 
-fn lock_workspace_hydrated() -> Result<std::sync::MutexGuard<'static, bool>, String> {
+fn lock_workspace_hydrated() -> WorkspaceResult<std::sync::MutexGuard<'static, bool>> {
     WORKSPACE_HYDRATED
         .get_or_init(|| Mutex::new(false))
         .lock()
-        .map_err(|_| "workspace hydrated lock poisoned".to_string())
+        .map_err(|_| WorkspaceError::LockPoisoned)
 }
 
 #[tauri::command]
@@ -101,12 +100,12 @@ pub async fn load_workspace_task(
 
 #[tauri::command]
 pub async fn register_task_upload(request: RegisterTaskUploadCommandRequest) -> Result<(), String> {
-    register_task_upload_internal(request)
+    Ok(register_task_upload_internal(request)?)
 }
 
 #[tauri::command]
 pub async fn delete_tasks(request: DeleteTasksCommandRequest) -> Result<(), String> {
-    delete_tasks_internal(request)
+    Ok(delete_tasks_internal(request)?)
 }
 
 #[tauri::command]
@@ -114,7 +113,7 @@ pub async fn enqueue_task_run(
     app: AppHandle,
     request: EnqueueTaskRunCommandRequest,
 ) -> Result<(), String> {
-    enqueue_task_run_internal(&app, request)
+    Ok(enqueue_task_run_internal(&app, request)?)
 }
 
 #[tauri::command]
@@ -122,7 +121,7 @@ pub async fn update_task_languages(
     app: AppHandle,
     request: UpdateTaskLanguagesCommandRequest,
 ) -> Result<(), String> {
-    update_task_languages_internal(&app, request)
+    Ok(update_task_languages_internal(&app, request)?)
 }
 
 #[tauri::command]
@@ -161,7 +160,7 @@ pub async fn enqueue_and_execute_task_batch(
             }),
             Err(err) => failed.push(ExecuteTaskBatchFailedItem {
                 task_id: item.id,
-                error: err,
+                error: err.to_string(),
             }),
         }
     }
@@ -186,64 +185,64 @@ fn patch_task_item(
     app: &AppHandle,
     task_id: &str,
     mutator: impl FnOnce(&mut WorkspaceTaskRecord),
-) -> Result<(), String> {
+) -> WorkspaceResult<()> {
     let updated_item = {
         let mut store = lock_workspace_store()?;
         let Some(task) = find_task_mut(&mut store, task_id) else {
-            return Err(format!("task not found: {task_id}"));
+            return Err(WorkspaceError::TaskNotFound(task_id.to_string()));
         };
         mutator(task);
-        persist_task_meta(task)?;
+        persist_task_meta(task).map_err(WorkspaceError::TaskFailed)?;
         task.item.clone()
     };
     emit_task_state_changed(app, &updated_item);
     Ok(())
 }
 
-fn get_task_record(task_id: &str) -> Result<WorkspaceTaskRecord, String> {
+fn get_task_record(task_id: &str) -> WorkspaceResult<WorkspaceTaskRecord> {
     let store = lock_workspace_store()?;
     let Some(task) = store.tasks.iter().find(|entry| entry.item.id == task_id) else {
-        return Err(format!("task not found: {task_id}"));
+        return Err(WorkspaceError::TaskNotFound(task_id.to_string()));
     };
     Ok(task.clone())
 }
 
-pub fn get_task_queue_item_for_export(task_id: &str) -> Result<WorkspaceQueueItem, String> {
+pub fn get_task_queue_item_for_export(task_id: &str) -> WorkspaceResult<WorkspaceQueueItem> {
     let normalized = task_id.trim();
     if normalized.is_empty() {
-        return Err("taskId is required".to_string());
+        return Err(WorkspaceError::InvalidRequest("taskId is required".to_string()));
     }
-    ensure_workspace_hydrated_from_disk()?;
+    ensure_workspace_hydrated_from_disk().map_err(|e: String| WorkspaceError::TaskFailed(e))?;
     let record = get_task_record(normalized)?;
     Ok(record.item)
 }
 
-pub fn add_task_total_tokens(task_id: &str, delta_tokens: u64) -> Result<u64, String> {
+pub fn add_task_total_tokens(task_id: &str, delta_tokens: u64) -> WorkspaceResult<u64> {
     let task_id = task_id.trim();
     if task_id.is_empty() || delta_tokens == 0 {
         return Ok(0);
     }
 
-    ensure_workspace_hydrated_from_disk()?;
+    ensure_workspace_hydrated_from_disk().map_err(|e: String| WorkspaceError::TaskFailed(e))?;
     let updated_total = {
         let mut store = lock_workspace_store()?;
         let Some(task) = find_task_mut(&mut store, task_id) else {
             return Ok(0);
         };
         task.item.llm_total_tokens = task.item.llm_total_tokens.saturating_add(delta_tokens);
-        persist_task_meta(task)?;
+        persist_task_meta(task).map_err(WorkspaceError::TaskFailed)?;
         task.item.llm_total_tokens
     };
     Ok(updated_total)
 }
 
-pub fn get_task_total_tokens_from_workspace(task_id: &str) -> Result<u64, String> {
+pub fn get_task_total_tokens_from_workspace(task_id: &str) -> WorkspaceResult<u64> {
     let task_id = task_id.trim();
     if task_id.is_empty() {
         return Ok(0);
     }
 
-    ensure_workspace_hydrated_from_disk()?;
+    ensure_workspace_hydrated_from_disk().map_err(|e: String| WorkspaceError::TaskFailed(e))?;
     let store = lock_workspace_store()?;
     let Some(task) = store.tasks.iter().find(|entry| entry.item.id == task_id) else {
         return Ok(0);

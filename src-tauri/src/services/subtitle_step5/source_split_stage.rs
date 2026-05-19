@@ -337,14 +337,14 @@ fn fallback_binary_boundary(task: &Step51LlmSplitTask) -> Option<usize> {
     let midpoint = total_units / 2.0;
     let mut left_units = 0.0f64;
     let mut candidates = Vec::<(usize, f64, bool)>::new();
-    for local_idx in 0..slice.len().saturating_sub(1) {
-        left_units += text_length_units(&slice[local_idx].text, &task.source_lang);
+    for (local_idx, token) in slice.iter().enumerate().take(slice.len().saturating_sub(1)) {
+        left_units += text_length_units(&token.text, &task.source_lang);
         let right_units = (total_units - left_units).max(0.0);
         if left_units <= 0.0 || right_units <= 0.0 {
             continue;
         }
         let mut score = (left_units - midpoint).abs();
-        if is_good_fallback_split_tail(&slice[local_idx].text) {
+        if is_good_fallback_split_tail(&token.text) {
             score -= total_units * 0.25;
         }
         if left_units < 3.0 || right_units < 3.0 {
@@ -353,7 +353,7 @@ fn fallback_binary_boundary(task: &Step51LlmSplitTask) -> Option<usize> {
         candidates.push((
             start + local_idx + 1,
             score,
-            is_good_fallback_split_tail(&slice[local_idx].text),
+            is_good_fallback_split_tail(&token.text),
         ));
     }
     let has_good_candidate = candidates.iter().any(|(_, _, is_good)| *is_good);

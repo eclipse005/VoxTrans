@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,8 +94,6 @@ pub struct EnqueueTaskRunCommandRequest {
     pub target_lang: Option<String>,
     #[serde(default)]
     pub max_retries: Option<u32>,
-    #[serde(default)]
-    pub settings_snapshot: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

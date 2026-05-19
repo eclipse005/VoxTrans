@@ -48,8 +48,8 @@ pub fn save_srt(request: SaveSrtRequest) -> Result<(), String> {
         (Some(task_id), _) if !task_id.trim().is_empty() => Some(TaskLogger::main(task_id.clone())),
         _ => None,
     };
-    if let Some(parent) = std::path::Path::new(&request.output_path).parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
+    if let Some(parent) = std::path::Path::new(&request.output_path).parent()
+        && let Err(err) = std::fs::create_dir_all(parent) {
             let message = err.to_string();
             if let Some(logger) = &logger {
                 logger.event(
@@ -62,7 +62,6 @@ pub fn save_srt(request: SaveSrtRequest) -> Result<(), String> {
             }
             return Err(message);
         }
-    }
     let srt_bytes = request.content.len();
     if let Err(err) = std::fs::write(&request.output_path, request.content.as_bytes()) {
         let message = err.to_string();

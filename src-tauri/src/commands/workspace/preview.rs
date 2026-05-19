@@ -11,8 +11,8 @@ pub(super) fn update_subtitle_preview(
     segments: Vec<WorkspaceSubtitleSegment>,
 ) -> Result<(), String> {
     let subtitle_segments_json = serialize_segments(&segments);
-    patch_task_item(app, task_id, |task| {
+    Ok(patch_task_item(app, task_id, |task| {
         task.item.result_text = source_text.to_string();
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
-    })
+    })?)
 }

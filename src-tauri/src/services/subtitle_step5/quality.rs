@@ -141,8 +141,8 @@ fn line_redundancy_penalty(signatures: &[String]) -> i64 {
         if left.len() < 8 {
             continue;
         }
-        for right_index in (left_index + 1)..signatures.len() {
-            let right = signatures[right_index].as_str();
+        for right in signatures.iter().skip(left_index + 1) {
+            let right = right.as_str();
             if right.len() < 8 || left == right {
                 continue;
             }

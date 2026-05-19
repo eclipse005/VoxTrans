@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { deleteTasks, enqueueTaskRun } from "../../api/workspace";
-import { createEmptyTaskProgress, type QueueItem, type SavedSettings } from "../../../features/media/types";
+import { createEmptyTaskProgress, type QueueItem } from "../../../features/media/types";
 import {
   normalizeSourceLanguage,
   normalizeTargetLanguage,
@@ -19,7 +19,6 @@ type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
 
 type UseQueueSchedulerArgs = {
   queue: QueueItem[];
-  settings: SavedSettings;
   dispatch: DispatchState;
   pushToast: PushToast;
   runQueuedByTaskIds: (taskIds: string[]) => Promise<void>;
@@ -29,7 +28,6 @@ export type QueueBatchMode = "transcribe" | "transcribe_translate";
 
 export function useQueueScheduler({
   queue,
-  settings,
   dispatch,
   pushToast,
   runQueuedByTaskIds,
@@ -66,7 +64,6 @@ export function useQueueScheduler({
         sourceLang: normalizeSourceLanguage(item.sourceLang),
         targetLang: normalizeTargetLanguage(item.targetLang),
         maxRetries: 0,
-        settingsSnapshot: buildSettingsSnapshot(settings),
       });
       // State is updated via task-state-changed event from backend
       return true;
@@ -82,7 +79,7 @@ export function useQueueScheduler({
       pushToast(`失败：${item.name}，${message}`, "error");
       return false;
     }
-  }, [dispatch, pushToast, settings]);
+  }, [dispatch, pushToast]);
 
   useEffect(() => {
     if (hasProcessingTask) return;
@@ -184,21 +181,3 @@ export function useQueueScheduler({
   };
 }
 
-function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown> {
-  return {
-    provider: settings.provider,
-    chunkTargetSeconds: settings.chunkTargetSeconds,
-    subtitleLengthPreset: settings.subtitleLengthPreset,
-    asrModel: settings.asrModel,
-    alignModel: settings.alignModel,
-    demucsModel: settings.demucsModel,
-    enableVocalSeparation: settings.enableVocalSeparation,
-    translateApiKey: settings.translateApiKey,
-    translateBaseUrl: settings.translateBaseUrl,
-    translateModel: settings.translateModel,
-    llmConcurrency: settings.llmConcurrency,
-    terminologyGroups: settings.terminologyGroups,
-    enableTerminology: settings.enableTerminology,
-    enableSubtitleBeautify: settings.enableSubtitleBeautify,
-  };
-}

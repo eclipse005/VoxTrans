@@ -22,6 +22,7 @@ import { useTaskLogs } from "./hooks/useTaskLogs";
 import { useToast } from "./hooks/useToast";
 import { useWorkspacePersistence } from "./hooks/useWorkspacePersistence";
 import { appReducer, initialAppState } from "./state/appReducer";
+import { SettingsFormContext } from "./contexts/SettingsFormContext";
 
 const SUBTITLE_EXPORT_ITEMS_KEY = "voxtrans.subtitleExportItems.v1";
 const ALL_EXPORT_ITEMS: ExportSrtItem[] = [
@@ -111,7 +112,6 @@ function App() {
     updateYtDlpBinary,
   } = useQueueWorkflow({
     queue,
-    settings,
     dispatch,
     pushToast,
   });
@@ -142,6 +142,7 @@ function App() {
     () => queue.find((item) => item.id === activeId) ?? null,
     [queue, activeId],
   );
+
   const {
     asrStatus,
     asrStatusByModel,
@@ -157,6 +158,50 @@ function App() {
     alignModel: settings.alignModel,
     demucsModel: settings.demucsModel,
   });
+
+  const {
+    openSettings,
+    saveSettings,
+    saveTerminologyGroups,
+    testTranslateConnection,
+    form,
+    setForm,
+  } = useSettingsController({
+    settings,
+    dispatch,
+    pushToast,
+    refreshModelStatus,
+  });
+
+  const settingsFormContextValue = useMemo(
+    () => ({
+      form,
+      setForm,
+      asrStatus,
+      asrStatusByModel,
+      alignStatus,
+      demucsStatus,
+      saveSettings,
+      testTranslateConnection,
+      openModelDir,
+      startModelDownload,
+      cancelModelDownload,
+    }),
+    [
+      form,
+      setForm,
+      asrStatus,
+      asrStatusByModel,
+      alignStatus,
+      demucsStatus,
+      saveSettings,
+      testTranslateConnection,
+      openModelDir,
+      startModelDownload,
+      cancelModelDownload,
+    ],
+  );
+
   const {
     taskName: logTaskName,
     logContent,
@@ -174,19 +219,6 @@ function App() {
     dispatch,
     pushToast,
   });
-  const {
-    openSettings,
-    saveSettings,
-    saveTerminologyGroups,
-    testTranslateConnection,
-    form,
-    setForm,
-  } = useSettingsController({
-    settings,
-    dispatch,
-    pushToast,
-    refreshModelStatus,
-  });
 
   const openSubtitleDir = useCallback(async () => {
     try {
@@ -199,6 +231,7 @@ function App() {
       pushToast(message, "error");
     }
   }, [pushToast, subtitleMediaPath, subtitleTaskId]);
+
   const canExportTranslated = useMemo(
     () => subtitleCues.some((cue) => cue.translatedText.trim().length > 0),
     [subtitleCues],
@@ -282,53 +315,12 @@ function App() {
         </section>
       </main>
 
-      <SettingsModal
-        visible={showSettings}
-        draftProvider={form.provider}
-        draftChunkInput={form.chunkInput}
-        draftSubtitleLengthPreset={form.subtitleLengthPreset}
-        draftAsrModel={form.asrModel}
-        draftAlignModel={form.alignModel}
-        draftDemucsModel={form.demucsModel}
-        draftEnableVocalSeparation={form.enableVocalSeparation}
-        draftTranslateApiKey={form.translateApiKey}
-        draftTranslateBaseUrl={form.translateBaseUrl}
-        draftTranslateModel={form.translateModel}
-        draftLlmConcurrencyInput={form.llmConcurrencyInput}
-        draftEnableTerminology={form.enableTerminology}
-        draftEnableSubtitleBeautify={form.enableSubtitleBeautify}
-        draftEnableClickSound={form.enableClickSound}
-        draftAutoBurnHardSubtitle={form.autoBurnHardSubtitle}
-        draftSubtitleBurnMode={form.subtitleBurnMode}
-        draftSubtitleRenderStyle={form.subtitleRenderStyle}
-        asrStatus={asrStatus}
-        asrStatusByModel={asrStatusByModel}
-        alignStatus={alignStatus}
-        demucsStatus={demucsStatus}
-        onClose={() => dispatch({ type: "set_ui", payload: { showSettings: false } })}
-        onSave={saveSettings}
-        onDraftProviderChange={(value) => setForm((prev) => ({ ...prev, provider: value }))}
-        onDraftChunkInputChange={(value) => setForm((prev) => ({ ...prev, chunkInput: value }))}
-        onDraftSubtitleLengthPresetChange={(value) => setForm((prev) => ({ ...prev, subtitleLengthPreset: value }))}
-        onDraftAsrModelChange={(value) => setForm((prev) => ({ ...prev, asrModel: value }))}
-        onDraftAlignModelChange={(value) => setForm((prev) => ({ ...prev, alignModel: value }))}
-        onDraftDemucsModelChange={(value) => setForm((prev) => ({ ...prev, demucsModel: value }))}
-        onDraftEnableVocalSeparationChange={(value) => setForm((prev) => ({ ...prev, enableVocalSeparation: value }))}
-        onDraftTranslateApiKeyChange={(value) => setForm((prev) => ({ ...prev, translateApiKey: value }))}
-        onDraftTranslateBaseUrlChange={(value) => setForm((prev) => ({ ...prev, translateBaseUrl: value }))}
-        onDraftTranslateModelChange={(value) => setForm((prev) => ({ ...prev, translateModel: value }))}
-        onDraftLlmConcurrencyInputChange={(value) => setForm((prev) => ({ ...prev, llmConcurrencyInput: value }))}
-        onDraftEnableTerminologyChange={(value) => setForm((prev) => ({ ...prev, enableTerminology: value }))}
-        onDraftEnableSubtitleBeautifyChange={(value) => setForm((prev) => ({ ...prev, enableSubtitleBeautify: value }))}
-        onDraftEnableClickSoundChange={(value) => setForm((prev) => ({ ...prev, enableClickSound: value }))}
-        onDraftAutoBurnHardSubtitleChange={(value) => setForm((prev) => ({ ...prev, autoBurnHardSubtitle: value }))}
-        onDraftSubtitleBurnModeChange={(value) => setForm((prev) => ({ ...prev, subtitleBurnMode: value }))}
-        onDraftSubtitleRenderStyleChange={(value) => setForm((prev) => ({ ...prev, subtitleRenderStyle: value }))}
-        onTestTranslateConnection={testTranslateConnection}
-        onOpenModelDir={openModelDir}
-        onStartModelDownload={startModelDownload}
-        onCancelModelDownload={cancelModelDownload}
-      />
+      <SettingsFormContext.Provider value={settingsFormContextValue}>
+        <SettingsModal
+          visible={showSettings}
+          onClose={() => dispatch({ type: "set_ui", payload: { showSettings: false } })}
+        />
+      </SettingsFormContext.Provider>
 
       <LogsModal
         visible={showLogs}

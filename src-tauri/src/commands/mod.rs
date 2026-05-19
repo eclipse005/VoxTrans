@@ -18,7 +18,7 @@ pub mod transcription_cli;
 mod transcription_types;
 pub mod translate;
 pub mod translate_artifacts;
-pub mod translate_cli_args;
+mod cli;
 pub mod translate_connectivity;
 pub mod translate_llm_settings;
 pub mod translate_step5_commands;

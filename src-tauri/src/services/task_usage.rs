@@ -37,5 +37,5 @@ pub fn record_llm_usage_best_effort(task_id: &str, phase: &str, usage: LlmTokenU
 }
 
 pub async fn get_task_total_tokens(task_id: &str) -> Result<u64, String> {
-    crate::commands::workspace::get_task_total_tokens_from_workspace(task_id)
+    Ok(crate::commands::workspace::get_task_total_tokens_from_workspace(task_id)?)
 }

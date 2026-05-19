@@ -1,132 +1,26 @@
 import { useEffect, useState } from "react";
-import type {
-  AlignModel,
-  AsrModel,
-  DemucsModel,
-  ModelStatusResponse,
-  Provider,
-  SubtitleBurnMode,
-  SubtitleLengthPreset,
-  SubtitleRenderStyle,
-} from "../../features/media/types";
+import type { SubtitleBurnMode } from "../../features/media/types";
 import { PROVIDER_OPTIONS } from "../../features/media/provider";
 import { listSystemFonts } from "../api/system";
 import { CheckIcon, CpuIcon, GpuIcon } from "./Icons";
 import { ModelDownloadCard } from "./settings/ModelDownloadCard";
 import { SubtitleStylePreview } from "./settings/SubtitleStylePreview";
 import { useDialogA11y } from "./useDialogA11y";
+import { useSettingsFormContext } from "../contexts/SettingsFormContext";
 
 const SUBTITLE_LENGTH_PRESETS = [
-  {
-    id: "short",
-    label: "短",
-  },
-  {
-    id: "standard",
-    label: "标准",
-  },
-  {
-    id: "loose",
-    label: "宽松",
-  },
+  { id: "short", label: "短" },
+  { id: "standard", label: "标准" },
+  { id: "loose", label: "宽松" },
 ] as const;
 
 type SettingsModalProps = {
   visible: boolean;
-  draftProvider: Provider;
-  draftChunkInput: string;
-  draftSubtitleLengthPreset: SubtitleLengthPreset;
-  draftAsrModel: AsrModel;
-  draftAlignModel: AlignModel;
-  draftDemucsModel: DemucsModel;
-  draftEnableVocalSeparation: boolean;
-  draftTranslateApiKey: string;
-  draftTranslateBaseUrl: string;
-  draftTranslateModel: string;
-  draftLlmConcurrencyInput: string;
-  draftEnableTerminology: boolean;
-  draftEnableSubtitleBeautify: boolean;
-  draftEnableClickSound: boolean;
-  draftAutoBurnHardSubtitle: boolean;
-  draftSubtitleBurnMode: SubtitleBurnMode;
-  draftSubtitleRenderStyle: SubtitleRenderStyle;
-  asrStatus: ModelStatusResponse | null;
-  asrStatusByModel: Record<AsrModel, ModelStatusResponse | null>;
-  alignStatus: ModelStatusResponse | null;
-  demucsStatus: ModelStatusResponse | null;
   onClose: () => void;
-  onSave: () => void | Promise<void>;
-  onDraftProviderChange: (value: Provider) => void;
-  onDraftChunkInputChange: (value: string) => void;
-  onDraftSubtitleLengthPresetChange: (value: SubtitleLengthPreset) => void;
-  onDraftAsrModelChange: (value: AsrModel) => void;
-  onDraftAlignModelChange: (value: AlignModel) => void;
-  onDraftDemucsModelChange: (value: DemucsModel) => void;
-  onDraftEnableVocalSeparationChange: (value: boolean) => void;
-  onDraftTranslateApiKeyChange: (value: string) => void;
-  onDraftTranslateBaseUrlChange: (value: string) => void;
-  onDraftTranslateModelChange: (value: string) => void;
-  onDraftLlmConcurrencyInputChange: (value: string) => void;
-  onDraftEnableTerminologyChange: (value: boolean) => void;
-  onDraftEnableSubtitleBeautifyChange: (value: boolean) => void;
-  onDraftEnableClickSoundChange: (value: boolean) => void;
-  onDraftAutoBurnHardSubtitleChange: (value: boolean) => void;
-  onDraftSubtitleBurnModeChange: (value: SubtitleBurnMode) => void;
-  onDraftSubtitleRenderStyleChange: (value: SubtitleRenderStyle) => void;
-  onTestTranslateConnection: () => void | Promise<void>;
-  onOpenModelDir: (target: "asr" | "align" | "demucs", model?: string) => void | Promise<void>;
-  onStartModelDownload: (target: "asr" | "align" | "demucs", model?: string) => void | Promise<void>;
-  onCancelModelDownload: (target: "asr" | "align" | "demucs", model?: string) => void | Promise<void>;
 };
 
-export default function SettingsModal(props: SettingsModalProps) {
-  const {
-    visible,
-    draftProvider,
-    draftChunkInput,
-    draftSubtitleLengthPreset,
-    draftAsrModel,
-    draftAlignModel,
-    draftDemucsModel,
-    draftEnableVocalSeparation,
-    draftTranslateApiKey,
-    draftTranslateBaseUrl,
-    draftTranslateModel,
-    draftLlmConcurrencyInput,
-    draftEnableTerminology,
-    draftEnableSubtitleBeautify,
-    draftEnableClickSound,
-    draftAutoBurnHardSubtitle,
-    draftSubtitleBurnMode,
-    draftSubtitleRenderStyle,
-    asrStatus,
-    asrStatusByModel,
-    alignStatus,
-    demucsStatus,
-    onClose,
-    onSave,
-    onDraftProviderChange,
-    onDraftChunkInputChange,
-    onDraftSubtitleLengthPresetChange,
-    onDraftAsrModelChange,
-    onDraftAlignModelChange,
-    onDraftDemucsModelChange,
-    onDraftEnableVocalSeparationChange,
-    onDraftTranslateApiKeyChange,
-    onDraftTranslateBaseUrlChange,
-    onDraftTranslateModelChange,
-    onDraftLlmConcurrencyInputChange,
-    onDraftEnableTerminologyChange,
-    onDraftEnableSubtitleBeautifyChange,
-    onDraftEnableClickSoundChange,
-    onDraftAutoBurnHardSubtitleChange,
-    onDraftSubtitleBurnModeChange,
-    onDraftSubtitleRenderStyleChange,
-    onTestTranslateConnection,
-    onOpenModelDir,
-    onStartModelDownload,
-    onCancelModelDownload,
-  } = props;
+export default function SettingsModal({ visible, onClose }: SettingsModalProps) {
+  const ctx = useSettingsFormContext();
 
   const [activeTab, setActiveTab] = useState<"transcribe" | "translate" | "subtitle" | "models">("transcribe");
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
@@ -158,18 +52,23 @@ export default function SettingsModal(props: SettingsModalProps) {
       : activeTab === "subtitle"
         ? 2
         : 3;
-  const subtitleLengthPresetIndex = SUBTITLE_LENGTH_PRESETS.findIndex((preset) => preset.id === draftSubtitleLengthPreset);
+
+  const subtitleLengthPresetIndex = SUBTITLE_LENGTH_PRESETS.findIndex(
+    (preset) => preset.id === ctx.form.subtitleLengthPreset
+  );
+
   const handleSubtitleLengthPresetChange = (preset: (typeof SUBTITLE_LENGTH_PRESETS)[number]) => {
-    onDraftSubtitleLengthPresetChange(preset.id);
+    ctx.setForm((prev) => ({ ...prev, subtitleLengthPreset: preset.id }));
   };
+
   const handleChunkInputChange = (value: string) => {
     const digits = value.replace(/[^0-9]/g, "");
     if (!digits) {
-      onDraftChunkInputChange("");
+      ctx.setForm((prev) => ({ ...prev, chunkInput: "" }));
       return;
     }
     const nextValue = Math.min(60, Number.parseInt(digits, 10));
-    onDraftChunkInputChange(String(nextValue));
+    ctx.setForm((prev) => ({ ...prev, chunkInput: String(nextValue) }));
   };
 
   return (
@@ -231,9 +130,9 @@ export default function SettingsModal(props: SettingsModalProps) {
                           <button
                             key={option.id}
                             type="button"
-                            className={`device-toggle-btn ${draftProvider === option.id ? "active" : ""}`}
-                            onClick={() => onDraftProviderChange(option.id)}
-                            aria-pressed={draftProvider === option.id}
+                            className={`device-toggle-btn ${ctx.form.provider === option.id ? "active" : ""}`}
+                            onClick={() => ctx.setForm((prev) => ({ ...prev, provider: option.id }))}
+                            aria-pressed={ctx.form.provider === option.id}
                             title={option.title}
                           >
                             {option.kind === "cpu" ? <CpuIcon /> : <GpuIcon />}
@@ -251,7 +150,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                           inputMode="numeric"
                           min={30}
                           max={60}
-                          value={draftChunkInput}
+                          value={ctx.form.chunkInput}
                           onChange={(e) => handleChunkInputChange(e.target.value)}
                           placeholder="30 - 60"
                         />
@@ -263,8 +162,8 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <input
                       id="enable-vocal-separation"
                       type="checkbox"
-                      checked={draftEnableVocalSeparation}
-                      onChange={(e) => onDraftEnableVocalSeparationChange(e.target.checked)}
+                      checked={ctx.form.enableVocalSeparation}
+                      onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableVocalSeparation: e.target.checked }))}
                     />
                     <div className="toggle-label">
                       <span className="toggle-title">人声分离</span>
@@ -276,8 +175,8 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <input
                       id="enable-click-sound"
                       type="checkbox"
-                      checked={draftEnableClickSound}
-                      onChange={(e) => onDraftEnableClickSoundChange(e.target.checked)}
+                      checked={ctx.form.enableClickSound}
+                      onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableClickSound: e.target.checked }))}
                     />
                     <div className="toggle-label">
                       <span className="toggle-title">点击音效</span>
@@ -298,8 +197,8 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <input
                         className="apple-input"
                         type="password"
-                        value={draftTranslateApiKey}
-                        onChange={(e) => onDraftTranslateApiKeyChange(e.target.value)}
+                        value={ctx.form.translateApiKey}
+                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, translateApiKey: e.target.value }))}
                         placeholder="sk-..."
                       />
                     </div>
@@ -307,8 +206,8 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <label>接口地址</label>
                       <input
                         className="apple-input"
-                        value={draftTranslateBaseUrl}
-                        onChange={(e) => onDraftTranslateBaseUrlChange(e.target.value)}
+                        value={ctx.form.translateBaseUrl}
+                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, translateBaseUrl: e.target.value }))}
                         placeholder="https://api.openai.com/v1"
                       />
                     </div>
@@ -317,14 +216,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <div className="llm-model-test-row">
                         <input
                           className="apple-input llm-model-input"
-                          value={draftTranslateModel}
-                          onChange={(e) => onDraftTranslateModelChange(e.target.value)}
+                          value={ctx.form.translateModel}
+                          onChange={(e) => ctx.setForm((prev) => ({ ...prev, translateModel: e.target.value }))}
                           placeholder="gpt-4.1-mini"
                         />
                         <button
                           type="button"
                           className="nav-button llm-test-btn"
-                          onClick={() => { void onTestTranslateConnection(); }}
+                          onClick={() => { void ctx.testTranslateConnection(); }}
                         >
                           测试
                         </button>
@@ -335,8 +234,8 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <input
                         className="apple-input"
                         inputMode="numeric"
-                        value={draftLlmConcurrencyInput}
-                        onChange={(e) => onDraftLlmConcurrencyInputChange(e.target.value.replace(/[^0-9]/g, ""))}
+                        value={ctx.form.llmConcurrencyInput}
+                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, llmConcurrencyInput: e.target.value.replace(/[^0-9]/g, "") }))}
                         placeholder="1 - 16"
                       />
                     </div>
@@ -345,8 +244,8 @@ export default function SettingsModal(props: SettingsModalProps) {
                     <input
                       id="enable-terminology"
                       type="checkbox"
-                      checked={draftEnableTerminology}
-                      onChange={(e) => onDraftEnableTerminologyChange(e.target.checked)}
+                      checked={ctx.form.enableTerminology}
+                      onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableTerminology: e.target.checked }))}
                     />
                     <div className="toggle-label">
                       <span className="toggle-title">启用术语库</span>
@@ -376,10 +275,10 @@ export default function SettingsModal(props: SettingsModalProps) {
                             <button
                               key={preset.id}
                               type="button"
-                              className={`subtitle-length-option ${draftSubtitleLengthPreset === preset.id ? "active" : ""}`}
+                              className={`subtitle-length-option ${ctx.form.subtitleLengthPreset === preset.id ? "active" : ""}`}
                               onClick={() => handleSubtitleLengthPresetChange(preset)}
                               role="radio"
-                              aria-checked={draftSubtitleLengthPreset === preset.id}
+                              aria-checked={ctx.form.subtitleLengthPreset === preset.id}
                             >
                               {preset.label}
                             </button>
@@ -393,8 +292,8 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <input
                         id="auto-burn-hard-subtitle"
                         type="checkbox"
-                        checked={draftAutoBurnHardSubtitle}
-                        onChange={(e) => onDraftAutoBurnHardSubtitleChange(e.target.checked)}
+                        checked={ctx.form.autoBurnHardSubtitle}
+                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, autoBurnHardSubtitle: e.target.checked }))}
                       />
                       <div className="toggle-label">
                         <span className="toggle-title">自动压制</span>
@@ -406,8 +305,8 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <input
                         id="enable-subtitle-beautify"
                         type="checkbox"
-                        checked={draftEnableSubtitleBeautify}
-                        onChange={(e) => onDraftEnableSubtitleBeautifyChange(e.target.checked)}
+                        checked={ctx.form.enableSubtitleBeautify}
+                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableSubtitleBeautify: e.target.checked }))}
                       />
                       <div className="toggle-label">
                         <span className="toggle-title">美化字幕</span>
@@ -421,8 +320,8 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <label>字幕类型</label>
                       <select
                         className="apple-input"
-                        value={draftSubtitleBurnMode}
-                        onChange={(e) => onDraftSubtitleBurnModeChange(e.target.value as SubtitleBurnMode)}
+                        value={ctx.form.subtitleBurnMode}
+                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, subtitleBurnMode: e.target.value as SubtitleBurnMode }))}
                       >
                         <option value="source">原文</option>
                         <option value="target">译文</option>
@@ -441,20 +340,20 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <label>原文字体</label>
                       <select
                         className="apple-input"
-                        value={draftSubtitleRenderStyle.source.fontFamily}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          source: {
-                            ...draftSubtitleRenderStyle.source,
-                            fontFamily: e.target.value,
+                        value={ctx.form.subtitleRenderStyle.source.fontFamily}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            source: { ...prev.subtitleRenderStyle.source, fontFamily: e.target.value },
                           },
-                        })}
+                        }))}
                       >
-                        <option value={draftSubtitleRenderStyle.source.fontFamily}>
-                          {draftSubtitleRenderStyle.source.fontFamily}
+                        <option value={ctx.form.subtitleRenderStyle.source.fontFamily}>
+                          {ctx.form.subtitleRenderStyle.source.fontFamily}
                         </option>
                         {systemFonts
-                          .filter((font) => font !== draftSubtitleRenderStyle.source.fontFamily)
+                          .filter((font) => font !== ctx.form.subtitleRenderStyle.source.fontFamily)
                           .map((font) => (
                             <option key={`source-${font}`} value={font}>{font}</option>
                           ))}
@@ -467,14 +366,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                         type="number"
                         min={16}
                         max={96}
-                        value={draftSubtitleRenderStyle.source.fontSize}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          source: {
-                            ...draftSubtitleRenderStyle.source,
-                            fontSize: Number.parseInt(e.target.value || "0", 10) || 44,
+                        value={ctx.form.subtitleRenderStyle.source.fontSize}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            source: { ...prev.subtitleRenderStyle.source, fontSize: Number.parseInt(e.target.value || "0", 10) || 44 },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
@@ -482,14 +381,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
-                        value={draftSubtitleRenderStyle.source.primaryColor}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          source: {
-                            ...draftSubtitleRenderStyle.source,
-                            primaryColor: e.target.value.toUpperCase(),
+                        value={ctx.form.subtitleRenderStyle.source.primaryColor}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            source: { ...prev.subtitleRenderStyle.source, primaryColor: e.target.value.toUpperCase() },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
@@ -500,14 +399,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                         min={0}
                         max={8}
                         step={0.5}
-                        value={draftSubtitleRenderStyle.source.shadow}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          source: {
-                            ...draftSubtitleRenderStyle.source,
-                            shadow: Number.parseFloat(e.target.value || "0") || 0,
+                        value={ctx.form.subtitleRenderStyle.source.shadow}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            source: { ...prev.subtitleRenderStyle.source, shadow: Number.parseFloat(e.target.value || "0") || 0 },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
@@ -515,28 +414,28 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
-                        value={draftSubtitleRenderStyle.source.backColor}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          source: {
-                            ...draftSubtitleRenderStyle.source,
-                            backColor: e.target.value.toUpperCase(),
+                        value={ctx.form.subtitleRenderStyle.source.backColor}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            source: { ...prev.subtitleRenderStyle.source, backColor: e.target.value.toUpperCase() },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
                       <label>原文边框样式</label>
                       <select
                         className="apple-input"
-                        value={draftSubtitleRenderStyle.source.borderStyle}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          source: {
-                            ...draftSubtitleRenderStyle.source,
-                            borderStyle: e.target.value === "box" ? "box" : "outline",
+                        value={ctx.form.subtitleRenderStyle.source.borderStyle}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            source: { ...prev.subtitleRenderStyle.source, borderStyle: e.target.value === "box" ? "box" : "outline" },
                           },
-                        })}
+                        }))}
                       >
                         <option value="outline">描边</option>
                         <option value="box">方框</option>
@@ -550,14 +449,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                         min={0}
                         max={8}
                         step={0.5}
-                        value={draftSubtitleRenderStyle.source.outline}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          source: {
-                            ...draftSubtitleRenderStyle.source,
-                            outline: Number.parseFloat(e.target.value || "0") || 0,
+                        value={ctx.form.subtitleRenderStyle.source.outline}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            source: { ...prev.subtitleRenderStyle.source, outline: Number.parseFloat(e.target.value || "0") || 0 },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
@@ -565,14 +464,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
-                        value={draftSubtitleRenderStyle.source.outlineColor}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          source: {
-                            ...draftSubtitleRenderStyle.source,
-                            outlineColor: e.target.value.toUpperCase(),
+                        value={ctx.form.subtitleRenderStyle.source.outlineColor}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            source: { ...prev.subtitleRenderStyle.source, outlineColor: e.target.value.toUpperCase() },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
@@ -582,14 +481,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                         type="number"
                         min={0}
                         max={100}
-                        value={draftSubtitleRenderStyle.source.borderOpacity}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          source: {
-                            ...draftSubtitleRenderStyle.source,
-                            borderOpacity: Number.parseInt(e.target.value || "0", 10) || 0,
+                        value={ctx.form.subtitleRenderStyle.source.borderOpacity}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            source: { ...prev.subtitleRenderStyle.source, borderOpacity: Number.parseInt(e.target.value || "0", 10) || 0 },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="subtitle-style-divider" aria-hidden="true" />
@@ -598,20 +497,20 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <label>译文字体</label>
                       <select
                         className="apple-input"
-                        value={draftSubtitleRenderStyle.target.fontFamily}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          target: {
-                            ...draftSubtitleRenderStyle.target,
-                            fontFamily: e.target.value,
+                        value={ctx.form.subtitleRenderStyle.target.fontFamily}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            target: { ...prev.subtitleRenderStyle.target, fontFamily: e.target.value },
                           },
-                        })}
+                        }))}
                       >
-                        <option value={draftSubtitleRenderStyle.target.fontFamily}>
-                          {draftSubtitleRenderStyle.target.fontFamily}
+                        <option value={ctx.form.subtitleRenderStyle.target.fontFamily}>
+                          {ctx.form.subtitleRenderStyle.target.fontFamily}
                         </option>
                         {systemFonts
-                          .filter((font) => font !== draftSubtitleRenderStyle.target.fontFamily)
+                          .filter((font) => font !== ctx.form.subtitleRenderStyle.target.fontFamily)
                           .map((font) => (
                             <option key={`target-${font}`} value={font}>{font}</option>
                           ))}
@@ -624,14 +523,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                         type="number"
                         min={16}
                         max={96}
-                        value={draftSubtitleRenderStyle.target.fontSize}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          target: {
-                            ...draftSubtitleRenderStyle.target,
-                            fontSize: Number.parseInt(e.target.value || "0", 10) || 40,
+                        value={ctx.form.subtitleRenderStyle.target.fontSize}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            target: { ...prev.subtitleRenderStyle.target, fontSize: Number.parseInt(e.target.value || "0", 10) || 40 },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
@@ -639,14 +538,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
-                        value={draftSubtitleRenderStyle.target.primaryColor}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          target: {
-                            ...draftSubtitleRenderStyle.target,
-                            primaryColor: e.target.value.toUpperCase(),
+                        value={ctx.form.subtitleRenderStyle.target.primaryColor}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            target: { ...prev.subtitleRenderStyle.target, primaryColor: e.target.value.toUpperCase() },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
@@ -657,14 +556,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                         min={0}
                         max={8}
                         step={0.5}
-                        value={draftSubtitleRenderStyle.target.shadow}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          target: {
-                            ...draftSubtitleRenderStyle.target,
-                            shadow: Number.parseFloat(e.target.value || "0") || 0,
+                        value={ctx.form.subtitleRenderStyle.target.shadow}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            target: { ...prev.subtitleRenderStyle.target, shadow: Number.parseFloat(e.target.value || "0") || 0 },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
@@ -672,28 +571,28 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
-                        value={draftSubtitleRenderStyle.target.backColor}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          target: {
-                            ...draftSubtitleRenderStyle.target,
-                            backColor: e.target.value.toUpperCase(),
+                        value={ctx.form.subtitleRenderStyle.target.backColor}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            target: { ...prev.subtitleRenderStyle.target, backColor: e.target.value.toUpperCase() },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
                       <label>译文边框样式</label>
                       <select
                         className="apple-input"
-                        value={draftSubtitleRenderStyle.target.borderStyle}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          target: {
-                            ...draftSubtitleRenderStyle.target,
-                            borderStyle: e.target.value === "box" ? "box" : "outline",
+                        value={ctx.form.subtitleRenderStyle.target.borderStyle}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            target: { ...prev.subtitleRenderStyle.target, borderStyle: e.target.value === "box" ? "box" : "outline" },
                           },
-                        })}
+                        }))}
                       >
                         <option value="outline">描边</option>
                         <option value="box">方框</option>
@@ -707,14 +606,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                         min={0}
                         max={8}
                         step={0.5}
-                        value={draftSubtitleRenderStyle.target.outline}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          target: {
-                            ...draftSubtitleRenderStyle.target,
-                            outline: Number.parseFloat(e.target.value || "0") || 0,
+                        value={ctx.form.subtitleRenderStyle.target.outline}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            target: { ...prev.subtitleRenderStyle.target, outline: Number.parseFloat(e.target.value || "0") || 0 },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
@@ -722,14 +621,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
-                        value={draftSubtitleRenderStyle.target.outlineColor}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          target: {
-                            ...draftSubtitleRenderStyle.target,
-                            outlineColor: e.target.value.toUpperCase(),
+                        value={ctx.form.subtitleRenderStyle.target.outlineColor}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            target: { ...prev.subtitleRenderStyle.target, outlineColor: e.target.value.toUpperCase() },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
@@ -739,14 +638,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                         type="number"
                         min={0}
                         max={100}
-                        value={draftSubtitleRenderStyle.target.borderOpacity}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          target: {
-                            ...draftSubtitleRenderStyle.target,
-                            borderOpacity: Number.parseInt(e.target.value || "0", 10) || 0,
+                        value={ctx.form.subtitleRenderStyle.target.borderOpacity}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            target: { ...prev.subtitleRenderStyle.target, borderOpacity: Number.parseInt(e.target.value || "0", 10) || 0 },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="subtitle-style-grid-break" aria-hidden="true" />
@@ -757,14 +656,14 @@ export default function SettingsModal(props: SettingsModalProps) {
                         type="number"
                         min={0}
                         max={200}
-                        value={draftSubtitleRenderStyle.layout.marginV}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          layout: {
-                            ...draftSubtitleRenderStyle.layout,
-                            marginV: Number.parseInt(e.target.value || "0", 10) || 0,
+                        value={ctx.form.subtitleRenderStyle.layout.marginV}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            layout: { ...prev.subtitleRenderStyle.layout, marginV: Number.parseInt(e.target.value || "0", 10) || 0 },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
@@ -774,30 +673,31 @@ export default function SettingsModal(props: SettingsModalProps) {
                         type="number"
                         min={0}
                         max={140}
-                        value={draftSubtitleRenderStyle.layout.bilingualLineGap}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          layout: {
-                            ...draftSubtitleRenderStyle.layout,
-                            bilingualLineGap: e.target.value === ""
-                              ? 10
-                              : Number.parseInt(e.target.value, 10),
+                        value={ctx.form.subtitleRenderStyle.layout.bilingualLineGap}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            layout: {
+                              ...prev.subtitleRenderStyle.layout,
+                              bilingualLineGap: e.target.value === "" ? 10 : Number.parseInt(e.target.value, 10),
+                            },
                           },
-                        })}
+                        }))}
                       />
                     </div>
                     <div className="form-group">
                       <label>对齐</label>
                       <select
                         className="apple-input"
-                        value={draftSubtitleRenderStyle.layout.alignment}
-                        onChange={(e) => onDraftSubtitleRenderStyleChange({
-                          ...draftSubtitleRenderStyle,
-                          layout: {
-                            ...draftSubtitleRenderStyle.layout,
-                            alignment: Number.parseInt(e.target.value, 10) as 1 | 2 | 3,
+                        value={ctx.form.subtitleRenderStyle.layout.alignment}
+                        onChange={(e) => ctx.setForm((prev) => ({
+                          ...prev,
+                          subtitleRenderStyle: {
+                            ...prev.subtitleRenderStyle,
+                            layout: { ...prev.subtitleRenderStyle.layout, alignment: Number.parseInt(e.target.value, 10) as 1 | 2 | 3 },
                           },
-                        })}
+                        }))}
                       >
                         <option value={1}>底部左对齐</option>
                         <option value={2}>底部居中</option>
@@ -805,7 +705,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                       </select>
                     </div>
                   </div>
-                  <SubtitleStylePreview mode={draftSubtitleBurnMode} style={draftSubtitleRenderStyle} />
+                  <SubtitleStylePreview mode={ctx.form.subtitleBurnMode} style={ctx.form.subtitleRenderStyle} />
                 </div>
               </div>
             </div>
@@ -816,12 +716,12 @@ export default function SettingsModal(props: SettingsModalProps) {
                 title="ASR 模型"
                 description="Qwen3-ASR-0.6B 负责从音频生成纯文本，时间戳由独立对齐模型处理。"
                 modelName="Qwen3-ASR-0.6B"
-                selected={draftAsrModel === "Qwen3-ASR-0.6B"}
-                status={asrStatusByModel["Qwen3-ASR-0.6B"] ?? (draftAsrModel === "Qwen3-ASR-0.6B" ? asrStatus : null)}
-                onSelect={() => onDraftAsrModelChange("Qwen3-ASR-0.6B")}
-                onOpenModelDir={onOpenModelDir}
-                onStartModelDownload={onStartModelDownload}
-                onCancelModelDownload={onCancelModelDownload}
+                selected={ctx.form.asrModel === "Qwen3-ASR-0.6B"}
+                status={ctx.asrStatusByModel["Qwen3-ASR-0.6B"] ?? (ctx.form.asrModel === "Qwen3-ASR-0.6B" ? ctx.asrStatus : null)}
+                onSelect={() => ctx.setForm((prev) => ({ ...prev, asrModel: "Qwen3-ASR-0.6B" }))}
+                onOpenModelDir={ctx.openModelDir}
+                onStartModelDownload={ctx.startModelDownload}
+                onCancelModelDownload={ctx.cancelModelDownload}
               />
 
               <ModelDownloadCard
@@ -829,12 +729,12 @@ export default function SettingsModal(props: SettingsModalProps) {
                 title="ASR 模型"
                 description="Qwen3-ASR-1.7B 负责从音频生成纯文本，时间戳由独立对齐模型处理。"
                 modelName="Qwen3-ASR-1.7B"
-                selected={draftAsrModel === "Qwen3-ASR-1.7B"}
-                status={asrStatusByModel["Qwen3-ASR-1.7B"] ?? (draftAsrModel === "Qwen3-ASR-1.7B" ? asrStatus : null)}
-                onSelect={() => onDraftAsrModelChange("Qwen3-ASR-1.7B")}
-                onOpenModelDir={onOpenModelDir}
-                onStartModelDownload={onStartModelDownload}
-                onCancelModelDownload={onCancelModelDownload}
+                selected={ctx.form.asrModel === "Qwen3-ASR-1.7B"}
+                status={ctx.asrStatusByModel["Qwen3-ASR-1.7B"] ?? (ctx.form.asrModel === "Qwen3-ASR-1.7B" ? ctx.asrStatus : null)}
+                onSelect={() => ctx.setForm((prev) => ({ ...prev, asrModel: "Qwen3-ASR-1.7B" }))}
+                onOpenModelDir={ctx.openModelDir}
+                onStartModelDownload={ctx.startModelDownload}
+                onCancelModelDownload={ctx.cancelModelDownload}
               />
 
               <ModelDownloadCard
@@ -842,12 +742,12 @@ export default function SettingsModal(props: SettingsModalProps) {
                 title="对齐模型"
                 description="Qwen3 Forced Aligner 负责把转录文本对齐回音频，生成词级时间戳。"
                 modelName="Qwen3-ForcedAligner-0.6B"
-                selected={draftAlignModel === "Qwen3-ForcedAligner-0.6B"}
-                status={alignStatus}
-                onSelect={() => onDraftAlignModelChange("Qwen3-ForcedAligner-0.6B")}
-                onOpenModelDir={onOpenModelDir}
-                onStartModelDownload={onStartModelDownload}
-                onCancelModelDownload={onCancelModelDownload}
+                selected={ctx.form.alignModel === "Qwen3-ForcedAligner-0.6B"}
+                status={ctx.alignStatus}
+                onSelect={() => ctx.setForm((prev) => ({ ...prev, alignModel: "Qwen3-ForcedAligner-0.6B" }))}
+                onOpenModelDir={ctx.openModelDir}
+                onStartModelDownload={ctx.startModelDownload}
+                onCancelModelDownload={ctx.cancelModelDownload}
               />
 
               <ModelDownloadCard
@@ -855,18 +755,18 @@ export default function SettingsModal(props: SettingsModalProps) {
                 title="人声分离模型"
                 description="htdemucs_ft 是高保真人声分离模型，能更稳定地提取清晰 vocals、减少伴奏残留。"
                 modelName="htdemucs_ft"
-                selected={draftDemucsModel === "htdemucs_ft"}
-                status={demucsStatus}
-                onSelect={() => onDraftDemucsModelChange("htdemucs_ft")}
-                onOpenModelDir={onOpenModelDir}
-                onStartModelDownload={onStartModelDownload}
-                onCancelModelDownload={onCancelModelDownload}
+                selected={ctx.form.demucsModel === "htdemucs_ft"}
+                status={ctx.demucsStatus}
+                onSelect={() => ctx.setForm((prev) => ({ ...prev, demucsModel: "htdemucs_ft" }))}
+                onOpenModelDir={ctx.openModelDir}
+                onStartModelDownload={ctx.startModelDownload}
+                onCancelModelDownload={ctx.cancelModelDownload}
               />
             </div>
           )}
         </div>
         <div className="settings-footer">
-          <button className="nav-button" onClick={onSave} title="保存设置" aria-label="保存设置">
+          <button className="nav-button" onClick={ctx.saveSettings} title="保存设置" aria-label="保存设置">
             <CheckIcon />
             <span>保存</span>
           </button>

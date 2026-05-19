@@ -236,9 +236,7 @@ pub(super) fn split_translation_evenly_by_weights(
 
     if token_total < expected_count {
         let mut out = vec![String::new(); expected_count];
-        for index in 0..token_total {
-            out[index] = tokens[index].clone();
-        }
+        out[..token_total].clone_from_slice(&tokens[..token_total]);
         return out
             .into_iter()
             .map(|line| normalize_inline_text(&line))

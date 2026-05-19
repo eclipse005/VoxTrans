@@ -183,8 +183,8 @@ impl OpenAiCompatLlmClient {
                         }
                     };
 
-                    if let Some(validator) = response_validator {
-                        if let Err(err) = validator.validate(&parsed.value) {
+                    if let Some(validator) = response_validator
+                        && let Err(err) = validator.validate(&parsed.value) {
                             validation_failures += 1;
                             match self
                                 .repair_json_response(
@@ -217,7 +217,6 @@ impl OpenAiCompatLlmClient {
                                 }
                             }
                         }
-                    }
 
                     match semantic_validate(parsed.value.clone()) {
                         Ok(value) => {

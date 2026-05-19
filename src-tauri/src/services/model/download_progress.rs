@@ -19,6 +19,7 @@ struct ModelDownloadProgressEvent {
     message: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn set_model_download_snapshot(
     app: &tauri::AppHandle,
     runtime: &Arc<Mutex<ModelDownloadRuntime>>,

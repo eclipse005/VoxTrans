@@ -42,7 +42,6 @@ type EnqueueTaskRunRequest = {
   sourceLang?: SourceLanguage;
   targetLang?: TargetLanguage;
   maxRetries?: number;
-  settingsSnapshot?: Record<string, unknown>;
 };
 
 type UpdateTaskLanguagesRequest = {

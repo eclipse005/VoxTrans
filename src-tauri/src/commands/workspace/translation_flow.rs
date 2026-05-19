@@ -3,14 +3,15 @@ use std::path::Path;
 use tauri::AppHandle;
 
 use crate::commands::translate_types::BuildTranslationSegmentCommand;
-use crate::services::pipeline::{StepContext, StepSource};
-
-use super::adapters::{
+use crate::domain::task::adapters::{
     map_step2_segments_for_translate, translation_segments_from_step52_parents,
     workspace_subtitle_segments_from_step51_parents,
     workspace_subtitle_segments_from_step52_parents,
     workspace_subtitle_segments_from_translation_segments,
 };
+use crate::domain::task::runtime_settings::PipelineRuntimeSettings;
+use crate::services::pipeline::{StepContext, StepSource};
+
 use super::output_completion::finish_translate_with_step5;
 use super::pipeline_runner::execute_workspace_step;
 use super::pipeline_steps::{
@@ -19,9 +20,9 @@ use super::pipeline_steps::{
 };
 use super::preview::update_subtitle_preview;
 use super::progress::report_task_stage;
-use super::runtime_settings::PipelineRuntimeSettings;
 use super::{TaskStage, WorkspaceTaskRecord};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn execute_translate_steps(
     app: &AppHandle,
     task_id: &str,
@@ -190,6 +191,7 @@ pub(super) async fn execute_translate_steps(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn finalize_translate_with_step5(
     app: &AppHandle,
     task_id: &str,

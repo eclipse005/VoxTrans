@@ -35,17 +35,17 @@ pub(super) fn report_task_stage(
     total: u32,
 ) -> Result<(), String> {
     let progress = task_progress_state(stage, detail, current, total);
-    patch_task_item(app, task_id, |task| {
+    Ok(patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "processing".to_string();
         task.item.task_progress = progress;
         task.item.transcribe_error = String::new();
-    })
+    })?)
 }
 
 pub(super) fn mark_task_failed(app: &AppHandle, task_id: &str, error: &str) -> Result<(), String> {
-    patch_task_item(app, task_id, |task| {
+    Ok(patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "error".to_string();
         task.item.task_progress = WorkspaceTaskProgressState::default();
         task.item.transcribe_error = error.to_string();
-    })
+    })?)
 }

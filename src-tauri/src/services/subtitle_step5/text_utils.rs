@@ -1,8 +1,7 @@
 use super::language_units::is_cjk_char;
 
 pub(super) fn normalize_inline_text(raw: &str) -> String {
-    raw.replace('\r', " ")
-        .replace('\n', " ")
+    raw.replace(['\r', '\n'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

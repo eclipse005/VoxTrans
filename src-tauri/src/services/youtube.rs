@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use dashmap::DashMap;
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
@@ -65,16 +66,16 @@ struct YoutubeVideoMetadata {
     filesize_approx: Option<u64>,
 }
 
-static YOUTUBE_PROGRESS: OnceLock<Mutex<HashMap<String, YoutubeDownloadProgressResponse>>> =
+static YOUTUBE_PROGRESS: OnceLock<DashMap<String, YoutubeDownloadProgressResponse>> =
     OnceLock::new();
-static YOUTUBE_CANCEL_FLAGS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+static YOUTUBE_CANCEL_FLAGS: OnceLock<DashMap<String, Arc<AtomicBool>>> = OnceLock::new();
 
-fn progress_snapshots() -> &'static Mutex<HashMap<String, YoutubeDownloadProgressResponse>> {
-    YOUTUBE_PROGRESS.get_or_init(|| Mutex::new(HashMap::new()))
+fn progress_snapshots() -> &'static DashMap<String, YoutubeDownloadProgressResponse> {
+    YOUTUBE_PROGRESS.get_or_init(DashMap::new)
 }
 
-fn cancel_flags() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
-    YOUTUBE_CANCEL_FLAGS.get_or_init(|| Mutex::new(HashMap::new()))
+fn cancel_flags() -> &'static DashMap<String, Arc<AtomicBool>> {
+    YOUTUBE_CANCEL_FLAGS.get_or_init(DashMap::new)
 }
 
 pub fn download_youtube_to_task(
@@ -100,10 +101,7 @@ pub fn download_youtube_to_task(
     }
 
     let cancel = Arc::new(AtomicBool::new(false));
-    cancel_flags()
-        .lock()
-        .map_err(|_| "youtube cancel state lock poisoned".to_string())?
-        .insert(task_id.clone(), cancel.clone());
+    cancel_flags().insert(task_id.clone(), cancel.clone());
 
     let mut snapshot = new_progress(&task_id, "starting", "解析视频信息");
     set_progress(app, snapshot.clone());
@@ -163,27 +161,21 @@ pub fn get_download_progress(task_id: &str) -> Result<YoutubeDownloadProgressRes
         return Err("taskId is required".to_string());
     }
     Ok(progress_snapshots()
-        .lock()
-        .map_err(|_| "youtube progress state lock poisoned".to_string())?
         .get(task_id)
-        .cloned()
+        .map(|r| r.clone())
         .unwrap_or_else(|| new_progress(task_id, "idle", "")))
 }
 
 pub fn list_download_progress() -> Result<Vec<YoutubeDownloadProgressResponse>, String> {
     Ok(progress_snapshots()
-        .lock()
-        .map_err(|_| "youtube progress state lock poisoned".to_string())?
-        .values()
-        .cloned()
+        .iter()
+        .map(|r| r.clone())
         .collect())
 }
 
 pub fn request_cancel(task_id: &str) -> bool {
     cancel_flags()
-        .lock()
-        .ok()
-        .and_then(|flags| flags.get(task_id).cloned())
+        .get(task_id)
         .map(|flag| {
             flag.store(true, Ordering::SeqCst);
             true
@@ -408,7 +400,7 @@ fn format_size_bytes(bytes: u64) -> String {
 }
 
 fn remove_cancel_flag(task_id: &str) {
-    let _ = cancel_flags().lock().map(|mut flags| flags.remove(task_id));
+    let _ = cancel_flags().remove(task_id);
 }
 
 fn resolve_tool(program: &str) -> PathBuf {
@@ -460,15 +452,14 @@ fn handle_ytdlp_line(
     }
     remember_line(recent_lines, line);
 
-    if let Some(path) = extract_path_from_line(line, output_dir) {
-        if path.extension().is_some() {
+    if let Some(path) = extract_path_from_line(line, output_dir)
+        && path.extension().is_some() {
             *final_path = Some(path.clone());
             let title = media_name(&path);
             if !title.is_empty() {
                 snapshot.title = title;
             }
         }
-    }
 
     if line.contains("[Merger]") {
         snapshot.phase = "merging".to_string();
@@ -648,9 +639,7 @@ fn new_progress(task_id: &str, phase: &str, message: &str) -> YoutubeDownloadPro
 }
 
 fn set_progress(app: &tauri::AppHandle, snapshot: YoutubeDownloadProgressResponse) {
-    if let Ok(mut progress) = progress_snapshots().lock() {
-        progress.insert(snapshot.task_id.clone(), snapshot.clone());
-    }
+    progress_snapshots().insert(snapshot.task_id.clone(), snapshot.clone());
     let _ = app.emit("youtube-download-progress", snapshot);
 }
 

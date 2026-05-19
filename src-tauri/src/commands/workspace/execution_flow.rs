@@ -4,17 +4,18 @@ use tauri::AppHandle;
 
 use crate::services::pipeline::StepContext;
 
-use super::adapters::{
+use crate::domain::task::adapters::{
     source_text_from_step2_segments, step2_segments_to_srt,
     workspace_subtitle_segments_from_step2_segments,
 };
+use crate::domain::task::runtime_settings::resolve_runtime_settings;
+
 use super::artifact_migration::migrate_legacy_artifacts;
 use super::output_completion::finish_transcribe_only;
 use super::pipeline_runner::execute_workspace_step;
 use super::pipeline_steps::{Step1AsrPipelineStep, Step2SegmentsPipelineStep};
 use super::preview::update_subtitle_preview;
 use super::progress::{mark_task_failed, report_task_stage};
-use super::runtime_settings::resolve_runtime_settings;
 use super::translation_flow::execute_translate_steps;
 use super::{
     TaskStage, get_task_record, normalize_intent, normalize_task_source_lang,

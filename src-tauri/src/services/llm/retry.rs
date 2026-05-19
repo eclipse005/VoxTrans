@@ -165,8 +165,7 @@ fn compact_invalid_json_hint(detail: &str, max_chars: usize) -> String {
 
 fn compact_hint(input: &str, max_chars: usize) -> String {
     let normalized = input
-        .replace('\r', " ")
-        .replace('\n', " ")
+        .replace(['\r', '\n'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");

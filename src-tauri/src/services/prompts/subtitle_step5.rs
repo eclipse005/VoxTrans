@@ -13,6 +13,7 @@ pub struct Step5PromptTerm {
     pub note: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_source_split_prompt(
     source_lang: &str,
     target_lang: &str,

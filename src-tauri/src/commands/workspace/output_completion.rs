@@ -3,15 +3,16 @@ use std::path::Path;
 use tauri::AppHandle;
 
 use crate::commands::translate_types::BuildTranslationSegmentCommand;
-use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, serialize_segments};
-
-use super::adapters::{
+use crate::domain::task::adapters::{
     workspace_subtitle_segments_from_step2_segments,
     workspace_subtitle_segments_from_translation_segments,
 };
+use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, serialize_segments};
+
 use super::patch_task_item;
 use super::progress::done_task_progress_state;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn finish_transcribe_only(
     app: &AppHandle,
     task_id: &str,
@@ -35,16 +36,17 @@ pub(super) fn finish_transcribe_only(
         target_lang,
     )?;
 
-    patch_task_item(app, task_id, |task| {
+    Ok(patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
         task.item.task_progress = done_task_progress_state();
         task.item.transcribe_error = String::new();
         task.item.result_text = source_text.clone();
         task.item.result_srt = step2_srt.clone();
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
-    })
+    })?)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn finish_translate_with_step5(
     app: &AppHandle,
     task_id: &str,
@@ -67,14 +69,14 @@ pub(super) fn finish_translate_with_step5(
         target_lang,
     )?;
 
-    patch_task_item(app, task_id, |task| {
+    Ok(patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
         task.item.task_progress = done_task_progress_state();
         task.item.transcribe_error = String::new();
         task.item.result_text = source_text.clone();
         task.item.result_srt = String::new();
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
-    })
+    })?)
 }
 
 fn write_completion_srts(

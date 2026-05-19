@@ -92,7 +92,7 @@ pub(super) fn validate_align_response(
         out.insert(id, text);
     }
     for expected_id in expected_ids {
-        out.entry(*expected_id).or_insert_with(String::new);
+        out.entry(*expected_id).or_default();
     }
     Ok(out)
 }

@@ -82,14 +82,12 @@ fn preview_text(text: &str, max_chars: usize) -> String {
     }
     let normalized = text.replace('\r', "\\r").replace('\n', "\\n");
     let mut out = String::new();
-    let mut count = 0usize;
-    for ch in normalized.chars() {
+    for (count, ch) in normalized.chars().enumerate() {
         if count >= max_chars {
             out.push_str("...");
             break;
         }
         out.push(ch);
-        count += 1;
     }
     out
 }
@@ -167,10 +165,8 @@ fn dedup_preserve_order(items: Vec<String>) -> Vec<String> {
 fn repair_common_json_issues(input: &str) -> String {
     let mut out = input
         .replace('\u{feff}', "")
-        .replace('“', "\"")
-        .replace('”', "\"")
-        .replace('‘', "'")
-        .replace('’', "'");
+        .replace(['“', '”'], "\"")
+        .replace(['‘', '’'], "'");
 
     while out.contains(",}") || out.contains(",]") {
         out = out.replace(",}", "}").replace(",]", "]");

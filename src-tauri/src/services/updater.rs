@@ -1,10 +1,10 @@
 /// 更新服务：检测更新、下载并安装。
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use dashmap::DashMap;
 use tauri::Emitter;
 
 use super::file_download::{DownloadCallback, DownloadOptions, DownloadProgress};
@@ -53,17 +53,17 @@ pub struct UpdateDownloadProgress {
     pub speed: f64,
 }
 
-static UPDATE_PROGRESS_SNAPSHOTS: OnceLock<Mutex<HashMap<String, UpdateDownloadProgress>>> =
+static UPDATE_PROGRESS_SNAPSHOTS: OnceLock<DashMap<String, UpdateDownloadProgress>> =
     OnceLock::new();
 
-static UPDATE_CANCEL_FLAGS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+static UPDATE_CANCEL_FLAGS: OnceLock<DashMap<String, Arc<AtomicBool>>> = OnceLock::new();
 
-fn progress_snapshots() -> &'static Mutex<HashMap<String, UpdateDownloadProgress>> {
-    UPDATE_PROGRESS_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+fn progress_snapshots() -> &'static DashMap<String, UpdateDownloadProgress> {
+    UPDATE_PROGRESS_SNAPSHOTS.get_or_init(DashMap::new)
 }
 
-fn cancel_flags() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
-    UPDATE_CANCEL_FLAGS.get_or_init(|| Mutex::new(HashMap::new()))
+fn cancel_flags() -> &'static DashMap<String, Arc<AtomicBool>> {
+    UPDATE_CANCEL_FLAGS.get_or_init(DashMap::new)
 }
 
 fn installer_filename_from_url(download_url: &str) -> &str {
@@ -80,12 +80,7 @@ fn installer_filename_from_url(download_url: &str) -> &str {
 }
 
 pub fn request_cancel(task_id: &str) -> bool {
-    if let Some(flags) = cancel_flags()
-        .lock()
-        .ok()
-        .as_deref()
-        .and_then(|m| m.get(task_id))
-    {
+    if let Some(flags) = cancel_flags().get(task_id) {
         flags.store(true, Ordering::SeqCst);
         true
     } else {
@@ -170,10 +165,7 @@ pub fn download_and_install(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let cancel = Arc::new(AtomicBool::new(false));
-    cancel_flags()
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(task_id.clone(), cancel.clone());
+    cancel_flags().insert(task_id.clone(), cancel.clone());
 
     let temp_dir = std::env::temp_dir().join("voxtrans_update");
     std::fs::create_dir_all(&temp_dir).map_err(|e| format!("创建临时目录失败: {}", e))?;
@@ -199,9 +191,7 @@ pub fn download_and_install(
                 percent: pct,
                 speed: p.speed_bytes_per_sec as f64,
             };
-            if let Ok(mut m) = progress_snapshots().lock() {
-                m.insert(self.task_id.clone(), prog.clone());
-            }
+            progress_snapshots().insert(self.task_id.clone(), prog.clone());
             let _ = self
                 .app
                 .emit("update-download-progress", &(self.task_id.clone(), prog));

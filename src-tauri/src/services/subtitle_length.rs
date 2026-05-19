@@ -93,7 +93,7 @@ fn target_limit_for_language(lang: &str, preset: SubtitleLengthPreset) -> u32 {
 fn language_key(lang: &str) -> String {
     let trimmed = lang.trim();
     let end = trimmed
-        .find(|ch| ch == '-' || ch == '_')
+        .find(['-', '_'])
         .unwrap_or(trimmed.len());
     trimmed[..end].to_ascii_lowercase()
 }

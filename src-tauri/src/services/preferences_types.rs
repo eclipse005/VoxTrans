@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct TerminologyTerm {
     pub id: String,
     pub origin: String,
@@ -10,8 +12,9 @@ pub struct TerminologyTerm {
     pub note: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct TerminologyGroup {
     pub id: String,
     pub name: String,
@@ -19,8 +22,9 @@ pub struct TerminologyGroup {
     pub terms: Vec<TerminologyTerm>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct SubtitleLineStyle {
     pub font_family: String,
     pub font_size: u32,
@@ -33,16 +37,18 @@ pub struct SubtitleLineStyle {
     pub border_opacity: u8,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct SubtitleLayoutStyle {
     pub margin_v: u32,
     pub alignment: u8,
     pub bilingual_line_gap: u32,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct SubtitleRenderStyle {
     pub source: SubtitleLineStyle,
     pub target: SubtitleLineStyle,
@@ -83,8 +89,9 @@ impl Default for SubtitleRenderStyle {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct SavedSettings {
     pub provider: String,
     pub chunk_target_seconds: u32,
@@ -114,14 +121,16 @@ pub struct SavedSettings {
     pub subtitle_render_style: SubtitleRenderStyle,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct UserPreferencesResponse {
     pub settings: SavedSettings,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 pub struct SaveAppSettingsRequest {
     pub settings: SavedSettings,
 }
@@ -136,4 +145,21 @@ fn default_align_model() -> String {
 
 fn default_subtitle_burn_mode() -> String {
     "bilingualSourceFirst".to_string()
+}
+
+#[cfg(test)]
+mod ts_export_tests {
+    use super::*;
+
+    #[test]
+    fn export_preference_types() {
+        TerminologyTerm::export_all().unwrap();
+        TerminologyGroup::export_all().unwrap();
+        SubtitleLineStyle::export_all().unwrap();
+        SubtitleLayoutStyle::export_all().unwrap();
+        SubtitleRenderStyle::export_all().unwrap();
+        SavedSettings::export_all().unwrap();
+        UserPreferencesResponse::export_all().unwrap();
+        SaveAppSettingsRequest::export_all().unwrap();
+    }
 }

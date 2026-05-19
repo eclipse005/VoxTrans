@@ -34,12 +34,11 @@ pub(super) fn extract_numbers(text: &str) -> HashSet<String> {
                 || raw.ends_with('.')
                 || raw.ends_with('，')
                 || raw.ends_with('。');
-            if !has_trailing_punctuation {
-                if let Some((multiplier, consumed)) = parse_number_suffix(&chars[next..], has_gap) {
+            if !has_trailing_punctuation
+                && let Some((multiplier, consumed)) = parse_number_suffix(&chars[next..], has_gap) {
                     value *= multiplier;
                     consumed_end = next + consumed;
                 }
-            }
             let normalized = normalize_numeric_value(value);
             if !normalized.is_empty() {
                 out.insert(normalized);

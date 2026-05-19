@@ -4,7 +4,7 @@ use crate::commands::translate_types::{
 };
 use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, WorkspaceSubtitleWord};
 
-pub(super) fn workspace_subtitle_segments_from_step2_segments(
+pub fn workspace_subtitle_segments_from_step2_segments(
     segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
 ) -> Vec<WorkspaceSubtitleSegment> {
     segments
@@ -27,7 +27,7 @@ pub(super) fn workspace_subtitle_segments_from_step2_segments(
         .collect()
 }
 
-pub(super) fn workspace_subtitle_segments_from_translation_segments(
+pub fn workspace_subtitle_segments_from_translation_segments(
     segments: &[BuildTranslationSegmentCommand],
 ) -> Vec<WorkspaceSubtitleSegment> {
     segments
@@ -50,7 +50,7 @@ pub(super) fn workspace_subtitle_segments_from_translation_segments(
         .collect()
 }
 
-pub(super) fn workspace_subtitle_segments_from_step51_parents(
+pub fn workspace_subtitle_segments_from_step51_parents(
     parents: &[Step5SplitParentCommand],
 ) -> Vec<WorkspaceSubtitleSegment> {
     let mut segments = Vec::new();
@@ -76,7 +76,7 @@ pub(super) fn workspace_subtitle_segments_from_step51_parents(
     segments
 }
 
-pub(super) fn workspace_subtitle_segments_from_step52_parents(
+pub fn workspace_subtitle_segments_from_step52_parents(
     parents: &[Step5AlignedParentCommand],
 ) -> Vec<WorkspaceSubtitleSegment> {
     let mut segments = Vec::new();
@@ -102,7 +102,7 @@ pub(super) fn workspace_subtitle_segments_from_step52_parents(
     segments
 }
 
-pub(super) fn translation_segments_from_step52_parents(
+pub fn translation_segments_from_step52_parents(
     parents: &[Step5AlignedParentCommand],
 ) -> Vec<BuildTranslationSegmentCommand> {
     let mut segments = Vec::new();
@@ -121,7 +121,7 @@ pub(super) fn translation_segments_from_step52_parents(
     segments
 }
 
-pub(super) fn source_text_from_step2_segments(
+pub fn source_text_from_step2_segments(
     segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
 ) -> String {
     segments
@@ -132,7 +132,7 @@ pub(super) fn source_text_from_step2_segments(
         .join("\n")
 }
 
-pub(super) fn step2_segments_to_srt(
+pub fn step2_segments_to_srt(
     segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
 ) -> String {
     let mut out = String::new();
@@ -152,7 +152,7 @@ pub(super) fn step2_segments_to_srt(
     out.trim_end().to_string()
 }
 
-pub(super) fn map_step2_segments_for_translate(
+pub fn map_step2_segments_for_translate(
     segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
 ) -> Vec<SourceSegmentForTerminologyCommand> {
     segments

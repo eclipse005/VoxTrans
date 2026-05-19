@@ -87,11 +87,10 @@ pub(super) fn repair_single_watchability_line(
         return updated;
     }
 
-    if is_watchability_fragment_issue(source, &updated, target_lang) {
-        if let Some(trimmed) = trim_trailing_connector_fragment(&updated) {
+    if is_watchability_fragment_issue(source, &updated, target_lang)
+        && let Some(trimmed) = trim_trailing_connector_fragment(&updated) {
             updated = trimmed;
         }
-    }
     updated
 }
 

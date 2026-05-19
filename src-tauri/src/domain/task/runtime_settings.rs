@@ -6,18 +6,18 @@ use serde_json::Value;
 use crate::commands::translate_types::TranslateTerminologyEntryCommand;
 
 #[derive(Debug, Clone)]
-pub(super) struct PipelineRuntimeSettings {
-    pub(super) asr_model: String,
-    pub(super) align_model: String,
-    pub(super) provider: String,
-    pub(super) chunk_target_seconds: u32,
-    pub(super) translate_api_key: String,
-    pub(super) translate_base_url: String,
-    pub(super) translate_model: String,
-    pub(super) llm_concurrency: u32,
-    pub(super) subtitle_length_preset: String,
-    pub(super) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
-    pub(super) enable_subtitle_beautify: bool,
+pub struct PipelineRuntimeSettings {
+    pub asr_model: String,
+    pub align_model: String,
+    pub provider: String,
+    pub chunk_target_seconds: u32,
+    pub translate_api_key: String,
+    pub translate_base_url: String,
+    pub translate_model: String,
+    pub llm_concurrency: u32,
+    pub subtitle_length_preset: String,
+    pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
+    pub enable_subtitle_beautify: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -66,7 +66,7 @@ struct SettingsSnapshotTerminologyTerm {
     note: String,
 }
 
-pub(super) fn resolve_runtime_settings(
+pub fn resolve_runtime_settings(
     snapshot: &Value,
     require_translate_llm: bool,
 ) -> Result<PipelineRuntimeSettings, String> {
@@ -201,7 +201,7 @@ pub(super) fn resolve_runtime_settings(
     })
 }
 
-pub(super) fn fallback_saved_settings() -> crate::services::preferences::SavedSettings {
+pub fn fallback_saved_settings() -> crate::services::preferences::SavedSettings {
     crate::services::preferences::SavedSettings {
         provider: "cpu".to_string(),
         chunk_target_seconds: 45,

@@ -154,14 +154,13 @@ pub(super) fn repair_aligned_lines(
                     if let Some(trimmed) = trim_before_leaked_number_anchor(&text, &leaked_numbers)
                     {
                         text = trimmed;
-                    } else if let Some(leading) = leading_number_anchor(&text) {
-                        if leaked_numbers.contains(&leading) {
+                    } else if let Some(leading) = leading_number_anchor(&text)
+                        && leaked_numbers.contains(&leading) {
                             let stripped = strip_leading_number_token(&text);
                             if !stripped.is_empty() {
                                 text = stripped;
                             }
                         }
-                    }
                 }
             }
         }
@@ -171,11 +170,10 @@ pub(super) fn repair_aligned_lines(
         {
             text = fallback_text.clone();
         }
-        if is_unusable_translation(&text) {
-            if !is_unusable_translation(&fallback_text) {
+        if is_unusable_translation(&text)
+            && !is_unusable_translation(&fallback_text) {
                 text = fallback_text;
             }
-        }
         if is_unusable_translation(&text) {
             text = normalize_inline_text(&part.source);
         }

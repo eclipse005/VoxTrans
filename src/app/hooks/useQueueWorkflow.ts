@@ -10,7 +10,6 @@ import {
 } from "../../features/media/languages";
 import type {
   QueueItem,
-  SavedSettings,
   SourceLanguage,
   TargetLanguage,
 } from "../../features/media/types";
@@ -25,14 +24,12 @@ type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
 
 type UseQueueWorkflowArgs = {
   queue: QueueItem[];
-  settings: SavedSettings;
   dispatch: DispatchState;
   pushToast: PushToast;
 };
 
 export function useQueueWorkflow({
   queue,
-  settings,
   dispatch,
   pushToast,
 }: UseQueueWorkflowArgs) {
@@ -67,7 +64,6 @@ export function useQueueWorkflow({
     removeItem: removeItemFromScheduler,
   } = useQueueScheduler({
     queue,
-    settings,
     dispatch,
     pushToast,
     runQueuedByTaskIds,

@@ -69,6 +69,7 @@ pub fn read_cache_hit(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn append_cache_entry(
     context: &LlmCallContext,
     config: &LlmConfig,
@@ -183,11 +184,10 @@ fn load_or_get_cache_state(path: &Path) -> Result<Arc<CacheFileState>, String> {
         let guard = cache_state_map()
             .read()
             .map_err(|_| "cache state lock poisoned".to_string())?;
-        if let Some(state) = guard.get(path) {
-            if state.loaded {
+        if let Some(state) = guard.get(path)
+            && state.loaded {
                 return Ok(Arc::clone(state));
             }
-        }
     }
 
     // Not in cache or not loaded, need to write
@@ -196,11 +196,10 @@ fn load_or_get_cache_state(path: &Path) -> Result<Arc<CacheFileState>, String> {
         .map_err(|_| "cache state lock poisoned".to_string())?;
 
     // Double-check after acquiring write lock
-    if let Some(state) = guard.get(path) {
-        if state.loaded {
+    if let Some(state) = guard.get(path)
+        && state.loaded {
             return Ok(Arc::clone(state));
         }
-    }
 
     let mut entries = read_entries(path)?;
     if entries.len() > MAX_CACHE_ENTRIES {

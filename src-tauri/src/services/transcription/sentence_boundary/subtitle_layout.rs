@@ -101,6 +101,7 @@ fn split_span_by_dp(
     cuts
 }
 
+#[allow(clippy::too_many_arguments)]
 fn segment_cost(
     words: &[WordTokenDto],
     start: usize,

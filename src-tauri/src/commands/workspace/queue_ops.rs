@@ -1,6 +1,8 @@
 use serde_json::Value;
 use tauri::AppHandle;
 
+use crate::domain::error::{WorkspaceError, WorkspaceResult};
+
 use super::execution_flow::execute_single_task;
 use super::meta::{ensure_workspace_hydrated_from_disk, persist_task_meta, remove_task_meta};
 use super::task_logs::log_task_failure_to_main;
@@ -15,15 +17,15 @@ use super::{
 
 pub(super) fn register_task_upload_internal(
     request: RegisterTaskUploadCommandRequest,
-) -> Result<(), String> {
+) -> WorkspaceResult<()> {
     ensure_workspace_hydrated_from_disk()?;
     let id = request.id.trim();
     let media_path = request.media_path.trim();
     if id.is_empty() {
-        return Err("id is required".to_string());
+        return Err(WorkspaceError::InvalidRequest("id is required".to_string()));
     }
     if media_path.is_empty() {
-        return Err("mediaPath is required".to_string());
+        return Err(WorkspaceError::InvalidRequest("mediaPath is required".to_string()));
     }
 
     {
@@ -61,7 +63,7 @@ pub(super) fn register_task_upload_internal(
     Ok(())
 }
 
-pub(super) fn delete_tasks_internal(request: DeleteTasksCommandRequest) -> Result<(), String> {
+pub(super) fn delete_tasks_internal(request: DeleteTasksCommandRequest) -> WorkspaceResult<()> {
     ensure_workspace_hydrated_from_disk()?;
     let task_id = request
         .task_id
@@ -123,15 +125,15 @@ pub(super) fn delete_tasks_internal(request: DeleteTasksCommandRequest) -> Resul
 pub(super) fn enqueue_task_run_internal(
     app: &AppHandle,
     request: EnqueueTaskRunCommandRequest,
-) -> Result<(), String> {
+) -> WorkspaceResult<()> {
     ensure_workspace_hydrated_from_disk()?;
     let id = request.id.trim();
     let media_path = request.media_path.trim();
     if id.is_empty() {
-        return Err("id is required".to_string());
+        return Err(WorkspaceError::InvalidRequest("id is required".to_string()));
     }
     if media_path.is_empty() {
-        return Err("mediaPath is required".to_string());
+        return Err(WorkspaceError::InvalidRequest("mediaPath is required".to_string()));
     }
 
     let queued_item = {
@@ -167,11 +169,9 @@ pub(super) fn enqueue_task_run_internal(
                 source_lang,
                 target_lang,
                 max_retries: request.max_retries.unwrap_or(0),
-                settings_snapshot: request.settings_snapshot.unwrap_or_else(|| {
-                    crate::services::preferences::load_saved_settings_from_default_path()
-                        .map(|settings| serde_json::to_value(settings).unwrap_or(Value::Null))
-                        .unwrap_or(Value::Null)
-                }),
+                settings_snapshot: crate::services::preferences::load_saved_settings_from_default_path()
+                    .map(|settings| serde_json::to_value(settings).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
             };
             let emitted = record.item.clone();
             persist_task_meta(&record)?;
@@ -186,11 +186,11 @@ pub(super) fn enqueue_task_run_internal(
 pub(super) fn update_task_languages_internal(
     app: &AppHandle,
     request: UpdateTaskLanguagesCommandRequest,
-) -> Result<(), String> {
+) -> WorkspaceResult<()> {
     ensure_workspace_hydrated_from_disk()?;
     let task_id = request.task_id.trim();
     if task_id.is_empty() {
-        return Err("taskId is required".to_string());
+        return Err(WorkspaceError::InvalidRequest("taskId is required".to_string()));
     }
 
     let source_lang = normalize_task_source_lang(&request.source_lang);
@@ -198,10 +198,10 @@ pub(super) fn update_task_languages_internal(
     let updated_item = {
         let mut store = lock_workspace_store()?;
         let Some(task) = find_task_mut(&mut store, task_id) else {
-            return Err(format!("task not found: {task_id}"));
+            return Err(WorkspaceError::TaskNotFound(task_id.to_string()));
         };
         if task.item.transcribe_status == "processing" || task.item.transcribe_status == "queued" {
-            return Err("任务正在处理或排队，不能修改语言".to_string());
+            return Err(WorkspaceError::TaskBusy);
         }
 
         task.source_lang = source_lang.clone();
@@ -325,7 +325,9 @@ fn apply_enqueue_request(record: &mut WorkspaceTaskRecord, request: EnqueueTaskR
     record.item.source_lang = record.source_lang.clone();
     record.item.target_lang = record.target_lang.clone();
     record.max_retries = request.max_retries.unwrap_or(0);
-    record.settings_snapshot = request.settings_snapshot.unwrap_or(Value::Null);
+    record.settings_snapshot = crate::services::preferences::load_saved_settings_from_default_path()
+        .map(|settings| serde_json::to_value(settings).unwrap_or(Value::Null))
+        .unwrap_or(Value::Null);
 }
 
 #[cfg(test)]
