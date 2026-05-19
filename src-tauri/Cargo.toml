@@ -29,5 +29,6 @@ candle-core = "0.10.2"
 dashmap = "6"
 thiserror = "2"
 ts-rs = "10"
+open = "5"
 qwen3-asr = { path = "../../qwen3-asr-rs", default-features = false }
 qwen-forced-aligner-rs = { path = "../../qwen-aligner", default-features = false }

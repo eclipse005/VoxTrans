@@ -69,26 +69,6 @@ pub fn cancel_update(task_id: String) -> Result<bool, String> {
 
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("cmd")
-            .args(["/c", "start", &url])
-            .spawn()
-            .map_err(|e| format!("打开链接失败: {}", e))?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&url)
-            .spawn()
-            .map_err(|e| format!("打开链接失败: {}", e))?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&url)
-            .spawn()
-            .map_err(|e| format!("打开链接失败: {}", e))?;
-    }
+    open::that(&url).map_err(|e| format!("打开链接失败: {}", e))?;
     Ok(())
 }
