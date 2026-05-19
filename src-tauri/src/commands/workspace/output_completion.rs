@@ -3,6 +3,7 @@ use std::path::Path;
 use tauri::AppHandle;
 
 use crate::commands::translate_types::BuildTranslationSegmentCommand;
+use crate::domain::error::WorkspaceResult;
 use crate::domain::task::adapters::{
     workspace_subtitle_segments_from_step2_segments,
     workspace_subtitle_segments_from_translation_segments,
@@ -23,7 +24,7 @@ pub(super) fn finish_transcribe_only(
     enable_subtitle_beautify: bool,
     subtitle_length_preset: &str,
     target_lang: &str,
-) -> Result<(), String> {
+) -> WorkspaceResult<()> {
     let workspace_segments = workspace_subtitle_segments_from_step2_segments(step2_segments);
     let subtitle_segments_json = serialize_segments(&workspace_segments);
     write_completion_srts(
@@ -36,14 +37,14 @@ pub(super) fn finish_transcribe_only(
         target_lang,
     )?;
 
-    Ok(patch_task_item(app, task_id, |task| {
+    patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
         task.item.task_progress = done_task_progress_state();
         task.item.transcribe_error = String::new();
         task.item.result_text = source_text.clone();
         task.item.result_srt = step2_srt.clone();
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
-    })?)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -56,7 +57,7 @@ pub(super) fn finish_translate_with_step5(
     enable_subtitle_beautify: bool,
     subtitle_length_preset: &str,
     target_lang: &str,
-) -> Result<(), String> {
+) -> WorkspaceResult<()> {
     let workspace_segments = workspace_subtitle_segments_from_translation_segments(segments);
     let subtitle_segments_json = serialize_segments(&workspace_segments);
     write_completion_srts(
@@ -69,14 +70,14 @@ pub(super) fn finish_translate_with_step5(
         target_lang,
     )?;
 
-    Ok(patch_task_item(app, task_id, |task| {
+    patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
         task.item.task_progress = done_task_progress_state();
         task.item.transcribe_error = String::new();
         task.item.result_text = source_text.clone();
         task.item.result_srt = String::new();
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
-    })?)
+    })
 }
 
 fn write_completion_srts(

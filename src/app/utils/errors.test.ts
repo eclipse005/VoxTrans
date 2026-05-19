@@ -50,6 +50,28 @@ describe("toUserErrorMessage", () => {
     expect(toUserErrorMessage("serialization error: invalid JSON")).toBe("数据解析失败");
   });
 
+  it("classifies structured backend errors by stable code", () => {
+    expect(toUserErrorMessage(JSON.stringify({
+      code: "TASK_NOT_FOUND",
+      message: "missing",
+    }))).toBe("任务不存在，请刷新任务列表");
+    expect(toUserErrorMessage({
+      code: "TASK_BUSY",
+      message: "busy",
+    })).toBe("任务正在处理中，请稍后再试");
+    expect(toUserErrorMessage(JSON.stringify({
+      code: "TASK_FAILED",
+      message: "task failed: runtime error",
+    }))).toBe("任务执行失败，请查看日志");
+  });
+
+  it("preserves actionable messages for structured task failures", () => {
+    expect(toUserErrorMessage(JSON.stringify({
+      code: "TASK_FAILED",
+      message: "task failed: translateApiKey is required",
+    }))).toBe("翻译 API Key 未设置，请在设置中配置");
+  });
+
   it("classifies LLM and network errors", () => {
     expect(toUserErrorMessage("llm call failed after 3 attempts")).toBe("AI 调用失败，请检查网络连接和 API 配置");
     expect(toUserErrorMessage("failed to create http client: timeout")).toBe("网络配置错误，请检查 API 设置");

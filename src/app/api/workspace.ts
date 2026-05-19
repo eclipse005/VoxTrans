@@ -50,7 +50,7 @@ type UpdateTaskLanguagesRequest = {
   targetLang: TargetLanguage;
 };
 
-type RegisterTaskUploadRequest = {
+export type RegisterTaskUploadRequest = {
   id: string;
   mediaPath: string;
   name: string;

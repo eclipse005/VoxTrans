@@ -4,6 +4,7 @@ use tauri::AppHandle;
 
 use crate::services::pipeline::StepContext;
 
+use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::domain::task::adapters::{
     source_text_from_step2_segments, step2_segments_to_srt,
     workspace_subtitle_segments_from_step2_segments,
@@ -22,7 +23,14 @@ use super::{
     normalize_task_target_lang, patch_task_item,
 };
 
-pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Result<(), String> {
+pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
+    let result = execute_single_task_inner(app, task_id).await;
+    mark_task_failed_after_execution_error(result, |err| {
+        mark_task_failed(app, task_id, &err.to_string())
+    })
+}
+
+async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
     let record = get_task_record(task_id)?;
     let intent = normalize_intent(&record.intent).to_string();
     let runtime =
@@ -31,10 +39,10 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
     let target_lang = normalize_task_target_lang(&record.target_lang);
     let task_output_dir =
         crate::services::task_path::task_output_dir(task_id, Path::new(&record.item.path));
-    std::fs::create_dir_all(&task_output_dir).map_err(|err| err.to_string())?;
+    std::fs::create_dir_all(&task_output_dir)?;
     let artifact_dir =
         crate::services::task_path::task_artifacts_dir(task_id, Path::new(&record.item.path));
-    std::fs::create_dir_all(&artifact_dir).map_err(|err| err.to_string())?;
+    std::fs::create_dir_all(&artifact_dir)?;
     migrate_legacy_artifacts(&task_output_dir, &artifact_dir)?;
     let step_context = StepContext {
         output_dir: &artifact_dir,
@@ -49,8 +57,6 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
     })?;
 
     let step1_exec = execute_workspace_step(
-        app,
-        task_id,
         &Step1AsrPipelineStep {
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
@@ -83,8 +89,6 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
     report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 0)?;
 
     let step2_exec = execute_workspace_step(
-        app,
-        task_id,
         &Step2SegmentsPipelineStep {
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
@@ -106,7 +110,7 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
         workspace_subtitle_segments_from_step2_segments(&step2_segments),
     )?;
 
-    let run_result = if intent == "TRANSCRIBE_TRANSLATE" {
+    let run_result: WorkspaceResult<()> = if intent == "TRANSCRIBE_TRANSLATE" {
         execute_translate_steps(
             app,
             task_id,
@@ -132,9 +136,57 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Resul
             &target_lang,
         )
     };
-    if let Err(err) = run_result {
-        mark_task_failed(app, task_id, &err)?;
-        return Err(err);
-    }
+    run_result?;
     Ok(())
+}
+
+fn mark_task_failed_after_execution_error(
+    result: WorkspaceResult<()>,
+    mut mark_failed: impl FnMut(&WorkspaceError) -> WorkspaceResult<()>,
+) -> WorkspaceResult<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            mark_failed(&err)?;
+            Err(err)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::error::WorkspaceError;
+
+    #[test]
+    fn execution_error_marks_task_failed_and_returns_original_error() {
+        let mut marked_error = String::new();
+
+        let result = mark_task_failed_after_execution_error(
+            Err(WorkspaceError::InvalidRequest(
+                "missing runtime settings".to_string(),
+            )),
+            |err| {
+                marked_error = err.to_string();
+                Ok(())
+            },
+        );
+
+        let err = result.expect_err("execution error should be returned");
+        assert_eq!(err.code(), "INVALID_REQUEST");
+        assert_eq!(marked_error, "invalid request: missing runtime settings");
+    }
+
+    #[test]
+    fn execution_success_does_not_mark_task_failed() {
+        let mut marked = false;
+
+        let result = mark_task_failed_after_execution_error(Ok(()), |_| {
+            marked = true;
+            Ok(())
+        });
+
+        assert!(result.is_ok());
+        assert!(!marked);
+    }
 }

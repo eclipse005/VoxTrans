@@ -1,5 +1,7 @@
 use tauri::AppHandle;
 
+use crate::domain::error::WorkspaceResult;
+
 use super::{TaskStage, WorkspaceTaskProgressState, WorkspaceTaskStageState, patch_task_item};
 
 pub(super) fn task_progress_state(
@@ -33,19 +35,19 @@ pub(super) fn report_task_stage(
     detail: impl Into<String>,
     current: u32,
     total: u32,
-) -> Result<(), String> {
+) -> WorkspaceResult<()> {
     let progress = task_progress_state(stage, detail, current, total);
-    Ok(patch_task_item(app, task_id, |task| {
+    patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "processing".to_string();
         task.item.task_progress = progress;
         task.item.transcribe_error = String::new();
-    })?)
+    })
 }
 
-pub(super) fn mark_task_failed(app: &AppHandle, task_id: &str, error: &str) -> Result<(), String> {
-    Ok(patch_task_item(app, task_id, |task| {
+pub(super) fn mark_task_failed(app: &AppHandle, task_id: &str, error: &str) -> WorkspaceResult<()> {
+    patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "error".to_string();
         task.item.task_progress = WorkspaceTaskProgressState::default();
         task.item.transcribe_error = error.to_string();
-    })?)
+    })
 }

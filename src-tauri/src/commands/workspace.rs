@@ -1,5 +1,3 @@
-use std::sync::{Mutex, OnceLock};
-
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
@@ -17,16 +15,18 @@ mod pipeline_steps;
 mod preview;
 mod progress;
 mod queue_ops;
+mod store;
 mod task_logs;
 mod translation_flow;
 mod types;
 
+use crate::domain::task::runtime_settings::fallback_saved_settings;
 use meta::{ensure_workspace_hydrated_from_disk, persist_task_meta};
 use queue_ops::{
     delete_tasks_internal, enqueue_task_run_internal, execute_task_batch_internal,
     register_task_upload_internal, update_task_languages_internal,
 };
-use crate::domain::task::runtime_settings::fallback_saved_settings;
+use store::{TaskStore, find_task_mut, lock_workspace_store};
 pub use types::*;
 
 #[derive(Debug, Clone)]
@@ -39,13 +39,6 @@ struct WorkspaceTaskRecord {
     settings_snapshot: Value,
 }
 
-#[derive(Debug, Default)]
-struct WorkspaceStore {
-    tasks: Vec<WorkspaceTaskRecord>,
-}
-
-static WORKSPACE_STORE: OnceLock<Mutex<WorkspaceStore>> = OnceLock::new();
-static WORKSPACE_HYDRATED: OnceLock<Mutex<bool>> = OnceLock::new();
 const TASK_META_FILE_NAME: &str = "task_meta.json";
 const STEP_01_ASR_FILE: &str = "step_01_asr.json";
 const STEP_02_SEGMENTS_FILE: &str = "step_02_segments.json";
@@ -54,29 +47,12 @@ const STEP_04_TRANSLATION_FILE: &str = "step_04_translation.json";
 const STEP_05_01_SOURCE_SPLIT_FILE: &str = "step_05_01_source_split.json";
 const STEP_05_02_TRANSLATION_ALIGN_FILE: &str = "step_05_02_translation_align.json";
 
-fn workspace_store() -> &'static Mutex<WorkspaceStore> {
-    WORKSPACE_STORE.get_or_init(|| Mutex::new(WorkspaceStore::default()))
-}
-
-fn lock_workspace_store() -> WorkspaceResult<std::sync::MutexGuard<'static, WorkspaceStore>> {
-    workspace_store()
-        .lock()
-        .map_err(|_| WorkspaceError::LockPoisoned)
-}
-
-fn lock_workspace_hydrated() -> WorkspaceResult<std::sync::MutexGuard<'static, bool>> {
-    WORKSPACE_HYDRATED
-        .get_or_init(|| Mutex::new(false))
-        .lock()
-        .map_err(|_| WorkspaceError::LockPoisoned)
-}
-
 #[tauri::command]
 pub async fn load_workspace_state() -> Result<WorkspaceStateResponse, String> {
     ensure_workspace_hydrated_from_disk()?;
     let store = lock_workspace_store()?;
     Ok(WorkspaceStateResponse {
-        queue: store.tasks.iter().map(|task| task.item.clone()).collect(),
+        queue: store.tasks().iter().map(|task| task.item.clone()).collect(),
     })
 }
 
@@ -84,15 +60,9 @@ pub async fn load_workspace_state() -> Result<WorkspaceStateResponse, String> {
 pub async fn load_workspace_task(
     request: LoadWorkspaceTaskCommandRequest,
 ) -> Result<WorkspaceTaskResponse, String> {
+    let task_id = require_task_id(&request.task_id)?;
     ensure_workspace_hydrated_from_disk()?;
-    let task_id = request.task_id.trim();
-    if task_id.is_empty() {
-        return Err("taskId is required".to_string());
-    }
-    let store = lock_workspace_store()?;
-    let Some(task) = store.tasks.iter().find(|entry| entry.item.id == task_id) else {
-        return Err(format!("task not found: {task_id}"));
-    };
+    let task = get_task_record(task_id)?;
     Ok(WorkspaceTaskResponse {
         item: task.item.clone(),
     })
@@ -160,7 +130,7 @@ pub async fn enqueue_and_execute_task_batch(
             }),
             Err(err) => failed.push(ExecuteTaskBatchFailedItem {
                 task_id: item.id,
-                error: err.to_string(),
+                error: err.to_command_error(),
             }),
         }
     }
@@ -191,28 +161,53 @@ fn patch_task_item(
         let Some(task) = find_task_mut(&mut store, task_id) else {
             return Err(WorkspaceError::TaskNotFound(task_id.to_string()));
         };
-        mutator(task);
-        persist_task_meta(task).map_err(WorkspaceError::TaskFailed)?;
-        task.item.clone()
+        persist_task_record_update(task, mutator)?
     };
     emit_task_state_changed(app, &updated_item);
     Ok(())
 }
 
+fn persist_task_record_update(
+    record: &mut WorkspaceTaskRecord,
+    mutator: impl FnOnce(&mut WorkspaceTaskRecord),
+) -> WorkspaceResult<WorkspaceQueueItem> {
+    update_task_record_with_persist(record, mutator, persist_task_meta)
+}
+
+fn update_task_record_with_persist(
+    record: &mut WorkspaceTaskRecord,
+    mutator: impl FnOnce(&mut WorkspaceTaskRecord),
+    persist: impl FnOnce(&WorkspaceTaskRecord) -> WorkspaceResult<()>,
+) -> WorkspaceResult<WorkspaceQueueItem> {
+    let mut updated = record.clone();
+    mutator(&mut updated);
+    persist(&updated)?;
+    let item = updated.item.clone();
+    *record = updated;
+    Ok(item)
+}
+
 fn get_task_record(task_id: &str) -> WorkspaceResult<WorkspaceTaskRecord> {
     let store = lock_workspace_store()?;
-    let Some(task) = store.tasks.iter().find(|entry| entry.item.id == task_id) else {
+    let Some(task) = store.tasks().iter().find(|entry| entry.item.id == task_id) else {
         return Err(WorkspaceError::TaskNotFound(task_id.to_string()));
     };
     Ok(task.clone())
 }
 
-pub fn get_task_queue_item_for_export(task_id: &str) -> WorkspaceResult<WorkspaceQueueItem> {
+fn require_task_id(task_id: &str) -> WorkspaceResult<&str> {
     let normalized = task_id.trim();
     if normalized.is_empty() {
-        return Err(WorkspaceError::InvalidRequest("taskId is required".to_string()));
+        return Err(WorkspaceError::InvalidRequest(
+            "taskId is required".to_string(),
+        ));
     }
-    ensure_workspace_hydrated_from_disk().map_err(|e: String| WorkspaceError::TaskFailed(e))?;
+    Ok(normalized)
+}
+
+pub fn get_task_queue_item_for_export(task_id: &str) -> WorkspaceResult<WorkspaceQueueItem> {
+    let normalized = require_task_id(task_id)?;
+    ensure_workspace_hydrated_from_disk()?;
     let record = get_task_record(normalized)?;
     Ok(record.item)
 }
@@ -223,15 +218,16 @@ pub fn add_task_total_tokens(task_id: &str, delta_tokens: u64) -> WorkspaceResul
         return Ok(0);
     }
 
-    ensure_workspace_hydrated_from_disk().map_err(|e: String| WorkspaceError::TaskFailed(e))?;
+    ensure_workspace_hydrated_from_disk()?;
     let updated_total = {
         let mut store = lock_workspace_store()?;
         let Some(task) = find_task_mut(&mut store, task_id) else {
             return Ok(0);
         };
-        task.item.llm_total_tokens = task.item.llm_total_tokens.saturating_add(delta_tokens);
-        persist_task_meta(task).map_err(WorkspaceError::TaskFailed)?;
-        task.item.llm_total_tokens
+        let item = persist_task_record_update(task, |task| {
+            task.item.llm_total_tokens = task.item.llm_total_tokens.saturating_add(delta_tokens);
+        })?;
+        item.llm_total_tokens
     };
     Ok(updated_total)
 }
@@ -242,22 +238,12 @@ pub fn get_task_total_tokens_from_workspace(task_id: &str) -> WorkspaceResult<u6
         return Ok(0);
     }
 
-    ensure_workspace_hydrated_from_disk().map_err(|e: String| WorkspaceError::TaskFailed(e))?;
+    ensure_workspace_hydrated_from_disk()?;
     let store = lock_workspace_store()?;
-    let Some(task) = store.tasks.iter().find(|entry| entry.item.id == task_id) else {
+    let Some(task) = store.tasks().iter().find(|entry| entry.item.id == task_id) else {
         return Ok(0);
     };
     Ok(task.item.llm_total_tokens)
-}
-
-fn find_task_mut<'a>(
-    store: &'a mut WorkspaceStore,
-    task_id: &str,
-) -> Option<&'a mut WorkspaceTaskRecord> {
-    store
-        .tasks
-        .iter_mut()
-        .find(|entry| entry.item.id == task_id)
 }
 
 fn normalize_media_kind(raw: &str) -> &str {
@@ -329,6 +315,79 @@ mod tests {
             "广东话",
         ] {
             assert_eq!(normalize_task_source_lang(alias), "yue");
+        }
+    }
+
+    #[test]
+    fn require_task_id_rejects_empty_input_with_invalid_request() {
+        let err = require_task_id("  ").expect_err("empty task id should be rejected");
+
+        assert_eq!(err.code(), "INVALID_REQUEST");
+        assert_eq!(err.to_string(), "invalid request: taskId is required");
+    }
+
+    #[test]
+    fn task_record_update_keeps_original_record_when_persist_fails() {
+        let mut record = test_workspace_record("task-1");
+
+        let err = update_task_record_with_persist(
+            &mut record,
+            |task| {
+                task.item.name = "updated.mp4".to_string();
+            },
+            |_| {
+                Err(WorkspaceError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "cannot persist task meta",
+                )))
+            },
+        )
+        .expect_err("persist failure should abort the record update");
+
+        assert_eq!(err.code(), "IO_ERROR");
+        assert_eq!(record.item.name, "demo.mp4");
+    }
+
+    #[test]
+    fn task_record_update_replaces_record_after_persist_succeeds() {
+        let mut record = test_workspace_record("task-1");
+
+        let item = update_task_record_with_persist(
+            &mut record,
+            |task| {
+                task.item.name = "updated.mp4".to_string();
+            },
+            |_| Ok(()),
+        )
+        .expect("persist success should update the record");
+
+        assert_eq!(item.name, "updated.mp4");
+        assert_eq!(record.item.name, "updated.mp4");
+    }
+
+    fn test_workspace_record(task_id: &str) -> WorkspaceTaskRecord {
+        WorkspaceTaskRecord {
+            item: WorkspaceQueueItem {
+                id: task_id.to_string(),
+                path: String::new(),
+                name: "demo.mp4".to_string(),
+                media_kind: "video".to_string(),
+                size_bytes: 1,
+                source_lang: "en".to_string(),
+                target_lang: "zh-CN".to_string(),
+                transcribe_status: "pending".to_string(),
+                task_progress: WorkspaceTaskProgressState::default(),
+                transcribe_error: String::new(),
+                result_text: String::new(),
+                result_srt: String::new(),
+                subtitle_segments_json: "[]".to_string(),
+                llm_total_tokens: 0,
+            },
+            intent: "TRANSCRIBE".to_string(),
+            source_lang: "en".to_string(),
+            target_lang: "zh-CN".to_string(),
+            max_retries: 0,
+            settings_snapshot: Value::Null,
         }
     }
 }

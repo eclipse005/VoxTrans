@@ -3,6 +3,7 @@ use std::path::Path;
 use tauri::AppHandle;
 
 use crate::commands::translate_types::BuildTranslationSegmentCommand;
+use crate::domain::error::WorkspaceResult;
 use crate::domain::task::adapters::{
     map_step2_segments_for_translate, translation_segments_from_step52_parents,
     workspace_subtitle_segments_from_step51_parents,
@@ -33,14 +34,12 @@ pub(super) async fn execute_translate_steps(
     output_dir: &Path,
     step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
     source_text: String,
-) -> Result<(), String> {
+) -> WorkspaceResult<()> {
     let step_context = StepContext { output_dir };
     report_task_stage(app, task_id, TaskStage::Terminology, "", 0, 1)?;
 
     let terminology_segments = map_step2_segments_for_translate(step2_segments);
     let step3_exec = execute_workspace_step(
-        app,
-        task_id,
         &Step3TerminologyPipelineStep {
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
@@ -71,8 +70,6 @@ pub(super) async fn execute_translate_steps(
     )?;
 
     let step4_exec = execute_workspace_step(
-        app,
-        task_id,
         &Step4TranslationPipelineStep {
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
@@ -102,8 +99,6 @@ pub(super) async fn execute_translate_steps(
     )?;
 
     let step51_exec = execute_workspace_step(
-        app,
-        task_id,
         &Step51SourceSplitPipelineStep {
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
@@ -139,8 +134,6 @@ pub(super) async fn execute_translate_steps(
     )?;
 
     let step52_exec = execute_workspace_step(
-        app,
-        task_id,
         &Step52TranslationAlignPipelineStep {
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
@@ -201,7 +194,7 @@ async fn finalize_translate_with_step5(
     source_text: String,
     enable_subtitle_beautify: bool,
     subtitle_length_preset: &str,
-) -> Result<(), String> {
+) -> WorkspaceResult<()> {
     finish_translate_with_step5(
         app,
         task_id,

@@ -1,15 +1,8 @@
 import { useCallback, useMemo, useReducer, useState } from "react";
 import type { ExportSrtItem } from "./api/transcribe";
-import MediaList from "./components/MediaList";
-import LogsModal from "./components/LogsModal";
+import { ModalLayer } from "./components/ModalLayer";
 import Navbar from "./components/Navbar";
-import SettingsModal from "./components/SettingsModal";
-import SubtitleExportModal from "./components/SubtitleExportModal";
-import SubtitleEditorModal from "./components/SubtitleEditorModal";
-import TerminologyModal from "./components/TerminologyModal";
-import Toast from "./components/Toast";
-import UpdateModal from "./components/UpdateModal";
-import UploadPanel from "./components/UploadPanel";
+import { WorkspaceScreen } from "./components/WorkspaceScreen";
 import { openTaskOutputDir } from "./api/system";
 import { useAppPersistence } from "./hooks/useAppPersistence";
 import { useAutoUpdateCheck } from "./hooks/useAutoUpdateCheck";
@@ -246,131 +239,84 @@ function App() {
         onOpenUpdateDialog={openUpdateDialog}
       />
 
-      <main className="apple-container apple-section">
-        <section className="workspace-left">
-          <UploadPanel
-            activeTab={activeTab}
-            dragActive={dragActive}
-            youtubeUrl={youtubeUrl}
-            ytDlpVersion={ytDlpVersion}
-            ytDlpUpdating={ytDlpUpdating}
-            onTabChange={(tab) => dispatch({ type: "set_ui", payload: { activeTab: tab } })}
-            onPickFiles={pickFiles}
-            onYoutubeUrlChange={(value) => dispatch({ type: "set_ui", payload: { youtubeUrl: value } })}
-            onYoutubeDownload={() => {
-              void downloadYoutube(youtubeUrl);
-            }}
-            onUpdateYtDlp={() => {
-              void updateYtDlpBinary();
-            }}
-          />
-
-          <MediaList
-            queue={queue}
-            queueCount={queueCount}
-            workspaceHydrated={workspaceHydrated}
-            activeId={activeId}
-            isProcessing={queueBusy}
-            onSetActiveId={(id) => dispatch({ type: "set_ui", payload: { activeId: activeId === id ? "" : id } })}
-            onProcessQueue={processQueue}
-            onClearQueue={clearQueue}
-            onProcessSingle={processSingle}
-            onProcessSingleTranscribeTranslate={processSingleTranscribeTranslate}
-            onUpdateTaskLanguages={updateTaskLanguages}
-            onUpdateAllTaskLanguages={updateAllTaskLanguages}
-            onRemoveItem={removeItem}
-          />
-        </section>
-
-        <section className="workspace-right">
-          <div className={`subtitle-panel-layer subtitle-panel-layer-editor ${activeItem ? "is-visible" : "is-hidden"}`}>
-            <SubtitleEditorModal
-              embedded
-              visible
-              canEdit={canEditSubtitle}
-              readOnlyReason={canEditSubtitle ? "" : "任务完成后才可编辑字幕"}
-              taskName={subtitleTaskName}
-              cues={subtitleCues}
-              cueWarningsById={subtitleCueWarnings}
-              onUpdateCue={updateCue}
-              onAddCueAfter={addCueAfter}
-              onMergeSelected={mergeSelectedCues}
-              onSplitSelected={splitSelectedCues}
-              onReplaceText={replaceTextInCues}
-              onDeleteCue={removeCue}
-              onOpenSrtDir={openSubtitleDir}
-              onExportSrt={() => {
-                setShowSubtitleExportModal(true);
-              }}
-              onOpenLogs={openLogs}
-              onClose={() => {}}
-            />
-          </div>
-          <div className={`subtitle-panel-layer subtitle-panel-layer-empty ${activeItem ? "is-hidden" : "is-visible"}`}>
-            <div className="subtitle-panel-empty">
-              <h3 className="apple-heading-medium">字幕编辑器</h3>
-              <p className="apple-body">请在左侧任务列表中选择一个媒体任务开始编辑字幕。</p>
-            </div>
-          </div>
-        </section>
-      </main>
+      <WorkspaceScreen
+        queue={queue}
+        queueCount={queueCount}
+        workspaceHydrated={workspaceHydrated}
+        activeId={activeId}
+        activeItem={activeItem}
+        activeTab={activeTab}
+        dragActive={dragActive}
+        youtubeUrl={youtubeUrl}
+        ytDlpVersion={ytDlpVersion}
+        ytDlpUpdating={ytDlpUpdating}
+        queueBusy={queueBusy}
+        canEditSubtitle={canEditSubtitle}
+        subtitleTaskName={subtitleTaskName}
+        subtitleCues={subtitleCues}
+        subtitleCueWarnings={subtitleCueWarnings}
+        dispatch={dispatch}
+        onPickFiles={pickFiles}
+        onYoutubeDownload={() => {
+          void downloadYoutube(youtubeUrl);
+        }}
+        onUpdateYtDlp={() => {
+          void updateYtDlpBinary();
+        }}
+        onProcessQueue={processQueue}
+        onClearQueue={clearQueue}
+        onProcessSingle={processSingle}
+        onProcessSingleTranscribeTranslate={processSingleTranscribeTranslate}
+        onUpdateTaskLanguages={updateTaskLanguages}
+        onUpdateAllTaskLanguages={updateAllTaskLanguages}
+        onRemoveItem={removeItem}
+        onUpdateCue={updateCue}
+        onAddCueAfter={addCueAfter}
+        onMergeSelected={mergeSelectedCues}
+        onSplitSelected={splitSelectedCues}
+        onReplaceText={replaceTextInCues}
+        onDeleteCue={removeCue}
+        onOpenSubtitleDir={openSubtitleDir}
+        onOpenSubtitleExport={() => setShowSubtitleExportModal(true)}
+        onOpenLogs={openLogs}
+      />
 
       <SettingsFormContext.Provider value={settingsFormContextValue}>
-        <SettingsModal
-          visible={showSettings}
-          onClose={() => dispatch({ type: "set_ui", payload: { showSettings: false } })}
+        <ModalLayer
+          showSettings={showSettings}
+          showLogs={showLogs}
+          showTerminologyModal={showTerminologyModal}
+          showSubtitleExportModal={showSubtitleExportModal}
+          showUpdateDialog={showUpdateDialog}
+          canExportTranslated={canExportTranslated}
+          savedExportItems={savedExportItems}
+          form={form}
+          toast={toast}
+          logTaskName={logTaskName}
+          logContent={logContent}
+          logChannel={logChannel}
+          loadingLogs={loadingLogs}
+          totalTokens={totalTokens}
+          availableUpdate={availableUpdate}
+          installing={installing}
+          installProgress={installProgress}
+          dispatch={dispatch}
+          setForm={setForm}
+          setShowTerminologyModal={setShowTerminologyModal}
+          setShowSubtitleExportModal={setShowSubtitleExportModal}
+          setSavedExportItems={setSavedExportItems}
+          saveExportItems={saveExportItems}
+          saveTerminologyGroups={saveTerminologyGroups}
+          exportSubtitleSrt={exportSubtitleSrt}
+          loadLogs={loadLogs}
+          setLogChannel={setLogChannel}
+          clearLogs={clearLogs}
+          openLogDir={openLogDir}
+          closeUpdateDialog={closeUpdateDialog}
+          installUpdate={installUpdate}
+          cancelInstall={cancelInstall}
         />
       </SettingsFormContext.Provider>
-
-      <LogsModal
-        visible={showLogs}
-        loading={loadingLogs}
-        totalTokens={totalTokens}
-        taskName={logTaskName}
-        content={logContent}
-        channel={logChannel}
-        onChannelChange={setLogChannel}
-        onClose={() => dispatch({ type: "set_ui", payload: { showLogs: false } })}
-        onRefresh={loadLogs}
-        onClear={clearLogs}
-        onOpenDir={openLogDir}
-      />
-
-      <TerminologyModal
-        visible={showTerminologyModal}
-        groups={form.terminologyGroups}
-        onClose={() => setShowTerminologyModal(false)}
-        onChange={(value) => setForm((prev) => ({ ...prev, terminologyGroups: value }))}
-        onSave={async (groups) => {
-          await saveTerminologyGroups(groups);
-        }}
-      />
-
-      {showSubtitleExportModal ? (
-        <SubtitleExportModal
-          canExportTranslated={canExportTranslated}
-          initialSelectedItems={savedExportItems}
-          onClose={() => setShowSubtitleExportModal(false)}
-          onConfirm={async (items) => {
-            setSavedExportItems(items);
-            saveExportItems(items);
-            await exportSubtitleSrt(items);
-            setShowSubtitleExportModal(false);
-          }}
-        />
-      ) : null}
-
-      <UpdateModal
-        visible={showUpdateDialog}
-        update={availableUpdate}
-        installing={installing}
-        installProgress={installProgress}
-        onClose={closeUpdateDialog}
-        onInstall={installUpdate}
-        onCancelInstall={cancelInstall}
-      />
-
-      <Toast toast={toast} />
     </div>
   );
 }

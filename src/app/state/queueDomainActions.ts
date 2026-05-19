@@ -16,6 +16,14 @@ export function removeQueueItem(dispatch: DispatchState, id: string): void {
   dispatch({ type: "remove_queue_item", id });
 }
 
+export function replaceQueueItem(
+  dispatch: DispatchState,
+  previousId: string,
+  item: QueueItem,
+): void {
+  dispatch({ type: "replace_queue_item", previousId, item });
+}
+
 export function clearQueueItems(dispatch: DispatchState): void {
   dispatch({ type: "clear_queue" });
 }

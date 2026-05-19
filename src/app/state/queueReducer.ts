@@ -16,6 +16,12 @@ export function reduceQueueState(state: AppState, action: QueueAction): AppState
         ...state,
         queue: state.queue.map((item) => (item.id === action.id ? action.updater(item) : item)),
       };
+    case "replace_queue_item":
+      return {
+        ...state,
+        queue: state.queue.map((item) => (item.id === action.previousId ? action.item : item)),
+        activeId: state.activeId === action.previousId ? action.item.id : state.activeId,
+      };
     case "remove_queue_item":
       return {
         ...state,

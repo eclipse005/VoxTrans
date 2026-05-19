@@ -9,8 +9,8 @@ import type {
   SubtitleBurnMode,
   SubtitleLineStyle,
   SubtitleRenderStyle,
-  UserPreferencesResponse,
 } from "../../features/media/types";
+import type { UserPreferencesResponse } from "../../generated/bindings/UserPreferencesResponse";
 import type { AppAction } from "../state/appReducer";
 import { normalizeTerminologyGroups } from "../utils/terminology";
 

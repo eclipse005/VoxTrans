@@ -39,9 +39,10 @@ export function useQueueWorkflow({
     queueRef.current = queue;
   }, [queue]);
 
-  const isTaskPresent = useCallback((taskId: string) => (
-    queueRef.current.some((item) => item.id === taskId)
-  ), []);
+  const isTaskPresent = useCallback(
+    (taskId: string) => queueRef.current.some((item) => item.id === taskId),
+    [],
+  );
 
   const { appendPaths, pickFiles } = useQueueInput({
     dispatch,
@@ -59,7 +60,8 @@ export function useQueueWorkflow({
     queueBusy,
     processQueue: processQueueFromScheduler,
     processSingle: processSingleFromScheduler,
-    processSingleTranscribeTranslate: processSingleTranscribeTranslateFromScheduler,
+    processSingleTranscribeTranslate:
+      processSingleTranscribeTranslateFromScheduler,
     clearQueue: clearQueueFromScheduler,
     removeItem: removeItemFromScheduler,
   } = useQueueScheduler({
@@ -72,9 +74,10 @@ export function useQueueWorkflow({
   const {
     downloadYoutube,
     processSingle: processSingleFromYoutube,
-    processSingleTranscribeTranslate: processSingleTranscribeTranslateFromYoutube,
+    processSingleTranscribeTranslate:
+      processSingleTranscribeTranslateFromYoutube,
     removeItem: removeItemFromYoutube,
-    clearYoutubeQueue,
+    prepareClearYoutubeQueue,
   } = useYoutubeDownloadWorkflow({
     queue,
     dispatch,
@@ -84,152 +87,183 @@ export function useQueueWorkflow({
     processSingleTranscribeTranslateFromScheduler,
   });
 
-  const {
-    ytDlpVersion,
-    ytDlpUpdating,
-    updateYtDlpBinary,
-  } = useYtDlpManager({ pushToast });
+  const { ytDlpVersion, ytDlpUpdating, updateYtDlpBinary } = useYtDlpManager({
+    pushToast,
+  });
 
-  const processSingle = useCallback(async (item: QueueItem) => {
-    const handledByYoutube = await processSingleFromYoutube(item);
-    if (handledByYoutube) return;
-    await processSingleFromScheduler(item);
-  }, [processSingleFromScheduler, processSingleFromYoutube]);
+  const processSingle = useCallback(
+    async (item: QueueItem) => {
+      const handledByYoutube = await processSingleFromYoutube(item);
+      if (handledByYoutube) return;
+      await processSingleFromScheduler(item);
+    },
+    [processSingleFromScheduler, processSingleFromYoutube],
+  );
 
-  const processQueue = useCallback(async (mode: QueueBatchMode = "transcribe") => {
-    await processQueueFromScheduler(mode);
-  }, [processQueueFromScheduler]);
+  const processQueue = useCallback(
+    async (mode: QueueBatchMode = "transcribe") => {
+      await processQueueFromScheduler(mode);
+    },
+    [processQueueFromScheduler],
+  );
 
-  const processSingleTranscribeTranslate = useCallback(async (item: QueueItem) => {
-    const handledByYoutube = await processSingleTranscribeTranslateFromYoutube(item);
-    if (handledByYoutube) return;
-    await processSingleTranscribeTranslateFromScheduler(item);
-  }, [processSingleTranscribeTranslateFromScheduler, processSingleTranscribeTranslateFromYoutube]);
+  const processSingleTranscribeTranslate = useCallback(
+    async (item: QueueItem) => {
+      const handledByYoutube =
+        await processSingleTranscribeTranslateFromYoutube(item);
+      if (handledByYoutube) return;
+      await processSingleTranscribeTranslateFromScheduler(item);
+    },
+    [
+      processSingleTranscribeTranslateFromScheduler,
+      processSingleTranscribeTranslateFromYoutube,
+    ],
+  );
 
-  const removeItem = useCallback(async (id: string) => {
-    const handledByYoutube = await removeItemFromYoutube(id);
-    if (handledByYoutube) return;
-    await removeItemFromScheduler(id);
-  }, [removeItemFromScheduler, removeItemFromYoutube]);
+  const removeItem = useCallback(
+    async (id: string) => {
+      const handledByYoutube = await removeItemFromYoutube(id);
+      if (handledByYoutube) return;
+      await removeItemFromScheduler(id);
+    },
+    [removeItemFromScheduler, removeItemFromYoutube],
+  );
 
-  const updateTaskLanguagesForItem = useCallback(async (
-    item: QueueItem,
-    sourceLang: SourceLanguage,
-    targetLang: TargetLanguage,
-  ) => {
-    if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") {
-      pushToast("任务正在处理或排队，不能修改语言", "error");
-      return;
-    }
+  const updateTaskLanguagesForItem = useCallback(
+    async (
+      item: QueueItem,
+      sourceLang: SourceLanguage,
+      targetLang: TargetLanguage,
+    ) => {
+      if (
+        item.transcribeStatus === "processing" ||
+        item.transcribeStatus === "queued"
+      ) {
+        pushToast("任务正在处理或排队，不能修改语言", "error");
+        return;
+      }
 
-    const nextSourceLang = normalizeSourceLanguage(sourceLang);
-    const nextTargetLang = normalizeTargetLanguage(targetLang);
-    const previousSourceLang = item.sourceLang;
-    const previousTargetLang = item.targetLang;
-    patchQueueItem(dispatch, item.id, (current) => ({
-      ...current,
-      sourceLang: nextSourceLang,
-      targetLang: nextTargetLang,
-    }));
-
-    try {
-      await updateTaskLanguages({
-        taskId: item.id,
-        sourceLang: nextSourceLang,
-        targetLang: nextTargetLang,
-      });
-    } catch (error) {
-      reportError(error, "updateTaskLanguages");
+      const nextSourceLang = normalizeSourceLanguage(sourceLang);
+      const nextTargetLang = normalizeTargetLanguage(targetLang);
+      const previousSourceLang = item.sourceLang;
+      const previousTargetLang = item.targetLang;
       patchQueueItem(dispatch, item.id, (current) => ({
         ...current,
-        sourceLang: previousSourceLang,
-        targetLang: previousTargetLang,
+        sourceLang: nextSourceLang,
+        targetLang: nextTargetLang,
       }));
-      pushToast(toUserErrorMessage(error, "语言设置保存失败"), "error");
-    }
-  }, [dispatch, pushToast]);
 
-  const updateAllTaskLanguages = useCallback(async (
-    sourceLang?: SourceLanguage,
-    targetLang?: TargetLanguage,
-  ) => {
-    const editableItems = queueRef.current.filter((item) => (
-      item.transcribeStatus !== "processing" && item.transcribeStatus !== "queued"
-    ));
-    if (editableItems.length === 0) {
-      pushToast("没有可修改语言的任务", "info");
-      return;
-    }
-
-    const updates = editableItems
-      .map((item) => {
-        const nextSourceLang = sourceLang
-          ? normalizeSourceLanguage(sourceLang)
-          : normalizeSourceLanguage(item.sourceLang);
-        const nextTargetLang = targetLang
-          ? normalizeTargetLanguage(targetLang)
-          : normalizeTargetLanguage(item.targetLang);
-        return {
-          item,
-          nextSourceLang,
-          nextTargetLang,
-          previousSourceLang: item.sourceLang,
-          previousTargetLang: item.targetLang,
-        };
-      })
-      .filter((entry) => (
-        entry.previousSourceLang !== entry.nextSourceLang
-        || entry.previousTargetLang !== entry.nextTargetLang
-      ));
-
-    if (updates.length === 0) return;
-
-    for (const update of updates) {
-      patchQueueItem(dispatch, update.item.id, (current) => ({
-        ...current,
-        sourceLang: update.nextSourceLang,
-        targetLang: update.nextTargetLang,
-      }));
-    }
-
-    let failedCount = 0;
-    for (const update of updates) {
       try {
         await updateTaskLanguages({
-          taskId: update.item.id,
-          sourceLang: update.nextSourceLang,
-          targetLang: update.nextTargetLang,
+          taskId: item.id,
+          sourceLang: nextSourceLang,
+          targetLang: nextTargetLang,
         });
       } catch (error) {
-        failedCount += 1;
-        reportError(error, "updateTaskLanguagesBatch");
+        reportError(error, "updateTaskLanguages");
+        patchQueueItem(dispatch, item.id, (current) => ({
+          ...current,
+          sourceLang: previousSourceLang,
+          targetLang: previousTargetLang,
+        }));
+        pushToast(toUserErrorMessage(error, "语言设置保存失败"), "error");
+      }
+    },
+    [dispatch, pushToast],
+  );
+
+  const updateAllTaskLanguages = useCallback(
+    async (sourceLang?: SourceLanguage, targetLang?: TargetLanguage) => {
+      const editableItems = queueRef.current.filter(
+        (item) =>
+          item.transcribeStatus !== "processing" &&
+          item.transcribeStatus !== "queued",
+      );
+      if (editableItems.length === 0) {
+        pushToast("没有可修改语言的任务", "info");
+        return;
+      }
+
+      const updates = editableItems
+        .map((item) => {
+          const nextSourceLang = sourceLang
+            ? normalizeSourceLanguage(sourceLang)
+            : normalizeSourceLanguage(item.sourceLang);
+          const nextTargetLang = targetLang
+            ? normalizeTargetLanguage(targetLang)
+            : normalizeTargetLanguage(item.targetLang);
+          return {
+            item,
+            nextSourceLang,
+            nextTargetLang,
+            previousSourceLang: item.sourceLang,
+            previousTargetLang: item.targetLang,
+          };
+        })
+        .filter(
+          (entry) =>
+            entry.previousSourceLang !== entry.nextSourceLang ||
+            entry.previousTargetLang !== entry.nextTargetLang,
+        );
+
+      if (updates.length === 0) return;
+
+      for (const update of updates) {
         patchQueueItem(dispatch, update.item.id, (current) => ({
           ...current,
-          sourceLang: update.previousSourceLang,
-          targetLang: update.previousTargetLang,
+          sourceLang: update.nextSourceLang,
+          targetLang: update.nextTargetLang,
         }));
       }
-    }
 
-    if (failedCount > 0) {
-      pushToast(`有 ${failedCount} 个任务语言保存失败`, "error");
-    }
-  }, [dispatch, pushToast]);
+      let failedCount = 0;
+      for (const update of updates) {
+        try {
+          await updateTaskLanguages({
+            taskId: update.item.id,
+            sourceLang: update.nextSourceLang,
+            targetLang: update.nextTargetLang,
+          });
+        } catch (error) {
+          failedCount += 1;
+          reportError(error, "updateTaskLanguagesBatch");
+          patchQueueItem(dispatch, update.item.id, (current) => ({
+            ...current,
+            sourceLang: update.previousSourceLang,
+            targetLang: update.previousTargetLang,
+          }));
+        }
+      }
+
+      if (failedCount > 0) {
+        pushToast(`有 ${failedCount} 个任务语言保存失败`, "error");
+      }
+    },
+    [dispatch, pushToast],
+  );
 
   const clearQueue = useCallback(async () => {
-    await clearYoutubeQueue();
-    await clearQueueFromScheduler();
-  }, [clearQueueFromScheduler, clearYoutubeQueue]);
-
-  const downloadYoutubeAndResetInput = useCallback(async (url: string) => {
-    const trimmed = url.trim();
-    if (!trimmed) {
-      await downloadYoutube(url);
+    const youtubeClear = prepareClearYoutubeQueue();
+    const cleared = await clearQueueFromScheduler();
+    if (!cleared) {
+      await youtubeClear.rollback();
       return;
     }
-    await downloadYoutube(trimmed);
-    dispatch({ type: "set_ui", payload: { youtubeUrl: "" } });
-  }, [dispatch, downloadYoutube]);
+    await youtubeClear.commit();
+  }, [clearQueueFromScheduler, prepareClearYoutubeQueue]);
+
+  const downloadYoutubeAndResetInput = useCallback(
+    async (url: string) => {
+      const trimmed = url.trim();
+      if (!trimmed) {
+        await downloadYoutube(url);
+        return;
+      }
+      await downloadYoutube(trimmed);
+      dispatch({ type: "set_ui", payload: { youtubeUrl: "" } });
+    },
+    [dispatch, downloadYoutube],
+  );
 
   return {
     queueCount,

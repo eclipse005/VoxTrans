@@ -5,17 +5,27 @@ import {
   createTaskProgress,
   type QueueItem,
 } from "../../features/media/types";
-import {
-  DEFAULT_SOURCE_LANGUAGE,
-  DEFAULT_TARGET_LANGUAGE,
-} from "../../features/media/languages";
 import type { AppAction } from "../state/appReducer";
 import type { QueueRunMode } from "./queue/useQueueRunner";
-import type { YoutubeDownloadProgressResponse } from "../api/youtube";
+import type {
+  DownloadYoutubeTaskResponse,
+  YoutubeDownloadProgressResponse,
+} from "../api/youtube";
 import { cancelYoutubeDownload, downloadYoutubeTask } from "../api/youtube";
-import { addQueueItems, patchQueueItem, removeQueueItem } from "../state/queueDomainActions";
+import {
+  commitDownloadedYoutubeTask,
+  createDownloadedYoutubeQueueItem,
+  restoreDeferredYoutubeCompletion,
+} from "./youtubeDownloadCommit";
+import {
+  addQueueItems,
+  patchQueueItem,
+  removeQueueItem,
+  replaceQueueItem,
+} from "../state/queueDomainActions";
 import { deleteTasks, registerTaskUpload } from "../api/workspace";
-import { toUserErrorMessage } from "../utils/errors";
+import { reportError, toUserErrorMessage } from "../utils/errors";
+import { deleteRemoteWithLocalPreparation } from "./queue/queueDeleteCommit";
 import {
   clampPercent,
   createYoutubePlaceholderTask,
@@ -36,13 +46,25 @@ type YoutubeQueuedDownload = {
   createdAt: number;
 };
 
+type YoutubeRemovalPreparation = {
+  taskIds: string[];
+  previouslyRemovedTaskIds: Set<string>;
+};
+
+type PreparedYoutubeClear = {
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
+};
+
 type UseYoutubeDownloadWorkflowArgs = {
   queue: QueueItem[];
   dispatch: DispatchState;
   pushToast: PushToast;
   isTaskPresent: (taskId: string) => boolean;
   processSingleFromScheduler: (item: QueueItem) => Promise<void>;
-  processSingleTranscribeTranslateFromScheduler: (item: QueueItem) => Promise<void>;
+  processSingleTranscribeTranslateFromScheduler: (
+    item: QueueItem,
+  ) => Promise<void>;
 };
 
 export function useYoutubeDownloadWorkflow({
@@ -56,9 +78,16 @@ export function useYoutubeDownloadWorkflow({
   const youtubeTrackedTaskIdsRef = useRef<Set<string>>(new Set());
   const youtubeRemovedTaskIdsRef = useRef<Set<string>>(new Set());
   const youtubeTaskUrlRef = useRef<Map<string, string>>(new Map());
-  const youtubePostDownloadModeRef = useRef<Map<string, QueueRunMode>>(new Map());
+  const youtubePostDownloadModeRef = useRef<Map<string, QueueRunMode>>(
+    new Map(),
+  );
+  const youtubeDeferredCompletionRef = useRef<
+    Map<string, DownloadYoutubeTaskResponse>
+  >(new Map());
   const runningYoutubeTaskIdRef = useRef("");
-  const [youtubeDownloadQueue, setYoutubeDownloadQueue] = useState<YoutubeQueuedDownload[]>([]);
+  const [youtubeDownloadQueue, setYoutubeDownloadQueue] = useState<
+    YoutubeQueuedDownload[]
+  >([]);
 
   useEffect(() => {
     for (const item of queue) {
@@ -71,66 +100,76 @@ export function useYoutubeDownloadWorkflow({
     }
   }, [queue]);
 
-  const applyYoutubeProgress = useCallback((payload: YoutubeDownloadProgressResponse) => {
-    if (!payload.taskId) return;
-    if (!youtubeTrackedTaskIdsRef.current.has(payload.taskId)) return;
-    if (youtubeRemovedTaskIdsRef.current.has(payload.taskId)) return;
-    const progress = clampPercent(payload.progressPercent || 0);
-    const phase = (payload.phase || "").toLowerCase();
-    const downloadingLike = phase === "starting" || phase === "downloading" || phase === "merging";
-    const normalizedTitle = normalizeTitle(payload.title || "");
-    const totalBytes = parseSizeToBytes(payload.totalSize || "");
-    const hasMetadata = normalizedTitle.length > 0 && totalBytes > 0;
+  const applyYoutubeProgress = useCallback(
+    (payload: YoutubeDownloadProgressResponse) => {
+      if (!payload.taskId) return;
+      if (!youtubeTrackedTaskIdsRef.current.has(payload.taskId)) return;
+      if (youtubeRemovedTaskIdsRef.current.has(payload.taskId)) return;
+      const progress = clampPercent(payload.progressPercent || 0);
+      const phase = (payload.phase || "").toLowerCase();
+      const downloadingLike =
+        phase === "starting" || phase === "downloading" || phase === "merging";
+      const normalizedTitle = normalizeTitle(payload.title || "");
+      const totalBytes = parseSizeToBytes(payload.totalSize || "");
+      const hasMetadata = normalizedTitle.length > 0 && totalBytes > 0;
 
-    if (!isTaskPresent(payload.taskId)) {
-      if (!downloadingLike || !hasMetadata) return;
-      const sourceUrl = youtubeTaskUrlRef.current.get(payload.taskId) || "";
-      const placeholderPath = encodeYoutubePlaceholderPath(payload.taskId, sourceUrl);
-      addQueueItems(dispatch, [
-        createYoutubePlaceholderTask(
+      if (!isTaskPresent(payload.taskId)) {
+        if (!downloadingLike || !hasMetadata) return;
+        const sourceUrl = youtubeTaskUrlRef.current.get(payload.taskId) || "";
+        const placeholderPath = encodeYoutubePlaceholderPath(
           payload.taskId,
-          placeholderPath,
-          normalizedTitle,
-          totalBytes,
-          progress,
-        ),
-      ]);
-      return;
-    }
+          sourceUrl,
+        );
+        addQueueItems(dispatch, [
+          createYoutubePlaceholderTask(
+            payload.taskId,
+            placeholderPath,
+            normalizedTitle,
+            totalBytes,
+            progress,
+          ),
+        ]);
+        return;
+      }
 
-    patchQueueItem(dispatch, payload.taskId, (item) => {
-      const nextName = normalizedTitle || item.name;
-      if (!downloadingLike) {
+      patchQueueItem(dispatch, payload.taskId, (item) => {
+        const nextName = normalizedTitle || item.name;
+        if (!downloadingLike) {
+          return {
+            ...item,
+            name: nextName,
+            sizeBytes: item.sizeBytes > 0 ? item.sizeBytes : totalBytes,
+          };
+        }
         return {
           ...item,
           name: nextName,
-          sizeBytes: item.sizeBytes > 0 ? item.sizeBytes : totalBytes,
+          sizeBytes: totalBytes > 0 ? totalBytes : item.sizeBytes,
+          transcribeStatus: "processing",
+          taskProgress: createTaskProgress({
+            code: "downloading",
+            label: "下载中",
+            detail: `${progress}%`,
+            current: progress,
+            total: 100,
+          }),
         };
-      }
-      return {
-        ...item,
-        name: nextName,
-        sizeBytes: totalBytes > 0 ? totalBytes : item.sizeBytes,
-        transcribeStatus: "processing",
-        taskProgress: createTaskProgress({
-          code: "downloading",
-          label: "下载中",
-          detail: `${progress}%`,
-          current: progress,
-          total: 100,
-        }),
-      };
-    });
-  }, [dispatch, isTaskPresent]);
+      });
+    },
+    [dispatch, isTaskPresent],
+  );
 
   useEffect(() => {
     let disposed = false;
     let unlisten: undefined | (() => void);
 
-    void listen<YoutubeDownloadProgressResponse>("youtube-download-progress", (event) => {
-      if (disposed || !event.payload) return;
-      applyYoutubeProgress(event.payload);
-    }).then((fn) => {
+    void listen<YoutubeDownloadProgressResponse>(
+      "youtube-download-progress",
+      (event) => {
+        if (disposed || !event.payload) return;
+        applyYoutubeProgress(event.payload);
+      },
+    ).then((fn) => {
       if (disposed) {
         fn();
         return;
@@ -144,284 +183,471 @@ export function useYoutubeDownloadWorkflow({
     };
   }, [applyYoutubeProgress]);
 
-  const runQueuedYoutubeDownload = useCallback(async (taskId: string, url: string) => {
-    runningYoutubeTaskIdRef.current = taskId;
-
-    if (isTaskPresent(taskId)) {
-      patchQueueItem(dispatch, taskId, (item) => ({
-        ...item,
-        transcribeStatus: "processing",
-        taskProgress: createTaskProgress({
-          code: "downloading",
-          label: "下载中",
-          detail: "0%",
-          current: 0,
-          total: 100,
-        }),
-      }));
-    }
-
-    try {
-      const response = await downloadYoutubeTask({ url, taskId });
-      if (youtubeRemovedTaskIdsRef.current.has(taskId)) {
-        return;
-      }
-
-      await registerTaskUpload({
-        id: response.task.id,
-        mediaPath: response.task.mediaPath,
-        name: response.task.name,
-        mediaKind: response.task.mediaKind,
-        sizeBytes: response.task.sizeBytes,
-      });
-
+  const commitYoutubeDownloadLocally = useCallback(
+    (taskId: string, committedResponse: DownloadYoutubeTaskResponse) => {
+      const existingItem = queue.find((item) => item.id === taskId) || null;
+      const downloadedItem = createDownloadedYoutubeQueueItem(
+        committedResponse,
+        existingItem
+          ? {
+              sourceLang: existingItem.sourceLang,
+              targetLang: existingItem.targetLang,
+            }
+          : undefined,
+      );
       youtubeTrackedTaskIdsRef.current.delete(taskId);
       youtubeTaskUrlRef.current.delete(taskId);
       if (isTaskPresent(taskId)) {
-        patchQueueItem(dispatch, taskId, (item) => ({
-          ...item,
-          id: response.task.id,
-          path: response.task.mediaPath,
-          name: response.task.name,
-          mediaKind: response.task.mediaKind,
-          sizeBytes: response.task.sizeBytes,
-          sourceLang: item.sourceLang,
-          targetLang: item.targetLang,
-          transcribeStatus: "pending",
-          taskProgress: createEmptyTaskProgress(),
-          transcribeError: "",
-        }));
+        replaceQueueItem(dispatch, taskId, downloadedItem);
       } else {
-        addQueueItems(dispatch, [{
-          id: response.task.id,
-          path: response.task.mediaPath,
-          name: response.task.name,
-          mediaKind: response.task.mediaKind,
-          sizeBytes: response.task.sizeBytes,
-          sourceLang: DEFAULT_SOURCE_LANGUAGE,
-          targetLang: DEFAULT_TARGET_LANGUAGE,
-          transcribeStatus: "pending",
-          taskProgress: createEmptyTaskProgress(),
-          transcribeError: "",
-          resultText: "",
-          resultSrt: "",
-          subtitleSegmentsJson: "[]",
-        }]);
+        addQueueItems(dispatch, [downloadedItem]);
       }
       pushToast("YouTube 下载完成，已加入任务列表", "success");
 
       const pendingMode = youtubePostDownloadModeRef.current.get(taskId);
       youtubePostDownloadModeRef.current.delete(taskId);
       if (pendingMode) {
-        const downloadedItem: QueueItem = {
-          id: response.task.id,
-          path: response.task.mediaPath,
-          name: response.task.name,
-          mediaKind: response.task.mediaKind,
-          sizeBytes: response.task.sizeBytes,
-          sourceLang: DEFAULT_SOURCE_LANGUAGE,
-          targetLang: DEFAULT_TARGET_LANGUAGE,
-          transcribeStatus: "pending",
-          taskProgress: createEmptyTaskProgress(),
-          transcribeError: "",
-          resultText: "",
-          resultSrt: "",
-          subtitleSegmentsJson: "[]",
-        };
         if (pendingMode === "transcribe") {
           void processSingleFromScheduler(downloadedItem);
         } else {
           void processSingleTranscribeTranslateFromScheduler(downloadedItem);
         }
       }
-    } catch (error) {
-      const message = toUserErrorMessage(error, "YouTube 下载失败");
-      const cancelled = isCancelledMessage(message) || youtubeRemovedTaskIdsRef.current.has(taskId);
-      if (!cancelled && isTaskPresent(taskId)) {
+    },
+    [
+      dispatch,
+      isTaskPresent,
+      processSingleFromScheduler,
+      processSingleTranscribeTranslateFromScheduler,
+      pushToast,
+      queue,
+    ],
+  );
+
+  const markYoutubeCompletionRestoreError = useCallback(
+    (taskId: string, error: unknown) => {
+      const message = toUserErrorMessage(
+        error,
+        "YouTube 下载已完成，但任务入库失败，请重试",
+      );
+      if (isTaskPresent(taskId)) {
         patchQueueItem(dispatch, taskId, (item) => ({
           ...item,
           transcribeStatus: "error",
           taskProgress: createEmptyTaskProgress(),
           transcribeError: message,
         }));
-        pushToast(message, "error");
-      } else if (!cancelled) {
-        pushToast(message, "error");
       }
-    } finally {
-      if (runningYoutubeTaskIdRef.current === taskId) {
-        runningYoutubeTaskIdRef.current = "";
+      pushToast(message, "error");
+    },
+    [dispatch, isTaskPresent, pushToast],
+  );
+
+  const restoreYoutubeDeferredCompletion = useCallback(
+    async (taskId: string, mode?: QueueRunMode): Promise<boolean> => {
+      if (!youtubeDeferredCompletionRef.current.has(taskId)) return false;
+      if (mode) {
+        youtubePostDownloadModeRef.current.set(taskId, mode);
       }
-      setYoutubeDownloadQueue((prev) => prev.filter((item) => item.taskId !== taskId));
-    }
-  }, [dispatch, isTaskPresent, processSingleFromScheduler, processSingleTranscribeTranslateFromScheduler, pushToast]);
+      const restoreResult = await restoreDeferredYoutubeCompletion({
+        taskId,
+        deferredCompletions: youtubeDeferredCompletionRef.current,
+        restore: (response) =>
+          commitDownloadedYoutubeTask({
+            placeholderTaskId: taskId,
+            response,
+            isRemoved: () => false,
+            registerTask: registerTaskUpload,
+            deleteRegisteredTask: ({ taskId: registeredTaskId, mediaPath }) =>
+              deleteTasks({
+                taskId: registeredTaskId,
+                mediaPath,
+              }),
+            commitLocal: (committedResponse) => {
+              commitYoutubeDownloadLocally(taskId, committedResponse);
+            },
+          }),
+      });
+      if (restoreResult.status === "compensationFailed") {
+        reportError(restoreResult.error, "youtubeDownloadRollbackRestore");
+        markYoutubeCompletionRestoreError(taskId, restoreResult.error);
+        return true;
+      }
+      if (restoreResult.status === "commitFailed") {
+        reportError(restoreResult.error, "youtubeDownloadRollbackRestore");
+        markYoutubeCompletionRestoreError(taskId, restoreResult.error);
+        return true;
+      }
+      if (restoreResult.status === "restoreFailed") {
+        reportError(restoreResult.error, "youtubeDownloadRollbackRestore");
+        markYoutubeCompletionRestoreError(taskId, restoreResult.error);
+        return true;
+      }
+      if (restoreResult.status === "deferred") {
+        youtubeDeferredCompletionRef.current.set(
+          restoreResult.placeholderTaskId,
+          restoreResult.response,
+        );
+        if (restoreResult.placeholderTaskId !== taskId) {
+          youtubeDeferredCompletionRef.current.delete(taskId);
+        }
+      }
+      return true;
+    },
+    [commitYoutubeDownloadLocally, markYoutubeCompletionRestoreError],
+  );
+
+  const prepareYoutubeRemoval = useCallback(
+    (taskIds: string[]): YoutubeRemovalPreparation => {
+      const uniqueTaskIds = [...new Set(taskIds.filter((taskId) => taskId))];
+      const previouslyRemovedTaskIds = new Set(
+        uniqueTaskIds.filter((taskId) =>
+          youtubeRemovedTaskIdsRef.current.has(taskId),
+        ),
+      );
+      for (const taskId of uniqueTaskIds) {
+        youtubeRemovedTaskIdsRef.current.add(taskId);
+      }
+      return {
+        taskIds: uniqueTaskIds,
+        previouslyRemovedTaskIds,
+      };
+    },
+    [],
+  );
+
+  const rollbackYoutubeRemoval = useCallback(
+    async (preparation: YoutubeRemovalPreparation): Promise<void> => {
+      for (const taskId of preparation.taskIds) {
+        if (!preparation.previouslyRemovedTaskIds.has(taskId)) {
+          youtubeRemovedTaskIdsRef.current.delete(taskId);
+        }
+      }
+      for (const taskId of preparation.taskIds) {
+        await restoreYoutubeDeferredCompletion(taskId);
+      }
+      setYoutubeDownloadQueue((prev) => (prev.length > 0 ? [...prev] : prev));
+    },
+    [restoreYoutubeDeferredCompletion],
+  );
+
+  const runQueuedYoutubeDownload = useCallback(
+    async (taskId: string, url: string) => {
+      if (youtubeRemovedTaskIdsRef.current.has(taskId)) {
+        setYoutubeDownloadQueue((prev) =>
+          prev.filter((item) => item.taskId !== taskId),
+        );
+        return;
+      }
+
+      runningYoutubeTaskIdRef.current = taskId;
+
+      if (isTaskPresent(taskId)) {
+        patchQueueItem(dispatch, taskId, (item) => ({
+          ...item,
+          transcribeStatus: "processing",
+          taskProgress: createTaskProgress({
+            code: "downloading",
+            label: "下载中",
+            detail: "0%",
+            current: 0,
+            total: 100,
+          }),
+        }));
+      }
+
+      try {
+        const response = await downloadYoutubeTask({ url, taskId });
+        const commitResult = await commitDownloadedYoutubeTask({
+          placeholderTaskId: taskId,
+          response,
+          isRemoved: (id) => youtubeRemovedTaskIdsRef.current.has(id),
+          registerTask: registerTaskUpload,
+          deleteRegisteredTask: ({ taskId: registeredTaskId, mediaPath }) =>
+            deleteTasks({
+              taskId: registeredTaskId,
+              mediaPath,
+            }),
+          commitLocal: (committedResponse) => {
+            commitYoutubeDownloadLocally(taskId, committedResponse);
+          },
+        });
+        if (commitResult.status === "compensationFailed") {
+          reportError(commitResult.error, "youtubeDownloadCompensation");
+          pushToast("YouTube 下载已取消，但任务清理失败，请刷新任务列表", "error");
+          return;
+        }
+        if (commitResult.status === "commitFailed") {
+          reportError(commitResult.error, "youtubeDownloadCommit");
+          youtubeDeferredCompletionRef.current.set(
+            commitResult.placeholderTaskId,
+            commitResult.response,
+          );
+          if (youtubeRemovedTaskIdsRef.current.has(taskId)) {
+            return;
+          }
+          markYoutubeCompletionRestoreError(taskId, commitResult.error);
+          return;
+        }
+        if (commitResult.status === "deferred") {
+          youtubeDeferredCompletionRef.current.set(
+            commitResult.placeholderTaskId,
+            commitResult.response,
+          );
+          return;
+        }
+      } catch (error) {
+        const message = toUserErrorMessage(error, "YouTube 下载失败");
+        const cancelled =
+          isCancelledMessage(message) ||
+          youtubeRemovedTaskIdsRef.current.has(taskId);
+        if (!cancelled && isTaskPresent(taskId)) {
+          patchQueueItem(dispatch, taskId, (item) => ({
+            ...item,
+            transcribeStatus: "error",
+            taskProgress: createEmptyTaskProgress(),
+            transcribeError: message,
+          }));
+          pushToast(message, "error");
+        } else if (!cancelled) {
+          pushToast(message, "error");
+        }
+      } finally {
+        if (runningYoutubeTaskIdRef.current === taskId) {
+          runningYoutubeTaskIdRef.current = "";
+        }
+        setYoutubeDownloadQueue((prev) =>
+          prev.filter((item) => item.taskId !== taskId),
+        );
+      }
+    },
+    [
+      commitYoutubeDownloadLocally,
+      dispatch,
+      isTaskPresent,
+      markYoutubeCompletionRestoreError,
+      pushToast,
+    ],
+  );
 
   useEffect(() => {
     if (runningYoutubeTaskIdRef.current) return;
     if (youtubeDownloadQueue.length === 0) return;
-    const next = [...youtubeDownloadQueue].sort((a, b) => a.createdAt - b.createdAt)[0];
+    const next = [...youtubeDownloadQueue]
+      .filter((item) => !youtubeRemovedTaskIdsRef.current.has(item.taskId))
+      .sort((a, b) => a.createdAt - b.createdAt)[0];
     if (!next) return;
     void runQueuedYoutubeDownload(next.taskId, next.url);
   }, [runQueuedYoutubeDownload, youtubeDownloadQueue]);
 
-  const downloadYoutube = useCallback(async (url: string) => {
-    const trimmed = url.trim();
-    if (!trimmed) {
-      pushToast("请先输入 YouTube 链接", "info");
-      return;
-    }
-
-    const taskId = `yt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    youtubeRemovedTaskIdsRef.current.delete(taskId);
-    youtubeTrackedTaskIdsRef.current.add(taskId);
-    youtubeTaskUrlRef.current.set(taskId, trimmed);
-
-    setYoutubeDownloadQueue((prev) => ([
-      ...prev,
-      {
-        taskId,
-        url: trimmed,
-        createdAt: Date.now(),
-      },
-    ]));
-
-    pushToast("已加入 YouTube 下载队列", "info");
-    return Promise.resolve();
-  }, [pushToast]);
-
-  const enqueueYoutubeRetry = useCallback((taskId: string, mode: QueueRunMode) => {
-    const url = youtubeTaskUrlRef.current.get(taskId);
-    if (!url) {
-      pushToast("缺少下载链接，无法重试。请删除后重新添加。", "error");
-      return;
-    }
-    if (runningYoutubeTaskIdRef.current === taskId) {
-      pushToast("该任务正在下载中", "info");
-      return;
-    }
-    if (youtubeDownloadQueue.some((item) => item.taskId === taskId)) {
-      pushToast("该任务已在下载队列中", "info");
-      return;
-    }
-
-    youtubeTrackedTaskIdsRef.current.add(taskId);
-    youtubePostDownloadModeRef.current.set(taskId, mode);
-    patchQueueItem(dispatch, taskId, (item) => ({
-      ...item,
-      transcribeStatus: "queued",
-      taskProgress: createTaskProgress({
-        code: "downloading",
-        label: "下载中",
-        detail: "排队中",
-        current: 0,
-        total: 100,
-      }),
-      transcribeError: "",
-    }));
-    setYoutubeDownloadQueue((prev) => ([
-      ...prev,
-      {
-        taskId,
-        url,
-        createdAt: Date.now(),
-      },
-    ]));
-    pushToast("已加入下载重试队列", "info");
-  }, [dispatch, pushToast, youtubeDownloadQueue]);
-
-  const processSingle = useCallback(async (item: QueueItem): Promise<boolean> => {
-    const isYoutubeTask = youtubeTrackedTaskIdsRef.current.has(item.id) || isYoutubePlaceholderPath(item.path);
-    if (!isYoutubeTask) {
-      return false;
-    }
-    if (!youtubeTaskUrlRef.current.has(item.id)) {
-      const restored = decodeYoutubeUrlFromPath(item.path);
-      if (restored) youtubeTaskUrlRef.current.set(item.id, restored);
-    }
-    if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") {
-      pushToast("该任务正在下载中", "info");
-      return true;
-    }
-    enqueueYoutubeRetry(item.id, "transcribe");
-    return true;
-  }, [enqueueYoutubeRetry, pushToast]);
-
-  const processSingleTranscribeTranslate = useCallback(async (item: QueueItem): Promise<boolean> => {
-    const isYoutubeTask = youtubeTrackedTaskIdsRef.current.has(item.id) || isYoutubePlaceholderPath(item.path);
-    if (!isYoutubeTask) {
-      return false;
-    }
-    if (!youtubeTaskUrlRef.current.has(item.id)) {
-      const restored = decodeYoutubeUrlFromPath(item.path);
-      if (restored) youtubeTaskUrlRef.current.set(item.id, restored);
-    }
-    if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") {
-      pushToast("该任务正在下载中", "info");
-      return true;
-    }
-    enqueueYoutubeRetry(item.id, "transcribe_translate");
-    return true;
-  }, [enqueueYoutubeRetry, pushToast]);
-
-  const removeItem = useCallback(async (id: string): Promise<boolean> => {
-    const target = queue.find((item) => item.id === id) || null;
-    const isYoutubeTask = youtubeTrackedTaskIdsRef.current.has(id)
-      || (target ? isYoutubePlaceholderPath(target.path) : false);
-    if (!isYoutubeTask) {
-      return false;
-    }
-
-    youtubeRemovedTaskIdsRef.current.add(id);
-    setYoutubeDownloadQueue((prev) => prev.filter((item) => item.taskId !== id));
-
-    if (runningYoutubeTaskIdRef.current === id) {
-      try {
-        await cancelYoutubeDownload(id);
-      } catch {
-        // Ignore cancellation failure if process already exited.
+  const downloadYoutube = useCallback(
+    async (url: string) => {
+      const trimmed = url.trim();
+      if (!trimmed) {
+        pushToast("请先输入 YouTube 链接", "info");
+        return;
       }
-    }
 
-    try {
-      await deleteTasks({
-        taskId: id,
-        mediaPath: target?.path || null,
-      });
-    } catch {
-      // Keep local removal responsive even if DB cleanup fails.
-    }
-    removeQueueItem(dispatch, id);
-    youtubeTrackedTaskIdsRef.current.delete(id);
-    youtubeTaskUrlRef.current.delete(id);
-    youtubePostDownloadModeRef.current.delete(id);
-    return true;
-  }, [dispatch, queue]);
+      const taskId = `yt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      youtubeRemovedTaskIdsRef.current.delete(taskId);
+      youtubeTrackedTaskIdsRef.current.add(taskId);
+      youtubeTaskUrlRef.current.set(taskId, trimmed);
 
-  const clearYoutubeQueue = useCallback(async () => {
+      setYoutubeDownloadQueue((prev) => [
+        ...prev,
+        {
+          taskId,
+          url: trimmed,
+          createdAt: Date.now(),
+        },
+      ]);
+
+      pushToast("已加入 YouTube 下载队列", "info");
+      return Promise.resolve();
+    },
+    [pushToast],
+  );
+
+  const enqueueYoutubeRetry = useCallback(
+    (taskId: string, mode: QueueRunMode) => {
+      const url = youtubeTaskUrlRef.current.get(taskId);
+      if (!url) {
+        pushToast("缺少下载链接，无法重试。请删除后重新添加。", "error");
+        return;
+      }
+      if (runningYoutubeTaskIdRef.current === taskId) {
+        pushToast("该任务正在下载中", "info");
+        return;
+      }
+      if (youtubeDownloadQueue.some((item) => item.taskId === taskId)) {
+        pushToast("该任务已在下载队列中", "info");
+        return;
+      }
+
+      youtubeTrackedTaskIdsRef.current.add(taskId);
+      youtubePostDownloadModeRef.current.set(taskId, mode);
+      patchQueueItem(dispatch, taskId, (item) => ({
+        ...item,
+        transcribeStatus: "queued",
+        taskProgress: createTaskProgress({
+          code: "downloading",
+          label: "下载中",
+          detail: "排队中",
+          current: 0,
+          total: 100,
+        }),
+        transcribeError: "",
+      }));
+      setYoutubeDownloadQueue((prev) => [
+        ...prev,
+        {
+          taskId,
+          url,
+          createdAt: Date.now(),
+        },
+      ]);
+      pushToast("已加入下载重试队列", "info");
+    },
+    [dispatch, pushToast, youtubeDownloadQueue],
+  );
+
+  const processSingle = useCallback(
+    async (item: QueueItem): Promise<boolean> => {
+      const isYoutubeTask =
+        youtubeTrackedTaskIdsRef.current.has(item.id) ||
+        isYoutubePlaceholderPath(item.path);
+      if (!isYoutubeTask) {
+        return false;
+      }
+      if (!youtubeTaskUrlRef.current.has(item.id)) {
+        const restored = decodeYoutubeUrlFromPath(item.path);
+        if (restored) youtubeTaskUrlRef.current.set(item.id, restored);
+      }
+      if (await restoreYoutubeDeferredCompletion(item.id, "transcribe")) {
+        return true;
+      }
+      if (
+        item.transcribeStatus === "processing" ||
+        item.transcribeStatus === "queued"
+      ) {
+        pushToast("该任务正在下载中", "info");
+        return true;
+      }
+      enqueueYoutubeRetry(item.id, "transcribe");
+      return true;
+    },
+    [enqueueYoutubeRetry, pushToast, restoreYoutubeDeferredCompletion],
+  );
+
+  const processSingleTranscribeTranslate = useCallback(
+    async (item: QueueItem): Promise<boolean> => {
+      const isYoutubeTask =
+        youtubeTrackedTaskIdsRef.current.has(item.id) ||
+        isYoutubePlaceholderPath(item.path);
+      if (!isYoutubeTask) {
+        return false;
+      }
+      if (!youtubeTaskUrlRef.current.has(item.id)) {
+        const restored = decodeYoutubeUrlFromPath(item.path);
+        if (restored) youtubeTaskUrlRef.current.set(item.id, restored);
+      }
+      if (
+        await restoreYoutubeDeferredCompletion(item.id, "transcribe_translate")
+      ) {
+        return true;
+      }
+      if (
+        item.transcribeStatus === "processing" ||
+        item.transcribeStatus === "queued"
+      ) {
+        pushToast("该任务正在下载中", "info");
+        return true;
+      }
+      enqueueYoutubeRetry(item.id, "transcribe_translate");
+      return true;
+    },
+    [enqueueYoutubeRetry, pushToast, restoreYoutubeDeferredCompletion],
+  );
+
+  const removeItem = useCallback(
+    async (id: string): Promise<boolean> => {
+      const target = queue.find((item) => item.id === id) || null;
+      const isYoutubeTask =
+        youtubeTrackedTaskIdsRef.current.has(id) ||
+        (target ? isYoutubePlaceholderPath(target.path) : false);
+      if (!isYoutubeTask) {
+        return false;
+      }
+
+      try {
+        await deleteRemoteWithLocalPreparation({
+          prepareLocal: () => prepareYoutubeRemoval([id]),
+          deleteRemote: () =>
+            deleteTasks({
+              taskId: id,
+              mediaPath: target?.path || null,
+            }),
+          commitLocal: async () => {
+            if (runningYoutubeTaskIdRef.current === id) {
+              try {
+                await cancelYoutubeDownload(id);
+              } catch {
+                // Ignore cancellation failure if process already exited.
+              }
+            }
+            setYoutubeDownloadQueue((prev) =>
+              prev.filter((item) => item.taskId !== id),
+            );
+            removeQueueItem(dispatch, id);
+            youtubeTrackedTaskIdsRef.current.delete(id);
+            youtubeTaskUrlRef.current.delete(id);
+            youtubePostDownloadModeRef.current.delete(id);
+            youtubeDeferredCompletionRef.current.delete(id);
+          },
+          rollbackLocal: rollbackYoutubeRemoval,
+        });
+      } catch (error) {
+        reportError(error, "removeYoutubeItem");
+        pushToast(toUserErrorMessage(error, "删除任务失败"), "error");
+        return true;
+      }
+      return true;
+    },
+    [dispatch, prepareYoutubeRemoval, pushToast, queue, rollbackYoutubeRemoval],
+  );
+
+  const prepareClearYoutubeQueue = useCallback((): PreparedYoutubeClear => {
     const runningTaskId = runningYoutubeTaskIdRef.current;
     const trackedIds = [...youtubeTrackedTaskIdsRef.current];
-    for (const taskId of trackedIds) {
-      youtubeRemovedTaskIdsRef.current.add(taskId);
-    }
-    setYoutubeDownloadQueue([]);
-    youtubeTrackedTaskIdsRef.current.clear();
-    youtubeTaskUrlRef.current.clear();
-    youtubePostDownloadModeRef.current.clear();
+    const preparation = prepareYoutubeRemoval(
+      runningTaskId ? [...trackedIds, runningTaskId] : trackedIds,
+    );
 
-    if (runningTaskId) {
-      try {
-        await cancelYoutubeDownload(runningTaskId);
-      } catch {
-        // Ignore cancellation failure if process already exited.
-      }
-    }
-  }, []);
+    return {
+      commit: async () => {
+        setYoutubeDownloadQueue([]);
+        youtubeTrackedTaskIdsRef.current.clear();
+        youtubeTaskUrlRef.current.clear();
+        youtubePostDownloadModeRef.current.clear();
+        youtubeDeferredCompletionRef.current.clear();
+
+        if (runningTaskId) {
+          try {
+            await cancelYoutubeDownload(runningTaskId);
+          } catch {
+            // Ignore cancellation failure if process already exited.
+          }
+        }
+      },
+      rollback: () => rollbackYoutubeRemoval(preparation),
+    };
+  }, [prepareYoutubeRemoval, rollbackYoutubeRemoval]);
 
   return {
     downloadYoutube,
     processSingle,
     processSingleTranscribeTranslate,
     removeItem,
-    clearYoutubeQueue,
+    prepareClearYoutubeQueue,
   };
 }

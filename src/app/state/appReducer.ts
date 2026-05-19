@@ -51,6 +51,7 @@ export type UiAction = {
 export type QueueAction =
   | { type: "add_queue_items"; items: QueueItem[] }
   | { type: "patch_queue_item"; id: string; updater: (item: QueueItem) => QueueItem }
+  | { type: "replace_queue_item"; previousId: string; item: QueueItem }
   | { type: "remove_queue_item"; id: string }
   | { type: "clear_queue" };
 
@@ -169,6 +170,7 @@ function isQueueAction(action: AppAction): action is QueueAction {
   return (
     action.type === "add_queue_items"
     || action.type === "patch_queue_item"
+    || action.type === "replace_queue_item"
     || action.type === "remove_queue_item"
     || action.type === "clear_queue"
   );

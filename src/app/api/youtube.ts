@@ -5,7 +5,7 @@ type DownloadYoutubeTaskRequest = {
   taskId?: string;
 };
 
-type DownloadYoutubeTaskResponse = {
+export type DownloadYoutubeTaskResponse = {
   task: {
     id: string;
     mediaPath: string;

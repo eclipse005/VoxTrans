@@ -298,14 +298,6 @@ export type SubtitleSaveRequest = {
   subtitleSegmentsJson?: string;
 };
 
-export type UserPreferencesResponse = {
-  settings: SavedSettings;
-};
-
-export type SaveAppSettingsRequest = {
-  settings: SavedSettings;
-};
-
 export type WorkspaceStateResponse = {
   queue: QueueItem[];
 };

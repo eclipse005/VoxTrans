@@ -15,6 +15,7 @@ import type {
   SourceLanguage,
   TargetLanguage,
 } from "../../features/media/types";
+import { canDeleteQueueItem } from "../../features/media/queuePolicy";
 import { formatBytes, statusLabel } from "../../features/media/utils";
 import { AudioFileIcon, ChevronDownIcon, MicIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
 
@@ -456,7 +457,7 @@ export default function MediaList({
                         <button className="file-action-btn" title="转录" disabled={item.transcribeStatus === "processing"} onClick={(e) => { e.stopPropagation(); void onProcessSingle(item); }}>
                           <MicIcon />
                         </button>
-                        <button className="file-action-btn delete" title="删除" onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>
+                        <button className="file-action-btn delete" title="删除" disabled={!canDeleteQueueItem(item)} onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>
                           <TrashIcon />
                         </button>
                       </div>
