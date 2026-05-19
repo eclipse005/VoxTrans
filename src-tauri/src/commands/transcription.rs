@@ -217,8 +217,7 @@ fn is_hangul(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        GroupedSentenceSegmentCommandDto, SourceSentenceCommandDto, WordTokenCommandDto,
-        build_grouped_sentence_segments,
+        SourceSentenceCommandDto, WordTokenCommandDto, build_grouped_sentence_segments,
     };
 
     #[test]

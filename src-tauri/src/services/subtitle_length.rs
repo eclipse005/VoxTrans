@@ -100,72 +100,72 @@ fn language_key(lang: &str) -> String {
 
 fn source_word_limits(preset: SubtitleLengthPreset) -> u32 {
     match preset {
-        SubtitleLengthPreset::Short => 16,
-        SubtitleLengthPreset::Standard => 20,
-        SubtitleLengthPreset::Loose => 28,
+        SubtitleLengthPreset::Short => 12,
+        SubtitleLengthPreset::Standard => 16,
+        SubtitleLengthPreset::Loose => 20,
     }
 }
 
 fn long_word_source_limits(preset: SubtitleLengthPreset) -> u32 {
     match preset {
-        SubtitleLengthPreset::Short => 14,
-        SubtitleLengthPreset::Standard => 18,
-        SubtitleLengthPreset::Loose => 25,
+        SubtitleLengthPreset::Short => 11,
+        SubtitleLengthPreset::Standard => 14,
+        SubtitleLengthPreset::Loose => 18,
     }
 }
 
 fn target_word_limits(preset: SubtitleLengthPreset) -> u32 {
     match preset {
-        SubtitleLengthPreset::Short => 12,
-        SubtitleLengthPreset::Standard => 16,
-        SubtitleLengthPreset::Loose => 22,
+        SubtitleLengthPreset::Short => 10,
+        SubtitleLengthPreset::Standard => 12,
+        SubtitleLengthPreset::Loose => 16,
     }
 }
 
 fn medium_word_target_limits(preset: SubtitleLengthPreset) -> u32 {
     match preset {
-        SubtitleLengthPreset::Short => 12,
-        SubtitleLengthPreset::Standard => 15,
-        SubtitleLengthPreset::Loose => 21,
+        SubtitleLengthPreset::Short => 10,
+        SubtitleLengthPreset::Standard => 12,
+        SubtitleLengthPreset::Loose => 15,
     }
 }
 
 fn long_word_target_limits(preset: SubtitleLengthPreset) -> u32 {
     match preset {
-        SubtitleLengthPreset::Short => 11,
-        SubtitleLengthPreset::Standard => 14,
-        SubtitleLengthPreset::Loose => 20,
+        SubtitleLengthPreset::Short => 9,
+        SubtitleLengthPreset::Standard => 11,
+        SubtitleLengthPreset::Loose => 14,
     }
 }
 
 fn vietnamese_limits(preset: SubtitleLengthPreset) -> u32 {
     match preset {
-        SubtitleLengthPreset::Short => 14,
-        SubtitleLengthPreset::Standard => 18,
-        SubtitleLengthPreset::Loose => 24,
+        SubtitleLengthPreset::Short => 11,
+        SubtitleLengthPreset::Standard => 14,
+        SubtitleLengthPreset::Loose => 18,
     }
 }
 
 fn cjk_limits(preset: SubtitleLengthPreset) -> u32 {
     match preset {
-        SubtitleLengthPreset::Short => 22,
-        SubtitleLengthPreset::Standard => 28,
-        SubtitleLengthPreset::Loose => 38,
+        SubtitleLengthPreset::Short => 16,
+        SubtitleLengthPreset::Standard => 22,
+        SubtitleLengthPreset::Loose => 28,
     }
 }
 
 fn korean_limits(preset: SubtitleLengthPreset) -> u32 {
     match preset {
-        SubtitleLengthPreset::Short => 20,
-        SubtitleLengthPreset::Standard => 26,
-        SubtitleLengthPreset::Loose => 34,
+        SubtitleLengthPreset::Short => 15,
+        SubtitleLengthPreset::Standard => 20,
+        SubtitleLengthPreset::Loose => 26,
     }
 }
 
 fn thai_limits(preset: SubtitleLengthPreset) -> u32 {
     match preset {
-        SubtitleLengthPreset::Short => 32,
-        SubtitleLengthPreset::Standard => 42,
-        SubtitleLengthPreset::Loose => 56,
+        SubtitleLengthPreset::Short => 24,
+        SubtitleLengthPreset::Standard => 32,
+        SubtitleLengthPreset::Loose => 42,
     }
 }

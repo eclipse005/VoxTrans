@@ -60,17 +60,22 @@ fn subtitle_length_preset_normalization_accepts_three_ui_modes() {
 fn subtitle_length_limits_are_language_aware_for_source_and_target() {
     let english_to_chinese =
         effective_subtitle_limits("en", "zh-CN", SubtitleLengthPreset::Standard);
-    assert_eq!(english_to_chinese.source_limit, 20);
-    assert_eq!(english_to_chinese.target_limit, 28);
+    assert_eq!(english_to_chinese.source_limit, 16);
+    assert_eq!(english_to_chinese.target_limit, 22);
+
+    let loose_english_to_chinese =
+        effective_subtitle_limits("en", "zh-CN", SubtitleLengthPreset::Loose);
+    assert_eq!(loose_english_to_chinese.source_limit, 20);
+    assert_eq!(loose_english_to_chinese.target_limit, 28);
 
     let chinese_to_english = effective_subtitle_limits("zh", "en", SubtitleLengthPreset::Standard);
-    assert_eq!(chinese_to_english.source_limit, 28);
-    assert_eq!(chinese_to_english.target_limit, 16);
+    assert_eq!(chinese_to_english.source_limit, 22);
+    assert_eq!(chinese_to_english.target_limit, 12);
 
     let cantonese_to_english =
         effective_subtitle_limits("yue", "en", SubtitleLengthPreset::Standard);
-    assert_eq!(cantonese_to_english.source_limit, 28);
-    assert_eq!(cantonese_to_english.target_limit, 16);
+    assert_eq!(cantonese_to_english.source_limit, 22);
+    assert_eq!(cantonese_to_english.target_limit, 12);
 
     let english_to_thai = effective_subtitle_limits("en", "th", SubtitleLengthPreset::Standard);
     assert!(english_to_thai.target_limit > english_to_chinese.target_limit);
