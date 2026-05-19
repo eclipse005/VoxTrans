@@ -64,24 +64,6 @@ function App() {
     showSettings,
     showLogs,
     settings,
-    draftProvider,
-    draftChunkInput,
-    draftSubtitleLengthPreset,
-    draftAsrModel,
-    draftAlignModel,
-    draftDemucsModel,
-    draftEnableVocalSeparation,
-    draftTranslateApiKey,
-    draftTranslateBaseUrl,
-    draftTranslateModel,
-    draftLlmConcurrencyInput,
-    draftTerminologyGroups,
-    draftEnableTerminology,
-    draftEnableSubtitleBeautify,
-    draftEnableClickSound,
-    draftAutoBurnHardSubtitle,
-    draftSubtitleBurnMode,
-    draftSubtitleRenderStyle,
     youtubeUrl,
     toast,
     subtitleTaskId,
@@ -171,9 +153,9 @@ function App() {
     openModelDir,
   } = useModelManager({
     pushToast,
-    asrModel: draftAsrModel,
-    alignModel: draftAlignModel,
-    demucsModel: draftDemucsModel,
+    asrModel: settings.asrModel,
+    alignModel: settings.alignModel,
+    demucsModel: settings.demucsModel,
   });
   const {
     taskName: logTaskName,
@@ -197,26 +179,10 @@ function App() {
     saveSettings,
     saveTerminologyGroups,
     testTranslateConnection,
+    form,
+    setForm,
   } = useSettingsController({
     settings,
-    draftProvider,
-    draftChunkInput,
-    draftSubtitleLengthPreset,
-    draftAsrModel,
-    draftAlignModel,
-    draftDemucsModel,
-    draftEnableVocalSeparation,
-    draftTranslateApiKey,
-    draftTranslateBaseUrl,
-    draftTranslateModel,
-    draftLlmConcurrencyInput,
-    draftTerminologyGroups,
-    draftEnableTerminology,
-    draftEnableSubtitleBeautify,
-    draftEnableClickSound,
-    draftAutoBurnHardSubtitle,
-    draftSubtitleBurnMode,
-    draftSubtitleRenderStyle,
     dispatch,
     pushToast,
     refreshModelStatus,
@@ -318,46 +284,46 @@ function App() {
 
       <SettingsModal
         visible={showSettings}
-        draftProvider={draftProvider}
-        draftChunkInput={draftChunkInput}
-        draftSubtitleLengthPreset={draftSubtitleLengthPreset}
-        draftAsrModel={draftAsrModel}
-        draftAlignModel={draftAlignModel}
-        draftDemucsModel={draftDemucsModel}
-        draftEnableVocalSeparation={draftEnableVocalSeparation}
-        draftTranslateApiKey={draftTranslateApiKey}
-        draftTranslateBaseUrl={draftTranslateBaseUrl}
-        draftTranslateModel={draftTranslateModel}
-        draftLlmConcurrencyInput={draftLlmConcurrencyInput}
-        draftEnableTerminology={draftEnableTerminology}
-        draftEnableSubtitleBeautify={draftEnableSubtitleBeautify}
-        draftEnableClickSound={draftEnableClickSound}
-        draftAutoBurnHardSubtitle={draftAutoBurnHardSubtitle}
-        draftSubtitleBurnMode={draftSubtitleBurnMode}
-        draftSubtitleRenderStyle={draftSubtitleRenderStyle}
+        draftProvider={form.provider}
+        draftChunkInput={form.chunkInput}
+        draftSubtitleLengthPreset={form.subtitleLengthPreset}
+        draftAsrModel={form.asrModel}
+        draftAlignModel={form.alignModel}
+        draftDemucsModel={form.demucsModel}
+        draftEnableVocalSeparation={form.enableVocalSeparation}
+        draftTranslateApiKey={form.translateApiKey}
+        draftTranslateBaseUrl={form.translateBaseUrl}
+        draftTranslateModel={form.translateModel}
+        draftLlmConcurrencyInput={form.llmConcurrencyInput}
+        draftEnableTerminology={form.enableTerminology}
+        draftEnableSubtitleBeautify={form.enableSubtitleBeautify}
+        draftEnableClickSound={form.enableClickSound}
+        draftAutoBurnHardSubtitle={form.autoBurnHardSubtitle}
+        draftSubtitleBurnMode={form.subtitleBurnMode}
+        draftSubtitleRenderStyle={form.subtitleRenderStyle}
         asrStatus={asrStatus}
         asrStatusByModel={asrStatusByModel}
         alignStatus={alignStatus}
         demucsStatus={demucsStatus}
         onClose={() => dispatch({ type: "set_ui", payload: { showSettings: false } })}
         onSave={saveSettings}
-        onDraftProviderChange={(value) => dispatch({ type: "set_draft", payload: { draftProvider: value } })}
-        onDraftChunkInputChange={(value) => dispatch({ type: "set_draft", payload: { draftChunkInput: value } })}
-        onDraftSubtitleLengthPresetChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleLengthPreset: value } })}
-        onDraftAsrModelChange={(value) => dispatch({ type: "set_draft", payload: { draftAsrModel: value } })}
-        onDraftAlignModelChange={(value) => dispatch({ type: "set_draft", payload: { draftAlignModel: value } })}
-        onDraftDemucsModelChange={(value) => dispatch({ type: "set_draft", payload: { draftDemucsModel: value } })}
-        onDraftEnableVocalSeparationChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableVocalSeparation: value } })}
-        onDraftTranslateApiKeyChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateApiKey: value } })}
-        onDraftTranslateBaseUrlChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateBaseUrl: value } })}
-        onDraftTranslateModelChange={(value) => dispatch({ type: "set_draft", payload: { draftTranslateModel: value } })}
-        onDraftLlmConcurrencyInputChange={(value) => dispatch({ type: "set_draft", payload: { draftLlmConcurrencyInput: value } })}
-        onDraftEnableTerminologyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableTerminology: value } })}
-        onDraftEnableSubtitleBeautifyChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableSubtitleBeautify: value } })}
-        onDraftEnableClickSoundChange={(value) => dispatch({ type: "set_draft", payload: { draftEnableClickSound: value } })}
-        onDraftAutoBurnHardSubtitleChange={(value) => dispatch({ type: "set_draft", payload: { draftAutoBurnHardSubtitle: value } })}
-        onDraftSubtitleBurnModeChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleBurnMode: value } })}
-        onDraftSubtitleRenderStyleChange={(value) => dispatch({ type: "set_draft", payload: { draftSubtitleRenderStyle: value } })}
+        onDraftProviderChange={(value) => setForm((prev) => ({ ...prev, provider: value }))}
+        onDraftChunkInputChange={(value) => setForm((prev) => ({ ...prev, chunkInput: value }))}
+        onDraftSubtitleLengthPresetChange={(value) => setForm((prev) => ({ ...prev, subtitleLengthPreset: value }))}
+        onDraftAsrModelChange={(value) => setForm((prev) => ({ ...prev, asrModel: value }))}
+        onDraftAlignModelChange={(value) => setForm((prev) => ({ ...prev, alignModel: value }))}
+        onDraftDemucsModelChange={(value) => setForm((prev) => ({ ...prev, demucsModel: value }))}
+        onDraftEnableVocalSeparationChange={(value) => setForm((prev) => ({ ...prev, enableVocalSeparation: value }))}
+        onDraftTranslateApiKeyChange={(value) => setForm((prev) => ({ ...prev, translateApiKey: value }))}
+        onDraftTranslateBaseUrlChange={(value) => setForm((prev) => ({ ...prev, translateBaseUrl: value }))}
+        onDraftTranslateModelChange={(value) => setForm((prev) => ({ ...prev, translateModel: value }))}
+        onDraftLlmConcurrencyInputChange={(value) => setForm((prev) => ({ ...prev, llmConcurrencyInput: value }))}
+        onDraftEnableTerminologyChange={(value) => setForm((prev) => ({ ...prev, enableTerminology: value }))}
+        onDraftEnableSubtitleBeautifyChange={(value) => setForm((prev) => ({ ...prev, enableSubtitleBeautify: value }))}
+        onDraftEnableClickSoundChange={(value) => setForm((prev) => ({ ...prev, enableClickSound: value }))}
+        onDraftAutoBurnHardSubtitleChange={(value) => setForm((prev) => ({ ...prev, autoBurnHardSubtitle: value }))}
+        onDraftSubtitleBurnModeChange={(value) => setForm((prev) => ({ ...prev, subtitleBurnMode: value }))}
+        onDraftSubtitleRenderStyleChange={(value) => setForm((prev) => ({ ...prev, subtitleRenderStyle: value }))}
         onTestTranslateConnection={testTranslateConnection}
         onOpenModelDir={openModelDir}
         onStartModelDownload={startModelDownload}
@@ -380,9 +346,9 @@ function App() {
 
       <TerminologyModal
         visible={showTerminologyModal}
-        groups={draftTerminologyGroups}
+        groups={form.terminologyGroups}
         onClose={() => setShowTerminologyModal(false)}
-        onChange={(value) => dispatch({ type: "set_draft", payload: { draftTerminologyGroups: value } })}
+        onChange={(value) => setForm((prev) => ({ ...prev, terminologyGroups: value }))}
         onSave={async (groups) => {
           await saveTerminologyGroups(groups);
         }}

@@ -12,7 +12,7 @@ pub use super::translate_terminology::build_terminology_layer;
 pub use super::translate_translation::build_translation_layer;
 pub use super::translate_types::*;
 
-pub use super::translate_cli::{
+pub use super::translate_cli_args::{
     maybe_run_build_step5_mode_from_args, maybe_run_build_terminology_mode_from_args,
     maybe_run_build_translation_mode_from_args,
 };

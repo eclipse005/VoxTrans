@@ -1,9 +1,18 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import {
   saveAppSettings as saveAppSettingsApi,
   testTranslateLlmConnection,
 } from "../api/settings";
-import type { SavedSettings, SubtitleLengthPreset } from "../../features/media/types";
+import type {
+  AlignModel,
+  AsrModel,
+  DemucsModel,
+  Provider,
+  SavedSettings,
+  SubtitleBurnMode,
+  SubtitleLengthPreset,
+  SubtitleRenderStyle,
+} from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { ToastTone } from "../types";
 import { normalizeTerminologyGroups } from "../utils/terminology";
@@ -15,26 +24,52 @@ type PushToast = (
   options?: { id?: number; sticky?: boolean; durationMs?: number },
 ) => number;
 
+export type SettingsForm = {
+  provider: Provider;
+  chunkInput: string;
+  subtitleLengthPreset: SubtitleLengthPreset;
+  asrModel: AsrModel;
+  alignModel: AlignModel;
+  demucsModel: DemucsModel;
+  enableVocalSeparation: boolean;
+  translateApiKey: string;
+  translateBaseUrl: string;
+  translateModel: string;
+  llmConcurrencyInput: string;
+  terminologyGroups: SavedSettings["terminologyGroups"];
+  enableTerminology: boolean;
+  enableSubtitleBeautify: boolean;
+  enableClickSound: boolean;
+  autoBurnHardSubtitle: boolean;
+  subtitleBurnMode: SubtitleBurnMode;
+  subtitleRenderStyle: SubtitleRenderStyle;
+};
+
+function settingsToForm(settings: SavedSettings): SettingsForm {
+  return {
+    provider: settings.provider,
+    chunkInput: String(settings.chunkTargetSeconds),
+    subtitleLengthPreset: settings.subtitleLengthPreset,
+    asrModel: settings.asrModel,
+    alignModel: settings.alignModel,
+    demucsModel: settings.demucsModel,
+    enableVocalSeparation: settings.enableVocalSeparation,
+    translateApiKey: settings.translateApiKey,
+    translateBaseUrl: settings.translateBaseUrl,
+    translateModel: settings.translateModel,
+    llmConcurrencyInput: String(settings.llmConcurrency),
+    terminologyGroups: settings.terminologyGroups,
+    enableTerminology: settings.enableTerminology,
+    enableSubtitleBeautify: settings.enableSubtitleBeautify,
+    enableClickSound: settings.enableClickSound,
+    autoBurnHardSubtitle: settings.autoBurnHardSubtitle,
+    subtitleBurnMode: settings.subtitleBurnMode,
+    subtitleRenderStyle: settings.subtitleRenderStyle,
+  };
+}
+
 type UseSettingsControllerArgs = {
   settings: SavedSettings;
-  draftProvider: SavedSettings["provider"];
-  draftChunkInput: string;
-  draftSubtitleLengthPreset: SubtitleLengthPreset;
-  draftAsrModel: SavedSettings["asrModel"];
-  draftAlignModel: SavedSettings["alignModel"];
-  draftDemucsModel: SavedSettings["demucsModel"];
-  draftEnableVocalSeparation: boolean;
-  draftTranslateApiKey: string;
-  draftTranslateBaseUrl: string;
-  draftTranslateModel: string;
-  draftLlmConcurrencyInput: string;
-  draftTerminologyGroups: SavedSettings["terminologyGroups"];
-  draftEnableTerminology: boolean;
-  draftEnableSubtitleBeautify: boolean;
-  draftEnableClickSound: boolean;
-  draftAutoBurnHardSubtitle: boolean;
-  draftSubtitleBurnMode: SavedSettings["subtitleBurnMode"];
-  draftSubtitleRenderStyle: SavedSettings["subtitleRenderStyle"];
   dispatch: DispatchState;
   pushToast: PushToast;
   refreshModelStatus: () => Promise<void>;
@@ -42,112 +77,53 @@ type UseSettingsControllerArgs = {
 
 export function useSettingsController({
   settings,
-  draftProvider,
-  draftChunkInput,
-  draftSubtitleLengthPreset,
-  draftAsrModel,
-  draftAlignModel,
-  draftDemucsModel,
-  draftEnableVocalSeparation,
-  draftTranslateApiKey,
-  draftTranslateBaseUrl,
-  draftTranslateModel,
-  draftLlmConcurrencyInput,
-  draftTerminologyGroups,
-  draftEnableTerminology,
-  draftEnableSubtitleBeautify,
-  draftEnableClickSound,
-  draftAutoBurnHardSubtitle,
-  draftSubtitleBurnMode,
-  draftSubtitleRenderStyle,
   dispatch,
   pushToast,
   refreshModelStatus,
 }: UseSettingsControllerArgs) {
+  const [form, setForm] = useState<SettingsForm>(() => settingsToForm(settings));
+
   const openSettings = useCallback(() => {
     void refreshModelStatus();
-    dispatch({
-      type: "set_draft",
-      payload: {
-        draftProvider: settings.provider,
-        draftChunkInput: String(settings.chunkTargetSeconds),
-        draftSubtitleLengthPreset: settings.subtitleLengthPreset,
-        draftAsrModel: settings.asrModel,
-        draftAlignModel: settings.alignModel,
-        draftDemucsModel: settings.demucsModel,
-        draftEnableVocalSeparation: settings.enableVocalSeparation,
-        draftTranslateApiKey: settings.translateApiKey,
-        draftTranslateBaseUrl: settings.translateBaseUrl,
-        draftTranslateModel: settings.translateModel,
-        draftLlmConcurrencyInput: String(settings.llmConcurrency),
-        draftTerminologyGroups: settings.terminologyGroups,
-        draftEnableTerminology: settings.enableTerminology,
-        draftEnableSubtitleBeautify: settings.enableSubtitleBeautify,
-        draftEnableClickSound: settings.enableClickSound,
-        draftAutoBurnHardSubtitle: settings.autoBurnHardSubtitle,
-        draftSubtitleBurnMode: settings.subtitleBurnMode,
-        draftSubtitleRenderStyle: settings.subtitleRenderStyle,
-      },
-    });
+    setForm(settingsToForm(settings));
     dispatch({ type: "set_ui", payload: { showSettings: true } });
-  }, [
-    dispatch,
-    refreshModelStatus,
-    settings.chunkTargetSeconds,
-    settings.demucsModel,
-    settings.alignModel,
-    settings.enableVocalSeparation,
-    settings.provider,
-    settings.asrModel,
-    settings.subtitleLengthPreset,
-    settings.translateApiKey,
-    settings.translateBaseUrl,
-    settings.translateModel,
-    settings.llmConcurrency,
-    settings.terminologyGroups,
-    settings.enableTerminology,
-    settings.enableSubtitleBeautify,
-    settings.enableClickSound,
-    settings.autoBurnHardSubtitle,
-    settings.subtitleBurnMode,
-    settings.subtitleRenderStyle,
-  ]);
+  }, [dispatch, refreshModelStatus, settings]);
 
   const saveSettings = useCallback(async () => {
-    const parsed = Number.parseInt(draftChunkInput.trim(), 10);
+    const parsed = Number.parseInt(form.chunkInput.trim(), 10);
     if (!Number.isFinite(parsed)) {
       pushToast("分段时长必须是数字", "error");
       return;
     }
     const clamped = Math.max(30, Math.min(60, parsed));
 
-    const parsedConcurrency = Number.parseInt(draftLlmConcurrencyInput.trim(), 10);
+    const parsedConcurrency = Number.parseInt(form.llmConcurrencyInput.trim(), 10);
     if (!Number.isFinite(parsedConcurrency)) {
       pushToast("并发数必须是数字", "error");
       return;
     }
     const clampedConcurrency = Math.max(1, Math.min(16, parsedConcurrency));
 
-    const nextSettings = {
-      provider: draftProvider,
+    const nextSettings: SavedSettings = {
+      provider: form.provider,
       chunkTargetSeconds: clamped,
-      subtitleLengthPreset: draftSubtitleLengthPreset,
-      asrModel: draftAsrModel,
-      alignModel: draftAlignModel,
-      demucsModel: draftDemucsModel,
-      enableVocalSeparation: draftEnableVocalSeparation,
-      translateApiKey: draftTranslateApiKey.trim(),
-      translateBaseUrl: draftTranslateBaseUrl.trim() || "https://api.openai.com/v1",
-      translateModel: draftTranslateModel.trim() || "gpt-4.1-mini",
+      subtitleLengthPreset: form.subtitleLengthPreset,
+      asrModel: form.asrModel,
+      alignModel: form.alignModel,
+      demucsModel: form.demucsModel,
+      enableVocalSeparation: form.enableVocalSeparation,
+      translateApiKey: form.translateApiKey.trim(),
+      translateBaseUrl: form.translateBaseUrl.trim() || "https://api.openai.com/v1",
+      translateModel: form.translateModel.trim() || "gpt-4.1-mini",
       llmConcurrency: clampedConcurrency,
-      terminologyGroups: normalizeTerminologyGroups(draftTerminologyGroups),
-      enableTerminology: draftEnableTerminology,
-      enableSubtitleBeautify: draftEnableSubtitleBeautify,
-      enableClickSound: draftEnableClickSound,
-      autoBurnHardSubtitle: draftAutoBurnHardSubtitle,
-      subtitleBurnMode: draftSubtitleBurnMode,
+      terminologyGroups: normalizeTerminologyGroups(form.terminologyGroups),
+      enableTerminology: form.enableTerminology,
+      enableSubtitleBeautify: form.enableSubtitleBeautify,
+      enableClickSound: form.enableClickSound,
+      autoBurnHardSubtitle: form.autoBurnHardSubtitle,
+      subtitleBurnMode: form.subtitleBurnMode,
       subtitleRenderStyle: {
-        source: normalizeSubtitleLineStyle(draftSubtitleRenderStyle.source, {
+        source: normalizeSubtitleLineStyle(form.subtitleRenderStyle.source, {
           fontFamily: "Arial",
           fontSize: 44,
           primaryColor: "#FFFFFF",
@@ -158,7 +134,7 @@ export function useSettingsController({
           borderStyle: "outline",
           borderOpacity: 88,
         }),
-        target: normalizeSubtitleLineStyle(draftSubtitleRenderStyle.target, {
+        target: normalizeSubtitleLineStyle(form.subtitleRenderStyle.target, {
           fontFamily: "Microsoft YaHei",
           fontSize: 40,
           primaryColor: "#EAF6FF",
@@ -170,39 +146,18 @@ export function useSettingsController({
           borderOpacity: 88,
         }),
         layout: {
-          marginV: Math.max(0, Math.min(200, Math.round(draftSubtitleRenderStyle.layout.marginV))),
-          alignment: draftSubtitleRenderStyle.layout.alignment,
-          bilingualLineGap: Math.max(0, Math.min(140, Math.round(draftSubtitleRenderStyle.layout.bilingualLineGap))),
+          marginV: Math.max(0, Math.min(200, Math.round(form.subtitleRenderStyle.layout.marginV))),
+          alignment: form.subtitleRenderStyle.layout.alignment,
+          bilingualLineGap: Math.max(0, Math.min(140, Math.round(form.subtitleRenderStyle.layout.bilingualLineGap))),
         },
       },
-    } satisfies SavedSettings;
+    };
 
     dispatch({
       type: "set_settings",
       settings: nextSettings,
     });
-    dispatch({
-      type: "set_draft",
-      payload: {
-        draftChunkInput: String(clamped),
-        draftSubtitleLengthPreset: nextSettings.subtitleLengthPreset,
-        draftAsrModel,
-        draftAlignModel,
-        draftDemucsModel,
-        draftEnableVocalSeparation,
-        draftTranslateApiKey: nextSettings.translateApiKey,
-        draftTranslateBaseUrl: nextSettings.translateBaseUrl,
-        draftTranslateModel: nextSettings.translateModel,
-        draftLlmConcurrencyInput: String(nextSettings.llmConcurrency),
-        draftTerminologyGroups: nextSettings.terminologyGroups,
-        draftEnableTerminology: nextSettings.enableTerminology,
-        draftEnableSubtitleBeautify,
-        draftEnableClickSound: nextSettings.enableClickSound,
-        draftAutoBurnHardSubtitle: nextSettings.autoBurnHardSubtitle,
-        draftSubtitleBurnMode: nextSettings.subtitleBurnMode,
-        draftSubtitleRenderStyle: nextSettings.subtitleRenderStyle,
-      },
-    });
+    setForm(settingsToForm(nextSettings));
 
     try {
       await saveAppSettingsApi(nextSettings);
@@ -211,74 +166,59 @@ export function useSettingsController({
       const message = error instanceof Error ? error.message : "设置保存失败";
       pushToast(message, "error");
     }
-  }, [
-    dispatch,
-    draftChunkInput,
-    draftDemucsModel,
-    draftAlignModel,
-    draftEnableVocalSeparation,
-    draftProvider,
-    draftAsrModel,
-    draftSubtitleLengthPreset,
-    draftTranslateApiKey,
-    draftTranslateBaseUrl,
-    draftTranslateModel,
-    draftLlmConcurrencyInput,
-    draftTerminologyGroups,
-    draftEnableTerminology,
-    draftEnableClickSound,
-    draftAutoBurnHardSubtitle,
-    draftSubtitleBurnMode,
-    draftSubtitleRenderStyle,
-    pushToast,
-    draftEnableSubtitleBeautify,
-  ]);
+  }, [form, dispatch, pushToast]);
+
+  const saveTerminologyGroups = useCallback(async (groups: SavedSettings["terminologyGroups"]) => {
+    const normalizedGroups = normalizeTerminologyGroups(groups);
+    const nextSettings: SavedSettings = {
+      ...settings,
+      terminologyGroups: normalizedGroups,
+    };
+    dispatch({ type: "set_settings", settings: nextSettings });
+    setForm((prev) => ({ ...prev, terminologyGroups: normalizedGroups }));
+    try {
+      await saveAppSettingsApi(nextSettings);
+      pushToast("术语已保存", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "术语保存失败";
+      pushToast(message, "error");
+    }
+  }, [settings, dispatch, pushToast]);
+
+  const testTranslateConnection = useCallback(async () => {
+    const apiKey = form.translateApiKey.trim();
+    const baseUrl = form.translateBaseUrl.trim() || "https://api.openai.com/v1";
+    const configuredModel = form.translateModel.trim() || "gpt-4.1-mini";
+    if (!apiKey) {
+      pushToast("请先填写接口密钥", "error");
+      return;
+    }
+    const toastId = pushToast("正在测试 LLM 连通性...", "info", { sticky: true });
+    try {
+      const response = await testTranslateLlmConnection({
+        apiKey,
+        baseUrl,
+        model: configuredModel,
+      });
+      if (response.ok) {
+        const modelName = response.model?.trim() || configuredModel;
+        pushToast(`测试成功：模型 ${modelName} 可用`, "success", { id: toastId, durationMs: 2600 });
+        return;
+      }
+      pushToast(`测试失败：${response.message || "未知错误"}`, "error", { id: toastId, durationMs: 3000 });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "连通性测试失败";
+      pushToast(message, "error", { id: toastId, durationMs: 3000 });
+    }
+  }, [form.translateApiKey, form.translateBaseUrl, form.translateModel, pushToast]);
 
   return {
     openSettings,
     saveSettings,
-    saveTerminologyGroups: async (groups: SavedSettings["terminologyGroups"]) => {
-      const normalizedGroups = normalizeTerminologyGroups(groups);
-      const nextSettings: SavedSettings = {
-        ...settings,
-        terminologyGroups: normalizedGroups,
-      };
-      dispatch({ type: "set_settings", settings: nextSettings });
-      dispatch({ type: "set_draft", payload: { draftTerminologyGroups: normalizedGroups } });
-      try {
-        await saveAppSettingsApi(nextSettings);
-        pushToast("术语已保存", "success");
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "术语保存失败";
-        pushToast(message, "error");
-      }
-    },
-    testTranslateConnection: async () => {
-      const apiKey = draftTranslateApiKey.trim();
-      const baseUrl = draftTranslateBaseUrl.trim() || "https://api.openai.com/v1";
-      const configuredModel = draftTranslateModel.trim() || "gpt-4.1-mini";
-      if (!apiKey) {
-        pushToast("请先填写接口密钥", "error");
-        return;
-      }
-      const toastId = pushToast("正在测试 LLM 连通性...", "info", { sticky: true });
-      try {
-        const response = await testTranslateLlmConnection({
-          apiKey,
-          baseUrl,
-          model: configuredModel,
-        });
-        if (response.ok) {
-          const modelName = response.model?.trim() || configuredModel;
-          pushToast(`测试成功：模型 ${modelName} 可用`, "success", { id: toastId, durationMs: 2600 });
-          return;
-        }
-        pushToast(`测试失败：${response.message || "未知错误"}`, "error", { id: toastId, durationMs: 3000 });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "连通性测试失败";
-        pushToast(message, "error", { id: toastId, durationMs: 3000 });
-      }
-    },
+    saveTerminologyGroups,
+    testTranslateConnection,
+    form,
+    setForm,
   };
 }
 

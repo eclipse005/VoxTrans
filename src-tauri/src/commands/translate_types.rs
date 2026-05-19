@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use super::translate_defaults::{default_batch_size, default_llm_concurrency};
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -272,4 +271,20 @@ pub struct TestTranslateLlmResponse {
     pub ok: bool,
     pub message: String,
     pub model: String,
+}
+
+pub fn default_llm_concurrency() -> u32 {
+    4
+}
+
+pub fn default_batch_size() -> usize {
+    20
+}
+
+pub fn step5_schema_version() -> u32 {
+    2
+}
+
+pub fn step5_pipeline_version() -> &'static str {
+    "step5.v3"
 }

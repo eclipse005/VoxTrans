@@ -11,7 +11,6 @@ import {
   type TaskProgress,
   type TaskStageProgress,
   type QueueItem,
-  type SavedSettings,
 } from "../../../features/media/types";
 import {
   normalizeSourceLanguage,
@@ -82,14 +81,12 @@ type UseQueueRunnerArgs = {
   dispatch: DispatchState;
   pushToast: PushToast;
   isTaskPresent: (taskId: string) => boolean;
-  settings: SavedSettings;
 };
 
 export function useQueueRunner({
   dispatch,
   pushToast,
   isTaskPresent,
-  settings,
 }: UseQueueRunnerArgs) {
   // Listen for task-state-changed events from backend (single source of truth)
   useEffect(() => {
@@ -141,7 +138,7 @@ export function useQueueRunner({
 
     try {
       const response = await enqueueAndExecuteTaskBatch({
-        items: [toEnqueuePayload(item, mode, settings)],
+        items: [toEnqueuePayload(item, mode)],
       });
       // State is updated via task-state-changed event from backend
 
@@ -166,9 +163,8 @@ export function useQueueRunner({
   }, [
     isTaskPresent,
     pushToast,
-    settings,
   ]);
-  const runBatch = useRunBatch(pushToast, isTaskPresent, settings);
+  const runBatch = useRunBatch(pushToast, isTaskPresent);
   const runQueuedByTaskIds = useRunQueuedByTaskIds(pushToast, isTaskPresent);
 
   return {
@@ -186,14 +182,13 @@ type BatchTask = {
 function useRunBatch(
   pushToast: PushToast,
   isTaskPresent: (taskId: string) => boolean,
-  settings: SavedSettings,
 ) {
   return useCallback(async (tasks: BatchTask[]) => {
     const items = tasks.filter((task) => isTaskPresent(task.item.id));
     if (!items.length) return;
 
     const response = await enqueueAndExecuteTaskBatch({
-      items: items.map((task) => toEnqueuePayload(task.item, task.mode, settings)),
+      items: items.map((task) => toEnqueuePayload(task.item, task.mode)),
     });
     // State is updated via task-state-changed event from backend
 
@@ -201,7 +196,7 @@ function useRunBatch(
       const first = response.failed[0];
       pushToast(`部分任务失败：${first.taskId}，${first.error}`, "error");
     }
-  }, [pushToast, isTaskPresent, settings]);
+  }, [pushToast, isTaskPresent]);
 }
 
 function useRunQueuedByTaskIds(
@@ -226,7 +221,6 @@ function useRunQueuedByTaskIds(
 function toEnqueuePayload(
   item: QueueItem,
   mode: QueueRunMode,
-  settings: SavedSettings,
 ): {
   id: string;
   mediaPath: string;
@@ -237,7 +231,6 @@ function toEnqueuePayload(
   sourceLang: SourceLanguage;
   targetLang: TargetLanguage;
   maxRetries: number;
-  settingsSnapshot: Record<string, unknown>;
 } {
   return {
     id: item.id,
@@ -249,30 +242,10 @@ function toEnqueuePayload(
     sourceLang: normalizeSourceLanguage(item.sourceLang),
     targetLang: normalizeTargetLanguage(item.targetLang),
     maxRetries: 0,
-    settingsSnapshot: buildSettingsSnapshot(settings),
   };
 }
 
 function toIntent(mode: QueueRunMode): "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" {
   if (mode === "transcribe_translate") return "TRANSCRIBE_TRANSLATE";
   return "TRANSCRIBE";
-}
-
-function buildSettingsSnapshot(settings: SavedSettings): Record<string, unknown> {
-  return {
-    provider: settings.provider,
-    chunkTargetSeconds: settings.chunkTargetSeconds,
-    subtitleLengthPreset: settings.subtitleLengthPreset,
-    asrModel: settings.asrModel,
-    alignModel: settings.alignModel,
-    demucsModel: settings.demucsModel,
-    enableVocalSeparation: settings.enableVocalSeparation,
-    translateApiKey: settings.translateApiKey,
-    translateBaseUrl: settings.translateBaseUrl,
-    translateModel: settings.translateModel,
-    llmConcurrency: settings.llmConcurrency,
-    terminologyGroups: settings.terminologyGroups,
-    enableTerminology: settings.enableTerminology,
-    enableSubtitleBeautify: settings.enableSubtitleBeautify,
-  };
 }

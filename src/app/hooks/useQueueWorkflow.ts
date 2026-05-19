@@ -55,7 +55,6 @@ export function useQueueWorkflow({
     dispatch,
     pushToast,
     isTaskPresent,
-    settings,
   });
 
   const {

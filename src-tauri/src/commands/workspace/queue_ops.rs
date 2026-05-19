@@ -167,7 +167,11 @@ pub(super) fn enqueue_task_run_internal(
                 source_lang,
                 target_lang,
                 max_retries: request.max_retries.unwrap_or(0),
-                settings_snapshot: request.settings_snapshot.unwrap_or(Value::Null),
+                settings_snapshot: request.settings_snapshot.unwrap_or_else(|| {
+                    crate::services::preferences::load_saved_settings_from_default_path()
+                        .map(|settings| serde_json::to_value(settings).unwrap_or(Value::Null))
+                        .unwrap_or(Value::Null)
+                }),
             };
             let emitted = record.item.clone();
             persist_task_meta(&record)?;

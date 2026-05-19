@@ -1,4 +1,4 @@
-use super::translate_defaults::default_llm_concurrency;
+use super::translate_types::default_llm_concurrency;
 
 pub fn hydrate_translate_llm_settings(
     api_key: &mut String,

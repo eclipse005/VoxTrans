@@ -125,29 +125,6 @@ export function useAppPersistence(dispatch: DispatchState) {
             subtitleRenderStyle,
           },
         });
-        dispatch({
-          type: "set_draft",
-          payload: {
-            draftProvider: provider,
-            draftChunkInput: String(chunkTargetSeconds),
-            draftSubtitleLengthPreset: subtitleLengthPreset,
-            draftAsrModel: asrModel,
-            draftAlignModel: alignModel,
-            draftDemucsModel: demucsModel,
-            draftEnableVocalSeparation: enableVocalSeparation,
-            draftTranslateApiKey: translateApiKey,
-            draftTranslateBaseUrl: translateBaseUrl,
-            draftTranslateModel: translateModel,
-            draftLlmConcurrencyInput: String(llmConcurrency),
-            draftTerminologyGroups: terminologyGroups,
-            draftEnableTerminology: enableTerminology,
-            draftEnableSubtitleBeautify: enableSubtitleBeautify,
-            draftEnableClickSound: enableClickSound,
-            draftAutoBurnHardSubtitle: autoBurnHardSubtitle,
-            draftSubtitleBurnMode: subtitleBurnMode,
-            draftSubtitleRenderStyle: subtitleRenderStyle,
-          },
-        });
       } catch {
         // Use default settings when DB read fails.
       }

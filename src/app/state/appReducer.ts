@@ -1,9 +1,7 @@
 import type {
   QueueItem,
   SavedSettings,
-  SubtitleBurnMode,
   SubtitleCue,
-  SubtitleRenderStyle,
 } from "../../features/media/types";
 import { normalizeProvider } from "../../features/media/provider";
 import type { ToastState, UploadTab } from "../types";
@@ -20,24 +18,6 @@ export type AppState = {
   showSettings: boolean;
   showLogs: boolean;
   settings: SavedSettings;
-  draftProvider: SavedSettings["provider"];
-  draftChunkInput: string;
-  draftSubtitleLengthPreset: SavedSettings["subtitleLengthPreset"];
-  draftAsrModel: SavedSettings["asrModel"];
-  draftAlignModel: SavedSettings["alignModel"];
-  draftDemucsModel: SavedSettings["demucsModel"];
-  draftEnableVocalSeparation: boolean;
-  draftTranslateApiKey: string;
-  draftTranslateBaseUrl: string;
-  draftTranslateModel: string;
-  draftLlmConcurrencyInput: string;
-  draftTerminologyGroups: SavedSettings["terminologyGroups"];
-  draftEnableTerminology: boolean;
-  draftEnableSubtitleBeautify: boolean;
-  draftEnableClickSound: boolean;
-  draftAutoBurnHardSubtitle: boolean;
-  draftSubtitleBurnMode: SubtitleBurnMode;
-  draftSubtitleRenderStyle: SubtitleRenderStyle;
   youtubeUrl: string;
   youtubeQuality: string;
   toast: ToastState | null;
@@ -92,32 +72,6 @@ export type SubtitleAction = {
 
 export type SettingsAction =
   | { type: "set_settings"; settings: SavedSettings }
-  | {
-      type: "set_draft";
-      payload: Partial<
-        Pick<
-          AppState,
-          | "draftProvider"
-          | "draftChunkInput"
-          | "draftSubtitleLengthPreset"
-          | "draftAsrModel"
-          | "draftAlignModel"
-          | "draftDemucsModel"
-          | "draftEnableVocalSeparation"
-          | "draftTranslateApiKey"
-          | "draftTranslateBaseUrl"
-          | "draftTranslateModel"
-          | "draftLlmConcurrencyInput"
-          | "draftTerminologyGroups"
-          | "draftEnableTerminology"
-          | "draftEnableSubtitleBeautify"
-          | "draftEnableClickSound"
-          | "draftAutoBurnHardSubtitle"
-          | "draftSubtitleBurnMode"
-          | "draftSubtitleRenderStyle"
-        >
-      >;
-    }
   | { type: "set_toast"; toast: ToastState | null };
 
 export type AppAction = UiAction | QueueAction | SubtitleAction | SettingsAction;
@@ -179,24 +133,6 @@ export const initialAppState: AppState = {
   showSettings: false,
   showLogs: false,
   settings: defaultSettings,
-  draftProvider: defaultSettings.provider,
-  draftChunkInput: String(defaultSettings.chunkTargetSeconds),
-  draftSubtitleLengthPreset: defaultSettings.subtitleLengthPreset,
-  draftAsrModel: defaultSettings.asrModel,
-  draftAlignModel: defaultSettings.alignModel,
-  draftDemucsModel: defaultSettings.demucsModel,
-  draftEnableVocalSeparation: defaultSettings.enableVocalSeparation,
-  draftTranslateApiKey: defaultSettings.translateApiKey,
-  draftTranslateBaseUrl: defaultSettings.translateBaseUrl,
-  draftTranslateModel: defaultSettings.translateModel,
-  draftLlmConcurrencyInput: String(defaultSettings.llmConcurrency),
-  draftTerminologyGroups: defaultSettings.terminologyGroups,
-  draftEnableTerminology: defaultSettings.enableTerminology,
-  draftEnableSubtitleBeautify: defaultSettings.enableSubtitleBeautify,
-  draftEnableClickSound: defaultSettings.enableClickSound,
-  draftAutoBurnHardSubtitle: defaultSettings.autoBurnHardSubtitle,
-  draftSubtitleBurnMode: defaultSettings.subtitleBurnMode,
-  draftSubtitleRenderStyle: defaultSettings.subtitleRenderStyle,
   youtubeUrl: "",
   youtubeQuality: "",
   toast: null,
@@ -245,7 +181,6 @@ function isSubtitleAction(action: AppAction): action is SubtitleAction {
 function isSettingsAction(action: AppAction): action is SettingsAction {
   return (
     action.type === "set_settings"
-    || action.type === "set_draft"
     || action.type === "set_toast"
   );
 }

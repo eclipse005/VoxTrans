@@ -2,6 +2,7 @@
 
 mod app_state;
 mod commands;
+mod domain;
 mod services;
 
 use std::sync::Arc;
