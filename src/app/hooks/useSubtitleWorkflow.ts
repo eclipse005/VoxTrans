@@ -104,6 +104,23 @@ export function useSubtitleWorkflow({
         || !existingTaskIdsRef.current.has(taskId)
       );
 
+      if (item.transcribeStatus !== "done") {
+        dispatch({
+          type: "set_subtitle",
+          payload: {
+            subtitleTaskId: item.id,
+            subtitleTaskName: item.name,
+            subtitleMediaPath: item.path,
+            subtitleSrtPath: "",
+            subtitleCues: [],
+            subtitleCueWarnings: {},
+            subtitleDirty: false,
+          },
+        });
+        loadedSubtitleVersionRef.current = buildSubtitleVersion(item);
+        return;
+      }
+
       try {
         const taskDetail = await getTaskRunQueueItem(taskId);
         if (isStaleRequest()) return;
