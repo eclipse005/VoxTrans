@@ -143,6 +143,14 @@ pub struct ExecuteTaskBatchFailedItem {
     pub error: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSubtitleEditorCommandRequest {
+    pub task_id: String,
+    pub content: String,
+    pub subtitle_segments_json: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteTaskBatchCommandResponse {

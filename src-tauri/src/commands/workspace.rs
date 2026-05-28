@@ -95,6 +95,19 @@ pub async fn update_task_languages(
 }
 
 #[tauri::command]
+pub async fn save_subtitle_editor(
+    app: AppHandle,
+    request: SaveSubtitleEditorCommandRequest,
+) -> Result<(), String> {
+    let task_id = require_task_id(&request.task_id)?;
+    ensure_workspace_hydrated_from_disk()?;
+    Ok(patch_task_item(&app, task_id, |task| {
+        task.item.result_srt = request.content;
+        task.item.subtitle_segments_json = request.subtitle_segments_json;
+    })?)
+}
+
+#[tauri::command]
 pub async fn execute_task_run(
     app: AppHandle,
     request: ExecuteTaskRunCommandRequest,

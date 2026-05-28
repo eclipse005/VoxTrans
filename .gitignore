@@ -36,4 +36,5 @@ src/generated/
 runtime/
 output/
 src-tauri/output/
+release/
 build-release.ps1

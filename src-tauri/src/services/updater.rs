@@ -1,4 +1,6 @@
 /// 更新服务：检测更新、下载并安装。
+const BUILD_VARIANT: &str = if cfg!(feature = "cuda") { "cuda" } else { "cpu" };
+
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -142,8 +144,8 @@ async fn try_check(current_version: &str) -> Result<UpdateInfo, String> {
     let installer = release
         .assets
         .iter()
-        .find(|a| a.name.ends_with(".exe") && a.name.contains("x64"))
-        .ok_or("未找到 Windows x64 安装包")?;
+        .find(|a| a.name.ends_with(".exe") && a.name.contains(BUILD_VARIANT))
+        .ok_or(format!("未找到当前版本对应的安装包（{BUILD_VARIANT}）"))?;
 
     Ok(UpdateInfo {
         current_version: current_version.to_string(),
