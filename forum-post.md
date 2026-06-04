@@ -7,6 +7,9 @@
 
 N卡用户请下载 VoxTrans_cuda.exe
 非N卡、无显卡用户请下载 VoxTrans_cpu.exe
+
+> **v1.0.2(N卡用户必看)**:之前装 CUDA 版报"找不到 cudart64_12.dll"等 DLL 错的用户,重下这个版本就好。CUDA 版已不再需要装 CUDA Toolkit,装好 NVIDIA 驱动直接装即可(运行时安装时自动下)。**之前 CUDA 版能正常用的用户不需要更新**。
+
 ## 功能介绍
 
 - **离线多语言转字幕** — 支持英语、中文（普通话/粤语）、日语、韩语、法语、德语、意大利语、西班牙语、葡萄牙语等，无需联网
@@ -32,6 +35,12 @@ N卡用户请下载 VoxTrans_cuda.exe
 5. 处理完成后，输出文件位于安装目录 `output/` 文件夹
 
 ## 更新记录
+
+### v1.0.2
+
+- 修复 N 卡用户报"找不到 cudart64_12.dll / cublas64_12.dll / curand64_10.dll / cublasLt64_12.dll"的问题
+- CUDA 版不再需要装 CUDA Toolkit,装好 NVIDIA 驱动即可。运行时安装时自动从 ModelScope 下载
+- **此版本主要面向之前 CUDA 版用不了的 N 卡用户,之前 CUDA 版能正常用的不需要更新**
 
 ### v1.0.1
 

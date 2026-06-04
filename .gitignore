@@ -38,3 +38,4 @@ output/
 src-tauri/output/
 release/
 build-release.ps1
+src-tauri/bin/cuda/

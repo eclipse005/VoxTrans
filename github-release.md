@@ -1,5 +1,13 @@
 # VoxTrans Release Notes
 
+## v1.0.2
+
+**修复 N 卡用户 CUDA 版启动报"找不到 cudart64_12.dll"等 DLL 缺失问题**
+
+- CUDA 版不再需要装 CUDA Toolkit,装好 NVIDIA 驱动即可
+- CUDA Runtime 4 个 DLL 改为安装时从 ModelScope 下载(国内直连,1-3 分钟)
+- **目标用户**:之前 CUDA 版用不了的 N 卡用户。CUDA 版之前能正常用的用户无需更新
+
 ## v1.0.1
 
 **修复**
