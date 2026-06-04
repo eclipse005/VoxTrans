@@ -39,7 +39,7 @@ N卡用户请下载 VoxTrans_cuda.exe
 ### v1.0.2
 
 - 修复 N 卡用户报"找不到 cudart64_12.dll / cublas64_12.dll / curand64_10.dll / cublasLt64_12.dll"的问题
-- CUDA 版不再需要装 CUDA Toolkit,装好 NVIDIA 驱动即可。运行时安装时自动从 ModelScope 下载
+- CUDA 版装好 NVIDIA 驱动即可。运行时安装时自动下载所需 dll
 - **此版本主要面向之前 CUDA 版用不了的 N 卡用户,之前 CUDA 版能正常用的不需要更新**
 
 ### v1.0.1
