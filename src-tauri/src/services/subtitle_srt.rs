@@ -138,12 +138,20 @@ pub fn write_flat_variants_to_directory(
     if !target_dir.is_dir() {
         return Err(format!("导出目录不存在: {}", target_dir.display()));
     }
-    validate_translation_requirement(segments, items)?;
+    let has_translation = has_translated_content(segments);
+    let effective_items: Vec<ExportSrtItem> = items
+        .iter()
+        .filter(|item| !item.requires_translation() || has_translation)
+        .copied()
+        .collect();
+    if effective_items.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let mut seen = HashSet::<ExportSrtItem>::new();
     let mut written = Vec::<String>::new();
-    for item in items {
-        if !seen.insert(*item) {
+    for item in effective_items {
+        if !seen.insert(item) {
             continue;
         }
         let suffix = match item {
@@ -153,7 +161,7 @@ pub fn write_flat_variants_to_directory(
             ExportSrtItem::BilingualTargetFirst => "trans_src",
         };
         let output_path = target_dir.join(format!("{file_stem}_{suffix}.srt"));
-        let content = build_variant_srt(segments, *item);
+        let content = build_variant_srt(segments, item);
         std::fs::write(&output_path, content.as_bytes()).map_err(|err| err.to_string())?;
         written.push(output_path.display().to_string());
     }
