@@ -43,6 +43,8 @@ export type SettingsForm = {
   autoBurnHardSubtitle: boolean;
   subtitleBurnMode: SubtitleBurnMode;
   subtitleRenderStyle: SubtitleRenderStyle;
+  flatSrtOutput: boolean;
+  flatSrtItems: SubtitleBurnMode[];
 };
 
 function settingsToForm(settings: SavedSettings): SettingsForm {
@@ -65,6 +67,11 @@ function settingsToForm(settings: SavedSettings): SettingsForm {
     autoBurnHardSubtitle: settings.autoBurnHardSubtitle,
     subtitleBurnMode: settings.subtitleBurnMode,
     subtitleRenderStyle: settings.subtitleRenderStyle,
+    flatSrtOutput: settings.flatSrtOutput ?? false,
+    flatSrtItems: (settings.flatSrtItems ?? ["source", "target"]).filter(
+      (v): v is SubtitleBurnMode =>
+        v === "source" || v === "target" || v === "bilingualSourceFirst" || v === "bilingualTargetFirst"
+    ),
   };
 }
 
@@ -151,6 +158,8 @@ export function useSettingsController({
           bilingualLineGap: Math.max(0, Math.min(140, Math.round(form.subtitleRenderStyle.layout.bilingualLineGap))),
         },
       },
+      flatSrtOutput: form.flatSrtOutput,
+      flatSrtItems: form.flatSrtItems,
     };
 
     dispatch({

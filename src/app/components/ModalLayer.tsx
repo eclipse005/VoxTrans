@@ -45,6 +45,7 @@ type ModalLayerProps = {
   closeUpdateDialog: () => void;
   installUpdate: () => void | Promise<void>;
   cancelInstall: () => void | Promise<void>;
+  skipVersion: () => void | Promise<void>;
 };
 
 export function ModalLayer({
@@ -80,6 +81,7 @@ export function ModalLayer({
   closeUpdateDialog,
   installUpdate,
   cancelInstall,
+  skipVersion,
 }: ModalLayerProps) {
   return (
     <>
@@ -132,6 +134,7 @@ export function ModalLayer({
         onClose={closeUpdateDialog}
         onInstall={installUpdate}
         onCancelInstall={cancelInstall}
+        onSkipVersion={skipVersion}
       />
 
       <Toast toast={toast} />

@@ -44,6 +44,16 @@ impl ExportSrtItem {
     pub fn requires_translation(self) -> bool {
         !matches!(self, ExportSrtItem::Source)
     }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "source" => Some(ExportSrtItem::Source),
+            "target" => Some(ExportSrtItem::Target),
+            "bilingualSourceFirst" => Some(ExportSrtItem::BilingualSourceFirst),
+            "bilingualTargetFirst" => Some(ExportSrtItem::BilingualTargetFirst),
+            _ => None,
+        }
+    }
 }
 
 pub fn write_task_output_variants_for_completion(
@@ -109,6 +119,40 @@ pub fn write_variants_to_directory(
         if let Some(parent) = output_path.parent() {
             std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
         }
+        let content = build_variant_srt(segments, *item);
+        std::fs::write(&output_path, content.as_bytes()).map_err(|err| err.to_string())?;
+        written.push(output_path.display().to_string());
+    }
+    Ok(written)
+}
+
+pub fn write_flat_variants_to_directory(
+    target_dir: &Path,
+    file_stem: &str,
+    segments: &[SubtitleSrtSegment],
+    items: &[ExportSrtItem],
+) -> Result<Vec<String>, String> {
+    if items.is_empty() {
+        return Err("items is required".to_string());
+    }
+    if !target_dir.is_dir() {
+        return Err(format!("导出目录不存在: {}", target_dir.display()));
+    }
+    validate_translation_requirement(segments, items)?;
+
+    let mut seen = HashSet::<ExportSrtItem>::new();
+    let mut written = Vec::<String>::new();
+    for item in items {
+        if !seen.insert(*item) {
+            continue;
+        }
+        let suffix = match item {
+            ExportSrtItem::Source => "src",
+            ExportSrtItem::Target => "trans",
+            ExportSrtItem::BilingualSourceFirst => "src_trans",
+            ExportSrtItem::BilingualTargetFirst => "trans_src",
+        };
+        let output_path = target_dir.join(format!("{file_stem}_{suffix}.srt"));
         let content = build_variant_srt(segments, *item);
         std::fs::write(&output_path, content.as_bytes()).map_err(|err| err.to_string())?;
         written.push(output_path.display().to_string());

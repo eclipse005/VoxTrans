@@ -222,6 +222,8 @@ pub fn fallback_saved_settings() -> crate::services::preferences::SavedSettings 
         auto_burn_hard_subtitle: false,
         subtitle_burn_mode: "bilingualSourceFirst".to_string(),
         subtitle_render_style: crate::services::preferences::SubtitleRenderStyle::default(),
+        flat_srt_output: false,
+        flat_srt_items: vec!["source".to_string(), "target".to_string()],
     }
 }
 

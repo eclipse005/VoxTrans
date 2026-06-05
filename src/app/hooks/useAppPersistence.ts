@@ -102,6 +102,15 @@ export function useAppPersistence(dispatch: DispatchState) {
           },
         };
 
+        const flatSrtOutput = Boolean(res.settings.flatSrtOutput ?? false);
+        const flatSrtItemsRaw = Array.isArray(res.settings.flatSrtItems)
+          ? res.settings.flatSrtItems
+          : ["source", "target"];
+        const flatSrtItems: SubtitleBurnMode[] = flatSrtItemsRaw.filter(
+          (v: unknown): v is SubtitleBurnMode =>
+            v === "source" || v === "target" || v === "bilingualSourceFirst" || v === "bilingualTargetFirst"
+        );
+
         dispatch({
           type: "set_settings",
           settings: {
@@ -123,6 +132,8 @@ export function useAppPersistence(dispatch: DispatchState) {
             autoBurnHardSubtitle,
             subtitleBurnMode,
             subtitleRenderStyle,
+            flatSrtOutput,
+            flatSrtItems,
           },
         });
       } catch {

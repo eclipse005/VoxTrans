@@ -40,6 +40,14 @@ export async function cancelUpdate(taskId: string): Promise<boolean> {
   return await invoke<boolean>("cancel_update", { taskId });
 }
 
+export async function skipUpdateVersion(version: string): Promise<void> {
+  return await invoke<void>("skip_update_version", { version });
+}
+
+export async function getSkippedVersion(): Promise<string | null> {
+  return await invoke<string | null>("get_skipped_version");
+}
+
 export type UpdateProgressEvent = [string, UpdateDownloadProgress];
 
 export async function onUpdateProgress(

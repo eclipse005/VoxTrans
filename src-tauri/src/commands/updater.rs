@@ -68,6 +68,16 @@ pub fn cancel_update(task_id: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
+pub fn skip_update_version(app: tauri::AppHandle, version: String) -> Result<(), String> {
+    updater::save_skipped_version(&app, &version)
+}
+
+#[tauri::command]
+pub fn get_skipped_version(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    Ok(updater::load_skipped_version(&app))
+}
+
+#[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
     open::that(&url).map_err(|e| format!("打开链接失败: {}", e))?;
     Ok(())

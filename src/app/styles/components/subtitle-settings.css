@@ -414,6 +414,44 @@
   gap: 12px;
 }
 
+.flat-srt-items-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  background-color: #fff;
+  border: 1px solid var(--apple-border-lighter);
+}
+
+.flat-srt-items-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--apple-text-secondary);
+}
+
+.flat-srt-items-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.flat-srt-item-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--apple-text-primary);
+  cursor: pointer;
+}
+
+.flat-srt-item-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--apple-blue);
+  cursor: pointer;
+}
+
 .section-header {
   display: flex;
   align-items: center;

@@ -10,6 +10,7 @@ type UpdateModalProps = {
   onClose: () => void;
   onInstall: () => void | Promise<void>;
   onCancelInstall?: () => void | Promise<void>;
+  onSkipVersion?: () => void | Promise<void>;
 };
 
 export default function UpdateModal({
@@ -20,6 +21,7 @@ export default function UpdateModal({
   onClose,
   onInstall,
   onCancelInstall,
+  onSkipVersion,
 }: UpdateModalProps) {
   const dialogRef = useDialogA11y(visible, onClose);
   if (!visible || !update) {
@@ -87,6 +89,9 @@ export default function UpdateModal({
           ) : (
             <>
               <button className="nav-button" onClick={onClose}>取消</button>
+              {onSkipVersion ? (
+                <button className="nav-button" onClick={() => { void onSkipVersion(); }}>忽略此版本</button>
+              ) : null}
               <button className="nav-button" onClick={() => { void onInstall(); }}>下载安装</button>
             </>
           )}

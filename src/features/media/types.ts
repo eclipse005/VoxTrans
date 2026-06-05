@@ -69,6 +69,8 @@ export type SavedSettings = {
   autoBurnHardSubtitle: boolean;
   subtitleBurnMode: SubtitleBurnMode;
   subtitleRenderStyle: SubtitleRenderStyle;
+  flatSrtOutput: boolean;
+  flatSrtItems: SubtitleBurnMode[];
 };
 
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";

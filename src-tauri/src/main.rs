@@ -71,6 +71,8 @@ fn main() {
             commands::updater::check_update,
             commands::updater::download_update,
             commands::updater::cancel_update,
+            commands::updater::skip_update_version,
+            commands::updater::get_skipped_version,
             commands::updater::open_external_url,
             commands::youtube::download_youtube_to_task_run,
             commands::youtube::get_youtube_download_progress,

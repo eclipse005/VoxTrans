@@ -1,10 +1,12 @@
 import { isTauri } from "@tauri-apps/api/core";
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import {
   checkForUpdate,
   downloadUpdate,
   cancelUpdate,
   onUpdateProgress,
+  skipUpdateVersion,
+  getSkippedVersion,
 } from "../api/updater";
 import type { UpdateCheckResult } from "../api/updater";
 
@@ -26,13 +28,17 @@ export function useAutoUpdateCheck() {
     return () => { cleanup?.(); };
   }, []);
 
-  // 启动时检测更新
+  // 启动时检测更新，并对比已忽略版本
   useEffect(() => {
     if (!isTauri()) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void checkForUpdate().then((result) => {
-        if (!cancelled && result?.hasUpdate) {
+      void Promise.all([
+        checkForUpdate(),
+        getSkippedVersion().catch(() => null),
+      ]).then(([result, skippedVersion]) => {
+        if (cancelled) return;
+        if (result?.hasUpdate && result.latestVersion !== skippedVersion) {
           setAvailableUpdate(result);
         }
       }).catch((e) => {
@@ -41,6 +47,17 @@ export function useAutoUpdateCheck() {
     }, 1200);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, []);
+
+  const skipVersion = useCallback(async () => {
+    if (!availableUpdate?.hasUpdate) return;
+    try {
+      await skipUpdateVersion(availableUpdate.latestVersion);
+    } catch (e) {
+      console.error(`[updater] skip version failed: ${e}`);
+    }
+    setAvailableUpdate(null);
+    setShowUpdateDialog(false);
+  }, [availableUpdate]);
 
   return {
     availableUpdate,
@@ -75,5 +92,6 @@ export function useAutoUpdateCheck() {
       setInstallProgress(null);
       setShowUpdateDialog(false);
     },
+    skipVersion,
   };
 }

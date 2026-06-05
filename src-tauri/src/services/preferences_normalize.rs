@@ -27,6 +27,8 @@ pub(super) fn default_settings() -> SavedSettings {
         auto_burn_hard_subtitle: false,
         subtitle_burn_mode: "bilingualSourceFirst".to_string(),
         subtitle_render_style: SubtitleRenderStyle::default(),
+        flat_srt_output: false,
+        flat_srt_items: vec!["source".to_string(), "target".to_string()],
     }
 }
 
@@ -90,6 +92,8 @@ pub(super) fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         subtitle_burn_mode: normalize_subtitle_burn_mode(&settings.subtitle_burn_mode).to_string(),
         subtitle_render_style: normalize_subtitle_render_style(settings.subtitle_render_style),
+        flat_srt_output: settings.flat_srt_output,
+        flat_srt_items: normalize_flat_srt_items(settings.flat_srt_items),
     }
 }
 
@@ -97,6 +101,23 @@ fn normalize_subtitle_burn_mode(value: &str) -> &str {
     match value.trim() {
         "source" | "target" | "bilingualSourceFirst" | "bilingualTargetFirst" => value.trim(),
         _ => "bilingualSourceFirst",
+    }
+}
+
+fn normalize_flat_srt_items(items: Vec<String>) -> Vec<String> {
+    let valid = ["source", "target", "bilingualSourceFirst", "bilingualTargetFirst"];
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for item in items {
+        let trimmed = item.trim();
+        if valid.contains(&trimmed) && seen.insert(trimmed.to_string()) {
+            result.push(trimmed.to_string());
+        }
+    }
+    if result.is_empty() {
+        vec!["source".to_string(), "target".to_string()]
+    } else {
+        result
     }
 }
 

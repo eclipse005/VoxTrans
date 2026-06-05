@@ -42,6 +42,8 @@ pub(super) fn to_service_settings(
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         subtitle_burn_mode: settings.subtitle_burn_mode,
         subtitle_render_style: to_service_render_style(settings.subtitle_render_style),
+        flat_srt_output: settings.flat_srt_output,
+        flat_srt_items: settings.flat_srt_items,
     }
 }
 
@@ -84,6 +86,8 @@ pub(super) fn from_service_settings(
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         subtitle_burn_mode: settings.subtitle_burn_mode,
         subtitle_render_style: from_service_render_style(settings.subtitle_render_style),
+        flat_srt_output: settings.flat_srt_output,
+        flat_srt_items: settings.flat_srt_items,
     }
 }
 

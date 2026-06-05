@@ -80,6 +80,7 @@ function App() {
     closeUpdateDialog,
     installUpdate,
     cancelInstall,
+    skipVersion,
   } = useAutoUpdateCheck();
 
   useAppPersistence(dispatch);
@@ -315,6 +316,7 @@ function App() {
           closeUpdateDialog={closeUpdateDialog}
           installUpdate={installUpdate}
           cancelInstall={cancelInstall}
+          skipVersion={skipVersion}
         />
       </SettingsFormContext.Provider>
     </div>

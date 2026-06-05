@@ -110,6 +110,10 @@ pub struct SavedSettingsCommand {
     pub subtitle_burn_mode: String,
     #[serde(default)]
     pub subtitle_render_style: SubtitleRenderStyleCommand,
+    #[serde(default)]
+    pub flat_srt_output: bool,
+    #[serde(default = "default_flat_srt_items")]
+    pub flat_srt_items: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -134,4 +138,8 @@ fn default_align_model() -> String {
 
 fn default_subtitle_burn_mode() -> String {
     "bilingualSourceFirst".to_string()
+}
+
+fn default_flat_srt_items() -> Vec<String> {
+    vec!["source".to_string(), "target".to_string()]
 }

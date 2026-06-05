@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use dashmap::DashMap;
 use tauri::Emitter;
+use tauri::Manager;
 
 use super::file_download::{DownloadCallback, DownloadOptions, DownloadProgress};
 
@@ -221,9 +222,35 @@ pub fn download_and_install(
     }
 
     std::process::Command::new(&result.path)
+        .arg("/UPDATE")
+        .arg("/P")
         .spawn()
         .map_err(|e| format!("启动安装程序失败: {}", e))?;
 
     app.exit(0);
     Ok(())
+}
+
+const SKIPPED_VERSION_FILE: &str = "skipped_version.txt";
+
+pub fn save_skipped_version(app: &tauri::AppHandle, version: &str) -> Result<(), String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(SKIPPED_VERSION_FILE);
+    std::fs::write(&path, version.trim()).map_err(|e| e.to_string())
+}
+
+pub fn load_skipped_version(app: &tauri::AppHandle) -> Option<String> {
+    let dir = app.path().app_data_dir().ok()?;
+    let path = dir.join(SKIPPED_VERSION_FILE);
+    if !path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&path).ok()?;
+    let trimmed = content.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }

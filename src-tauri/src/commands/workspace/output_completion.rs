@@ -103,7 +103,7 @@ fn write_completion_srts(
     crate::services::subtitle_srt::write_task_output_variants_for_completion(
         task_id,
         Path::new(media_path),
-        srt_segments,
+        srt_segments.clone(),
         include_translation_variants,
         crate::services::subtitle_srt::SubtitleBeautifyOptions {
             enabled: enable_subtitle_beautify,
@@ -111,5 +111,45 @@ fn write_completion_srts(
             target_lang: target_lang.to_string(),
         },
     )?;
+
+    // Flat SRT output to output/ root directory
+    if let Ok(settings) = crate::services::preferences::load_saved_settings_from_default_path() {
+        if settings.flat_srt_output && !settings.flat_srt_items.is_empty() {
+            let flat_items: Vec<crate::services::subtitle_srt::ExportSrtItem> = settings
+                .flat_srt_items
+                .iter()
+                .filter_map(|s| crate::services::subtitle_srt::ExportSrtItem::parse(s))
+                .collect();
+            if !flat_items.is_empty() {
+                let output_dir = crate::services::output::resolve_output_dir();
+                if output_dir.is_dir() {
+                    let file_stem = Path::new(media_path)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| task_id.to_string());
+                    let safe_stem =
+                        crate::services::task_path::sanitize_filename_component(&file_stem);
+                    let mut flat_segments = srt_segments;
+                    if enable_subtitle_beautify {
+                        crate::services::subtitle_beautify::beautify_subtitle_srt_segments(
+                            &mut flat_segments,
+                            subtitle_length_preset,
+                            target_lang,
+                        );
+                    }
+                    if let Err(e) = crate::services::subtitle_srt::write_flat_variants_to_directory(
+                        &output_dir,
+                        &safe_stem,
+                        &flat_segments,
+                        &flat_items,
+                    ) {
+                        eprintln!("[warn] flat SRT output failed: {e}");
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }

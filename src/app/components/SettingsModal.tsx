@@ -14,6 +14,13 @@ const SUBTITLE_LENGTH_PRESETS = [
   { id: "loose", label: "宽松" },
 ] as const;
 
+const FLAT_SRT_OPTIONS: { item: SubtitleBurnMode; label: string }[] = [
+  { item: "source", label: "原文" },
+  { item: "target", label: "译文" },
+  { item: "bilingualSourceFirst", label: "双语（原文上）" },
+  { item: "bilingualTargetFirst", label: "双语（译文上）" },
+];
+
 type SettingsModalProps = {
   visible: boolean;
   onClose: () => void;
@@ -184,6 +191,44 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                     </div>
                     <span className="toggle-switch" />
                   </label>
+                  <label className="setting-toggle" htmlFor="flat-srt-output">
+                    <input
+                      id="flat-srt-output"
+                      type="checkbox"
+                      checked={ctx.form.flatSrtOutput}
+                      onChange={(e) => ctx.setForm((prev) => ({ ...prev, flatSrtOutput: e.target.checked }))}
+                    />
+                    <div className="toggle-label">
+                      <span className="toggle-title">字幕平铺输出</span>
+                      <span className="toggle-desc">额外将字幕直接输出到 output 目录，方便批量查找</span>
+                    </div>
+                    <span className="toggle-switch" />
+                  </label>
+                  {ctx.form.flatSrtOutput ? (
+                    <div className="flat-srt-items-group">
+                      <label className="flat-srt-items-label">输出字幕类型</label>
+                      <div className="flat-srt-items-options">
+                        {FLAT_SRT_OPTIONS.map((option) => (
+                          <label key={option.item} className="flat-srt-item-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={ctx.form.flatSrtItems.includes(option.item)}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                ctx.setForm((prev) => ({
+                                  ...prev,
+                                  flatSrtItems: checked
+                                    ? [...prev.flatSrtItems, option.item]
+                                    : prev.flatSrtItems.filter((v) => v !== option.item),
+                                }));
+                              }}
+                            />
+                            <span>{option.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
