@@ -124,6 +124,8 @@ export const defaultSettings: SavedSettings = {
       bilingualLineGap: 10,
     },
   },
+  flatSrtOutput: false,
+  flatSrtItems: ["source", "target"],
 };
 
 export const initialAppState: AppState = {

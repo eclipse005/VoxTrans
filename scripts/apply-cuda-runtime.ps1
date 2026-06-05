@@ -56,24 +56,53 @@ $installBlock = @'
 $uninstallBlock = @'
   ; Delete external binaries
   !ifdef INCLUDE_CUDA_RUNTIME
-    Delete "$INSTDIR\cudart64_12.dll"
-    Delete "$INSTDIR\cublas64_12.dll"
-    Delete "$INSTDIR\curand64_10.dll"
-    Delete "$INSTDIR\cublasLt64_12.dll"
+    ${If} $DeleteAppDataCheckboxState = 1
+    ${AndIf} $UpdateMode <> 1
+      Delete "$INSTDIR\cudart64_12.dll"
+      Delete "$INSTDIR\cublas64_12.dll"
+      Delete "$INSTDIR\curand64_10.dll"
+      Delete "$INSTDIR\cublasLt64_12.dll"
+    ${EndIf}
   !endif
 
   ; Delete app associations
 '@
 
-# Replace the empty "Copy external binaries" / "Create file associations" placeholder
-$content = $content -replace `
-  '(?ms)  ; Copy external binaries\s*\r?\n\s*; Create file associations', `
-  $installBlock
+# Tauri's uninstaller section also unconditionally wipes $INSTDIR\bin and tries
+# to remove $INSTDIR. We gate those on the same "user really wants to wipe
+# everything" checkbox so that a plain uninstall (no checkbox) preserves
+# $INSTDIR contents (bin/, models/, output/, etc.) for the next install.
+$binAndInstdirBlock = @'
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+    RMDir /REBOOTOK "$INSTDIR\bin"
+    RmDir /r "$INSTDIR"
+  ${EndIf}
+'@
+
+# Replace the empty "Copy external binaries" / "Create file associations" placeholder.
+# Use a MatchEvaluator (scriptblock) so $0 / $1 in $installBlock are not
+# interpreted as regex backreferences or PowerShell variables.
+$content = [regex]::Replace(
+  $content,
+  '(?ms)  ; Copy external binaries\s*\r?\n\s*; Create file associations',
+  [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $installBlock }
+)
 
 # Replace the empty "Delete external binaries" / "Delete app associations" placeholder
-$content = $content -replace `
-  '(?ms)  ; Delete external binaries\s*\r?\n\s*; Delete app associations', `
-  $uninstallBlock
+$content = [regex]::Replace(
+  $content,
+  '(?ms)  ; Delete external binaries\s*\r?\n\s*; Delete app associations',
+  [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $uninstallBlock }
+)
+
+# Wrap Tauri-generated `RMDir /REBOOTOK "$INSTDIR\bin"` + `RMDir "$INSTDIR"`
+# behind the same checkbox + update-mode guard.
+$content = [regex]::Replace(
+  $content,
+  '(?ms)  RMDir /REBOOTOK "\$INSTDIR\\bin"\r?\n  RMDir "\$INSTDIR"',
+  [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $binAndInstdirBlock }
+)
 
 Set-Content -LiteralPath $installerNsi -Value $content -NoNewline
 Write-Host "Patched installer.nsi with conditional CUDA runtime block"
