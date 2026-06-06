@@ -1,7 +1,6 @@
 import { useCallback, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
-  enqueueAndExecuteTaskBatch,
   executeTaskBatch,
 } from "../../api/workspace";
 import {
@@ -10,12 +9,11 @@ import {
 } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
 import { patchQueueItem } from "../../state/queueDomainActions";
-import { reportError, toUserErrorMessage } from "../../utils/errors";
 import {
   mergeTaskStateChanged,
-  toEnqueuePayload,
   type QueueRunMode,
 } from "../../../features/media/queueUtils";
+import { toUserErrorMessage } from "../../utils/errors";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
@@ -105,48 +103,6 @@ export function useQueueRunner({
     };
   }, [dispatch, isTaskPresent]);
 
-  const runTask = useCallback(
-    async (item: QueueItem, mode: QueueRunMode) => {
-      if (!isTaskPresent(item.id)) return;
-
-      try {
-        const response = await enqueueAndExecuteTaskBatch({
-          items: [toEnqueuePayload(item, mode)],
-        });
-
-        const failed = response.failed.find(
-          (entry) => entry.taskId === item.id,
-        );
-        if (failed) {
-          applyQueueFailures(dispatch, [failed], isTaskPresent);
-          pushToast(
-            formatQueueFailureMessage(item.name, failed.error),
-            "error",
-          );
-          return;
-        }
-        if (!isTaskPresent(item.id)) return;
-
-        pushToast(
-          mode === "transcribe"
-            ? `已完成：${item.name}`
-            : `已完成转译：${item.name}`,
-          "success",
-        );
-      } catch (err) {
-        if (!isTaskPresent(item.id)) return;
-        reportError(err, "runTask");
-        const fallback =
-          mode === "transcribe"
-            ? "转录失败，请检查模型和运行时配置"
-            : "转译失败，请检查翻译配置";
-        const errorMessage = toUserErrorMessage(err, fallback);
-        pushToast(`失败：${item.name}，${errorMessage}`, "error");
-      }
-    },
-    [dispatch, isTaskPresent, pushToast],
-  );
-  const runBatch = useRunBatch(dispatch, pushToast, isTaskPresent);
   const runQueuedByTaskIds = useRunQueuedByTaskIds(
     dispatch,
     pushToast,
@@ -154,42 +110,8 @@ export function useQueueRunner({
   );
 
   return {
-    runTask,
-    runBatch,
     runQueuedByTaskIds,
   };
-}
-
-type BatchTask = {
-  item: QueueItem;
-  mode: QueueRunMode;
-};
-
-function useRunBatch(
-  dispatch: DispatchState,
-  pushToast: PushToast,
-  isTaskPresent: (taskId: string) => boolean,
-) {
-  return useCallback(
-    async (tasks: BatchTask[]) => {
-      const items = tasks.filter((task) => isTaskPresent(task.item.id));
-      if (!items.length) return;
-
-      const response = await enqueueAndExecuteTaskBatch({
-        items: items.map((task) => toEnqueuePayload(task.item, task.mode)),
-      });
-
-      if (response.failed.length > 0) {
-        applyQueueFailures(dispatch, response.failed, isTaskPresent);
-        const first = response.failed[0];
-        pushToast(
-          formatQueueFailureMessage(first.taskId, first.error, "部分任务失败"),
-          "error",
-        );
-      }
-    },
-    [dispatch, pushToast, isTaskPresent],
-  );
 }
 
 function useRunQueuedByTaskIds(

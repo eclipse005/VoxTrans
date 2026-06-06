@@ -58,10 +58,6 @@ export type RegisterTaskUploadRequest = {
   sizeBytes: number;
 };
 
-type EnqueueAndExecuteTaskBatchRequest = {
-  items: EnqueueTaskRunRequest[];
-};
-
 export async function loadWorkspaceState(): Promise<WorkspaceStateResponse> {
   return invoke<WorkspaceStateResponse>("load_workspace_state");
 }
@@ -75,10 +71,6 @@ export async function getTaskRunQueueItem(taskId: string): Promise<Partial<Queue
 
 export async function deleteTasks(request: DeleteTasksRequest): Promise<void> {
   await invoke("delete_tasks", { request });
-}
-
-export async function executeTaskRun(request: ExecuteTaskRunRequest): Promise<void> {
-  await invoke("execute_task_run", { request });
 }
 
 export async function executeTaskBatch(
@@ -97,10 +89,4 @@ export async function registerTaskUpload(request: RegisterTaskUploadRequest): Pr
 
 export async function updateTaskLanguages(request: UpdateTaskLanguagesRequest): Promise<void> {
   await invoke("update_task_languages", { request });
-}
-
-export async function enqueueAndExecuteTaskBatch(
-  request: EnqueueAndExecuteTaskBatchRequest,
-): Promise<ExecuteTaskBatchResponse> {
-  return invoke<ExecuteTaskBatchResponse>("enqueue_and_execute_task_batch", { request });
 }

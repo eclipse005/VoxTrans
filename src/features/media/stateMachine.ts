@@ -5,7 +5,7 @@ import type { QueueItem, TranscribeStatus } from "./types";
  * pending -> queued -> processing -> (done | error)
  * done/error -> queued (manual re-run)
  */
-export const TRANSCRIBE_STATUS_TRANSITIONS = {
+const TRANSCRIBE_STATUS_TRANSITIONS = {
   pending: ["queued"],
   queued: ["processing"],
   processing: ["done", "error"],
@@ -13,12 +13,7 @@ export const TRANSCRIBE_STATUS_TRANSITIONS = {
   error: ["queued"],
 } as const satisfies Record<TranscribeStatus, readonly TranscribeStatus[]>;
 
-type TranscribeStatusTransitions = typeof TRANSCRIBE_STATUS_TRANSITIONS;
-
-export type AllowedTranscribeNextStatus<S extends TranscribeStatus> =
-  TranscribeStatusTransitions[S][number];
-
-export function canTransitionTranscribeStatus(
+function canTransitionTranscribeStatus(
   from: TranscribeStatus,
   to: TranscribeStatus,
 ): boolean {

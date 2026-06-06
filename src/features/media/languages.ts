@@ -1,6 +1,6 @@
 import type { SourceLanguage, TargetLanguage } from "./types";
 
-export type LanguageOption<T extends string> = {
+type LanguageOption<T extends string> = {
   id: T;
   short: string;
   label: string;

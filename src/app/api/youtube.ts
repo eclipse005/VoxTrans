@@ -42,15 +42,6 @@ export async function downloadYoutubeTask(
   return invoke<DownloadYoutubeTaskResponse>("download_youtube_to_task_run", { request });
 }
 
-export async function getYoutubeDownloadProgress(taskId: string): Promise<YoutubeDownloadProgressResponse> {
-  return invoke<YoutubeDownloadProgressResponse>("get_youtube_download_progress", {
-    request: { taskId },
-  });
-}
-
-export async function listYoutubeDownloadProgress(): Promise<YoutubeDownloadProgressResponse[]> {
-  return invoke<YoutubeDownloadProgressResponse[]>("list_youtube_download_progress");
-}
 
 export async function cancelYoutubeDownload(taskId: string): Promise<void> {
   await invoke("cancel_youtube_download", {

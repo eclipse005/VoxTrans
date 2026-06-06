@@ -6,11 +6,4 @@ export type ToastState = {
   tone: ToastTone;
 };
 
-export type TermEntry = {
-  id: string;
-  source: string;
-  target: string;
-  note: string;
-};
-
 export type UploadTab = "local" | "youtube";

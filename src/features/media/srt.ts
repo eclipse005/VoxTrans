@@ -74,20 +74,6 @@ export function cuesToSrt(cues: SubtitleCue[]): string {
     .join("\n");
 }
 
-export function buildFallbackCue(rawText: string): SubtitleCue[] {
-  const text = rawText.trim();
-  if (!text) return [];
-  return [
-    {
-      id: cueId(1, 0),
-      startMs: 0,
-      endMs: 2_000,
-      text,
-      translatedText: "",
-    },
-  ];
-}
-
 export function createCueAfter(current?: SubtitleCue): SubtitleCue {
   const start = current ? current.endMs + 100 : 0;
   return {

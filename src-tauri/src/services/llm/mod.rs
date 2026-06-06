@@ -12,8 +12,3 @@ mod json_validator;
 pub mod port;
 mod retry;
 
-impl From<error::LlmError> for crate::domain::error::WorkspaceError {
-    fn from(err: error::LlmError) -> Self {
-        crate::domain::error::WorkspaceError::TaskFailed(err.to_string())
-    }
-}

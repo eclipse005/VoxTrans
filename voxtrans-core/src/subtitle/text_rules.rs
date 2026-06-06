@@ -23,7 +23,7 @@ pub fn ends_with_terminal_punctuation(word: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn strip_trailing_closers(token: &str) -> &str {
+pub(crate) fn strip_trailing_closers(token: &str) -> &str {
     token.trim_end_matches(|c: char| {
         matches!(
             c,
@@ -50,7 +50,7 @@ pub fn strip_trailing_closers(token: &str) -> &str {
     })
 }
 
-pub fn is_non_break_terminal_case(token: &str) -> bool {
+pub(crate) fn is_non_break_terminal_case(token: &str) -> bool {
     is_common_abbreviation(token)
         || is_single_letter_initial(token)
         || looks_like_dotted_abbreviation(token)

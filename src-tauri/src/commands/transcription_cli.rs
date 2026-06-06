@@ -87,24 +87,7 @@ fn run_build_source_sentences_mode_from_args(args: &[String]) -> Result<(), Stri
                     ),
                 );
             }
-            "--api-key" => {
-                idx += 1;
-                let _ = required_cli_value(args, idx, "--api-key")?;
-            }
-            "--base-url" => {
-                idx += 1;
-                let _ = required_cli_value(args, idx, "--base-url")?;
-            }
-            "--model" => {
-                idx += 1;
-                let _ = required_cli_value(args, idx, "--model")?;
-            }
-            "--llm-concurrency" => {
-                idx += 1;
-                required_cli_value(args, idx, "--llm-concurrency")?
-                    .parse::<u32>()
-                    .map_err(|_| "--llm-concurrency requires integer".to_string())?;
-            }
+
             other => return Err(format!("unknown source-sentences arg: {other}")),
         }
         idx += 1;

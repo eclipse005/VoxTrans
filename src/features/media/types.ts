@@ -36,7 +36,7 @@ export type SubtitleLineStyle = {
   borderOpacity: number;
 };
 
-export type SubtitleLayoutStyle = {
+type SubtitleLayoutStyle = {
   marginV: number;
   alignment: 1 | 2 | 3;
   bilingualLineGap: number;
@@ -273,7 +273,7 @@ export type TranscribeResponse = {
   executionProvider: string;
 };
 
-export type TranscribeTimingSec = {
+type TranscribeTimingSec = {
   prepareElapsedSec: number;
   vadElapsedSec: number;
   tempWavWriteSec: number;
@@ -285,19 +285,13 @@ export type TranscribeTimingSec = {
   totalElapsedSec: number;
 };
 
-export type TranscribeRtfBreakdownX = {
+type TranscribeRtfBreakdownX = {
   total: number;
   asrStage: number;
   asrTranscribe: number;
   qwenStage: number;
   qwenAlign: number;
   modelOnly: number;
-};
-
-export type SubtitleSaveRequest = {
-  taskId: string;
-  content: string;
-  subtitleSegmentsJson?: string;
 };
 
 export type WorkspaceStateResponse = {
@@ -320,26 +314,4 @@ export type ModelStatusResponse = {
   missingFiles: string[];
   ready: boolean;
   download: ModelDownloadStateSnapshot;
-};
-
-export type TranslateAgentRuntimeEvent = {
-  kind: string;
-  toolName: string;
-  parentToolName: string;
-  phase: string;
-  reason: string;
-  detail: string;
-  toolInputSummary: string;
-  changedSegmentTotal: number;
-};
-
-export type TranslateAgentToolExecution = {
-  name: string;
-  status: string;
-  changedSegmentTotal: number;
-};
-
-export type TranslateAgentToolPlanStep = {
-  name: string;
-  toolInputSummary: string;
 };

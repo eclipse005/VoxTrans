@@ -439,7 +439,7 @@ fn spawn_line_reader(
 
 fn handle_ytdlp_line(
     app: &tauri::AppHandle,
-    task_id: &str,
+    _task_id: &str,
     output_dir: &Path,
     line: &str,
     snapshot: &mut YoutubeDownloadProgressResponse,
@@ -493,8 +493,6 @@ fn handle_ytdlp_line(
         snapshot.message = "文件已下载，正在整理".to_string();
         set_progress(app, snapshot.clone());
     }
-
-    let _ = task_id;
 }
 
 fn extract_path_from_line(line: &str, output_dir: &Path) -> Option<PathBuf> {
