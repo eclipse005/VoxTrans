@@ -97,8 +97,6 @@ fn to_service_word(word: WordTokenCommandDto) -> crate::services::transcribe::Wo
     }
 }
 
-pub use super::transcription_cli::maybe_run_build_source_sentences_mode_from_args;
-
 fn build_grouped_sentence_segments(
     words: &[WordTokenCommandDto],
     sentences: &[SourceSentenceCommandDto],

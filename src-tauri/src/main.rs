@@ -9,11 +9,6 @@ use std::sync::Arc;
 use tauri::Manager;
 
 fn main() {
-    commands::transcription::maybe_run_build_source_sentences_mode_from_args();
-    commands::translate::maybe_run_build_terminology_mode_from_args();
-    commands::translate::maybe_run_build_translation_mode_from_args();
-    commands::translate::maybe_run_build_step5_mode_from_args();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
