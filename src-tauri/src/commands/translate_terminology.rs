@@ -7,9 +7,12 @@ use super::translate_types::{
     BuildTerminologyLayerCommandRequest, BuildTerminologyLayerCommandResponse,
     TranslateTerminologyEntryCommand,
 };
+use crate::db::store::TaskStore;
+use tauri::{AppHandle, Manager};
 
 #[tauri::command]
 pub async fn build_terminology_layer(
+    app: AppHandle,
     mut request: BuildTerminologyLayerCommandRequest,
 ) -> Result<BuildTerminologyLayerCommandResponse, String> {
     if request.task_id.trim().is_empty() {
@@ -28,7 +31,9 @@ pub async fn build_terminology_layer(
         return Err("segments is required".to_string());
     }
 
+    let store = app.state::<TaskStore>().inner();
     hydrate_translate_llm_connection_settings(
+        store,
         &mut request.translate_api_key,
         &mut request.translate_base_url,
         &mut request.translate_model,
@@ -36,7 +41,7 @@ pub async fn build_terminology_layer(
     request.llm_concurrency = request.llm_concurrency.max(1);
 
     let terms = if request.terminology_entries.is_empty() {
-        load_terminology_entries_from_saved_settings()?
+        load_terminology_entries_from_saved_settings(store)?
     } else {
         normalize_command_terminology_entries(request.terminology_entries)
     };

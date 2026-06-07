@@ -1,6 +1,6 @@
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
-
+use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::domain::task::stage::TaskStage;
 
@@ -26,7 +26,7 @@ use queue_ops::{
     delete_tasks_internal, enqueue_task_run_internal, execute_task_batch_internal,
     register_task_upload_internal, update_task_languages_internal,
 };
-use store::{TaskStore, find_task_mut, lock_workspace_store};
+use store::{TaskStore as _, find_task_mut, lock_workspace_store};
 pub use types::*;
 
 #[derive(Debug, Clone)]
@@ -153,9 +153,12 @@ pub async fn enqueue_and_execute_task_batch(
     Ok(response)
 }
 
-pub fn task_subtitle_beautify_context(task_id: &str) -> Result<(bool, String, String), String> {
+pub fn task_subtitle_beautify_context(
+    store: &TaskStore,
+    task_id: &str,
+) -> Result<(bool, String, String), String> {
     let record = get_task_record(task_id)?;
-    let saved = crate::services::preferences::load_saved_settings_from_default_path()
+    let saved = crate::services::preferences::load_saved_settings_from_default_path(store)
         .unwrap_or_else(|_| fallback_saved_settings());
     Ok((
         saved.enable_subtitle_beautify,

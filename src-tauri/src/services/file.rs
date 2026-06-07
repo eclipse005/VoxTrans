@@ -1,3 +1,4 @@
+use crate::db::store::TaskStore;
 use crate::services::task_log::{TaskLogger, event};
 use serde::Deserialize;
 use serde_json::json;
@@ -140,7 +141,7 @@ pub fn export_srt(request: ExportSrtRequest) -> Result<String, String> {
     Ok(output_path.display().to_string())
 }
 
-pub fn export_task_srts(request: ExportTaskSrtsRequest) -> Result<Vec<String>, String> {
+pub fn export_task_srts(store: &TaskStore, request: ExportTaskSrtsRequest) -> Result<Vec<String>, String> {
     if request.task_id.trim().is_empty() {
         return Err("taskId is required".to_string());
     }
@@ -161,7 +162,7 @@ pub fn export_task_srts(request: ExportTaskSrtsRequest) -> Result<Vec<String>, S
 
     let task_item = crate::commands::workspace::get_task_queue_item_for_export(&request.task_id)?;
     let (task_enable_subtitle_beautify, subtitle_length_preset, target_lang) =
-        crate::commands::workspace::task_subtitle_beautify_context(&request.task_id)?;
+        crate::commands::workspace::task_subtitle_beautify_context(store, &request.task_id)?;
     let segments =
         crate::services::subtitle_srt::parse_segments_json(&task_item.subtitle_segments_json)
             .map_err(|err| format!("字幕片段解析失败: {err}"))?;

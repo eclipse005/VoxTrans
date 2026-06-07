@@ -1,11 +1,12 @@
 use serde_json::Value;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
+use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
 
 use super::execution_flow::execute_single_task;
 use super::meta::{ensure_workspace_hydrated_from_disk, persist_task_meta, remove_task_meta};
-use super::store::{TaskStore, WorkspaceStore, find_task_mut, lock_workspace_store};
+use super::store::{TaskStore as _, WorkspaceStore, find_task_mut, lock_workspace_store};
 use super::task_logs::log_task_failure_to_main;
 use super::{
     DeleteTasksCommandRequest, EnqueueTaskRunCommandRequest, ExecuteTaskBatchCommandResponse,
@@ -109,11 +110,12 @@ pub(super) fn enqueue_task_run_internal(
         ));
     }
 
+    let db_store = app.state::<TaskStore>().inner();
     let queued_item = {
         let mut store = lock_workspace_store()?;
         if let Some(existing) = find_task_mut(&mut store, id) {
             persist_task_record_update(existing, |record| {
-                apply_enqueue_request(record, request);
+                apply_enqueue_request(record, request, db_store);
             })?
         } else {
             let source_lang = request
@@ -143,7 +145,7 @@ pub(super) fn enqueue_task_run_internal(
                 target_lang,
                 max_retries: request.max_retries.unwrap_or(0),
                 settings_snapshot:
-                    crate::services::preferences::load_saved_settings_from_default_path()
+                    crate::services::preferences::load_saved_settings_from_default_path(db_store)
                         .map(|settings| serde_json::to_value(settings).unwrap_or(Value::Null))
                         .unwrap_or(Value::Null),
             };
@@ -348,7 +350,11 @@ fn apply_upload_fields(
     item.size_bytes = size_bytes;
 }
 
-fn apply_enqueue_request(record: &mut WorkspaceTaskRecord, request: EnqueueTaskRunCommandRequest) {
+fn apply_enqueue_request(
+    record: &mut WorkspaceTaskRecord,
+    request: EnqueueTaskRunCommandRequest,
+    db_store: &TaskStore,
+) {
     apply_upload_fields(
         &mut record.item,
         request.media_path.trim(),
@@ -379,7 +385,7 @@ fn apply_enqueue_request(record: &mut WorkspaceTaskRecord, request: EnqueueTaskR
     record.item.target_lang = record.target_lang.clone();
     record.max_retries = request.max_retries.unwrap_or(0);
     record.settings_snapshot =
-        crate::services::preferences::load_saved_settings_from_default_path()
+        crate::services::preferences::load_saved_settings_from_default_path(db_store)
             .map(|settings| serde_json::to_value(settings).unwrap_or(Value::Null))
             .unwrap_or(Value::Null);
 }

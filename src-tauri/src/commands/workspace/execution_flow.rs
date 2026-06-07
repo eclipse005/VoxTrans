@@ -1,7 +1,8 @@
 use std::path::Path;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
+use crate::db::store::TaskStore;
 use crate::services::pipeline::StepContext;
 
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
@@ -33,8 +34,9 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Works
 async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
     let record = get_task_record(task_id)?;
     let intent = normalize_intent(&record.intent).to_string();
+    let store = app.state::<TaskStore>().inner();
     let runtime =
-        resolve_runtime_settings(&record.settings_snapshot, intent == "TRANSCRIBE_TRANSLATE")?;
+        resolve_runtime_settings(store, &record.settings_snapshot, intent == "TRANSCRIBE_TRANSLATE")?;
     let mut source_lang = normalize_task_source_lang(&record.source_lang);
     let target_lang = normalize_task_target_lang(&record.target_lang);
     let task_output_dir =

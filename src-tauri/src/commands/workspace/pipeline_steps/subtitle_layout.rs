@@ -96,6 +96,7 @@ impl PipelineStep for Step51SourceSplitPipelineStep {
 
     async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
         build_step_5_1_source_split_with_progress(
+            self.app.clone(),
             BuildStep51SourceSplitCommandRequest {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),
@@ -162,6 +163,7 @@ impl PipelineStep for Step52TranslationAlignPipelineStep {
 
     async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
         build_step_5_2_translation_align_with_progress(
+            self.app.clone(),
             BuildStep52TranslationAlignCommandRequest {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),

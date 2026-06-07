@@ -12,15 +12,19 @@ use super::translate_types::{
     Step5QualitySummaryCommand, Step5SplitParentCommand, Step5SplitPartCommand,
     TranslateTerminologyEntryCommand, step5_pipeline_version, step5_schema_version,
 };
+use crate::db::store::TaskStore;
+use tauri::{AppHandle, Manager};
 
 #[tauri::command]
 pub async fn build_step_5_1_source_split(
+    app: AppHandle,
     request: BuildStep51SourceSplitCommandRequest,
 ) -> Result<BuildStep51SourceSplitCommandResponse, String> {
-    build_step_5_1_source_split_with_progress(request, None).await
+    build_step_5_1_source_split_with_progress(app, request, None).await
 }
 
 pub async fn build_step_5_1_source_split_with_progress(
+    app: AppHandle,
     mut request: BuildStep51SourceSplitCommandRequest,
     on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> Result<BuildStep51SourceSplitCommandResponse, String> {
@@ -34,7 +38,9 @@ pub async fn build_step_5_1_source_split_with_progress(
         return Err("segments is required".to_string());
     }
 
+    let store = app.state::<TaskStore>().inner();
     hydrate_translate_llm_connection_settings(
+        store,
         &mut request.translate_api_key,
         &mut request.translate_base_url,
         &mut request.translate_model,
@@ -84,12 +90,14 @@ pub async fn build_step_5_1_source_split_with_progress(
 
 #[tauri::command]
 pub async fn build_step_5_2_translation_align(
+    app: AppHandle,
     request: BuildStep52TranslationAlignCommandRequest,
 ) -> Result<BuildStep52TranslationAlignCommandResponse, String> {
-    build_step_5_2_translation_align_with_progress(request, None).await
+    build_step_5_2_translation_align_with_progress(app, request, None).await
 }
 
 pub async fn build_step_5_2_translation_align_with_progress(
+    app: AppHandle,
     mut request: BuildStep52TranslationAlignCommandRequest,
     on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> Result<BuildStep52TranslationAlignCommandResponse, String> {
@@ -103,7 +111,9 @@ pub async fn build_step_5_2_translation_align_with_progress(
         return Err("parents is required".to_string());
     }
 
+    let store = app.state::<TaskStore>().inner();
     hydrate_translate_llm_settings(
+        store,
         &mut request.translate_api_key,
         &mut request.translate_base_url,
         &mut request.translate_model,

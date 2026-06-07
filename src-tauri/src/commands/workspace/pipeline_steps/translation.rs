@@ -27,6 +27,7 @@ pub(in crate::commands::workspace) struct Step3TerminologyPipelineStep {
     pub(in crate::commands::workspace) translate_model: String,
     pub(in crate::commands::workspace) llm_concurrency: u32,
     pub(in crate::commands::workspace) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
+    pub(in crate::commands::workspace) app: AppHandle,
 }
 
 #[async_trait]
@@ -53,18 +54,21 @@ impl PipelineStep for Step3TerminologyPipelineStep {
     }
 
     async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        build_terminology_layer(BuildTerminologyLayerCommandRequest {
-            task_id: self.task_id.clone(),
-            media_path: self.media_path.clone(),
-            source_lang: self.source_lang.clone(),
-            target_lang: self.target_lang.clone(),
-            segments: self.segments.clone(),
-            translate_api_key: self.translate_api_key.clone(),
-            translate_base_url: self.translate_base_url.clone(),
-            translate_model: self.translate_model.clone(),
-            llm_concurrency: self.llm_concurrency,
-            terminology_entries: self.terminology_entries.clone(),
-        })
+        build_terminology_layer(
+            self.app.clone(),
+            BuildTerminologyLayerCommandRequest {
+                task_id: self.task_id.clone(),
+                media_path: self.media_path.clone(),
+                source_lang: self.source_lang.clone(),
+                target_lang: self.target_lang.clone(),
+                segments: self.segments.clone(),
+                translate_api_key: self.translate_api_key.clone(),
+                translate_base_url: self.translate_base_url.clone(),
+                translate_model: self.translate_model.clone(),
+                llm_concurrency: self.llm_concurrency,
+                terminology_entries: self.terminology_entries.clone(),
+            },
+        )
         .await
     }
 }
@@ -128,6 +132,7 @@ impl PipelineStep for Step4TranslationPipelineStep {
                 );
             });
         build_translation_layer_with_progress(
+            self.app.clone(),
             BuildTranslationLayerCommandRequest {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),

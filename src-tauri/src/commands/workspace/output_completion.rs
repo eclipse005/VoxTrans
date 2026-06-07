@@ -1,8 +1,9 @@
 use std::path::Path;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::commands::translate_types::BuildTranslationSegmentCommand;
+use crate::db::store::TaskStore;
 use crate::domain::error::WorkspaceResult;
 use crate::domain::task::adapters::{
     workspace_subtitle_segments_from_step2_segments,
@@ -27,7 +28,9 @@ pub(super) fn finish_transcribe_only(
 ) -> WorkspaceResult<()> {
     let workspace_segments = workspace_subtitle_segments_from_step2_segments(step2_segments);
     let subtitle_segments_json = serialize_segments(&workspace_segments);
+    let store = app.state::<TaskStore>().inner();
     write_completion_srts(
+        store,
         task_id,
         media_path,
         &workspace_segments,
@@ -60,7 +63,9 @@ pub(super) fn finish_translate_with_step5(
 ) -> WorkspaceResult<()> {
     let workspace_segments = workspace_subtitle_segments_from_translation_segments(segments);
     let subtitle_segments_json = serialize_segments(&workspace_segments);
+    let store = app.state::<TaskStore>().inner();
     write_completion_srts(
+        store,
         task_id,
         media_path,
         &workspace_segments,
@@ -80,7 +85,9 @@ pub(super) fn finish_translate_with_step5(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_completion_srts(
+    store: &TaskStore,
     task_id: &str,
     media_path: &str,
     segments: &[WorkspaceSubtitleSegment],
@@ -113,7 +120,7 @@ fn write_completion_srts(
     )?;
 
     // Flat SRT output to output/ root directory
-    if let Ok(settings) = crate::services::preferences::load_saved_settings_from_default_path() {
+    if let Ok(settings) = crate::services::preferences::load_saved_settings_from_default_path(store) {
         if settings.flat_srt_output && !settings.flat_srt_items.is_empty() {
             let flat_items: Vec<crate::services::subtitle_srt::ExportSrtItem> = settings
                 .flat_srt_items

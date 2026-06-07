@@ -6,15 +6,19 @@ use super::translate_types::{
     BuildTranslationLayerCommandRequest, BuildTranslationLayerCommandResponse,
     BuildTranslationSegmentCommand, SegmentTokenForTerminologyCommand,
 };
+use crate::db::store::TaskStore;
+use tauri::{AppHandle, Manager};
 
 #[tauri::command]
 pub async fn build_translation_layer(
+    app: AppHandle,
     request: BuildTranslationLayerCommandRequest,
 ) -> Result<BuildTranslationLayerCommandResponse, String> {
-    build_translation_layer_with_progress(request, None).await
+    build_translation_layer_with_progress(app, request, None).await
 }
 
 pub async fn build_translation_layer_with_progress(
+    app: AppHandle,
     mut request: BuildTranslationLayerCommandRequest,
     on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> Result<BuildTranslationLayerCommandResponse, String> {
@@ -34,7 +38,9 @@ pub async fn build_translation_layer_with_progress(
         return Err("segments is required".to_string());
     }
 
+    let store = app.state::<TaskStore>().inner();
     hydrate_translate_llm_connection_settings(
+        store,
         &mut request.translate_api_key,
         &mut request.translate_base_url,
         &mut request.translate_model,

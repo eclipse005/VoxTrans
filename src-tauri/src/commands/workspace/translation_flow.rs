@@ -51,6 +51,7 @@ pub(super) async fn execute_translate_steps(
             translate_model: runtime.translate_model.clone(),
             llm_concurrency: runtime.llm_concurrency,
             terminology_entries: runtime.terminology_entries.clone(),
+            app: app.clone(),
         },
         &step_context,
     )

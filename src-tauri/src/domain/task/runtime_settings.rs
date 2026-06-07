@@ -4,6 +4,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::commands::translate_types::TranslateTerminologyEntryCommand;
+use crate::db::store::TaskStore;
 
 #[derive(Debug, Clone)]
 pub struct PipelineRuntimeSettings {
@@ -67,12 +68,13 @@ struct SettingsSnapshotTerminologyTerm {
 }
 
 pub fn resolve_runtime_settings(
+    store: &TaskStore,
     snapshot: &Value,
     require_translate_llm: bool,
 ) -> Result<PipelineRuntimeSettings, String> {
     let snapshot_parsed = serde_json::from_value::<SettingsSnapshotInput>(snapshot.clone())
         .map_err(|err| format!("invalid settings snapshot: {err}"))?;
-    let saved = crate::services::preferences::load_saved_settings_from_default_path()
+    let saved = crate::services::preferences::load_saved_settings_from_default_path(store)
         .unwrap_or_else(|_| fallback_saved_settings());
 
     let provider = snapshot_parsed
@@ -247,9 +249,18 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn dummy_store() -> TaskStore {
+        // In-memory pool: `load_saved_settings_from_default_path` falls back to
+        // defaults on any error, so the schema does not need to be migrated
+        // for these tests.
+        let pool = tauri::async_runtime::block_on(crate::db::store::test_pool());
+        TaskStore::new(pool)
+    }
+
     #[test]
     fn runtime_settings_preserve_asr_model_from_snapshot() {
         let settings = resolve_runtime_settings(
+            &dummy_store(),
             &json!({
                 "asrModel": "Qwen3-ASR-1.7B",
                 "alignModel": "Qwen3-ForcedAligner-0.6B",
@@ -269,6 +280,7 @@ mod tests {
     #[test]
     fn runtime_settings_require_subtitle_length_preset_from_snapshot() {
         let err = resolve_runtime_settings(
+            &dummy_store(),
             &json!({
                 "asrModel": "Qwen3-ASR-1.7B",
                 "alignModel": "Qwen3-ForcedAligner-0.6B",
