@@ -14,9 +14,19 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
-            let pool = tauri::async_runtime::block_on(async {
-                crate::db::init_pool(&app_handle).await
-            })
+            // Tauri runs the setup closure on a worker thread of an existing
+            // tokio runtime, so we must use the current Handle (with
+            // block_in_place) instead of starting a fresh runtime.
+            let pool = match tokio::runtime::Handle::try_current() {
+                Ok(handle)
+                    if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
+                {
+                    tokio::task::block_in_place(|| {
+                        handle.block_on(crate::db::init_pool(&app_handle))
+                    })
+                }
+                _ => tauri::async_runtime::block_on(crate::db::init_pool(&app_handle)),
+            }
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             app.manage(crate::db::store::TaskStore::new(pool));
             app.manage(app_state::AppState {
