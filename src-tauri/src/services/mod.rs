@@ -14,7 +14,7 @@ pub mod output;
 pub mod pipeline;
 pub mod preferences;
 mod preferences_normalize;
-mod preferences_types;
+pub mod preferences_types;
 pub mod prompts;
 pub mod subtitle_beautify;
 pub mod subtitle_length;
