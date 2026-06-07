@@ -118,16 +118,6 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-pub fn segment_from_row(row: SubtitleSegmentRow) -> WorkspaceSubtitleSegment {
-    WorkspaceSubtitleSegment {
-        start_ms: row.start_ms,
-        end_ms: row.end_ms,
-        source_text: row.source_text,
-        translated_text: row.translated_text,
-        source_words: Vec::new(), // composed in store.rs
-    }
-}
-
 pub fn row_from_segment(
     task_id: &str,
     idx: i32,

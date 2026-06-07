@@ -2,9 +2,7 @@
 
 use sqlx::{Row, SqlitePool};
 
-use crate::commands::workspace::{
-    WorkspaceQueueItem, WorkspaceTaskProgressState, WorkspaceTaskStageState,
-};
+use crate::commands::workspace::WorkspaceQueueItem;
 use crate::db::conversion::{
     row_from_segment, row_from_settings, row_from_task, settings_from_row, task_from_row,
 };
@@ -29,6 +27,7 @@ impl TaskStore {
         Self { pool }
     }
 
+    #[allow(dead_code)]
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
@@ -588,6 +587,7 @@ pub async fn test_pool_with_migrations() -> SqlitePool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::workspace::{WorkspaceTaskProgressState, WorkspaceTaskStageState};
     use crate::services::preferences_types::{
         SavedSettings, SubtitleRenderStyle, TerminologyGroup, TerminologyTerm,
     };

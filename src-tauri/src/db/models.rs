@@ -48,6 +48,7 @@ pub struct SettingsRow {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FlatSrtItemRow {
     pub id: i64,
     pub value: String,
@@ -113,6 +114,7 @@ pub struct SubtitleWordRow {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TerminologyGroupRow {
     pub id: String,
     pub name: String,
@@ -120,6 +122,7 @@ pub struct TerminologyGroupRow {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TerminologyTermRow {
     pub id: String,
     pub group_id: String,
