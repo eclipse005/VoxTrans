@@ -9,10 +9,28 @@ use crate::domain::task::adapters::{
     workspace_subtitle_segments_from_step2_segments,
     workspace_subtitle_segments_from_translation_segments,
 };
-use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, serialize_segments};
+use crate::services::workspace_subtitle::{
+    WorkspaceSubtitleSegment, serialize_segments,
+};
 
 use super::patch_task_item;
 use super::progress::done_task_progress_state;
+
+fn parse_segments(
+    json: &str,
+) -> Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> {
+    serde_json::from_str(json).unwrap_or_default()
+}
+
+fn persist_segments_to_db(app: &AppHandle, task_id: &str, subtitle_segments_json: &str) {
+    let store = app.state::<TaskStore>().inner().clone();
+    let segments = parse_segments(subtitle_segments_json);
+    if let Err(e) =
+        tauri::async_runtime::block_on(async { store.replace_segments(task_id, &segments).await })
+    {
+        eprintln!("warn: persist segments {task_id} failed: {e}");
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn finish_transcribe_only(
@@ -48,7 +66,9 @@ pub(super) async fn finish_transcribe_only(
         task.item.result_srt = step2_srt.clone();
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
     })
-    .await
+    .await?;
+    persist_segments_to_db(app, task_id, &subtitle_segments_json);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -84,7 +104,9 @@ pub(super) async fn finish_translate_with_step5(
         task.item.result_srt = String::new();
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
     })
-    .await
+    .await?;
+    persist_segments_to_db(app, task_id, &subtitle_segments_json);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

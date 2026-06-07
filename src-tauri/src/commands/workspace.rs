@@ -110,11 +110,20 @@ pub async fn save_subtitle_editor(
 ) -> Result<(), String> {
     let task_id = require_task_id(&request.task_id)?;
     ensure_workspace_hydrated_from_db(&app).await?;
+    let subtitle_segments_json = request.subtitle_segments_json.clone();
     patch_task_item(&app, task_id, |task| {
         task.item.result_srt = request.content;
         task.item.subtitle_segments_json = request.subtitle_segments_json;
     })
     .await?;
+    let store = app.state::<TaskStore>().inner().clone();
+    let segments: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
+        serde_json::from_str(&subtitle_segments_json).unwrap_or_default();
+    if let Err(e) = tauri::async_runtime::block_on(async {
+        store.replace_segments(task_id, &segments).await
+    }) {
+        eprintln!("warn: persist segments {task_id} failed: {e}");
+    }
     Ok(())
 }
 
