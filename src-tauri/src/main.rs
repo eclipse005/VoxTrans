@@ -13,6 +13,12 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let app_handle = app.handle().clone();
+            let pool = tauri::async_runtime::block_on(async {
+                crate::db::init_pool(&app_handle).await
+            })
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            app.manage(crate::db::store::TaskStore::new(pool));
             app.manage(app_state::AppState {
                 asr_model_download: Arc::new(std::sync::Mutex::new(
                     app_state::ModelDownloadRuntime::default(),
