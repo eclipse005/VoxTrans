@@ -3,10 +3,11 @@
 //! `from_business` and `to_business` are pure functions, tested in isolation.
 //! They do not touch the database.
 
-use crate::db::models::SettingsRow;
+use crate::db::models::{SettingsRow, SubtitleSegmentRow, SubtitleWordRow};
 use crate::services::preferences_types::{
     SavedSettings, SubtitleLayoutStyle, SubtitleLineStyle, SubtitleRenderStyle,
 };
+use crate::services::workspace_subtitle::WorkspaceSubtitleSegment;
 
 pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
     SavedSettings {
@@ -112,6 +113,50 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+pub fn segment_from_row(row: SubtitleSegmentRow) -> WorkspaceSubtitleSegment {
+    WorkspaceSubtitleSegment {
+        start_ms: row.start_ms,
+        end_ms: row.end_ms,
+        source_text: row.source_text,
+        translated_text: row.translated_text,
+        source_words: Vec::new(), // composed in store.rs
+    }
+}
+
+pub fn row_from_segment(
+    task_id: &str,
+    idx: i32,
+    seg: &WorkspaceSubtitleSegment,
+) -> (SubtitleSegmentRow, Vec<SubtitleWordRow>) {
+    let segment_id = format!("{task_id}-seg-{idx}");
+    let now = now_ms();
+    let seg_row = SubtitleSegmentRow {
+        id: segment_id.clone(),
+        task_id: task_id.to_string(),
+        idx,
+        start_ms: seg.start_ms,
+        end_ms: seg.end_ms,
+        source_text: seg.source_text.clone(),
+        translated_text: seg.translated_text.clone(),
+        updated_at: now,
+    };
+    let word_rows: Vec<SubtitleWordRow> = seg
+        .source_words
+        .iter()
+        .enumerate()
+        .map(|(i, w)| SubtitleWordRow {
+            id: format!("{segment_id}-word-{i}"),
+            segment_id: segment_id.clone(),
+            idx: i as i32,
+            start_ms: w.start_ms,
+            end_ms: w.end_ms,
+            word: w.word.clone(),
+            updated_at: now,
+        })
+        .collect();
+    (seg_row, word_rows)
 }
 
 #[cfg(test)]

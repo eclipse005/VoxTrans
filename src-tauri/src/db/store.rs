@@ -2,7 +2,7 @@
 
 use sqlx::{Row, SqlitePool};
 
-use crate::db::conversion::{row_from_settings, settings_from_row};
+use crate::db::conversion::{row_from_segment, row_from_settings, settings_from_row};
 use crate::db::models::SettingsRow;
 use crate::services::preferences_normalize::default_settings;
 use crate::services::preferences_types::SavedSettings;
@@ -282,6 +282,111 @@ impl TaskStore {
         groups.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(groups)
     }
+
+    // ---- subtitle segments + words ----
+
+    /// Replace all segments + words for a task (delete + insert in one tx).
+    pub async fn replace_segments(
+        &self,
+        task_id: &str,
+        segments: &[crate::services::workspace_subtitle::WorkspaceSubtitleSegment],
+    ) -> Result<(), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| format!("begin tx: {e}"))?;
+        // CASCADE on subtitle_segments deletes words too.
+        sqlx::query("DELETE FROM subtitle_segments WHERE task_id = ?")
+            .bind(task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("delete segments: {e}"))?;
+        for (idx, seg) in segments.iter().enumerate() {
+            let (seg_row, word_rows) = row_from_segment(task_id, idx as i32, seg);
+            sqlx::query(
+                "INSERT INTO subtitle_segments (id, task_id, idx, start_ms, end_ms, \
+                 source_text, translated_text, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&seg_row.id)
+            .bind(&seg_row.task_id)
+            .bind(seg_row.idx)
+            .bind(seg_row.start_ms as i64)
+            .bind(seg_row.end_ms as i64)
+            .bind(&seg_row.source_text)
+            .bind(&seg_row.translated_text)
+            .bind(seg_row.updated_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("insert segment: {e}"))?;
+            for w in &word_rows {
+                sqlx::query(
+                    "INSERT INTO subtitle_words (id, segment_id, idx, start_ms, end_ms, word, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&w.id)
+                .bind(&w.segment_id)
+                .bind(w.idx)
+                .bind(w.start_ms as i64)
+                .bind(w.end_ms as i64)
+                .bind(&w.word)
+                .bind(w.updated_at)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("insert word: {e}"))?;
+            }
+        }
+        tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
+        Ok(())
+    }
+
+    /// Load all segments + words for a task, joined into WorkspaceSubtitleSegment.
+    /// Returns empty vec if task has no segments.
+    pub async fn load_segments(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment>, String> {
+        let seg_rows = sqlx::query(
+            "SELECT id, task_id, idx, start_ms, end_ms, source_text, translated_text, updated_at \
+             FROM subtitle_segments WHERE task_id = ? ORDER BY idx",
+        )
+        .bind(task_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("load segments: {e}"))?;
+
+        let word_rows = sqlx::query(
+            "SELECT w.id, w.segment_id, w.idx, w.start_ms, w.end_ms, w.word, w.updated_at \
+             FROM subtitle_words w JOIN subtitle_segments s ON w.segment_id = s.id \
+             WHERE s.task_id = ? ORDER BY w.segment_id, w.idx",
+        )
+        .bind(task_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("load words: {e}"))?;
+
+        use std::collections::HashMap;
+        let mut words_by_seg: HashMap<String, Vec<crate::services::workspace_subtitle::WorkspaceSubtitleWord>> = HashMap::new();
+        for r in word_rows {
+            let seg_id: String = r.get("segment_id");
+            words_by_seg.entry(seg_id).or_default().push(
+                crate::services::workspace_subtitle::WorkspaceSubtitleWord {
+                    start_ms: r.get::<i64, _>("start_ms") as u64,
+                    end_ms: r.get::<i64, _>("end_ms") as u64,
+                    word: r.get("word"),
+                },
+            );
+        }
+
+        let mut out = Vec::with_capacity(seg_rows.len());
+        for r in seg_rows {
+            let id: String = r.get("id");
+            out.push(crate::services::workspace_subtitle::WorkspaceSubtitleSegment {
+                start_ms: r.get::<i64, _>("start_ms") as u64,
+                end_ms: r.get::<i64, _>("end_ms") as u64,
+                source_text: r.get("source_text"),
+                translated_text: r.get("translated_text"),
+                source_words: words_by_seg.remove(&id).unwrap_or_default(),
+            });
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -319,10 +424,32 @@ mod tests {
     use crate::services::preferences_types::{
         SavedSettings, SubtitleRenderStyle, TerminologyGroup, TerminologyTerm,
     };
+    use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, WorkspaceSubtitleWord};
 
     async fn store() -> TaskStore {
         let pool = super::test_pool_with_migrations().await;
         TaskStore::new(pool)
+    }
+
+    /// Insert a minimal task row to satisfy FK for subtitle_segments. Task CRUD
+    /// (and a real `upsert_task` helper) lands in Task 10; this is just enough
+    /// for segments/words tests to exercise CASCADE.
+    async fn insert_blank_task(s: &TaskStore, id: &str) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        sqlx::query(
+            "INSERT INTO tasks (id, media_path, name, media_kind, size_bytes, source_lang, \
+             target_lang, transcribe_status, updated_at) \
+             VALUES (?, '', ?, '', 0, '', '', '', ?)",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(now)
+        .execute(s.pool())
+        .await
+        .expect("insert blank task");
     }
 
     fn sample_settings() -> SavedSettings {
@@ -384,5 +511,74 @@ mod tests {
         assert_eq!(loaded.terminology_groups[0].name, "Default");
         assert_eq!(loaded.terminology_groups[0].terms.len(), 1);
         assert_eq!(loaded.terminology_groups[0].terms[0].origin, "machine learning");
+    }
+
+    fn sample_segments() -> Vec<WorkspaceSubtitleSegment> {
+        vec![
+            WorkspaceSubtitleSegment {
+                start_ms: 0,
+                end_ms: 1000,
+                source_text: "hello".into(),
+                translated_text: "你好".into(),
+                source_words: vec![WorkspaceSubtitleWord {
+                    start_ms: 0,
+                    end_ms: 500,
+                    word: "hello".into(),
+                }],
+            },
+            WorkspaceSubtitleSegment {
+                start_ms: 1000,
+                end_ms: 2000,
+                source_text: "world".into(),
+                translated_text: "世界".into(),
+                source_words: vec![],
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn segments_replace_and_load_roundtrip() {
+        let s = store().await;
+        insert_blank_task(&s, "t1").await;
+        s.replace_segments("t1", &sample_segments()).await.unwrap();
+
+        let loaded = s.load_segments("t1").await.unwrap();
+        assert_eq!(loaded.len(), 2);
+        // Segment 0 has words.
+        assert_eq!(loaded[0].start_ms, 0);
+        assert_eq!(loaded[0].end_ms, 1000);
+        assert_eq!(loaded[0].source_text, "hello");
+        assert_eq!(loaded[0].translated_text, "你好");
+        assert_eq!(loaded[0].source_words.len(), 1);
+        assert_eq!(loaded[0].source_words[0].word, "hello");
+        assert_eq!(loaded[0].source_words[0].start_ms, 0);
+        assert_eq!(loaded[0].source_words[0].end_ms, 500);
+        // Segment 1 has no words.
+        assert_eq!(loaded[1].source_text, "world");
+        assert_eq!(loaded[1].translated_text, "世界");
+        assert!(loaded[1].source_words.is_empty());
+
+        // Replace with a shorter list — verifies CASCADE: old segment 1 and
+        // segment 0's words are deleted, then fresh inserts succeed.
+        let replacement = vec![WorkspaceSubtitleSegment {
+            start_ms: 5000,
+            end_ms: 6000,
+            source_text: "again".into(),
+            translated_text: "再次".into(),
+            source_words: vec![],
+        }];
+        s.replace_segments("t1", &replacement).await.unwrap();
+
+        let loaded2 = s.load_segments("t1").await.unwrap();
+        assert_eq!(loaded2.len(), 1);
+        assert_eq!(loaded2[0].source_text, "again");
+        assert!(loaded2[0].source_words.is_empty());
+
+        // No orphan words from the previous "hello" segment remain.
+        let word_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM subtitle_words")
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+        assert_eq!(word_count, 0);
     }
 }
