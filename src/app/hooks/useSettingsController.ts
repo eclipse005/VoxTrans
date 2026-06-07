@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   saveAppSettings as saveAppSettingsApi,
   testTranslateLlmConnection,
@@ -89,6 +89,16 @@ export function useSettingsController({
   refreshModelStatus,
 }: UseSettingsControllerArgs) {
   const [form, setForm] = useState<SettingsForm>(() => settingsToForm(settings));
+
+  // The terminology modal is opened from a separate entry point and reads
+  // `form.terminologyGroups` directly, not via openSettings(). If the user
+  // opens it before useAppPersistence's async load has populated `settings`,
+  // the form still holds the initial empty default group and any saved
+  // terms are invisible. Sync terminologyGroups whenever the upstream
+  // settings change so the modal always reflects the latest DB state.
+  useEffect(() => {
+    setForm((prev) => ({ ...prev, terminologyGroups: settings.terminologyGroups }));
+  }, [settings.terminologyGroups]);
 
   const openSettings = useCallback(() => {
     void refreshModelStatus();
