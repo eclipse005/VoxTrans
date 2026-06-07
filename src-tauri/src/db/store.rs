@@ -2,10 +2,22 @@
 
 use sqlx::{Row, SqlitePool};
 
-use crate::db::conversion::{row_from_segment, row_from_settings, settings_from_row};
-use crate::db::models::SettingsRow;
+use crate::commands::workspace::{
+    WorkspaceQueueItem, WorkspaceTaskProgressState, WorkspaceTaskStageState,
+};
+use crate::db::conversion::{
+    row_from_segment, row_from_settings, row_from_task, settings_from_row, task_from_row,
+};
+use crate::db::models::{SettingsRow, TaskRow};
 use crate::services::preferences_normalize::default_settings;
 use crate::services::preferences_types::SavedSettings;
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
 
 #[derive(Clone)]
 pub struct TaskStore {
@@ -387,6 +399,161 @@ impl TaskStore {
         }
         Ok(out)
     }
+
+    // ---- tasks ----
+
+    pub async fn load_all_tasks(&self) -> Result<Vec<WorkspaceQueueItem>, String> {
+        let rows = sqlx::query(
+            "SELECT id, media_path, name, media_kind, size_bytes, source_lang, target_lang, \
+             transcribe_status, task_progress_stage_code, task_progress_stage_label, \
+             task_progress_stage_order, task_progress_detail, task_progress_current, \
+             task_progress_total, transcribe_error, result_text, result_srt, llm_total_tokens, \
+             intent, max_retries, settings_snapshot_provider, settings_snapshot_asr_model, \
+             settings_snapshot_align_model, settings_snapshot_demucs_model, \
+             settings_snapshot_translate_api_key, settings_snapshot_translate_base_url, \
+             settings_snapshot_translate_model, settings_snapshot_llm_concurrency, \
+             settings_snapshot_chunk_target_seconds, settings_snapshot_enable_vocal_separation, \
+             updated_at FROM tasks ORDER BY updated_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("load tasks: {e}"))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let row = TaskRow {
+                id: r.get("id"),
+                media_path: r.get("media_path"),
+                name: r.get("name"),
+                media_kind: r.get("media_kind"),
+                size_bytes: r.get::<i64, _>("size_bytes") as u64,
+                source_lang: r.get("source_lang"),
+                target_lang: r.get("target_lang"),
+                transcribe_status: r.get("transcribe_status"),
+                task_progress_stage_code: r.get("task_progress_stage_code"),
+                task_progress_stage_label: r.get("task_progress_stage_label"),
+                task_progress_stage_order: r.get::<i64, _>("task_progress_stage_order") as u32,
+                task_progress_detail: r.get("task_progress_detail"),
+                task_progress_current: r.get::<i64, _>("task_progress_current") as u32,
+                task_progress_total: r.get::<i64, _>("task_progress_total") as u32,
+                transcribe_error: r.get("transcribe_error"),
+                result_text: r.get("result_text"),
+                result_srt: r.get("result_srt"),
+                llm_total_tokens: r.get::<i64, _>("llm_total_tokens") as u64,
+                intent: r.get("intent"),
+                max_retries: r.get::<i64, _>("max_retries") as u32,
+                settings_snapshot_provider: r.get("settings_snapshot_provider"),
+                settings_snapshot_asr_model: r.get("settings_snapshot_asr_model"),
+                settings_snapshot_align_model: r.get("settings_snapshot_align_model"),
+                settings_snapshot_demucs_model: r.get("settings_snapshot_demucs_model"),
+                settings_snapshot_translate_api_key: r.get("settings_snapshot_translate_api_key"),
+                settings_snapshot_translate_base_url: r.get("settings_snapshot_translate_base_url"),
+                settings_snapshot_translate_model: r.get("settings_snapshot_translate_model"),
+                settings_snapshot_llm_concurrency: r
+                    .get::<i64, _>("settings_snapshot_llm_concurrency")
+                    as u32,
+                settings_snapshot_chunk_target_seconds: r
+                    .get::<i64, _>("settings_snapshot_chunk_target_seconds")
+                    as u32,
+                settings_snapshot_enable_vocal_separation: r
+                    .get::<i64, _>("settings_snapshot_enable_vocal_separation")
+                    != 0,
+                updated_at: r.get("updated_at"),
+            };
+            out.push(task_from_row(row));
+        }
+        Ok(out)
+    }
+
+    pub async fn upsert_task(&self, item: &WorkspaceQueueItem) -> Result<(), String> {
+        let row = row_from_task(item);
+        sqlx::query(
+            "INSERT INTO tasks (id, media_path, name, media_kind, size_bytes, source_lang, \
+             target_lang, transcribe_status, task_progress_stage_code, \
+             task_progress_stage_label, task_progress_stage_order, task_progress_detail, \
+             task_progress_current, task_progress_total, transcribe_error, result_text, \
+             result_srt, llm_total_tokens, intent, max_retries, \
+             settings_snapshot_provider, settings_snapshot_asr_model, \
+             settings_snapshot_align_model, settings_snapshot_demucs_model, \
+             settings_snapshot_translate_api_key, settings_snapshot_translate_base_url, \
+             settings_snapshot_translate_model, settings_snapshot_llm_concurrency, \
+             settings_snapshot_chunk_target_seconds, settings_snapshot_enable_vocal_separation, \
+             updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
+             media_path=excluded.media_path, name=excluded.name, media_kind=excluded.media_kind, \
+             size_bytes=excluded.size_bytes, source_lang=excluded.source_lang, \
+             target_lang=excluded.target_lang, transcribe_status=excluded.transcribe_status, \
+             task_progress_stage_code=excluded.task_progress_stage_code, \
+             task_progress_stage_label=excluded.task_progress_stage_label, \
+             task_progress_stage_order=excluded.task_progress_stage_order, \
+             task_progress_detail=excluded.task_progress_detail, \
+             task_progress_current=excluded.task_progress_current, \
+             task_progress_total=excluded.task_progress_total, \
+             transcribe_error=excluded.transcribe_error, result_text=excluded.result_text, \
+             result_srt=excluded.result_srt, llm_total_tokens=excluded.llm_total_tokens, \
+             updated_at=excluded.updated_at",
+        )
+        .bind(&row.id)
+        .bind(&row.media_path)
+        .bind(&row.name)
+        .bind(&row.media_kind)
+        .bind(row.size_bytes as i64)
+        .bind(&row.source_lang)
+        .bind(&row.target_lang)
+        .bind(&row.transcribe_status)
+        .bind(&row.task_progress_stage_code)
+        .bind(&row.task_progress_stage_label)
+        .bind(row.task_progress_stage_order as i64)
+        .bind(&row.task_progress_detail)
+        .bind(row.task_progress_current as i64)
+        .bind(row.task_progress_total as i64)
+        .bind(&row.transcribe_error)
+        .bind(&row.result_text)
+        .bind(&row.result_srt)
+        .bind(row.llm_total_tokens as i64)
+        .bind(&row.intent)
+        .bind(row.max_retries as i64)
+        .bind(&row.settings_snapshot_provider)
+        .bind(&row.settings_snapshot_asr_model)
+        .bind(&row.settings_snapshot_align_model)
+        .bind(&row.settings_snapshot_demucs_model)
+        .bind(&row.settings_snapshot_translate_api_key)
+        .bind(&row.settings_snapshot_translate_base_url)
+        .bind(&row.settings_snapshot_translate_model)
+        .bind(row.settings_snapshot_llm_concurrency as i64)
+        .bind(row.settings_snapshot_chunk_target_seconds as i64)
+        .bind(row.settings_snapshot_enable_vocal_separation as i64)
+        .bind(row.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("upsert task: {e}"))?;
+        Ok(())
+    }
+
+    pub async fn delete_task(&self, id: &str) -> Result<(), String> {
+        sqlx::query("DELETE FROM tasks WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("delete task: {e}"))?;
+        Ok(())
+    }
+
+    /// Mark all tasks with transcribe_status='processing' as 'error' (startup recovery).
+    /// Returns the count of affected rows.
+    pub async fn mark_orphan_processing_as_error(&self) -> Result<u64, String> {
+        let n = sqlx::query(
+            "UPDATE tasks SET transcribe_status = 'error', \
+             transcribe_error = '任务在运行中被中断，请重新开始', \
+             updated_at = ? WHERE transcribe_status = 'processing'",
+        )
+        .bind(now_ms())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("recover orphan tasks: {e}"))?
+        .rows_affected();
+        Ok(n)
+    }
 }
 
 #[cfg(test)]
@@ -580,5 +747,70 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(word_count, 0);
+    }
+
+    fn sample_task(id: &str) -> WorkspaceQueueItem {
+        WorkspaceQueueItem {
+            id: id.into(),
+            path: "/tmp/a.mp3".into(),
+            name: "a.mp3".into(),
+            media_kind: "audio".into(),
+            size_bytes: 1024,
+            source_lang: "en".into(),
+            target_lang: "zh-CN".into(),
+            transcribe_status: "processing".into(),
+            task_progress: WorkspaceTaskProgressState {
+                stage: WorkspaceTaskStageState {
+                    code: "recognizing".into(),
+                    label: "语音识别中".into(),
+                    order: 30,
+                    detail: "".into(),
+                    current: 0,
+                    total: 0,
+                },
+            },
+            transcribe_error: "".into(),
+            result_text: "".into(),
+            result_srt: "".into(),
+            subtitle_segments_json: "[]".into(),
+            llm_total_tokens: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn task_upsert_and_load_roundtrip() {
+        let s = store().await;
+        let original = sample_task("task-1");
+        s.upsert_task(&original).await.expect("upsert");
+
+        let loaded = s.load_all_tasks().await.expect("load");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "task-1");
+        assert_eq!(loaded[0].transcribe_status, "processing");
+        assert_eq!(loaded[0].task_progress.stage.code, "recognizing");
+    }
+
+    #[tokio::test]
+    async fn mark_orphan_processing_as_error_recovers_residuals() {
+        let s = store().await;
+        s.upsert_task(&sample_task("a")).await.unwrap();
+        s.upsert_task(&sample_task("b")).await.unwrap();
+
+        let n = s.mark_orphan_processing_as_error().await.unwrap();
+        assert_eq!(n, 2);
+
+        let loaded = s.load_all_tasks().await.unwrap();
+        for item in &loaded {
+            assert_eq!(item.transcribe_status, "error");
+            assert!(!item.transcribe_error.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_task_removes_row() {
+        let s = store().await;
+        s.upsert_task(&sample_task("a")).await.unwrap();
+        s.delete_task("a").await.unwrap();
+        assert!(s.load_all_tasks().await.unwrap().is_empty());
     }
 }
