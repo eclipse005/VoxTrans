@@ -6,7 +6,7 @@ use super::preferences_types::{
     TerminologyTerm,
 };
 
-pub(super) fn default_settings() -> SavedSettings {
+pub fn default_settings() -> SavedSettings {
     SavedSettings {
         provider: "cpu".to_string(),
         chunk_target_seconds: 45,

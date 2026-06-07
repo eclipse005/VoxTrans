@@ -13,7 +13,7 @@ pub mod model;
 pub mod output;
 pub mod pipeline;
 pub mod preferences;
-mod preferences_normalize;
+pub mod preferences_normalize;
 pub mod preferences_types;
 pub mod prompts;
 pub mod subtitle_beautify;
