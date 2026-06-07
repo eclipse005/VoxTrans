@@ -337,7 +337,8 @@
 
 | 路径 | 改动 |
 |---|---|
-| `src-tauri/src/db/mod.rs` | `init_pool` 已有，加 `pub fn store(pool: &SqlitePool) -> TaskStore` 工厂 |
+| `src-tauri/src/main.rs` | 添加 `mod db;`（当前缺失，`db/mod.rs` 是孤儿代码）|
+| `src-tauri/src/db/mod.rs` | `init_pool` 已有（目前未被调用），加 `pub fn store(pool: &SqlitePool) -> TaskStore` 工厂；加 `pub mod store; pub mod models; pub mod conversion;` |
 | `src-tauri/src/services/preferences.rs` | `load_saved_settings_from_default_path` / `load_settings` / `save_app_settings` 改为走 store |
 | `src-tauri/src/commands/workspace/meta.rs` | `persist_task_meta` / `remove_task_meta` / `load_task_meta_artifacts` / `ensure_workspace_hydrated_from_disk` 改为走 store；`hydrate_workspace_from_disk` 改名为 `hydrate_workspace_from_db` |
 | `src-tauri/src/commands/workspace/queue_ops.rs` | 任务 CRUD 后同步写 DB（含 segments/words 写子表）|
