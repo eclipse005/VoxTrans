@@ -28,7 +28,7 @@ pub(super) fn done_task_progress_state() -> WorkspaceTaskProgressState {
     }
 }
 
-pub(super) fn report_task_stage(
+pub(super) async fn report_task_stage(
     app: &AppHandle,
     task_id: &str,
     stage: TaskStage,
@@ -42,12 +42,18 @@ pub(super) fn report_task_stage(
         task.item.task_progress = progress;
         task.item.transcribe_error = String::new();
     })
+    .await
 }
 
-pub(super) fn mark_task_failed(app: &AppHandle, task_id: &str, error: &str) -> WorkspaceResult<()> {
+pub(super) async fn mark_task_failed(
+    app: &AppHandle,
+    task_id: &str,
+    error: &str,
+) -> WorkspaceResult<()> {
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "error".to_string();
         task.item.task_progress = WorkspaceTaskProgressState::default();
         task.item.transcribe_error = error.to_string();
     })
+    .await
 }

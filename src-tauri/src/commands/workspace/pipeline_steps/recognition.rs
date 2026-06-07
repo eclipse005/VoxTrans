@@ -87,14 +87,14 @@ impl PipelineStep for Step1AsrPipelineStep {
                             TaskStage::Aligning
                         }
                     };
-                    let _ = report_task_stage(
+                    let _ = tauri::async_runtime::block_on(report_task_stage(
                         &app_for_progress,
                         &task_id_owned,
                         task_stage,
                         format!("{current}/{total}"),
                         current as u32,
                         total as u32,
-                    );
+                    ));
                 },
             )
         })

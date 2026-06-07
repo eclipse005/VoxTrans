@@ -31,14 +31,14 @@ fn subtitle_layout_progress(
         } else {
             String::new()
         };
-        let _ = report_task_stage(
+        let _ = tauri::async_runtime::block_on(report_task_stage(
             &app_for_progress,
             &task_id,
             TaskStage::SubtitleLayout,
             format!("{label} {detail}"),
             current as u32,
             total as u32,
-        );
+        ));
     })
 }
 

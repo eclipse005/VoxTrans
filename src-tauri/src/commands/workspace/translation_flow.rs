@@ -36,7 +36,7 @@ pub(super) async fn execute_translate_steps(
     source_text: String,
 ) -> WorkspaceResult<()> {
     let step_context = StepContext { output_dir };
-    report_task_stage(app, task_id, TaskStage::Terminology, "", 0, 1)?;
+    report_task_stage(app, task_id, TaskStage::Terminology, "", 0, 1).await?;
 
     let terminology_segments = map_step2_segments_for_translate(step2_segments);
     let step3_exec = execute_workspace_step(
@@ -68,7 +68,8 @@ pub(super) async fn execute_translate_steps(
         },
         1,
         1,
-    )?;
+    )
+    .await?;
 
     let step4_exec = execute_workspace_step(
         &Step4TranslationPipelineStep {
@@ -90,14 +91,15 @@ pub(super) async fn execute_translate_steps(
     .await?;
 
     if step4_exec.source == StepSource::Cache {
-        report_task_stage(app, task_id, TaskStage::Translating, "缓存命中", 1, 1)?;
+        report_task_stage(app, task_id, TaskStage::Translating, "缓存命中", 1, 1).await?;
     }
     update_subtitle_preview(
         app,
         task_id,
         &source_text,
         workspace_subtitle_segments_from_translation_segments(&step4_exec.output.segments),
-    )?;
+    )
+    .await?;
 
     let step51_exec = execute_workspace_step(
         &Step51SourceSplitPipelineStep {
@@ -125,14 +127,16 @@ pub(super) async fn execute_translate_steps(
             "原文切分缓存命中",
             1,
             1,
-        )?;
+        )
+        .await?;
     }
     update_subtitle_preview(
         app,
         task_id,
         &source_text,
         workspace_subtitle_segments_from_step51_parents(&step51_exec.output.parents),
-    )?;
+    )
+    .await?;
 
     let step52_exec = execute_workspace_step(
         &Step52TranslationAlignPipelineStep {
@@ -162,14 +166,16 @@ pub(super) async fn execute_translate_steps(
             "译文对齐缓存命中",
             1,
             1,
-        )?;
+        )
+        .await?;
     }
     update_subtitle_preview(
         app,
         task_id,
         &source_text,
         workspace_subtitle_segments_from_step52_parents(&step52_exec.output.parents),
-    )?;
+    )
+    .await?;
     let step5_segments = translation_segments_from_step52_parents(&step52_exec.output.parents);
 
     finalize_translate_with_step5(
@@ -206,4 +212,5 @@ async fn finalize_translate_with_step5(
         subtitle_length_preset,
         target_lang,
     )
+    .await
 }

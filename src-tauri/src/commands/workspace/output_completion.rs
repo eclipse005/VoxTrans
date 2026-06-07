@@ -15,7 +15,7 @@ use super::patch_task_item;
 use super::progress::done_task_progress_state;
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn finish_transcribe_only(
+pub(super) async fn finish_transcribe_only(
     app: &AppHandle,
     task_id: &str,
     media_path: &str,
@@ -48,10 +48,11 @@ pub(super) fn finish_transcribe_only(
         task.item.result_srt = step2_srt.clone();
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
     })
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn finish_translate_with_step5(
+pub(super) async fn finish_translate_with_step5(
     app: &AppHandle,
     task_id: &str,
     media_path: &str,
@@ -83,6 +84,7 @@ pub(super) fn finish_translate_with_step5(
         task.item.result_srt = String::new();
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
     })
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]

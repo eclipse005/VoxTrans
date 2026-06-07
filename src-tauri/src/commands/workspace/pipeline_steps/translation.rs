@@ -122,14 +122,14 @@ impl PipelineStep for Step4TranslationPipelineStep {
                 } else {
                     String::new()
                 };
-                let _ = report_task_stage(
+                let _ = tauri::async_runtime::block_on(report_task_stage(
                     &app_for_progress,
                     &task_id,
                     TaskStage::Translating,
                     detail,
                     current as u32,
                     total as u32,
-                );
+                ));
             });
         build_translation_layer_with_progress(
             self.app.clone(),

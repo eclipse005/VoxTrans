@@ -27,8 +27,12 @@ use super::{
 pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
     let result = execute_single_task_inner(app, task_id).await;
     mark_task_failed_after_execution_error(result, |err| {
-        mark_task_failed(app, task_id, &err.to_string())
+        let err_string = err.to_string();
+        let task_id = task_id.to_string();
+        let app = app.clone();
+        async move { mark_task_failed(&app, &task_id, &err_string).await }
     })
+    .await
 }
 
 async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
@@ -50,13 +54,14 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
         output_dir: &artifact_dir,
     };
 
-    report_task_stage(app, task_id, TaskStage::Preparing, "", 1, 1)?;
+    report_task_stage(app, task_id, TaskStage::Preparing, "", 1, 1).await?;
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_error = String::new();
         task.item.result_text = String::new();
         task.item.result_srt = String::new();
         task.item.subtitle_segments_json = "[]".to_string();
-    })?;
+    })
+    .await?;
 
     let step1_exec = execute_workspace_step(
         &Step1AsrPipelineStep {
@@ -88,7 +93,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
         })
         .collect::<Vec<_>>();
 
-    report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 0)?;
+    report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 0).await?;
 
     let step2_exec = execute_workspace_step(
         &Step2SegmentsPipelineStep {
@@ -110,7 +115,8 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
         task_id,
         &source_text,
         workspace_subtitle_segments_from_step2_segments(&step2_segments),
-    )?;
+    )
+    .await?;
 
     let run_result: WorkspaceResult<()> = if intent == "TRANSCRIBE_TRANSLATE" {
         execute_translate_steps(
@@ -137,19 +143,24 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             &runtime.subtitle_length_preset,
             &target_lang,
         )
+        .await
     };
     run_result?;
     Ok(())
 }
 
-fn mark_task_failed_after_execution_error(
+async fn mark_task_failed_after_execution_error<F, Fut>(
     result: WorkspaceResult<()>,
-    mut mark_failed: impl FnMut(&WorkspaceError) -> WorkspaceResult<()>,
-) -> WorkspaceResult<()> {
+    mut mark_failed: F,
+) -> WorkspaceResult<()>
+where
+    F: FnMut(&WorkspaceError) -> Fut,
+    Fut: std::future::Future<Output = WorkspaceResult<()>>,
+{
     match result {
         Ok(()) => Ok(()),
         Err(err) => {
-            mark_failed(&err)?;
+            mark_failed(&err).await?;
             Err(err)
         }
     }
@@ -160,8 +171,8 @@ mod tests {
     use super::*;
     use crate::domain::error::WorkspaceError;
 
-    #[test]
-    fn execution_error_marks_task_failed_and_returns_original_error() {
+    #[tokio::test]
+    async fn execution_error_marks_task_failed_and_returns_original_error() {
         let mut marked_error = String::new();
 
         let result = mark_task_failed_after_execution_error(
@@ -170,23 +181,25 @@ mod tests {
             )),
             |err| {
                 marked_error = err.to_string();
-                Ok(())
+                async { Ok(()) }
             },
-        );
+        )
+        .await;
 
         let err = result.expect_err("execution error should be returned");
         assert_eq!(err.code(), "INVALID_REQUEST");
         assert_eq!(marked_error, "invalid request: missing runtime settings");
     }
 
-    #[test]
-    fn execution_success_does_not_mark_task_failed() {
+    #[tokio::test]
+    async fn execution_success_does_not_mark_task_failed() {
         let mut marked = false;
 
         let result = mark_task_failed_after_execution_error(Ok(()), |_| {
             marked = true;
-            Ok(())
-        });
+            async { Ok(()) }
+        })
+        .await;
 
         assert!(result.is_ok());
         assert!(!marked);

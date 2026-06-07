@@ -1,5 +1,5 @@
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::domain::task::stage::TaskStage;
@@ -21,12 +21,12 @@ mod translation_flow;
 mod types;
 
 use crate::domain::task::runtime_settings::fallback_saved_settings;
-use meta::{ensure_workspace_hydrated_from_disk, persist_task_meta};
+use meta::ensure_workspace_hydrated_from_db;
 use queue_ops::{
     delete_tasks_internal, enqueue_task_run_internal, execute_task_batch_internal,
     register_task_upload_internal, update_task_languages_internal,
 };
-use store::{TaskStore as _, find_task_mut, lock_workspace_store};
+use store::{TaskStore as _, find_task_mut, is_workspace_hydrated, lock_workspace_store};
 pub use types::*;
 
 #[derive(Debug, Clone)]
@@ -48,8 +48,10 @@ const STEP_05_01_SOURCE_SPLIT_FILE: &str = "step_05_01_source_split.json";
 const STEP_05_02_TRANSLATION_ALIGN_FILE: &str = "step_05_02_translation_align.json";
 
 #[tauri::command]
-pub async fn load_workspace_state() -> Result<WorkspaceStateResponse, String> {
-    ensure_workspace_hydrated_from_disk()?;
+pub async fn load_workspace_state(
+    app: AppHandle,
+) -> Result<WorkspaceStateResponse, String> {
+    ensure_workspace_hydrated_from_db(&app).await?;
     let store = lock_workspace_store()?;
     Ok(WorkspaceStateResponse {
         queue: store.tasks().iter().map(|task| task.item.clone()).collect(),
@@ -58,10 +60,11 @@ pub async fn load_workspace_state() -> Result<WorkspaceStateResponse, String> {
 
 #[tauri::command]
 pub async fn load_workspace_task(
+    app: AppHandle,
     request: LoadWorkspaceTaskCommandRequest,
 ) -> Result<WorkspaceTaskResponse, String> {
     let task_id = require_task_id(&request.task_id)?;
-    ensure_workspace_hydrated_from_disk()?;
+    ensure_workspace_hydrated_from_db(&app).await?;
     let task = get_task_record(task_id)?;
     Ok(WorkspaceTaskResponse {
         item: task.item.clone(),
@@ -69,13 +72,19 @@ pub async fn load_workspace_task(
 }
 
 #[tauri::command]
-pub async fn register_task_upload(request: RegisterTaskUploadCommandRequest) -> Result<(), String> {
-    Ok(register_task_upload_internal(request)?)
+pub async fn register_task_upload(
+    app: AppHandle,
+    request: RegisterTaskUploadCommandRequest,
+) -> Result<(), String> {
+    Ok(register_task_upload_internal(&app, request).await?)
 }
 
 #[tauri::command]
-pub async fn delete_tasks(request: DeleteTasksCommandRequest) -> Result<(), String> {
-    Ok(delete_tasks_internal(request)?)
+pub async fn delete_tasks(
+    app: AppHandle,
+    request: DeleteTasksCommandRequest,
+) -> Result<(), String> {
+    Ok(delete_tasks_internal(&app, request).await?)
 }
 
 #[tauri::command]
@@ -83,7 +92,7 @@ pub async fn enqueue_task_run(
     app: AppHandle,
     request: EnqueueTaskRunCommandRequest,
 ) -> Result<(), String> {
-    Ok(enqueue_task_run_internal(&app, request)?)
+    Ok(enqueue_task_run_internal(&app, request).await?)
 }
 
 #[tauri::command]
@@ -91,7 +100,7 @@ pub async fn update_task_languages(
     app: AppHandle,
     request: UpdateTaskLanguagesCommandRequest,
 ) -> Result<(), String> {
-    Ok(update_task_languages_internal(&app, request)?)
+    Ok(update_task_languages_internal(&app, request).await?)
 }
 
 #[tauri::command]
@@ -100,11 +109,13 @@ pub async fn save_subtitle_editor(
     request: SaveSubtitleEditorCommandRequest,
 ) -> Result<(), String> {
     let task_id = require_task_id(&request.task_id)?;
-    ensure_workspace_hydrated_from_disk()?;
-    Ok(patch_task_item(&app, task_id, |task| {
+    ensure_workspace_hydrated_from_db(&app).await?;
+    patch_task_item(&app, task_id, |task| {
         task.item.result_srt = request.content;
         task.item.subtitle_segments_json = request.subtitle_segments_json;
-    })?)
+    })
+    .await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -136,7 +147,7 @@ pub async fn enqueue_and_execute_task_batch(
     let mut execute_items = Vec::<ExecuteTaskRunCommandRequest>::new();
 
     for item in request.items {
-        match enqueue_task_run_internal(&app, item.clone()) {
+        match enqueue_task_run_internal(&app, item.clone()).await {
             Ok(()) => execute_items.push(ExecuteTaskRunCommandRequest {
                 task_id: item.id,
                 intent: Some(item.intent),
@@ -167,40 +178,34 @@ pub fn task_subtitle_beautify_context(
     ))
 }
 
-fn patch_task_item(
+async fn patch_task_item(
     app: &AppHandle,
     task_id: &str,
     mutator: impl FnOnce(&mut WorkspaceTaskRecord),
 ) -> WorkspaceResult<()> {
-    let updated_item = {
-        let mut store = lock_workspace_store()?;
-        let Some(task) = find_task_mut(&mut store, task_id) else {
+    let mut updated = {
+        let store = lock_workspace_store()?;
+        let Some(task) = store
+            .tasks()
+            .iter()
+            .find(|entry| entry.item.id == task_id)
+        else {
             return Err(WorkspaceError::TaskNotFound(task_id.to_string()));
         };
-        persist_task_record_update(task, mutator)?
+        task.clone()
     };
+    mutator(&mut updated);
+    let db_store = app.state::<TaskStore>().inner();
+    crate::commands::workspace::meta::persist_task_meta(db_store, &updated).await?;
+    let updated_item = updated.item.clone();
+    {
+        let mut store = lock_workspace_store()?;
+        if let Some(task) = find_task_mut(&mut store, task_id) {
+            *task = updated;
+        }
+    }
     emit_task_state_changed(app, &updated_item);
     Ok(())
-}
-
-fn persist_task_record_update(
-    record: &mut WorkspaceTaskRecord,
-    mutator: impl FnOnce(&mut WorkspaceTaskRecord),
-) -> WorkspaceResult<WorkspaceQueueItem> {
-    update_task_record_with_persist(record, mutator, persist_task_meta)
-}
-
-fn update_task_record_with_persist(
-    record: &mut WorkspaceTaskRecord,
-    mutator: impl FnOnce(&mut WorkspaceTaskRecord),
-    persist: impl FnOnce(&WorkspaceTaskRecord) -> WorkspaceResult<()>,
-) -> WorkspaceResult<WorkspaceQueueItem> {
-    let mut updated = record.clone();
-    mutator(&mut updated);
-    persist(&updated)?;
-    let item = updated.item.clone();
-    *record = updated;
-    Ok(item)
 }
 
 fn get_task_record(task_id: &str) -> WorkspaceResult<WorkspaceTaskRecord> {
@@ -223,7 +228,9 @@ fn require_task_id(task_id: &str) -> WorkspaceResult<&str> {
 
 pub fn get_task_queue_item_for_export(task_id: &str) -> WorkspaceResult<WorkspaceQueueItem> {
     let normalized = require_task_id(task_id)?;
-    ensure_workspace_hydrated_from_disk()?;
+    if !is_workspace_hydrated() {
+        return Err(WorkspaceError::LockPoisoned);
+    }
     let record = get_task_record(normalized)?;
     Ok(record.item)
 }
@@ -234,18 +241,20 @@ pub fn add_task_total_tokens(task_id: &str, delta_tokens: u64) -> WorkspaceResul
         return Ok(0);
     }
 
-    ensure_workspace_hydrated_from_disk()?;
-    let updated_total = {
-        let mut store = lock_workspace_store()?;
-        let Some(task) = find_task_mut(&mut store, task_id) else {
-            return Ok(0);
-        };
-        let item = persist_task_record_update(task, |task| {
-            task.item.llm_total_tokens = task.item.llm_total_tokens.saturating_add(delta_tokens);
-        })?;
-        item.llm_total_tokens
+    if !is_workspace_hydrated() {
+        // Workspace not yet hydrated; skip until next persist.
+        return Ok(0);
+    }
+    let mut store = lock_workspace_store()?;
+    let Some(task) = find_task_mut(&mut store, task_id) else {
+        return Ok(0);
     };
-    Ok(updated_total)
+    task.item.llm_total_tokens = task.item.llm_total_tokens.saturating_add(delta_tokens);
+    let updated = task.item.clone();
+    // DB persistence for token counts is plumbed in Task 12 when
+    // AppHandle flows through the LLM call path; the next
+    // persist_task_meta on this task will write the updated count.
+    Ok(updated.llm_total_tokens)
 }
 
 pub fn get_task_total_tokens_from_workspace(task_id: &str) -> WorkspaceResult<u64> {
@@ -254,7 +263,9 @@ pub fn get_task_total_tokens_from_workspace(task_id: &str) -> WorkspaceResult<u6
         return Ok(0);
     }
 
-    ensure_workspace_hydrated_from_disk()?;
+    if !is_workspace_hydrated() {
+        return Ok(0);
+    }
     let store = lock_workspace_store()?;
     let Some(task) = store.tasks().iter().find(|entry| entry.item.id == task_id) else {
         return Ok(0);
@@ -340,45 +351,6 @@ mod tests {
 
         assert_eq!(err.code(), "INVALID_REQUEST");
         assert_eq!(err.to_string(), "invalid request: taskId is required");
-    }
-
-    #[test]
-    fn task_record_update_keeps_original_record_when_persist_fails() {
-        let mut record = test_workspace_record("task-1");
-
-        let err = update_task_record_with_persist(
-            &mut record,
-            |task| {
-                task.item.name = "updated.mp4".to_string();
-            },
-            |_| {
-                Err(WorkspaceError::Io(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "cannot persist task meta",
-                )))
-            },
-        )
-        .expect_err("persist failure should abort the record update");
-
-        assert_eq!(err.code(), "IO_ERROR");
-        assert_eq!(record.item.name, "demo.mp4");
-    }
-
-    #[test]
-    fn task_record_update_replaces_record_after_persist_succeeds() {
-        let mut record = test_workspace_record("task-1");
-
-        let item = update_task_record_with_persist(
-            &mut record,
-            |task| {
-                task.item.name = "updated.mp4".to_string();
-            },
-            |_| Ok(()),
-        )
-        .expect("persist success should update the record");
-
-        assert_eq!(item.name, "updated.mp4");
-        assert_eq!(record.item.name, "updated.mp4");
     }
 
     fn test_workspace_record(task_id: &str) -> WorkspaceTaskRecord {
