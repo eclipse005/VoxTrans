@@ -26,9 +26,7 @@ pub(super) async fn update_subtitle_preview(
     .await?;
     let store = app.state::<TaskStore>().inner().clone();
     let parsed = parse_segments(&subtitle_segments_json);
-    if let Err(e) =
-        tauri::async_runtime::block_on(async { store.replace_segments(task_id, &parsed).await })
-    {
+    if let Err(e) = store.replace_segments(task_id, &parsed).await {
         eprintln!("warn: persist segments {task_id} failed: {e}");
     }
     Ok(())

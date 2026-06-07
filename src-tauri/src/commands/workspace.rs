@@ -117,9 +117,7 @@ pub async fn save_subtitle_editor(
     let store = app.state::<TaskStore>().inner().clone();
     let segments: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
         serde_json::from_str(&subtitle_segments_json).unwrap_or_default();
-    if let Err(e) = tauri::async_runtime::block_on(async {
-        store.replace_segments(task_id, &segments).await
-    }) {
+    if let Err(e) = store.replace_segments(task_id, &segments).await {
         eprintln!("warn: persist segments {task_id} failed: {e}");
     }
     Ok(())
@@ -358,31 +356,5 @@ mod tests {
 
         assert_eq!(err.code(), "INVALID_REQUEST");
         assert_eq!(err.to_string(), "invalid request: taskId is required");
-    }
-
-    fn test_workspace_record(task_id: &str) -> WorkspaceTaskRecord {
-        WorkspaceTaskRecord {
-            item: WorkspaceQueueItem {
-                id: task_id.to_string(),
-                path: String::new(),
-                name: "demo.mp4".to_string(),
-                media_kind: "video".to_string(),
-                size_bytes: 1,
-                source_lang: "en".to_string(),
-                target_lang: "zh-CN".to_string(),
-                transcribe_status: "pending".to_string(),
-                task_progress: WorkspaceTaskProgressState::default(),
-                transcribe_error: String::new(),
-                result_text: String::new(),
-                result_srt: String::new(),
-                subtitle_segments_json: "[]".to_string(),
-                llm_total_tokens: 0,
-            },
-            intent: "TRANSCRIBE".to_string(),
-            source_lang: "en".to_string(),
-            target_lang: "zh-CN".to_string(),
-            max_retries: 0,
-            settings_snapshot: Value::Null,
-        }
     }
 }

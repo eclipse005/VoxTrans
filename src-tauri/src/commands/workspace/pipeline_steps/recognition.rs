@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use tokio::runtime::Handle;
 
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 
@@ -87,14 +88,30 @@ impl PipelineStep for Step1AsrPipelineStep {
                             TaskStage::Aligning
                         }
                     };
-                    let _ = tauri::async_runtime::block_on(report_task_stage(
+                    let report = report_task_stage(
                         &app_for_progress,
                         &task_id_owned,
                         task_stage,
                         format!("{current}/{total}"),
                         current as u32,
                         total as u32,
-                    ));
+                    );
+                    // spawn_blocking workers are tokio runtime threads, so plain
+                    // tauri::async_runtime::block_on would panic with
+                    // "Cannot start a runtime from within a runtime". Use
+                    // block_in_place on multi-thread runtimes, otherwise drop
+                    // the progress report silently.
+                    match Handle::try_current() {
+                        Ok(handle)
+                            if handle.runtime_flavor()
+                                == tokio::runtime::RuntimeFlavor::MultiThread =>
+                        {
+                            let _ = tokio::task::block_in_place(|| {
+                                handle.block_on(report)
+                            });
+                        }
+                        _ => {}
+                    }
                 },
             )
         })

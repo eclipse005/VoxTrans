@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tauri::AppHandle;
+use tokio::runtime::Handle;
 
 use crate::commands::translate_step5_commands::{
     build_step_5_1_source_split_with_progress, build_step_5_2_translation_align_with_progress,
@@ -31,14 +32,27 @@ fn subtitle_layout_progress(
         } else {
             String::new()
         };
-        let _ = tauri::async_runtime::block_on(report_task_stage(
+        let report = report_task_stage(
             &app_for_progress,
             &task_id,
             TaskStage::SubtitleLayout,
             format!("{label} {detail}"),
             current as u32,
             total as u32,
-        ));
+        );
+        // The progress callback is invoked from the LLM HTTP client thread,
+        // which may already be a tokio runtime worker; plain block_on would
+        // panic. Use block_in_place on multi-thread runtimes.
+        match Handle::try_current() {
+            Ok(handle)
+                if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
+            {
+                let _ = tokio::task::block_in_place(|| handle.block_on(report));
+            }
+            _ => {
+                let _ = tauri::async_runtime::block_on(report);
+            }
+        }
     })
 }
 

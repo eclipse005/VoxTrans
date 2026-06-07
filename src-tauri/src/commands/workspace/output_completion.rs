@@ -22,12 +22,14 @@ fn parse_segments(
     serde_json::from_str(json).unwrap_or_default()
 }
 
-fn persist_segments_to_db(app: &AppHandle, task_id: &str, subtitle_segments_json: &str) {
+async fn persist_segments_to_db(
+    app: &AppHandle,
+    task_id: &str,
+    subtitle_segments_json: &str,
+) {
     let store = app.state::<TaskStore>().inner().clone();
     let segments = parse_segments(subtitle_segments_json);
-    if let Err(e) =
-        tauri::async_runtime::block_on(async { store.replace_segments(task_id, &segments).await })
-    {
+    if let Err(e) = store.replace_segments(task_id, &segments).await {
         eprintln!("warn: persist segments {task_id} failed: {e}");
     }
 }
@@ -67,7 +69,7 @@ pub(super) async fn finish_transcribe_only(
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
     })
     .await?;
-    persist_segments_to_db(app, task_id, &subtitle_segments_json);
+    persist_segments_to_db(app, task_id, &subtitle_segments_json).await;
     Ok(())
 }
 
@@ -105,7 +107,7 @@ pub(super) async fn finish_translate_with_step5(
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
     })
     .await?;
-    persist_segments_to_db(app, task_id, &subtitle_segments_json);
+    persist_segments_to_db(app, task_id, &subtitle_segments_json).await;
     Ok(())
 }
 
