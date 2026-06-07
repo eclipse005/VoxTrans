@@ -6,7 +6,6 @@ use crate::domain::task::stage::TaskStage;
 
 mod artifact_migration;
 mod execution_flow;
-mod json_files;
 mod log_payload;
 mod meta;
 mod output_completion;
@@ -39,7 +38,6 @@ struct WorkspaceTaskRecord {
     settings_snapshot: Value,
 }
 
-const TASK_META_FILE_NAME: &str = "task_meta.json";
 const STEP_01_ASR_FILE: &str = "step_01_asr.json";
 const STEP_02_SEGMENTS_FILE: &str = "step_02_segments.json";
 const STEP_03_TERMINOLOGY_FILE: &str = "step_03_terminology.json";
