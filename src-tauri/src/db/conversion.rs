@@ -3,7 +3,10 @@
 //! `from_business` and `to_business` are pure functions, tested in isolation.
 //! They do not touch the database.
 
-use crate::db::models::{SettingsRow, SubtitleSegmentRow, SubtitleWordRow};
+use crate::commands::workspace::{
+    WorkspaceQueueItem, WorkspaceTaskProgressState, WorkspaceTaskStageState,
+};
+use crate::db::models::{SettingsRow, SubtitleSegmentRow, SubtitleWordRow, TaskRow};
 use crate::services::preferences_types::{
     SavedSettings, SubtitleLayoutStyle, SubtitleLineStyle, SubtitleRenderStyle,
 };
@@ -159,6 +162,70 @@ pub fn row_from_segment(
     (seg_row, word_rows)
 }
 
+pub fn task_from_row(row: TaskRow) -> WorkspaceQueueItem {
+    WorkspaceQueueItem {
+        id: row.id,
+        path: row.media_path,
+        name: row.name,
+        media_kind: row.media_kind,
+        size_bytes: row.size_bytes,
+        source_lang: row.source_lang,
+        target_lang: row.target_lang,
+        transcribe_status: row.transcribe_status,
+        task_progress: WorkspaceTaskProgressState {
+            stage: WorkspaceTaskStageState {
+                code: row.task_progress_stage_code,
+                label: row.task_progress_stage_label,
+                order: row.task_progress_stage_order,
+                detail: row.task_progress_detail,
+                current: row.task_progress_current,
+                total: row.task_progress_total,
+            },
+        },
+        transcribe_error: row.transcribe_error,
+        result_text: row.result_text,
+        result_srt: row.result_srt,
+        subtitle_segments_json: String::new(), // composed in store.rs from subtitle_segments
+        llm_total_tokens: row.llm_total_tokens,
+    }
+}
+
+pub fn row_from_task(item: &WorkspaceQueueItem) -> TaskRow {
+    TaskRow {
+        id: item.id.clone(),
+        media_path: item.path.clone(),
+        name: item.name.clone(),
+        media_kind: item.media_kind.clone(),
+        size_bytes: item.size_bytes,
+        source_lang: item.source_lang.clone(),
+        target_lang: item.target_lang.clone(),
+        transcribe_status: item.transcribe_status.clone(),
+        task_progress_stage_code: item.task_progress.stage.code.clone(),
+        task_progress_stage_label: item.task_progress.stage.label.clone(),
+        task_progress_stage_order: item.task_progress.stage.order,
+        task_progress_detail: item.task_progress.stage.detail.clone(),
+        task_progress_current: item.task_progress.stage.current,
+        task_progress_total: item.task_progress.stage.total,
+        transcribe_error: item.transcribe_error.clone(),
+        result_text: item.result_text.clone(),
+        result_srt: item.result_srt.clone(),
+        llm_total_tokens: item.llm_total_tokens,
+        intent: String::new(),        // set by caller
+        max_retries: 0,               // set by caller
+        settings_snapshot_provider: String::new(),
+        settings_snapshot_asr_model: String::new(),
+        settings_snapshot_align_model: String::new(),
+        settings_snapshot_demucs_model: String::new(),
+        settings_snapshot_translate_api_key: String::new(),
+        settings_snapshot_translate_base_url: String::new(),
+        settings_snapshot_translate_model: String::new(),
+        settings_snapshot_llm_concurrency: 0,
+        settings_snapshot_chunk_target_seconds: 0,
+        settings_snapshot_enable_vocal_separation: false,
+        updated_at: now_ms(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,5 +295,50 @@ mod tests {
         // composed fields are empty here (filled by store.rs)
         assert!(restored.terminology_groups.is_empty());
         assert!(restored.flat_srt_items.is_empty());
+    }
+
+    #[test]
+    fn task_roundtrip_preserves_core_fields() {
+        let original = WorkspaceQueueItem {
+            id: "task-1".into(),
+            path: "/tmp/a.mp3".into(),
+            name: "a.mp3".into(),
+            media_kind: "audio".into(),
+            size_bytes: 1024,
+            source_lang: "en".into(),
+            target_lang: "zh-CN".into(),
+            transcribe_status: "processing".into(),
+            task_progress: WorkspaceTaskProgressState {
+                stage: WorkspaceTaskStageState {
+                    code: "recognizing".into(),
+                    label: "语音识别中".into(),
+                    order: 30,
+                    detail: "chunk 5/10".into(),
+                    current: 5,
+                    total: 10,
+                },
+            },
+            transcribe_error: "".into(),
+            result_text: "hello".into(),
+            result_srt: "1\n00:00:00,000 --> 00:00:01,000\nhello".into(),
+            subtitle_segments_json: "[]".into(),
+            llm_total_tokens: 42,
+        };
+        let row = row_from_task(&original);
+        let restored = task_from_row(row);
+
+        assert_eq!(restored.id, original.id);
+        assert_eq!(restored.path, original.path);
+        assert_eq!(restored.transcribe_status, original.transcribe_status);
+        assert_eq!(restored.task_progress.stage.code, original.task_progress.stage.code);
+        assert_eq!(restored.task_progress.stage.label, original.task_progress.stage.label);
+        assert_eq!(restored.task_progress.stage.order, original.task_progress.stage.order);
+        assert_eq!(restored.task_progress.stage.detail, original.task_progress.stage.detail);
+        assert_eq!(restored.task_progress.stage.current, original.task_progress.stage.current);
+        assert_eq!(restored.task_progress.stage.total, original.task_progress.stage.total);
+        assert_eq!(restored.llm_total_tokens, original.llm_total_tokens);
+
+        // subtitle_segments_json is a placeholder; composed in store.rs
+        assert_eq!(restored.subtitle_segments_json, String::new());
     }
 }
