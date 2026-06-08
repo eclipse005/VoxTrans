@@ -407,12 +407,7 @@ impl TaskStore {
              transcribe_status, task_progress_stage_code, task_progress_stage_label, \
              task_progress_stage_order, task_progress_detail, task_progress_current, \
              task_progress_total, transcribe_error, result_text, result_srt, llm_total_tokens, \
-             intent, max_retries, settings_snapshot_provider, settings_snapshot_asr_model, \
-             settings_snapshot_align_model, settings_snapshot_demucs_model, \
-             settings_snapshot_translate_api_key, settings_snapshot_translate_base_url, \
-             settings_snapshot_translate_model, settings_snapshot_llm_concurrency, \
-             settings_snapshot_chunk_target_seconds, settings_snapshot_enable_vocal_separation, \
-             updated_at FROM tasks ORDER BY updated_at DESC",
+             intent, max_retries, updated_at FROM tasks ORDER BY updated_at DESC",
         )
         .fetch_all(&self.pool)
         .await
@@ -441,22 +436,6 @@ impl TaskStore {
                 llm_total_tokens: r.get::<i64, _>("llm_total_tokens") as u64,
                 intent: r.get("intent"),
                 max_retries: r.get::<i64, _>("max_retries") as u32,
-                settings_snapshot_provider: r.get("settings_snapshot_provider"),
-                settings_snapshot_asr_model: r.get("settings_snapshot_asr_model"),
-                settings_snapshot_align_model: r.get("settings_snapshot_align_model"),
-                settings_snapshot_demucs_model: r.get("settings_snapshot_demucs_model"),
-                settings_snapshot_translate_api_key: r.get("settings_snapshot_translate_api_key"),
-                settings_snapshot_translate_base_url: r.get("settings_snapshot_translate_base_url"),
-                settings_snapshot_translate_model: r.get("settings_snapshot_translate_model"),
-                settings_snapshot_llm_concurrency: r
-                    .get::<i64, _>("settings_snapshot_llm_concurrency")
-                    as u32,
-                settings_snapshot_chunk_target_seconds: r
-                    .get::<i64, _>("settings_snapshot_chunk_target_seconds")
-                    as u32,
-                settings_snapshot_enable_vocal_separation: r
-                    .get::<i64, _>("settings_snapshot_enable_vocal_separation")
-                    != 0,
                 updated_at: r.get("updated_at"),
             };
             out.push(task_from_row(row));
@@ -472,13 +451,8 @@ impl TaskStore {
              task_progress_stage_label, task_progress_stage_order, task_progress_detail, \
              task_progress_current, task_progress_total, transcribe_error, result_text, \
              result_srt, llm_total_tokens, intent, max_retries, \
-             settings_snapshot_provider, settings_snapshot_asr_model, \
-             settings_snapshot_align_model, settings_snapshot_demucs_model, \
-             settings_snapshot_translate_api_key, settings_snapshot_translate_base_url, \
-             settings_snapshot_translate_model, settings_snapshot_llm_concurrency, \
-             settings_snapshot_chunk_target_seconds, settings_snapshot_enable_vocal_separation, \
              updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
+             ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
              media_path=excluded.media_path, name=excluded.name, media_kind=excluded.media_kind, \
              size_bytes=excluded.size_bytes, source_lang=excluded.source_lang, \
              target_lang=excluded.target_lang, transcribe_status=excluded.transcribe_status, \
@@ -490,6 +464,7 @@ impl TaskStore {
              task_progress_total=excluded.task_progress_total, \
              transcribe_error=excluded.transcribe_error, result_text=excluded.result_text, \
              result_srt=excluded.result_srt, llm_total_tokens=excluded.llm_total_tokens, \
+             intent=excluded.intent, max_retries=excluded.max_retries, \
              updated_at=excluded.updated_at",
         )
         .bind(&row.id)
@@ -512,16 +487,6 @@ impl TaskStore {
         .bind(row.llm_total_tokens as i64)
         .bind(&row.intent)
         .bind(row.max_retries as i64)
-        .bind(&row.settings_snapshot_provider)
-        .bind(&row.settings_snapshot_asr_model)
-        .bind(&row.settings_snapshot_align_model)
-        .bind(&row.settings_snapshot_demucs_model)
-        .bind(&row.settings_snapshot_translate_api_key)
-        .bind(&row.settings_snapshot_translate_base_url)
-        .bind(&row.settings_snapshot_translate_model)
-        .bind(row.settings_snapshot_llm_concurrency as i64)
-        .bind(row.settings_snapshot_chunk_target_seconds as i64)
-        .bind(row.settings_snapshot_enable_vocal_separation as i64)
         .bind(row.updated_at)
         .execute(&self.pool)
         .await

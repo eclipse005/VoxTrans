@@ -202,16 +202,6 @@ pub fn row_from_task(item: &WorkspaceQueueItem) -> TaskRow {
         llm_total_tokens: item.llm_total_tokens,
         intent: String::new(),        // set by caller
         max_retries: 0,               // set by caller
-        settings_snapshot_provider: String::new(),
-        settings_snapshot_asr_model: String::new(),
-        settings_snapshot_align_model: String::new(),
-        settings_snapshot_demucs_model: String::new(),
-        settings_snapshot_translate_api_key: String::new(),
-        settings_snapshot_translate_base_url: String::new(),
-        settings_snapshot_translate_model: String::new(),
-        settings_snapshot_llm_concurrency: 0,
-        settings_snapshot_chunk_target_seconds: 0,
-        settings_snapshot_enable_vocal_separation: false,
         updated_at: now_ms(),
     }
 }

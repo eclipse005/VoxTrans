@@ -71,16 +71,6 @@ CREATE TABLE tasks (
     llm_total_tokens INTEGER NOT NULL DEFAULT 0,
     intent TEXT NOT NULL DEFAULT '',
     max_retries INTEGER NOT NULL DEFAULT 0,
-    settings_snapshot_provider TEXT NOT NULL DEFAULT '',
-    settings_snapshot_asr_model TEXT NOT NULL DEFAULT '',
-    settings_snapshot_align_model TEXT NOT NULL DEFAULT '',
-    settings_snapshot_demucs_model TEXT NOT NULL DEFAULT '',
-    settings_snapshot_translate_api_key TEXT NOT NULL DEFAULT '',
-    settings_snapshot_translate_base_url TEXT NOT NULL DEFAULT '',
-    settings_snapshot_translate_model TEXT NOT NULL DEFAULT '',
-    settings_snapshot_llm_concurrency INTEGER NOT NULL DEFAULT 0,
-    settings_snapshot_chunk_target_seconds INTEGER NOT NULL DEFAULT 0,
-    settings_snapshot_enable_vocal_separation INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL
 );
 

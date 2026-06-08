@@ -77,16 +77,6 @@ pub struct TaskRow {
     pub llm_total_tokens: u64,
     pub intent: String,
     pub max_retries: u32,
-    pub settings_snapshot_provider: String,
-    pub settings_snapshot_asr_model: String,
-    pub settings_snapshot_align_model: String,
-    pub settings_snapshot_demucs_model: String,
-    pub settings_snapshot_translate_api_key: String,
-    pub settings_snapshot_translate_base_url: String,
-    pub settings_snapshot_translate_model: String,
-    pub settings_snapshot_llm_concurrency: u32,
-    pub settings_snapshot_chunk_target_seconds: u32,
-    pub settings_snapshot_enable_vocal_separation: bool,
     pub updated_at: i64,
 }
 
