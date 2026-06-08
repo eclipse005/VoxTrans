@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use tauri::{AppHandle, Manager};
 
 use crate::db::store::TaskStore;
@@ -12,7 +10,6 @@ use crate::domain::task::adapters::{
 };
 use crate::domain::task::runtime_settings::resolve_runtime_settings;
 
-use super::artifact_migration::migrate_legacy_artifacts;
 use super::output_completion::finish_transcribe_only;
 use super::pipeline_runner::execute_workspace_step;
 use super::pipeline_steps::{Step1AsrPipelineStep, Step2SegmentsPipelineStep};
@@ -43,16 +40,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
         resolve_runtime_settings(store, &record.settings_snapshot, intent == "TRANSCRIBE_TRANSLATE")?;
     let mut source_lang = normalize_task_source_lang(&record.source_lang);
     let target_lang = normalize_task_target_lang(&record.target_lang);
-    let task_output_dir =
-        crate::services::task_path::task_output_dir(task_id, Path::new(&record.item.path));
-    std::fs::create_dir_all(&task_output_dir)?;
-    let artifact_dir =
-        crate::services::task_path::task_artifacts_dir(task_id, Path::new(&record.item.path));
-    std::fs::create_dir_all(&artifact_dir)?;
-    migrate_legacy_artifacts(&task_output_dir, &artifact_dir)?;
-    let step_context = StepContext {
-        output_dir: &artifact_dir,
-    };
+    let step_context = StepContext { task_id, store };
 
     report_task_stage(app, task_id, TaskStage::Preparing, "", 1, 1).await?;
     patch_task_item(app, task_id, |task| {
@@ -75,6 +63,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             app: app.clone(),
         },
         &step_context,
+        store,
     )
     .await?;
 
@@ -105,6 +94,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             words: step2_words,
         },
         &step_context,
+        store,
     )
     .await?;
     let step2_segments = step2_exec.output;
@@ -126,9 +116,9 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             runtime,
             source_lang,
             target_lang,
-            &artifact_dir,
             &step2_segments,
             source_text,
+            store,
         )
         .await
     } else {

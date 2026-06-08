@@ -4,13 +4,12 @@ use tokio::time::sleep;
 
 use crate::services::task_usage::{LlmTokenUsage as TaskUsage, record_llm_usage_best_effort};
 
-use super::cache::{append_cache_entry, read_cache_hit};
 use super::chat_completions::call_chat_completion;
 use super::error::{LlmError, LlmErrorKind};
 use super::event_payload::{
-    attempt_base_payload, cache_hit_payload, cache_invalid_payload, http_error_attempt_payload,
+    attempt_base_payload, http_error_attempt_payload,
     invalid_semantic_attempt_payload, log_llm_call, logger_for_context,
-    repair_failed_attempt_payload, repair_requested_payload, should_persist_artifacts,
+    repair_failed_attempt_payload, repair_requested_payload,
     success_attempt_payload,
 };
 use super::json_guard::{
@@ -74,53 +73,6 @@ impl OpenAiCompatLlmClient {
         F: Fn(Value) -> Result<T, LlmSemanticValidationError>,
     {
         let logger = logger_for_context(context);
-        let persist_artifacts = should_persist_artifacts(context);
-
-        if persist_artifacts
-            && let Some(cache_hit) =
-                read_cache_hit(context, &self.config, "", user_prompt, response_validator)
-        {
-            if let Some(validator) = response_validator {
-                if let Err(err) = validator.validate(&cache_hit.json) {
-                    log_llm_call(
-                        logger.as_ref(),
-                        cache_invalid_payload(
-                            "cache_invalid_schema",
-                            err.message,
-                            context,
-                            request_id,
-                        ),
-                    );
-                } else {
-                    match semantic_validate(cache_hit.json.clone()) {
-                        Ok(value) => {
-                            log_llm_call(
-                                logger.as_ref(),
-                                cache_hit_payload(&self.config, context, request_id),
-                            );
-                            return Ok(LlmValidatedJsonResult { value });
-                        }
-                        Err(LlmSemanticValidationError::Retryable(message)) => {
-                            log_llm_call(
-                                logger.as_ref(),
-                                cache_invalid_payload(
-                                    "cache_invalid_semantic",
-                                    message,
-                                    context,
-                                    request_id,
-                                ),
-                            );
-                        }
-                    }
-                }
-            } else if let Ok(value) = semantic_validate(cache_hit.json.clone()) {
-                log_llm_call(
-                    logger.as_ref(),
-                    cache_hit_payload(&self.config, context, request_id),
-                );
-                return Ok(LlmValidatedJsonResult { value });
-            }
-        }
 
         let max_attempts = self.config.max_retries.saturating_add(1).max(1);
         let started = std::time::Instant::now();
@@ -220,18 +172,6 @@ impl OpenAiCompatLlmClient {
 
                     match semantic_validate(parsed.value.clone()) {
                         Ok(value) => {
-                            if persist_artifacts {
-                                append_cache_entry(
-                                    context,
-                                    &self.config,
-                                    "",
-                                    user_prompt,
-                                    response_validator,
-                                    &raw_text,
-                                    &parsed.value,
-                                    &usage,
-                                );
-                            }
                             let elapsed_ms = started.elapsed().as_millis();
                             log_llm_call(
                                 logger.as_ref(),
@@ -244,17 +184,15 @@ impl OpenAiCompatLlmClient {
                                     &usage,
                                 ),
                             );
-                            if persist_artifacts {
-                                record_llm_usage_best_effort(
-                                    &context.task_id,
-                                    &context.phase,
-                                    TaskUsage {
-                                        prompt_tokens: usage.prompt_tokens,
-                                        completion_tokens: usage.completion_tokens,
-                                        total_tokens: usage.total_tokens,
-                                    },
-                                );
-                            }
+                            record_llm_usage_best_effort(
+                                &context.task_id,
+                                &context.phase,
+                                TaskUsage {
+                                    prompt_tokens: usage.prompt_tokens,
+                                    completion_tokens: usage.completion_tokens,
+                                    total_tokens: usage.total_tokens,
+                                },
+                            );
 
                             return Ok(LlmValidatedJsonResult { value });
                         }

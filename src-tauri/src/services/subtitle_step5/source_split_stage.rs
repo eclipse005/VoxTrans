@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::services::llm::batch::run_indexed_concurrent_with_progress;
+use crate::services::llm::batch::run_indexed_concurrent_idempotent;
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 use crate::services::prompts::subtitle_step5::build_source_split_prompt;
@@ -230,8 +230,25 @@ async fn run_llm_split_round(
         media_path: Some(request.media_path.clone()),
         phase: "step_5_1_source_split".to_string(),
     };
+
+    // Build precomputed map from domain table.
+    type SplitResult = (usize, (usize, usize), Vec<usize>);
+    let (precomputed, persist_store) = if let Some(ref us) = request.unit_store {
+        let rows = us.load_source_splits().await.unwrap_or_default();
+        let mut map = HashMap::<usize, SplitResult>::new();
+        for row in rows {
+            map.insert(
+                row.work_index,
+                (row.work_index, (row.segment_start, row.segment_end), row.boundary_positions),
+            );
+        }
+        (map, Some(us.clone()))
+    } else {
+        (HashMap::new(), None)
+    };
+
     let llm_task_snapshot = llm_tasks.clone();
-    let results = run_indexed_concurrent_with_progress(
+    let results = run_indexed_concurrent_idempotent(
         tasks,
         request.llm_concurrency.max(1) as usize,
         {
@@ -292,6 +309,24 @@ async fn run_llm_split_round(
         },
         |msg| msg,
         |_done, _total| {},
+        precomputed,
+        move |idx: usize, val: SplitResult| {
+            let store = persist_store.clone();
+            async move {
+                if let Some(ref us) = store {
+                    us.save_source_split(
+                        &crate::services::pipeline::SourceSplitRow {
+                            work_index: idx,
+                            segment_start: val.1 .0,
+                            segment_end: val.1 .1,
+                            boundary_positions: val.2,
+                        },
+                    )
+                    .await?;
+                }
+                Ok(())
+            }
+        },
     )
     .await;
 

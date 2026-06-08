@@ -1,8 +1,7 @@
-use std::path::Path;
-
 use tauri::AppHandle;
 
 use crate::commands::translate_types::BuildTranslationSegmentCommand;
+use crate::db::store::TaskStore;
 use crate::domain::error::WorkspaceResult;
 use crate::domain::task::adapters::{
     map_step2_segments_for_translate, translation_segments_from_step52_parents,
@@ -31,11 +30,11 @@ pub(super) async fn execute_translate_steps(
     runtime: PipelineRuntimeSettings,
     source_lang: String,
     target_lang: String,
-    output_dir: &Path,
     step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
     source_text: String,
+    store: &TaskStore,
 ) -> WorkspaceResult<()> {
-    let step_context = StepContext { output_dir };
+    let step_context = StepContext { task_id, store };
     report_task_stage(app, task_id, TaskStage::Terminology, "", 0, 1).await?;
 
     let terminology_segments = map_step2_segments_for_translate(step2_segments);
@@ -54,6 +53,7 @@ pub(super) async fn execute_translate_steps(
             app: app.clone(),
         },
         &step_context,
+        store,
     )
     .await?;
     let step3_response = step3_exec.output;
@@ -87,6 +87,7 @@ pub(super) async fn execute_translate_steps(
             app: app.clone(),
         },
         &step_context,
+        store,
     )
     .await?;
 
@@ -116,6 +117,7 @@ pub(super) async fn execute_translate_steps(
             app: app.clone(),
         },
         &step_context,
+        store,
     )
     .await?;
 
@@ -155,6 +157,7 @@ pub(super) async fn execute_translate_steps(
             app: app.clone(),
         },
         &step_context,
+        store,
     )
     .await?;
 

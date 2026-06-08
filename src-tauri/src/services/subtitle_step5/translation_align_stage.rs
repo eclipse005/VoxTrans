@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::services::llm::batch::run_indexed_concurrent_with_progress;
+use crate::services::llm::batch::run_indexed_concurrent_idempotent;
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 use crate::services::prompts::subtitle_step5::{
@@ -372,7 +372,20 @@ async fn align_once(
             phase: "step_5_2_translation_align".to_string(),
         };
         let split_tasks_for_worker = split_tasks.clone();
-        let results = run_indexed_concurrent_with_progress(
+
+        // Build precomputed map from domain table.
+        let (precomputed, persist_store) = if let Some(ref us) = request.unit_store {
+            let rows = us.load_translation_aligns().await.unwrap_or_default();
+            let mut map = HashMap::<usize, Vec<String>>::new();
+            for row in rows {
+                map.insert(row.parent_index, row.aligned_lines);
+            }
+            (map, Some(us.clone()))
+        } else {
+            (HashMap::new(), None)
+        };
+
+        let results = run_indexed_concurrent_idempotent(
             tasks,
             request.llm_concurrency.max(1) as usize,
             {
@@ -410,6 +423,22 @@ async fn align_once(
             },
             |msg| msg,
             |_done, _total| {},
+            precomputed,
+            move |idx: usize, val: Vec<String>| {
+                let store = persist_store.clone();
+                async move {
+                    if let Some(ref us) = store {
+                        us.save_translation_align(
+                            &crate::services::pipeline::TranslationAlignRow {
+                                parent_index: idx,
+                                aligned_lines: val,
+                            },
+                        )
+                        .await?;
+                    }
+                    Ok(())
+                }
+            },
         )
         .await;
 

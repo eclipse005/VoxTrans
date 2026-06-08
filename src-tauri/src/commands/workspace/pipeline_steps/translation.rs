@@ -5,7 +5,7 @@ use tauri::AppHandle;
 use tokio::runtime::Handle;
 
 use crate::commands::translate_terminology::build_terminology_layer;
-use crate::commands::translate_translation::build_translation_layer_with_progress;
+use crate::commands::translate_translation::build_translation_layer_with_progress_and_unit_store;
 use crate::commands::translate_types::{
     BuildTerminologyLayerCommandRequest, BuildTerminologyLayerCommandResponse,
     BuildTranslationLayerCommandRequest, BuildTranslationLayerCommandResponse,
@@ -14,7 +14,7 @@ use crate::commands::translate_types::{
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 
 use super::super::progress::report_task_stage;
-use super::super::{STEP_03_TERMINOLOGY_FILE, STEP_04_TRANSLATION_FILE, TaskStage};
+use super::super::TaskStage;
 
 #[derive(Debug, Clone)]
 pub(in crate::commands::workspace) struct Step3TerminologyPipelineStep {
@@ -37,10 +37,6 @@ impl PipelineStep for Step3TerminologyPipelineStep {
 
     fn name(&self) -> &'static str {
         "step_03_terminology"
-    }
-
-    fn artifact_file(&self) -> &'static str {
-        STEP_03_TERMINOLOGY_FILE
     }
 
     fn policy(&self) -> CheckpointPolicy {
@@ -98,10 +94,6 @@ impl PipelineStep for Step4TranslationPipelineStep {
         "step_04_translation"
     }
 
-    fn artifact_file(&self) -> &'static str {
-        STEP_04_TRANSLATION_FILE
-    }
-
     fn policy(&self) -> CheckpointPolicy {
         CheckpointPolicy::SkipIfExists
     }
@@ -113,7 +105,7 @@ impl PipelineStep for Step4TranslationPipelineStep {
         Ok(())
     }
 
-    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+    async fn run(&self, ctx: &StepContext<'_>) -> Result<Self::Output, String> {
         let task_id = self.task_id.clone();
         let app_for_progress = self.app.clone();
         let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
@@ -147,7 +139,10 @@ impl PipelineStep for Step4TranslationPipelineStep {
                     }
                 }
             });
-        build_translation_layer_with_progress(
+
+        let unit_store = ctx.unit_store();
+
+        build_translation_layer_with_progress_and_unit_store(
             self.app.clone(),
             BuildTranslationLayerCommandRequest {
                 task_id: self.task_id.clone(),
@@ -164,6 +159,7 @@ impl PipelineStep for Step4TranslationPipelineStep {
                 batch_size: 20,
             },
             Some(on_progress),
+            Some(unit_store),
         )
         .await
     }

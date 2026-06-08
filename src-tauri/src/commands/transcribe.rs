@@ -26,8 +26,10 @@ pub async fn transcribe(
                 provider: request.provider,
                 chunk_target_seconds: request.chunk_target_seconds,
                 model_dir: request.model_dir,
+                precomputed_asr_segments: vec![],
+                precomputed_alignment: vec![],
             },
-            move |stage, current, total| {
+            move |stage, current, total, _fresh_result| {
                 let _ = app_handle.emit(
                     "transcribe-progress",
                     TranscribeProgressEvent {

@@ -5,7 +5,7 @@ use tauri::AppHandle;
 use tokio::runtime::Handle;
 
 use crate::commands::translate_step5_commands::{
-    build_step_5_1_source_split_with_progress, build_step_5_2_translation_align_with_progress,
+    build_step_5_1_source_split_with_progress_and_unit_store, build_step_5_2_translation_align_with_progress_and_unit_store,
 };
 use crate::commands::translate_types::{
     BuildStep51SourceSplitCommandRequest, BuildStep51SourceSplitCommandResponse,
@@ -15,7 +15,7 @@ use crate::commands::translate_types::{
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 
 use super::super::progress::report_task_stage;
-use super::super::{STEP_05_01_SOURCE_SPLIT_FILE, STEP_05_02_TRANSLATION_ALIGN_FILE, TaskStage};
+use super::super::TaskStage;
 
 type ProgressCallback = Arc<dyn Fn(usize, usize) + Send + Sync>;
 
@@ -91,10 +91,6 @@ impl PipelineStep for Step51SourceSplitPipelineStep {
         "step_5_1_source_split"
     }
 
-    fn artifact_file(&self) -> &'static str {
-        STEP_05_01_SOURCE_SPLIT_FILE
-    }
-
     fn policy(&self) -> CheckpointPolicy {
         CheckpointPolicy::SkipIfExists
     }
@@ -108,8 +104,9 @@ impl PipelineStep for Step51SourceSplitPipelineStep {
         )
     }
 
-    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        build_step_5_1_source_split_with_progress(
+    async fn run(&self, ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        let unit_store = ctx.unit_store();
+        build_step_5_1_source_split_with_progress_and_unit_store(
             self.app.clone(),
             BuildStep51SourceSplitCommandRequest {
                 task_id: self.task_id.clone(),
@@ -128,6 +125,7 @@ impl PipelineStep for Step51SourceSplitPipelineStep {
                 &self.task_id,
                 "原文切分",
             )),
+            Some(unit_store),
         )
         .await
     }
@@ -158,10 +156,6 @@ impl PipelineStep for Step52TranslationAlignPipelineStep {
         "step_5_2_translation_align"
     }
 
-    fn artifact_file(&self) -> &'static str {
-        STEP_05_02_TRANSLATION_ALIGN_FILE
-    }
-
     fn policy(&self) -> CheckpointPolicy {
         CheckpointPolicy::SkipIfExists
     }
@@ -175,8 +169,9 @@ impl PipelineStep for Step52TranslationAlignPipelineStep {
         )
     }
 
-    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        build_step_5_2_translation_align_with_progress(
+    async fn run(&self, ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        let unit_store = ctx.unit_store();
+        build_step_5_2_translation_align_with_progress_and_unit_store(
             self.app.clone(),
             BuildStep52TranslationAlignCommandRequest {
                 task_id: self.task_id.clone(),
@@ -197,6 +192,7 @@ impl PipelineStep for Step52TranslationAlignPipelineStep {
                 &self.task_id,
                 "译文对齐",
             )),
+            Some(unit_store),
         )
         .await
     }

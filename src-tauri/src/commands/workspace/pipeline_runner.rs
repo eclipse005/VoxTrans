@@ -1,14 +1,16 @@
+use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::services::pipeline::{PipelineStep, StepContext, StepExecution, execute_step};
 
 pub(super) async fn execute_workspace_step<S>(
     step: &S,
     step_context: &StepContext<'_>,
+    store: &TaskStore,
 ) -> WorkspaceResult<StepExecution<S::Output>>
 where
     S: PipelineStep + Send + Sync,
 {
-    execute_step(step, step_context)
+    execute_step(step, step_context, store)
         .await
         .map_err(workspace_step_error)
 }

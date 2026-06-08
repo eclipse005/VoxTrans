@@ -79,6 +79,15 @@ CREATE INDEX idx_tasks_updated_at ON tasks(updated_at DESC);
 CREATE INDEX idx_tasks_langs ON tasks(source_lang, target_lang);
 CREATE INDEX idx_tasks_media_kind ON tasks(media_kind);
 
+-- task_artifacts: pipeline step checkpoint 缓存（tasks 的 1:N，CASCADE 删除）
+CREATE TABLE task_artifacts (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    step_name TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (task_id, step_name)
+);
+
 -- subtitle_segments: tasks 的 1:N
 CREATE TABLE subtitle_segments (
     id TEXT PRIMARY KEY,
@@ -124,3 +133,45 @@ CREATE TABLE terminology_terms (
 );
 
 CREATE INDEX idx_terms_group_id ON terminology_terms(group_id);
+
+-- asr_transcripts: Step 1 ASR 段级转录结果
+CREATE TABLE asr_transcripts (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    segment_index INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    PRIMARY KEY (task_id, segment_index)
+);
+
+-- translation_batch_results: Step 4 翻译批次结果
+CREATE TABLE translation_batch_results (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    batch_index INTEGER NOT NULL,
+    segment_translations TEXT NOT NULL,
+    PRIMARY KEY (task_id, batch_index)
+);
+
+-- source_split_results: Step 5.1 原文切分结果
+CREATE TABLE source_split_results (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    work_index INTEGER NOT NULL,
+    segment_start INTEGER NOT NULL,
+    segment_end INTEGER NOT NULL,
+    boundary_positions TEXT NOT NULL,
+    PRIMARY KEY (task_id, work_index)
+);
+
+-- translation_align_results: Step 5.2 译文对齐结果
+CREATE TABLE translation_align_results (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    parent_index INTEGER NOT NULL,
+    aligned_lines TEXT NOT NULL,
+    PRIMARY KEY (task_id, parent_index)
+);
+
+-- alignment_results: Step 1 强制对齐段级结果
+CREATE TABLE alignment_results (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    segment_index INTEGER NOT NULL,
+    result_json TEXT NOT NULL,
+    PRIMARY KEY (task_id, segment_index)
+);

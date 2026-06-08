@@ -34,6 +34,7 @@ pub struct BuildTranslationLayerRequest {
     pub translate_model: String,
     pub llm_concurrency: u32,
     pub batch_size: usize,
+    pub unit_store: Option<crate::services::pipeline::UnitStore>,
 }
 
 #[derive(Debug, Clone)]

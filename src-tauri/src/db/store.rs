@@ -518,6 +518,299 @@ impl TaskStore {
         .rows_affected();
         Ok(n)
     }
+
+    // ---- task_artifacts (pipeline step checkpoints) ----
+
+    /// Load a cached artifact JSON for a given task + step, or None if not cached.
+    pub async fn load_artifact(
+        &self,
+        task_id: &str,
+        step_name: &str,
+    ) -> Result<Option<String>, String> {
+        let row = sqlx::query(
+            "SELECT payload_json FROM task_artifacts WHERE task_id = ? AND step_name = ?",
+        )
+        .bind(task_id)
+        .bind(step_name)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("load artifact: {e}"))?;
+
+        Ok(row.map(|r| r.get("payload_json")))
+    }
+
+    /// Save (upsert) a pipeline step artifact.
+    pub async fn save_artifact(
+        &self,
+        task_id: &str,
+        step_name: &str,
+        payload_json: &str,
+    ) -> Result<(), String> {
+        sqlx::query(
+            "INSERT INTO task_artifacts (task_id, step_name, payload_json, updated_at) \
+             VALUES (?, ?, ?, ?) ON CONFLICT(task_id, step_name) DO UPDATE SET \
+             payload_json=excluded.payload_json, updated_at=excluded.updated_at",
+        )
+        .bind(task_id)
+        .bind(step_name)
+        .bind(payload_json)
+        .bind(now_ms())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("save artifact: {e}"))?;
+        Ok(())
+    }
+
+    // ── Domain-specific pipeline resume tables ─────────────────────────
+
+    // Step 1: ASR transcripts
+
+    pub async fn load_asr_transcripts(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<crate::services::pipeline::AsrTranscriptRow>, String> {
+        let rows = sqlx::query(
+            "SELECT segment_index, text FROM asr_transcripts \
+             WHERE task_id = ? ORDER BY segment_index",
+        )
+        .bind(task_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("load asr transcripts: {e}"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| crate::services::pipeline::AsrTranscriptRow {
+                segment_index: r.get::<i64, _>("segment_index") as usize,
+                text: r.get("text"),
+            })
+            .collect())
+    }
+
+    pub async fn save_asr_transcript(
+        &self,
+        task_id: &str,
+        row: &crate::services::pipeline::AsrTranscriptRow,
+    ) -> Result<(), String> {
+        sqlx::query(
+            "INSERT INTO asr_transcripts (task_id, segment_index, text) \
+             VALUES (?, ?, ?) ON CONFLICT(task_id, segment_index) DO UPDATE SET \
+             text=excluded.text",
+        )
+        .bind(task_id)
+        .bind(row.segment_index as i64)
+        .bind(&row.text)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("save asr transcript: {e}"))?;
+        Ok(())
+    }
+
+    // Step 1 alignment: Cached ForcedAlignResult items per segment.
+
+    pub async fn load_alignment_results(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<crate::services::pipeline::AlignmentResultRow>, String> {
+        let rows = sqlx::query(
+            "SELECT segment_index, result_json FROM alignment_results \
+             WHERE task_id = ? ORDER BY segment_index",
+        )
+        .bind(task_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("load alignment results: {e}"))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let json: String = r.get("result_json");
+            let items: Vec<qwen_forced_aligner_rs::ForcedAlignItem> = serde_json::from_str(&json)
+                .map_err(|e| format!("deserialize alignment result: {e}"))?;
+            out.push(crate::services::pipeline::AlignmentResultRow {
+                segment_index: r.get::<i64, _>("segment_index") as usize,
+                items,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn save_alignment_result(
+        &self,
+        task_id: &str,
+        row: &crate::services::pipeline::AlignmentResultRow,
+    ) -> Result<(), String> {
+        let json = serde_json::to_string(&row.items)
+            .map_err(|e| format!("serialize alignment result: {e}"))?;
+        sqlx::query(
+            "INSERT INTO alignment_results (task_id, segment_index, result_json) \
+             VALUES (?, ?, ?) ON CONFLICT(task_id, segment_index) DO UPDATE SET \
+             result_json=excluded.result_json",
+        )
+        .bind(task_id)
+        .bind(row.segment_index as i64)
+        .bind(&json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("save alignment result: {e}"))?;
+        Ok(())
+    }
+
+    // Step 4: Translation batch results
+
+    pub async fn load_translation_batches(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<crate::services::pipeline::TranslationBatchRow>, String> {
+        let rows = sqlx::query(
+            "SELECT batch_index, segment_translations FROM translation_batch_results \
+             WHERE task_id = ? ORDER BY batch_index",
+        )
+        .bind(task_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("load translation batches: {e}"))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let json: String = r.get("segment_translations");
+            let segment_translations: std::collections::HashMap<usize, String> =
+                serde_json::from_str(&json)
+                    .map_err(|e| format!("deserialize translation batch: {e}"))?;
+            out.push(crate::services::pipeline::TranslationBatchRow {
+                batch_index: r.get::<i64, _>("batch_index") as usize,
+                segment_translations,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn save_translation_batch(
+        &self,
+        task_id: &str,
+        row: &crate::services::pipeline::TranslationBatchRow,
+    ) -> Result<(), String> {
+        let json = serde_json::to_string(&row.segment_translations)
+            .map_err(|e| format!("serialize translation batch: {e}"))?;
+        sqlx::query(
+            "INSERT INTO translation_batch_results \
+             (task_id, batch_index, segment_translations) \
+             VALUES (?, ?, ?) ON CONFLICT(task_id, batch_index) DO UPDATE SET \
+             segment_translations=excluded.segment_translations",
+        )
+        .bind(task_id)
+        .bind(row.batch_index as i64)
+        .bind(&json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("save translation batch: {e}"))?;
+        Ok(())
+    }
+
+    // Step 5.1: Source split results
+
+    pub async fn load_source_splits(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<crate::services::pipeline::SourceSplitRow>, String> {
+        let rows = sqlx::query(
+            "SELECT work_index, segment_start, segment_end, boundary_positions \
+             FROM source_split_results \
+             WHERE task_id = ? ORDER BY work_index",
+        )
+        .bind(task_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("load source splits: {e}"))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let bp_json: String = r.get("boundary_positions");
+            let boundary_positions: Vec<usize> = serde_json::from_str(&bp_json)
+                .map_err(|e| format!("deserialize boundary positions: {e}"))?;
+            out.push(crate::services::pipeline::SourceSplitRow {
+                work_index: r.get::<i64, _>("work_index") as usize,
+                segment_start: r.get::<i64, _>("segment_start") as usize,
+                segment_end: r.get::<i64, _>("segment_end") as usize,
+                boundary_positions,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn save_source_split(
+        &self,
+        task_id: &str,
+        row: &crate::services::pipeline::SourceSplitRow,
+    ) -> Result<(), String> {
+        let bp_json = serde_json::to_string(&row.boundary_positions)
+            .map_err(|e| format!("serialize boundary positions: {e}"))?;
+        sqlx::query(
+            "INSERT INTO source_split_results \
+             (task_id, work_index, segment_start, segment_end, boundary_positions) \
+             VALUES (?, ?, ?, ?, ?) ON CONFLICT(task_id, work_index) DO UPDATE SET \
+             segment_start=excluded.segment_start, segment_end=excluded.segment_end, \
+             boundary_positions=excluded.boundary_positions",
+        )
+        .bind(task_id)
+        .bind(row.work_index as i64)
+        .bind(row.segment_start as i64)
+        .bind(row.segment_end as i64)
+        .bind(&bp_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("save source split: {e}"))?;
+        Ok(())
+    }
+
+    // Step 5.2: Translation alignment results
+
+    pub async fn load_translation_aligns(
+        &self,
+        task_id: &str,
+    ) -> Result<Vec<crate::services::pipeline::TranslationAlignRow>, String> {
+        let rows = sqlx::query(
+            "SELECT parent_index, aligned_lines FROM translation_align_results \
+             WHERE task_id = ? ORDER BY parent_index",
+        )
+        .bind(task_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("load translation aligns: {e}"))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let json: String = r.get("aligned_lines");
+            let aligned_lines: Vec<String> = serde_json::from_str(&json)
+                .map_err(|e| format!("deserialize aligned lines: {e}"))?;
+            out.push(crate::services::pipeline::TranslationAlignRow {
+                parent_index: r.get::<i64, _>("parent_index") as usize,
+                aligned_lines,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn save_translation_align(
+        &self,
+        task_id: &str,
+        row: &crate::services::pipeline::TranslationAlignRow,
+    ) -> Result<(), String> {
+        let json = serde_json::to_string(&row.aligned_lines)
+            .map_err(|e| format!("serialize aligned lines: {e}"))?;
+        sqlx::query(
+            "INSERT INTO translation_align_results \
+             (task_id, parent_index, aligned_lines) \
+             VALUES (?, ?, ?) ON CONFLICT(task_id, parent_index) DO UPDATE SET \
+             aligned_lines=excluded.aligned_lines",
+        )
+        .bind(task_id)
+        .bind(row.parent_index as i64)
+        .bind(&json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("save translation align: {e}"))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -4,7 +4,6 @@ use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::domain::task::stage::TaskStage;
 
-mod artifact_migration;
 mod execution_flow;
 mod log_payload;
 mod meta;
@@ -37,13 +36,6 @@ struct WorkspaceTaskRecord {
     max_retries: u32,
     settings_snapshot: Value,
 }
-
-const STEP_01_ASR_FILE: &str = "step_01_asr.json";
-const STEP_02_SEGMENTS_FILE: &str = "step_02_segments.json";
-const STEP_03_TERMINOLOGY_FILE: &str = "step_03_terminology.json";
-const STEP_04_TRANSLATION_FILE: &str = "step_04_translation.json";
-const STEP_05_01_SOURCE_SPLIT_FILE: &str = "step_05_01_source_split.json";
-const STEP_05_02_TRANSLATION_ALIGN_FILE: &str = "step_05_02_translation_align.json";
 
 #[tauri::command]
 pub async fn load_workspace_state(

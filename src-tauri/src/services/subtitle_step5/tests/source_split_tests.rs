@@ -94,6 +94,7 @@ fn step5_source_split_splits_on_hard_pause() {
             translate_base_url: "https://api.openai.com/v1".to_string(),
             translate_model: "gpt-4.1-mini".to_string(),
             llm_concurrency: 1,
+            unit_store: None,
             segments: vec![Step5DraftSegment {
                 segment_id: 1,
                 start: 0.0,
@@ -153,6 +154,7 @@ fn step5_source_split_keeps_short_segment_without_llm_settings() {
             translate_base_url: String::new(),
             translate_model: String::new(),
             llm_concurrency: 1,
+            unit_store: None,
             segments: vec![Step5DraftSegment {
                 segment_id: 1,
                 start: 0.0,

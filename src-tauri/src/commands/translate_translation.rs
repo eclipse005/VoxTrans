@@ -19,8 +19,17 @@ pub async fn build_translation_layer(
 
 pub async fn build_translation_layer_with_progress(
     app: AppHandle,
+    request: BuildTranslationLayerCommandRequest,
+    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+) -> Result<BuildTranslationLayerCommandResponse, String> {
+    build_translation_layer_with_progress_and_unit_store(app, request, on_progress, None).await
+}
+
+pub async fn build_translation_layer_with_progress_and_unit_store(
+    app: AppHandle,
     mut request: BuildTranslationLayerCommandRequest,
     on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+    unit_store: Option<crate::services::pipeline::UnitStore>,
 ) -> Result<BuildTranslationLayerCommandResponse, String> {
     if request.task_id.trim().is_empty() {
         return Err("taskId is required".to_string());
@@ -90,6 +99,7 @@ pub async fn build_translation_layer_with_progress(
         translate_model: request.translate_model,
         llm_concurrency: request.llm_concurrency,
         batch_size: request.batch_size,
+        unit_store,
     };
 
     let service_response = crate::services::translation::build_translation_layer_with_progress(

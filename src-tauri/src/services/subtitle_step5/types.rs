@@ -50,6 +50,7 @@ pub struct BuildStep5SourceSplitRequest {
     pub translate_base_url: String,
     pub translate_model: String,
     pub llm_concurrency: u32,
+    pub unit_store: Option<crate::services::pipeline::UnitStore>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +91,7 @@ pub struct BuildStep5TranslationAlignRequest {
     pub translate_base_url: String,
     pub translate_model: String,
     pub llm_concurrency: u32,
+    pub unit_store: Option<crate::services::pipeline::UnitStore>,
 }
 
 #[derive(Debug, Clone)]

@@ -25,8 +25,17 @@ pub async fn build_step_5_1_source_split(
 
 pub async fn build_step_5_1_source_split_with_progress(
     app: AppHandle,
+    request: BuildStep51SourceSplitCommandRequest,
+    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+) -> Result<BuildStep51SourceSplitCommandResponse, String> {
+    build_step_5_1_source_split_with_progress_and_unit_store(app, request, on_progress, None).await
+}
+
+pub async fn build_step_5_1_source_split_with_progress_and_unit_store(
+    app: AppHandle,
     mut request: BuildStep51SourceSplitCommandRequest,
     on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+    unit_store: Option<crate::services::pipeline::UnitStore>,
 ) -> Result<BuildStep51SourceSplitCommandResponse, String> {
     validate_step5_command_base(
         &request.task_id,
@@ -60,6 +69,7 @@ pub async fn build_step_5_1_source_split_with_progress(
                 translate_base_url: request.translate_base_url.clone(),
                 translate_model: request.translate_model.clone(),
                 llm_concurrency: request.llm_concurrency,
+                unit_store,
             },
             on_progress,
         )
@@ -98,8 +108,17 @@ pub async fn build_step_5_2_translation_align(
 
 pub async fn build_step_5_2_translation_align_with_progress(
     app: AppHandle,
+    request: BuildStep52TranslationAlignCommandRequest,
+    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+) -> Result<BuildStep52TranslationAlignCommandResponse, String> {
+    build_step_5_2_translation_align_with_progress_and_unit_store(app, request, on_progress, None).await
+}
+
+pub async fn build_step_5_2_translation_align_with_progress_and_unit_store(
+    app: AppHandle,
     mut request: BuildStep52TranslationAlignCommandRequest,
     on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+    unit_store: Option<crate::services::pipeline::UnitStore>,
 ) -> Result<BuildStep52TranslationAlignCommandResponse, String> {
     validate_step5_command_base(
         &request.task_id,
@@ -136,6 +155,7 @@ pub async fn build_step_5_2_translation_align_with_progress(
                 translate_base_url: request.translate_base_url.clone(),
                 translate_model: request.translate_model.clone(),
                 llm_concurrency: request.llm_concurrency,
+                unit_store,
             },
             on_progress,
         )
