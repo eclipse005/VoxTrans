@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::db::store::TaskStore;
 use super::error::LlmError;
 use super::json_guard::JsonResponseValidator;
 
@@ -38,6 +39,7 @@ pub struct LlmCallContext {
     pub task_id: String,
     pub media_path: Option<String>,
     pub phase: String,
+    pub store: Option<TaskStore>,
 }
 
 #[derive(Debug, Clone)]

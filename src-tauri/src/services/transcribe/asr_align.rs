@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use candle_core::Device;
 use qwen_forced_aligner_rs::{
-    AlignRequest, AudioInput, DTypeRequest, DeviceRequest, ForcedAlignResult, ModelOptions,
-    TextInput, load_model,
+    AlignRequest, AudioInput, DTypeRequest, DeviceRequest, ForcedAlignItem, ForcedAlignResult,
+    ModelOptions, TextInput, load_model,
 };
 use qwen3_asr::{AsrInference, TranscribeOptions as AsrTranscribeOptions};
 use voxtrans_core::subtitle::{alignment::align_text_to_timestamps, segmenter::WordToken};
@@ -17,6 +17,12 @@ pub(super) struct AsrAlignRequest {
     pub(super) provider: String,
     pub(super) chunk_target_seconds: u32,
     pub(super) model_dir: Option<PathBuf>,
+    /// Previously computed ASR transcripts keyed by segment index.
+    /// When non-empty, ASR is skipped for these segments.
+    pub(super) precomputed_asr: Vec<(usize, String)>,
+    /// Previously computed alignment results keyed by segment index.
+    /// When non-empty, alignment is skipped for these segments.
+    pub(super) precomputed_alignment: Vec<(usize, ForcedAlignResult)>,
 }
 
 pub(super) struct AsrAlignOutput {
@@ -29,6 +35,9 @@ pub(super) struct AsrAlignOutput {
     pub(super) transcribe_elapsed_sec: f64,
     pub(super) timing: AsrAlignTiming,
     pub(super) execution_provider: String,
+    /// ASR transcripts that were freshly computed (not from precomputed cache).
+    /// `Vec<(segment_index, text)>`.
+    pub(super) new_asr_results: Vec<(usize, String)>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -49,7 +58,7 @@ pub(super) fn transcribe_with_asr_and_qwen<F>(
     mut on_progress: F,
 ) -> Result<AsrAlignOutput, String>
 where
-    F: FnMut(TranscribeProgressStage, usize, usize),
+    F: FnMut(TranscribeProgressStage, usize, usize, Option<FreshSegmentResult>),
 {
     let started_at = Instant::now();
     let chunk_target_seconds = request.chunk_target_seconds.clamp(30, 60) as f64;
@@ -72,6 +81,12 @@ where
     let aligner_language = qwen_language(&request.source_lang)?;
     let total_segments = prepared.segment_summaries.len();
     let sample_len = prepared.mono_samples.len();
+
+    let precomputed_asr_map: std::collections::HashMap<usize, String> =
+        request.precomputed_asr.into_iter().collect();
+    let precomputed_alignment_map: std::collections::HashMap<usize, ForcedAlignResult> =
+        request.precomputed_alignment.into_iter().collect();
+
     let segment_transcripts = {
         let load_started_at = Instant::now();
         let transcriber =
@@ -84,8 +99,8 @@ where
         timing.asr_load_sec = load_started_at.elapsed().as_secs_f64();
 
         let mut transcripts = Vec::new();
+        let mut new_results = Vec::new();
         for segment in &prepared.segment_summaries {
-            on_progress(TranscribeProgressStage::Asr, segment.index, total_segments);
             let start_index = ((segment.start_sec * voxtrans_core::TARGET_SAMPLE_RATE as f64)
                 .floor() as usize)
                 .min(sample_len);
@@ -93,6 +108,26 @@ where
                 as usize)
                 .min(sample_len);
             if end_index <= start_index {
+                on_progress(TranscribeProgressStage::Asr, segment.index, total_segments, None);
+                continue;
+            }
+
+            // Check if this segment's ASR was precomputed
+            if let Some(cached_text) = precomputed_asr_map.get(&segment.index) {
+                if !cached_text.is_empty() {
+                    let segment_samples = &prepared.mono_samples[start_index..end_index];
+                    let wav_started_at = Instant::now();
+                    let wav = TemporaryWav::write(segment_samples)
+                        .map_err(|err| format!("failed to write temporary wav: {err}"))?;
+                    timing.temp_wav_write_sec += wav_started_at.elapsed().as_secs_f64();
+                    transcripts.push(SegmentTranscript {
+                        start_sec: segment.start_sec,
+                        segment_index: segment.index,
+                        wav,
+                        text: cached_text.clone(),
+                    });
+                }
+                on_progress(TranscribeProgressStage::Asr, segment.index, total_segments, None);
                 continue;
             }
 
@@ -110,19 +145,34 @@ where
             timing.asr_transcribe_sec += transcribe_started_at.elapsed().as_secs_f64();
             let text = clean_asr_text(&report.text);
             if text.is_empty() {
+                on_progress(TranscribeProgressStage::Asr, segment.index, total_segments, None);
                 continue;
             }
+            on_progress(
+                TranscribeProgressStage::Asr,
+                segment.index,
+                total_segments,
+                Some(FreshSegmentResult::Asr {
+                    segment_index: segment.index,
+                    text: text.clone(),
+                }),
+            );
+            new_results.push((segment.index, text.clone()));
             transcripts.push(SegmentTranscript {
                 start_sec: segment.start_sec,
+                segment_index: segment.index,
                 wav,
                 text,
             });
         }
-        transcripts
+        SegmentTranscriptsWithNew {
+            transcripts,
+            new_results,
+        }
     };
 
-    let transcript_text = debug_text_from_transcripts(&segment_transcripts);
-    let (words, aligned_text) = if segment_transcripts.is_empty() {
+    let transcript_text = debug_text_from_transcripts(&segment_transcripts.transcripts);
+    let (words, aligned_text) = if segment_transcripts.transcripts.is_empty() {
         (Vec::new(), String::new())
     } else {
         let load_started_at = Instant::now();
@@ -145,16 +195,19 @@ where
         let results = align_segments(
             &aligner,
             &aligner_language,
-            &segment_transcripts,
+            &segment_transcripts.transcripts,
+            precomputed_alignment_map,
             &mut on_progress,
         )
         .map_err(|err| format!("qwen alignment failed: {err:#}"))?;
         timing.qwen_align_sec = align_started_at.elapsed().as_secs_f64();
         let segment_starts = segment_transcripts
+            .transcripts
             .iter()
             .map(|segment| segment.start_sec)
             .collect::<Vec<_>>();
         let segment_texts = segment_transcripts
+            .transcripts
             .iter()
             .map(|segment| segment.text.as_str())
             .collect::<Vec<_>>();
@@ -175,19 +228,36 @@ where
         transcribe_elapsed_sec: timing.total_elapsed_sec,
         timing,
         execution_provider: device.label,
+        new_asr_results: segment_transcripts.new_results,
     })
 }
 
 struct SegmentTranscript {
     start_sec: f64,
+    segment_index: usize,
     wav: TemporaryWav,
     text: String,
+}
+
+struct SegmentTranscriptsWithNew {
+    transcripts: Vec<SegmentTranscript>,
+    new_results: Vec<(usize, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TranscribeProgressStage {
     Asr,
     Align,
+}
+
+/// Payload for a freshly computed segment result that should be persisted.
+#[derive(Debug, Clone)]
+pub(crate) enum FreshSegmentResult {
+    Asr { segment_index: usize, text: String },
+    Align {
+        segment_index: usize,
+        items: Vec<ForcedAlignItem>,
+    },
 }
 
 struct RuntimeDevice {
@@ -205,13 +275,18 @@ fn align_segments(
     aligner: &qwen_forced_aligner_rs::Qwen3ForcedAligner,
     aligner_language: &str,
     segment_transcripts: &[SegmentTranscript],
-    on_progress: &mut impl FnMut(TranscribeProgressStage, usize, usize),
+    precomputed_alignment: std::collections::HashMap<usize, ForcedAlignResult>,
+    on_progress: &mut impl FnMut(TranscribeProgressStage, usize, usize, Option<FreshSegmentResult>),
 ) -> Result<Vec<ForcedAlignResult>, String> {
     let total = segment_transcripts.len();
     let mut results = Vec::with_capacity(total);
     for (index, segment) in segment_transcripts.iter().enumerate() {
         let current = index + 1;
-        on_progress(TranscribeProgressStage::Align, current, total);
+        if let Some(cached) = precomputed_alignment.get(&segment.segment_index) {
+            on_progress(TranscribeProgressStage::Align, current, total, None);
+            results.push(cached.clone());
+            continue;
+        }
         let result = aligner
             .align(AlignRequest::new(
                 AudioInput::Path(segment.wav.path.clone()),
@@ -219,6 +294,15 @@ fn align_segments(
                 aligner_language.to_string(),
             ))
             .map_err(|err| format!("failed align request {current}: {err:#}"))?;
+        on_progress(
+            TranscribeProgressStage::Align,
+            current,
+            total,
+            Some(FreshSegmentResult::Align {
+                segment_index: segment.segment_index,
+                items: result.items.clone(),
+            }),
+        );
         results.push(result);
     }
     Ok(results)

@@ -1,7 +1,8 @@
-use std::path::Path;
+use tauri::{AppHandle, Manager};
+use tauri::async_runtime::spawn_blocking;
+use tokio::runtime::Handle;
 
-use tauri::AppHandle;
-
+use crate::db::store::TaskStore;
 use crate::services::pipeline::StepContext;
 
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
@@ -11,7 +12,6 @@ use crate::domain::task::adapters::{
 };
 use crate::domain::task::runtime_settings::resolve_runtime_settings;
 
-use super::artifact_migration::migrate_legacy_artifacts;
 use super::output_completion::finish_transcribe_only;
 use super::pipeline_runner::execute_workspace_step;
 use super::pipeline_steps::{Step1AsrPipelineStep, Step2SegmentsPipelineStep};
@@ -26,40 +26,49 @@ use super::{
 pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
     let result = execute_single_task_inner(app, task_id).await;
     mark_task_failed_after_execution_error(result, |err| {
-        mark_task_failed(app, task_id, &err.to_string())
+        let err_string = err.to_string();
+        let task_id = task_id.to_string();
+        let app = app.clone();
+        async move { mark_task_failed(&app, &task_id, &err_string).await }
     })
+    .await
 }
 
 async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
     let record = get_task_record(task_id)?;
     let intent = normalize_intent(&record.intent).to_string();
+    let store = app.state::<TaskStore>().inner();
     let runtime =
-        resolve_runtime_settings(&record.settings_snapshot, intent == "TRANSCRIBE_TRANSLATE")?;
+        resolve_runtime_settings(store, &record.frozen, intent == "TRANSCRIBE_TRANSLATE")?;
     let mut source_lang = normalize_task_source_lang(&record.source_lang);
     let target_lang = normalize_task_target_lang(&record.target_lang);
-    let task_output_dir =
-        crate::services::task_path::task_output_dir(task_id, Path::new(&record.item.path));
-    std::fs::create_dir_all(&task_output_dir)?;
-    let artifact_dir =
-        crate::services::task_path::task_artifacts_dir(task_id, Path::new(&record.item.path));
-    std::fs::create_dir_all(&artifact_dir)?;
-    migrate_legacy_artifacts(&task_output_dir, &artifact_dir)?;
-    let step_context = StepContext {
-        output_dir: &artifact_dir,
-    };
+    let step_context = StepContext { task_id, store };
 
-    report_task_stage(app, task_id, TaskStage::Preparing, "", 1, 1)?;
+    report_task_stage(app, task_id, TaskStage::Preparing, "", 1, 1).await?;
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_error = String::new();
         task.item.result_text = String::new();
         task.item.result_srt = String::new();
         task.item.subtitle_segments_json = "[]".to_string();
-    })?;
+    })
+    .await?;
+
+    let asr_input_path = if runtime.enable_vocal_separation {
+        separate_vocals_for_task(
+            app,
+            task_id,
+            &record.item.path,
+            &runtime.demucs_model,
+        )
+        .await?
+    } else {
+        record.item.path.clone()
+    };
 
     let step1_exec = execute_workspace_step(
         &Step1AsrPipelineStep {
             task_id: task_id.to_string(),
-            media_path: record.item.path.clone(),
+            media_path: asr_input_path,
             source_lang: source_lang.clone(),
             asr_model: runtime.asr_model.clone(),
             align_model: runtime.align_model.clone(),
@@ -68,6 +77,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             app: app.clone(),
         },
         &step_context,
+        store,
     )
     .await?;
 
@@ -86,7 +96,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
         })
         .collect::<Vec<_>>();
 
-    report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 0)?;
+    report_task_stage(app, task_id, TaskStage::Segmenting, "", 0, 0).await?;
 
     let step2_exec = execute_workspace_step(
         &Step2SegmentsPipelineStep {
@@ -98,6 +108,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             words: step2_words,
         },
         &step_context,
+        store,
     )
     .await?;
     let step2_segments = step2_exec.output;
@@ -108,7 +119,8 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
         task_id,
         &source_text,
         workspace_subtitle_segments_from_step2_segments(&step2_segments),
-    )?;
+    )
+    .await?;
 
     let run_result: WorkspaceResult<()> = if intent == "TRANSCRIBE_TRANSLATE" {
         execute_translate_steps(
@@ -118,9 +130,9 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             runtime,
             source_lang,
             target_lang,
-            &artifact_dir,
             &step2_segments,
             source_text,
+            store,
         )
         .await
     } else {
@@ -135,22 +147,70 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             &runtime.subtitle_length_preset,
             &target_lang,
         )
+        .await
     };
     run_result?;
     Ok(())
 }
 
-fn mark_task_failed_after_execution_error(
+async fn mark_task_failed_after_execution_error<F, Fut>(
     result: WorkspaceResult<()>,
-    mut mark_failed: impl FnMut(&WorkspaceError) -> WorkspaceResult<()>,
-) -> WorkspaceResult<()> {
+    mut mark_failed: F,
+) -> WorkspaceResult<()>
+where
+    F: FnMut(&WorkspaceError) -> Fut,
+    Fut: std::future::Future<Output = WorkspaceResult<()>>,
+{
     match result {
         Ok(()) => Ok(()),
         Err(err) => {
-            mark_failed(&err)?;
+            mark_failed(&err).await?;
             Err(err)
         }
     }
+}
+
+async fn separate_vocals_for_task(
+    app: &AppHandle,
+    task_id: &str,
+    audio_path: &str,
+    demucs_model: &str,
+) -> WorkspaceResult<String> {
+    report_task_stage(app, task_id, TaskStage::Separating, "", 0, 100).await?;
+
+    let request = crate::services::demucs::SeparateVocalsRequest {
+        task_id: task_id.to_string(),
+        audio_path: audio_path.to_string(),
+        model: demucs_model.to_string(),
+    };
+    let app_for_progress = app.clone();
+    let task_id_owned = task_id.to_string();
+
+    let join = spawn_blocking(move || {
+        crate::services::demucs::separate_vocals_blocking(request, move |percent| {
+            let report = report_task_stage(
+                &app_for_progress,
+                &task_id_owned,
+                TaskStage::Separating,
+                format!("{percent}/100"),
+                percent,
+                100,
+            );
+            if let Ok(handle) = Handle::try_current() {
+                if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+                    let _ = tokio::task::block_in_place(|| {
+                        handle.block_on(async {
+                            let _ = report.await;
+                        });
+                    });
+                }
+            }
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())??;
+
+    Ok(join.vocals_path)
 }
 
 #[cfg(test)]
@@ -158,8 +218,8 @@ mod tests {
     use super::*;
     use crate::domain::error::WorkspaceError;
 
-    #[test]
-    fn execution_error_marks_task_failed_and_returns_original_error() {
+    #[tokio::test]
+    async fn execution_error_marks_task_failed_and_returns_original_error() {
         let mut marked_error = String::new();
 
         let result = mark_task_failed_after_execution_error(
@@ -168,23 +228,25 @@ mod tests {
             )),
             |err| {
                 marked_error = err.to_string();
-                Ok(())
+                async { Ok(()) }
             },
-        );
+        )
+        .await;
 
         let err = result.expect_err("execution error should be returned");
         assert_eq!(err.code(), "INVALID_REQUEST");
         assert_eq!(marked_error, "invalid request: missing runtime settings");
     }
 
-    #[test]
-    fn execution_success_does_not_mark_task_failed() {
+    #[tokio::test]
+    async fn execution_success_does_not_mark_task_failed() {
         let mut marked = false;
 
         let result = mark_task_failed_after_execution_error(Ok(()), |_| {
             marked = true;
-            Ok(())
-        });
+            async { Ok(()) }
+        })
+        .await;
 
         assert!(result.is_ok());
         assert!(!marked);

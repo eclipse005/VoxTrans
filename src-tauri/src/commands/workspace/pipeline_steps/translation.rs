@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tauri::AppHandle;
+use tokio::runtime::Handle;
 
 use crate::commands::translate_terminology::build_terminology_layer;
-use crate::commands::translate_translation::build_translation_layer_with_progress;
+use crate::commands::translate_translation::build_translation_layer_with_progress_and_unit_store;
 use crate::commands::translate_types::{
     BuildTerminologyLayerCommandRequest, BuildTerminologyLayerCommandResponse,
     BuildTranslationLayerCommandRequest, BuildTranslationLayerCommandResponse,
@@ -13,7 +14,7 @@ use crate::commands::translate_types::{
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 
 use super::super::progress::report_task_stage;
-use super::super::{STEP_03_TERMINOLOGY_FILE, STEP_04_TRANSLATION_FILE, TaskStage};
+use super::super::TaskStage;
 
 #[derive(Debug, Clone)]
 pub(in crate::commands::workspace) struct Step3TerminologyPipelineStep {
@@ -27,6 +28,7 @@ pub(in crate::commands::workspace) struct Step3TerminologyPipelineStep {
     pub(in crate::commands::workspace) translate_model: String,
     pub(in crate::commands::workspace) llm_concurrency: u32,
     pub(in crate::commands::workspace) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
+    pub(in crate::commands::workspace) app: AppHandle,
 }
 
 #[async_trait]
@@ -35,10 +37,6 @@ impl PipelineStep for Step3TerminologyPipelineStep {
 
     fn name(&self) -> &'static str {
         "step_03_terminology"
-    }
-
-    fn artifact_file(&self) -> &'static str {
-        STEP_03_TERMINOLOGY_FILE
     }
 
     fn policy(&self) -> CheckpointPolicy {
@@ -53,18 +51,21 @@ impl PipelineStep for Step3TerminologyPipelineStep {
     }
 
     async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        build_terminology_layer(BuildTerminologyLayerCommandRequest {
-            task_id: self.task_id.clone(),
-            media_path: self.media_path.clone(),
-            source_lang: self.source_lang.clone(),
-            target_lang: self.target_lang.clone(),
-            segments: self.segments.clone(),
-            translate_api_key: self.translate_api_key.clone(),
-            translate_base_url: self.translate_base_url.clone(),
-            translate_model: self.translate_model.clone(),
-            llm_concurrency: self.llm_concurrency,
-            terminology_entries: self.terminology_entries.clone(),
-        })
+        build_terminology_layer(
+            self.app.clone(),
+            BuildTerminologyLayerCommandRequest {
+                task_id: self.task_id.clone(),
+                media_path: self.media_path.clone(),
+                source_lang: self.source_lang.clone(),
+                target_lang: self.target_lang.clone(),
+                segments: self.segments.clone(),
+                translate_api_key: self.translate_api_key.clone(),
+                translate_base_url: self.translate_base_url.clone(),
+                translate_model: self.translate_model.clone(),
+                llm_concurrency: self.llm_concurrency,
+                terminology_entries: self.terminology_entries.clone(),
+            },
+        )
         .await
     }
 }
@@ -93,10 +94,6 @@ impl PipelineStep for Step4TranslationPipelineStep {
         "step_04_translation"
     }
 
-    fn artifact_file(&self) -> &'static str {
-        STEP_04_TRANSLATION_FILE
-    }
-
     fn policy(&self) -> CheckpointPolicy {
         CheckpointPolicy::SkipIfExists
     }
@@ -108,7 +105,7 @@ impl PipelineStep for Step4TranslationPipelineStep {
         Ok(())
     }
 
-    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+    async fn run(&self, ctx: &StepContext<'_>) -> Result<Self::Output, String> {
         let task_id = self.task_id.clone();
         let app_for_progress = self.app.clone();
         let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
@@ -118,7 +115,7 @@ impl PipelineStep for Step4TranslationPipelineStep {
                 } else {
                     String::new()
                 };
-                let _ = report_task_stage(
+                let report = report_task_stage(
                     &app_for_progress,
                     &task_id,
                     TaskStage::Translating,
@@ -126,8 +123,27 @@ impl PipelineStep for Step4TranslationPipelineStep {
                     current as u32,
                     total as u32,
                 );
+                // The progress callback is invoked from the LLM HTTP client
+                // thread, which may already be a tokio runtime worker; plain
+                // block_on would panic. Use block_in_place on multi-thread
+                // runtimes.
+                match Handle::try_current() {
+                    Ok(handle)
+                        if handle.runtime_flavor()
+                            == tokio::runtime::RuntimeFlavor::MultiThread =>
+                    {
+                        let _ = tokio::task::block_in_place(|| handle.block_on(report));
+                    }
+                    _ => {
+                        let _ = tauri::async_runtime::block_on(report);
+                    }
+                }
             });
-        build_translation_layer_with_progress(
+
+        let unit_store = ctx.unit_store();
+
+        build_translation_layer_with_progress_and_unit_store(
+            self.app.clone(),
             BuildTranslationLayerCommandRequest {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),
@@ -143,6 +159,7 @@ impl PipelineStep for Step4TranslationPipelineStep {
                 batch_size: 20,
             },
             Some(on_progress),
+            Some(unit_store),
         )
         .await
     }

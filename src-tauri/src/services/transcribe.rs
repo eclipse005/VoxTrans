@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use voxtrans_core::subtitle::segmenter::{WordToken, normalize_word_tokens};
 
 mod asr_align;
-pub(crate) use asr_align::TranscribeProgressStage;
+pub(crate) use asr_align::{FreshSegmentResult, TranscribeProgressStage};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +20,14 @@ pub struct TranscribeRequest {
     pub provider: String,
     pub chunk_target_seconds: u32,
     pub model_dir: Option<String>,
+    /// Precomputed ASR segment results: `Vec<(segment_index, text)>`.
+    /// These segments will be skipped during ASR.
+    #[serde(default)]
+    pub precomputed_asr_segments: Vec<(usize, String)>,
+    /// Precomputed alignment results: `Vec<(segment_index, ForcedAlignResult)>`.
+    /// These segments will be skipped during alignment.
+    #[serde(default)]
+    pub precomputed_alignment: Vec<(usize, qwen_forced_aligner_rs::ForcedAlignResult)>,
 }
 
 fn default_asr_model() -> String {
@@ -45,6 +53,9 @@ pub struct TranscribeResponse {
     pub rtf_x: f64,
     pub rtf_breakdown_x: TranscribeRtfBreakdownDto,
     pub execution_provider: String,
+    /// Freshly computed ASR results: `Vec<(segment_index, text)>`.
+    /// Only includes segments that were NOT precomputed.
+    pub new_asr_segments: Vec<(usize, String)>,
 }
 
 #[derive(Debug, Serialize, Clone, Copy)]
@@ -91,7 +102,7 @@ pub fn transcribe_blocking<F>(
     mut on_progress: F,
 ) -> Result<TranscribeResponse, String>
 where
-    F: FnMut(asr_align::TranscribeProgressStage, usize, usize),
+    F: FnMut(crate::services::transcribe::asr_align::TranscribeProgressStage, usize, usize, Option<crate::services::transcribe::asr_align::FreshSegmentResult>),
 {
     let logger = TaskLogger::main_with_media(request.task_id.clone(), request.audio_path.clone());
     let chunk_target_seconds = request.chunk_target_seconds.clamp(30, 60);
@@ -116,9 +127,11 @@ where
             provider: request.provider.clone(),
             chunk_target_seconds,
             model_dir: request.model_dir.as_ref().map(PathBuf::from),
+            precomputed_asr: request.precomputed_asr_segments,
+            precomputed_alignment: request.precomputed_alignment,
         },
-        |stage, current, total| {
-            on_progress(stage, current, total);
+        |stage, current, total, fresh_result| {
+            on_progress(stage, current, total, fresh_result);
         },
     );
     let output = match output {
@@ -168,6 +181,7 @@ where
         rtf_x: metrics.rtf_x.total,
         rtf_breakdown_x: metrics.rtf_x,
         execution_provider: output.execution_provider.to_string(),
+        new_asr_segments: output.new_asr_results,
     };
 
     append_transcribe_log(

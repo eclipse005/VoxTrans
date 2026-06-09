@@ -1,7 +1,5 @@
 mod base_url;
 pub mod batch;
-pub mod cache;
-mod cache_key;
 mod chat_completions;
 pub mod client;
 pub mod error;

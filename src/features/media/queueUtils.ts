@@ -57,7 +57,10 @@ export function shouldKeepCurrentProcessingStage(
     return true;
   }
   if (incomingOrder > 0 && currentOrder === incomingOrder) {
-    return stageRatio(incoming.taskProgress?.stage) < stageRatio(current.taskProgress.stage);
+    // Same stage — accept the latest event; the backend is the source of
+    // truth for progress.  Never second-guess monotonicty here because
+    // multi-round stages legitimately increase total after a round finishes.
+    return false;
   }
   return false;
 }

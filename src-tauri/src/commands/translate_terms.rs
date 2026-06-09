@@ -26,9 +26,10 @@ pub fn normalize_command_terminology_entries(
     out
 }
 
-pub fn load_terminology_entries_from_saved_settings()
--> Result<Vec<TranslateTerminologyEntryCommand>, String> {
-    let settings = crate::services::preferences::load_saved_settings_from_default_path()?;
+pub fn load_terminology_entries_from_saved_settings(
+    store: &crate::db::store::TaskStore,
+) -> Result<Vec<TranslateTerminologyEntryCommand>, String> {
+    let settings = crate::services::preferences::load_saved_settings_from_default_path(store)?;
     if !settings.enable_terminology {
         return Ok(Vec::new());
     }

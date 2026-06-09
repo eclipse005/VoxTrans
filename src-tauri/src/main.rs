@@ -2,6 +2,7 @@
 
 mod app_state;
 mod commands;
+mod db;
 mod domain;
 mod services;
 
@@ -12,6 +13,22 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let app_handle = app.handle().clone();
+            // Tauri runs the setup closure on a worker thread of an existing
+            // tokio runtime, so we must use the current Handle (with
+            // block_in_place) instead of starting a fresh runtime.
+            let pool = match tokio::runtime::Handle::try_current() {
+                Ok(handle)
+                    if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
+                {
+                    tokio::task::block_in_place(|| {
+                        handle.block_on(crate::db::init_pool(&app_handle))
+                    })
+                }
+                _ => tauri::async_runtime::block_on(crate::db::init_pool(&app_handle)),
+            }
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            app.manage(crate::db::store::TaskStore::new(pool));
             app.manage(app_state::AppState {
                 asr_model_download: Arc::new(std::sync::Mutex::new(
                     app_state::ModelDownloadRuntime::default(),
@@ -34,8 +51,7 @@ fn main() {
             commands::transcription::build_source_sentences,
             commands::translate_terminology::build_terminology_layer,
             commands::translate_translation::build_translation_layer,
-            commands::translate_step5_commands::build_step_5_1_source_split,
-            commands::translate_step5_commands::build_step_5_2_translation_align,
+            commands::translate_step5_commands::build_step_5_split_align,
             commands::translate_connectivity::test_translate_llm,
             commands::file::get_file_size,
             commands::system::open_in_explorer,

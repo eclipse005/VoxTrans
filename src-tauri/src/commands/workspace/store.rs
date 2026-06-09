@@ -62,6 +62,13 @@ pub(super) fn lock_workspace_hydrated() -> WorkspaceResult<WorkspaceHydratedGuar
         .map_err(|_| WorkspaceError::LockPoisoned)
 }
 
+pub(super) fn is_workspace_hydrated() -> bool {
+    WORKSPACE_HYDRATED
+        .get()
+        .and_then(|m| m.lock().ok().map(|guard| *guard))
+        .unwrap_or(false)
+}
+
 pub(super) fn find_task_mut<'a>(
     store: &'a mut WorkspaceStore,
     task_id: &str,

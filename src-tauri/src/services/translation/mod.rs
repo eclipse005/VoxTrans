@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::services::llm::batch::run_indexed_concurrent_with_progress;
+use crate::services::llm::batch::run_indexed_concurrent_idempotent;
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 
@@ -80,11 +80,44 @@ pub async fn build_translation_layer_with_progress(
         task_id: request.task_id.clone(),
         media_path: Some(request.media_path.clone()),
         phase: "step4_translate_batch".to_string(),
+        store: request.unit_store.as_ref().map(|us| us.store().clone()),
     };
 
     let windows_for_worker = windows.clone();
     let progress_callback = on_progress.clone();
-    let results = run_indexed_concurrent_with_progress(
+
+    // Build precomputed map from domain table if unit store available.
+    let (precomputed, persist_store) = if let Some(ref us) = request.unit_store {
+        let rows = us.load_translation_batches().await.unwrap_or_default();
+        let mut map = HashMap::<usize, (usize, HashMap<usize, String>)>::new();
+        for row in rows {
+            map.insert(row.batch_index, (row.batch_index, row.segment_translations));
+        }
+        (map, Some(us.clone()))
+    } else {
+        (HashMap::new(), None)
+    };
+
+    let on_item_done = {
+        let store = persist_store.clone();
+        move |idx: usize, val: (usize, HashMap<usize, String>)| {
+            let store = store.clone();
+            async move {
+                if let Some(ref us) = store {
+                    us.save_translation_batch(
+                        &crate::services::pipeline::TranslationBatchRow {
+                            batch_index: idx,
+                            segment_translations: val.1,
+                        },
+                    )
+                    .await?;
+                }
+                Ok(())
+            }
+        }
+    };
+
+    let results = run_indexed_concurrent_idempotent(
         tasks,
         concurrency,
         {
@@ -134,6 +167,8 @@ pub async fn build_translation_layer_with_progress(
                 callback(done, total);
             }
         },
+        precomputed,
+        on_item_done,
     )
     .await;
 

@@ -1,3 +1,6 @@
+use tauri::{AppHandle, Manager};
+
+use crate::db::store::TaskStore;
 use crate::services::logs;
 use crate::services::task_usage;
 
@@ -58,6 +61,7 @@ pub fn clear_task_logs(request: ClearTaskLogsCommandRequest) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub async fn get_task_total_tokens(task_id: String) -> Result<u64, String> {
-    task_usage::get_task_total_tokens(&task_id).await
+pub async fn get_task_total_tokens(app: AppHandle, task_id: String) -> Result<u64, String> {
+    let store = app.state::<TaskStore>().inner().clone();
+    task_usage::get_task_total_tokens(&task_id, &store).await
 }

@@ -119,6 +119,7 @@ async fn extract_theme(
         task_id: request.task_id.clone(),
         media_path: Some(request.media_path.clone()),
         phase: "step3_theme".to_string(),
+        store: None,
     };
     let llm_id = next_llm_request_id();
 
@@ -179,6 +180,7 @@ async fn filter_user_terms(
         task_id: request.task_id.clone(),
         media_path: Some(request.media_path.clone()),
         phase: "step3_filter_user_terms".to_string(),
+        store: None,
     };
     let llm_id = next_llm_request_id();
 
@@ -230,6 +232,7 @@ async fn extract_terms(
         task_id: request.task_id.clone(),
         media_path: Some(request.media_path.clone()),
         phase: "step3_extract_terms".to_string(),
+        store: None,
     };
     let llm_id = next_llm_request_id();
 

@@ -106,6 +106,7 @@ function getTranscribeProcessingText(item: QueueItem): string {
 function shouldShowStageCounter(code: QueueItem["taskProgress"]["stage"]["code"]): boolean {
   switch (code) {
     case "downloading":
+    case "separating":
     case "recognizing":
     case "aligning":
     case "segmenting":
@@ -124,6 +125,8 @@ function resolveStageLabel(code: QueueItem["taskProgress"]["stage"]["code"]): st
       return "下载中";
     case "preparing":
       return "准备中";
+    case "separating":
+      return "人声分离中";
     case "recognizing":
       return "语音识别中";
     case "aligning":

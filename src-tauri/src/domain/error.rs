@@ -13,6 +13,9 @@ pub enum WorkspaceError {
     #[error("workspace store lock poisoned")]
     LockPoisoned,
 
+    #[error("workspace not yet hydrated from database")]
+    NotHydrated,
+
     #[error("invalid request: {0}")]
     InvalidRequest(String),
 
@@ -39,6 +42,7 @@ impl WorkspaceError {
             WorkspaceError::TaskNotFound(_) => "TASK_NOT_FOUND",
             WorkspaceError::TaskBusy => "TASK_BUSY",
             WorkspaceError::LockPoisoned => "WORKSPACE_LOCK_POISONED",
+            WorkspaceError::NotHydrated => "WORKSPACE_NOT_HYDRATED",
             WorkspaceError::InvalidRequest(_) => "INVALID_REQUEST",
             WorkspaceError::TaskFailed(_) => "TASK_FAILED",
             WorkspaceError::Io(_) => "IO_ERROR",

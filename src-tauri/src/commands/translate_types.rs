@@ -137,85 +137,6 @@ pub struct Step5QualitySummaryCommand {
     pub soft_score: f64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildStep51SourceSplitCommandRequest {
-    pub task_id: String,
-    pub media_path: String,
-    pub source_lang: String,
-    pub target_lang: String,
-    pub segments: Vec<BuildTranslationSegmentCommand>,
-    #[serde(default)]
-    pub translate_api_key: String,
-    #[serde(default)]
-    pub translate_base_url: String,
-    #[serde(default)]
-    pub translate_model: String,
-    #[serde(default = "default_llm_concurrency")]
-    pub llm_concurrency: u32,
-    pub subtitle_length_preset: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Step5SplitPartCommand {
-    pub part_id: usize,
-    pub start: f64,
-    pub end: f64,
-    pub source: String,
-    pub tokens: Vec<SegmentTokenForTerminologyCommand>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Step5SplitParentCommand {
-    pub parent_segment_id: usize,
-    pub draft_translation: String,
-    pub parts: Vec<Step5SplitPartCommand>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildStep51SourceSplitCommandResponse {
-    pub task_id: String,
-    pub media_path: String,
-    pub source_lang: String,
-    pub target_lang: String,
-    #[serde(default)]
-    pub schema_version: u32,
-    #[serde(default)]
-    pub pipeline_version: String,
-    #[serde(default)]
-    pub artifact_meta: Step5ArtifactMetaCommand,
-    #[serde(default)]
-    pub quality_summary: Step5QualitySummaryCommand,
-    pub subtitle_length_preset: String,
-    pub parent_total: usize,
-    pub part_total: usize,
-    pub parents: Vec<Step5SplitParentCommand>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildStep52TranslationAlignCommandRequest {
-    pub task_id: String,
-    pub media_path: String,
-    pub source_lang: String,
-    pub target_lang: String,
-    pub theme_summary: String,
-    pub parents: Vec<Step5SplitParentCommand>,
-    #[serde(default)]
-    pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
-    pub subtitle_length_preset: String,
-    #[serde(default)]
-    pub translate_api_key: String,
-    #[serde(default)]
-    pub translate_base_url: String,
-    #[serde(default)]
-    pub translate_model: String,
-    #[serde(default = "default_llm_concurrency")]
-    pub llm_concurrency: u32,
-}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -235,9 +156,33 @@ pub struct Step5AlignedParentCommand {
     pub parts: Vec<Step5AlignedPartCommand>,
 }
 
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildStep5SplitAlignCommandRequest {
+    pub task_id: String,
+    pub media_path: String,
+    pub source_lang: String,
+    pub target_lang: String,
+    #[serde(default)]
+    pub theme_summary: String,
+    pub segments: Vec<BuildTranslationSegmentCommand>,
+    #[serde(default)]
+    pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
+    pub subtitle_length_preset: String,
+    #[serde(default)]
+    pub translate_api_key: String,
+    #[serde(default)]
+    pub translate_base_url: String,
+    #[serde(default)]
+    pub translate_model: String,
+    #[serde(default = "default_llm_concurrency")]
+    pub llm_concurrency: u32,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BuildStep52TranslationAlignCommandResponse {
+pub struct BuildStep5SplitAlignCommandResponse {
     pub task_id: String,
     pub media_path: String,
     pub source_lang: String,

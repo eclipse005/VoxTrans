@@ -1,9 +1,34 @@
 use std::collections::HashSet;
 
-use serde::Deserialize;
-use serde_json::Value;
-
 use crate::commands::translate_types::TranslateTerminologyEntryCommand;
+use crate::db::store::TaskStore;
+use crate::services::preferences_types::TerminologyGroup;
+
+/// Task-frozen settings: captured at enqueue time and never read live from
+/// the saved settings row during execution. These all affect "what the
+/// task means" rather than "how it talks to the LLM" -- changing them
+/// mid-run would make the same task produce inconsistent output across
+/// chunks/restarts. Everything else (LLM endpoint/model, concurrency,
+/// chunk length, ASR/align model) is resolved live from saved settings
+/// each call, so the user can swap providers without re-enqueuing.
+#[derive(Debug, Clone, Default)]
+pub struct FrozenSettings {
+    pub subtitle_length_preset: String,
+    pub enable_terminology: bool,
+    pub enable_subtitle_beautify: bool,
+    pub terminology_groups: Vec<TerminologyGroup>,
+}
+
+impl FrozenSettings {
+    pub fn from_saved(saved: &crate::services::preferences::SavedSettings) -> Self {
+        Self {
+            subtitle_length_preset: saved.subtitle_length_preset.clone(),
+            enable_terminology: saved.enable_terminology,
+            enable_subtitle_beautify: saved.enable_subtitle_beautify,
+            terminology_groups: saved.terminology_groups.clone(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct PipelineRuntimeSettings {
@@ -11,6 +36,8 @@ pub struct PipelineRuntimeSettings {
     pub align_model: String,
     pub provider: String,
     pub chunk_target_seconds: u32,
+    pub enable_vocal_separation: bool,
+    pub demucs_model: String,
     pub translate_api_key: String,
     pub translate_base_url: String,
     pub translate_model: String,
@@ -20,108 +47,27 @@ pub struct PipelineRuntimeSettings {
     pub enable_subtitle_beautify: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SettingsSnapshotInput {
-    #[serde(default)]
-    asr_model: Option<String>,
-    #[serde(default)]
-    align_model: Option<String>,
-    #[serde(default)]
-    provider: Option<String>,
-    #[serde(default)]
-    chunk_target_seconds: Option<u32>,
-    #[serde(default)]
-    translate_api_key: Option<String>,
-    #[serde(default)]
-    translate_base_url: Option<String>,
-    #[serde(default)]
-    translate_model: Option<String>,
-    #[serde(default)]
-    llm_concurrency: Option<u32>,
-    subtitle_length_preset: String,
-    #[serde(default)]
-    terminology_groups: Option<Vec<SettingsSnapshotTerminologyGroup>>,
-    #[serde(default)]
-    enable_terminology: Option<bool>,
-    #[serde(default)]
-    enable_subtitle_beautify: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct SettingsSnapshotTerminologyGroup {
-    #[serde(default)]
-    terms: Vec<SettingsSnapshotTerminologyTerm>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct SettingsSnapshotTerminologyTerm {
-    #[serde(default)]
-    origin: String,
-    #[serde(default)]
-    target: String,
-    #[serde(default)]
-    note: String,
-}
-
 pub fn resolve_runtime_settings(
-    snapshot: &Value,
+    store: &TaskStore,
+    frozen: &FrozenSettings,
     require_translate_llm: bool,
 ) -> Result<PipelineRuntimeSettings, String> {
-    let snapshot_parsed = serde_json::from_value::<SettingsSnapshotInput>(snapshot.clone())
-        .map_err(|err| format!("invalid settings snapshot: {err}"))?;
-    let saved = crate::services::preferences::load_saved_settings_from_default_path()
+    // Live settings: read fresh on every call so the user can swap
+    // LLM endpoint/model, concurrency, ASR/align model, or chunk length
+    // and have the next call/chunk pick it up.
+    let saved = crate::services::preferences::load_saved_settings_from_default_path(store)
         .unwrap_or_else(|_| fallback_saved_settings());
 
-    let provider = snapshot_parsed
-        .provider
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| saved.provider.clone());
-    let chunk_target_seconds = snapshot_parsed
-        .chunk_target_seconds
-        .unwrap_or(saved.chunk_target_seconds)
-        .clamp(30, 60);
-    let asr_model = snapshot_parsed
-        .asr_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| saved.asr_model.clone());
-    let align_model = snapshot_parsed
-        .align_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| saved.align_model.clone());
-
-    let translate_api_key = snapshot_parsed
-        .translate_api_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| saved.translate_api_key.clone());
-    let translate_base_url = snapshot_parsed
-        .translate_base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| saved.translate_base_url.clone());
-    let translate_model = snapshot_parsed
-        .translate_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| saved.translate_model.clone());
+    let provider = saved.provider.clone();
+    let chunk_target_seconds = saved.chunk_target_seconds.clamp(30, 60);
+    let asr_model = saved.asr_model.clone();
+    let align_model = saved.align_model.clone();
+    let enable_vocal_separation = saved.enable_vocal_separation;
+    let demucs_model = saved.demucs_model.clone();
+    let translate_api_key = saved.translate_api_key.clone();
+    let translate_base_url = saved.translate_base_url.clone();
+    let translate_model = saved.translate_model.clone();
+    let llm_concurrency = saved.llm_concurrency.clamp(1, 16);
 
     if require_translate_llm && translate_api_key.trim().is_empty() {
         return Err("translateApiKey is required for step_03~step_05".to_string());
@@ -133,53 +79,33 @@ pub fn resolve_runtime_settings(
         return Err("translateModel is required for step_03~step_05".to_string());
     }
 
-    let llm_concurrency = snapshot_parsed
-        .llm_concurrency
-        .unwrap_or(saved.llm_concurrency)
-        .clamp(1, 16);
-    let subtitle_length_preset = crate::services::subtitle_length::normalize_subtitle_length_preset(
-        &snapshot_parsed.subtitle_length_preset,
-    );
-    let enable_terminology = snapshot_parsed
-        .enable_terminology
-        .unwrap_or(saved.enable_terminology);
-    let enable_subtitle_beautify = snapshot_parsed
-        .enable_subtitle_beautify
-        .unwrap_or(saved.enable_subtitle_beautify);
+    // Frozen settings: captured at enqueue time, do not change mid-task.
+    let subtitle_length_preset =
+        crate::services::subtitle_length::normalize_subtitle_length_preset(
+            &frozen.subtitle_length_preset,
+        );
+    let enable_subtitle_beautify = frozen.enable_subtitle_beautify;
 
-    let terminology_entries = if enable_terminology {
+    let terminology_entries = if frozen.enable_terminology {
         let mut seen = HashSet::<(String, String)>::new();
         let mut out = Vec::<TranslateTerminologyEntryCommand>::new();
-        let snapshot_entries = snapshot_parsed
-            .terminology_groups
-            .unwrap_or_default()
-            .into_iter()
-            .flat_map(|group| group.terms.into_iter())
-            .map(|term| TranslateTerminologyEntryCommand {
-                source: term.origin.trim().to_string(),
-                target: term.target.trim().to_string(),
-                note: term.note.trim().to_string(),
-            })
-            .collect::<Vec<_>>();
-
-        for entry in snapshot_entries
-            .into_iter()
-            .chain(saved_terminology_entries(&saved).into_iter())
-        {
-            let source = entry.source.trim().to_string();
-            let target = entry.target.trim().to_string();
-            if source.is_empty() || target.is_empty() {
-                continue;
+        for group in &frozen.terminology_groups {
+            for term in &group.terms {
+                let source = term.origin.trim().to_string();
+                let target = term.target.trim().to_string();
+                if source.is_empty() || target.is_empty() {
+                    continue;
+                }
+                let key = (source.to_ascii_lowercase(), target.to_ascii_lowercase());
+                if !seen.insert(key) {
+                    continue;
+                }
+                out.push(TranslateTerminologyEntryCommand {
+                    source,
+                    target,
+                    note: term.note.trim().to_string(),
+                });
             }
-            let key = (source.to_ascii_lowercase(), target.to_ascii_lowercase());
-            if !seen.insert(key) {
-                continue;
-            }
-            out.push(TranslateTerminologyEntryCommand {
-                source,
-                target,
-                note: entry.note.trim().to_string(),
-            });
         }
         out
     } else {
@@ -191,6 +117,8 @@ pub fn resolve_runtime_settings(
         align_model,
         provider,
         chunk_target_seconds,
+        enable_vocal_separation,
+        demucs_model,
         translate_api_key,
         translate_base_url,
         translate_model,
@@ -227,58 +155,82 @@ pub fn fallback_saved_settings() -> crate::services::preferences::SavedSettings 
     }
 }
 
-fn saved_terminology_entries(
-    saved: &crate::services::preferences::SavedSettings,
-) -> Vec<TranslateTerminologyEntryCommand> {
-    saved
-        .terminology_groups
-        .iter()
-        .flat_map(|group| group.terms.iter())
-        .map(|term| TranslateTerminologyEntryCommand {
-            source: term.origin.clone(),
-            target: term.target.clone(),
-            note: term.note.clone(),
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::services::preferences_types::TerminologyTerm;
 
-    #[test]
-    fn runtime_settings_preserve_asr_model_from_snapshot() {
-        let settings = resolve_runtime_settings(
-            &json!({
-                "asrModel": "Qwen3-ASR-1.7B",
-                "alignModel": "Qwen3-ForcedAligner-0.6B",
-                "provider": "cuda",
-                "chunkTargetSeconds": 61,
-                "subtitleLengthPreset": "standard"
-            }),
-            false,
-        )
-        .expect("resolve_runtime_settings should not fail with valid snapshot");
-
-        assert_eq!(settings.asr_model, "Qwen3-ASR-1.7B");
-        assert_eq!(settings.align_model, "Qwen3-ForcedAligner-0.6B");
-        assert_eq!(settings.chunk_target_seconds, 60);
+    fn dummy_store() -> TaskStore {
+        let pool = tauri::async_runtime::block_on(crate::db::store::test_pool());
+        TaskStore::new(pool)
     }
 
     #[test]
-    fn runtime_settings_require_subtitle_length_preset_from_snapshot() {
-        let err = resolve_runtime_settings(
-            &json!({
-                "asrModel": "Qwen3-ASR-1.7B",
-                "alignModel": "Qwen3-ForcedAligner-0.6B",
-                "provider": "cuda",
-                "chunkTargetSeconds": 120
-            }),
-            false,
-        )
-        .unwrap_err();
+    fn frozen_subtitle_preset_is_preserved_across_calls() {
+        let frozen = FrozenSettings {
+            subtitle_length_preset: "loose".to_string(),
+            enable_terminology: false,
+            enable_subtitle_beautify: false,
+            terminology_groups: Vec::new(),
+        };
+        let settings = resolve_runtime_settings(&dummy_store(), &frozen, false)
+            .expect("resolve");
+        assert_eq!(settings.subtitle_length_preset, "loose");
+        assert!(!settings.enable_subtitle_beautify);
+        assert!(settings.terminology_entries.is_empty());
+    }
 
-        assert!(err.contains("subtitleLengthPreset"));
+    #[test]
+    fn frozen_terminology_entries_are_normalized_and_deduplicated() {
+        let frozen = FrozenSettings {
+            subtitle_length_preset: "default".to_string(),
+            enable_terminology: true,
+            enable_subtitle_beautify: true,
+            terminology_groups: vec![TerminologyGroup {
+                id: "g1".to_string(),
+                name: "Default".to_string(),
+                terms: vec![
+                    TerminologyTerm {
+                        id: "t1".to_string(),
+                        origin: "  NATO ".to_string(),
+                        target: "北约".to_string(),
+                        note: "a".to_string(),
+                    },
+                    TerminologyTerm {
+                        id: "t2".to_string(),
+                        origin: "nato".to_string(),
+                        target: " 北约 ".to_string(),
+                        note: "dup".to_string(),
+                    },
+                ],
+            }],
+        };
+        let settings = resolve_runtime_settings(&dummy_store(), &frozen, false)
+            .expect("resolve");
+        assert_eq!(settings.terminology_entries.len(), 1);
+        assert_eq!(settings.terminology_entries[0].source, "NATO");
+        assert_eq!(settings.terminology_entries[0].target, "北约");
+    }
+
+    #[test]
+    fn disabled_terminology_emits_no_entries_even_with_groups() {
+        let frozen = FrozenSettings {
+            subtitle_length_preset: "default".to_string(),
+            enable_terminology: false,
+            enable_subtitle_beautify: true,
+            terminology_groups: vec![TerminologyGroup {
+                id: "g1".to_string(),
+                name: "x".to_string(),
+                terms: vec![TerminologyTerm {
+                    id: "t1".to_string(),
+                    origin: "x".to_string(),
+                    target: "y".to_string(),
+                    note: "".to_string(),
+                }],
+            }],
+        };
+        let settings = resolve_runtime_settings(&dummy_store(), &frozen, false)
+            .expect("resolve");
+        assert!(settings.terminology_entries.is_empty());
     }
 }

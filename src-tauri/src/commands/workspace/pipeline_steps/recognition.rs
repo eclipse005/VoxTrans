@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use tokio::runtime::Handle;
 
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 
 use super::super::progress::report_task_stage;
-use super::super::{STEP_01_ASR_FILE, STEP_02_SEGMENTS_FILE, TaskStage};
+use super::super::TaskStage;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,10 +42,6 @@ impl PipelineStep for Step1AsrPipelineStep {
         "step_01_asr"
     }
 
-    fn artifact_file(&self) -> &'static str {
-        STEP_01_ASR_FILE
-    }
-
     fn policy(&self) -> CheckpointPolicy {
         CheckpointPolicy::SkipIfExists
     }
@@ -59,7 +56,36 @@ impl PipelineStep for Step1AsrPipelineStep {
         Ok(())
     }
 
-    async fn run(&self, _ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+    async fn run(&self, ctx: &StepContext<'_>) -> Result<Self::Output, String> {
+        let unit_store = ctx.unit_store();
+
+        let precomputed_asr = unit_store.load_asr_transcripts().await?;
+        let precomputed_asr_segments: Vec<(usize, String)> = precomputed_asr
+            .into_iter()
+            .map(|row| (row.segment_index, row.text))
+            .collect();
+
+        let precomputed_alignment = unit_store.load_alignment_results().await?;
+        let precomputed_alignment_segments: Vec<(
+            usize,
+            qwen_forced_aligner_rs::ForcedAlignResult,
+        )> = precomputed_alignment
+            .into_iter()
+            .map(|row| {
+                (
+                    row.segment_index,
+                    qwen_forced_aligner_rs::ForcedAlignResult {
+                        items: row.items,
+                        output_ids: Vec::new(),
+                        raw_timestamp_ms: Vec::new(),
+                        fixed_timestamp_ms: Vec::new(),
+                    },
+                )
+            })
+            .collect();
+
+        let unit_store_cb = unit_store.clone();
+
         let task_id_owned = self.task_id.clone();
         let app_for_progress = self.app.clone();
         let media_path = self.media_path.clone();
@@ -74,11 +100,14 @@ impl PipelineStep for Step1AsrPipelineStep {
             provider,
             chunk_target_seconds,
             model_dir: None,
+            precomputed_asr_segments,
+            precomputed_alignment: precomputed_alignment_segments,
         };
         let transcribe_response = tauri::async_runtime::spawn_blocking(move || {
+            let us = unit_store_cb;
             crate::services::transcribe::transcribe_blocking(
                 transcribe_request,
-                move |stage, current, total| {
+                move |stage, current, total, fresh_result| {
                     let task_stage = match stage {
                         crate::services::transcribe::TranscribeProgressStage::Asr => {
                             TaskStage::Recognizing
@@ -87,7 +116,7 @@ impl PipelineStep for Step1AsrPipelineStep {
                             TaskStage::Aligning
                         }
                     };
-                    let _ = report_task_stage(
+                    let report = report_task_stage(
                         &app_for_progress,
                         &task_id_owned,
                         task_stage,
@@ -95,6 +124,44 @@ impl PipelineStep for Step1AsrPipelineStep {
                         current as u32,
                         total as u32,
                     );
+                    match Handle::try_current() {
+                        Ok(handle)
+                            if handle.runtime_flavor()
+                                == tokio::runtime::RuntimeFlavor::MultiThread =>
+                        {
+                            let _ = tokio::task::block_in_place(|| {
+                                handle.block_on(async {
+                                    let _ = report.await;
+                                    match fresh_result {
+                                        Some(crate::services::transcribe::FreshSegmentResult::Asr {
+                                            segment_index,
+                                            text,
+                                        }) => {
+                                            let row =
+                                                crate::services::pipeline::AsrTranscriptRow {
+                                                    segment_index,
+                                                    text,
+                                                };
+                                            let _ = us.save_asr_transcript(&row).await;
+                                        }
+                                        Some(crate::services::transcribe::FreshSegmentResult::Align {
+                                            segment_index,
+                                            items,
+                                        }) => {
+                                            let row =
+                                                crate::services::pipeline::AlignmentResultRow {
+                                                    segment_index,
+                                                    items,
+                                                };
+                                            let _ = us.save_alignment_result(&row).await;
+                                        }
+                                        None => {}
+                                    }
+                                })
+                            });
+                        }
+                        _ => {}
+                    }
                 },
             )
         })
@@ -138,10 +205,6 @@ impl PipelineStep for Step2SegmentsPipelineStep {
 
     fn name(&self) -> &'static str {
         "step_02_segments"
-    }
-
-    fn artifact_file(&self) -> &'static str {
-        STEP_02_SEGMENTS_FILE
     }
 
     fn policy(&self) -> CheckpointPolicy {

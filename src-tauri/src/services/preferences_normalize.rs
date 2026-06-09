@@ -6,10 +6,10 @@ use super::preferences_types::{
     TerminologyTerm,
 };
 
-pub(super) fn default_settings() -> SavedSettings {
+pub fn default_settings() -> SavedSettings {
     SavedSettings {
         provider: "cpu".to_string(),
-        chunk_target_seconds: 45,
+        chunk_target_seconds: 30,
         subtitle_length_preset: crate::services::subtitle_length::DEFAULT_SUBTITLE_LENGTH_PRESET
             .to_string(),
         asr_model: crate::services::model::DEFAULT_ASR_MODEL.to_string(),
@@ -17,8 +17,8 @@ pub(super) fn default_settings() -> SavedSettings {
         demucs_model: "htdemucs_ft".to_string(),
         enable_vocal_separation: false,
         translate_api_key: String::new(),
-        translate_base_url: "https://api.openai.com/v1".to_string(),
-        translate_model: "gpt-4.1-mini".to_string(),
+        translate_base_url: "https://api.deepseek.com/v1".to_string(),
+        translate_model: "deepseek-chat".to_string(),
         llm_concurrency: 4,
         terminology_groups: normalize_terminology_groups(Vec::new()),
         enable_terminology: true,
@@ -71,7 +71,7 @@ pub(super) fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings
         translate_base_url: {
             let trimmed = settings.translate_base_url.trim();
             if trimmed.is_empty() {
-                "https://api.openai.com/v1".to_string()
+                "https://api.deepseek.com/v1".to_string()
             } else {
                 trimmed.to_string()
             }
@@ -79,7 +79,7 @@ pub(super) fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings
         translate_model: {
             let trimmed = settings.translate_model.trim();
             if trimmed.is_empty() {
-                "gpt-4.1-mini".to_string()
+                "deepseek-chat".to_string()
             } else {
                 trimmed.to_string()
             }
@@ -294,8 +294,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_chunk_target_seconds_is_forty_five() {
-        assert_eq!(default_settings().chunk_target_seconds, 45);
+    fn default_chunk_target_seconds_is_thirty() {
+        assert_eq!(default_settings().chunk_target_seconds, 30);
     }
 
     #[test]

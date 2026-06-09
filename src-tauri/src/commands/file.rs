@@ -1,4 +1,7 @@
 use serde::Deserialize;
+use tauri::{AppHandle, Manager};
+
+use crate::db::store::TaskStore;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,13 +55,20 @@ pub fn export_srt(request: ExportSrtCommandRequest) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn export_task_srts(request: ExportTaskSrtsCommandRequest) -> Result<Vec<String>, String> {
-    crate::services::file::export_task_srts(crate::services::file::ExportTaskSrtsRequest {
-        task_id: request.task_id,
-        target_dir: request.target_dir,
-        task_name: request.task_name,
-        items: request.items,
-    })
+pub fn export_task_srts(
+    app: AppHandle,
+    request: ExportTaskSrtsCommandRequest,
+) -> Result<Vec<String>, String> {
+    let store = app.state::<TaskStore>().inner();
+    crate::services::file::export_task_srts(
+        store,
+        crate::services::file::ExportTaskSrtsRequest {
+            task_id: request.task_id,
+            target_dir: request.target_dir,
+            task_name: request.task_name,
+            items: request.items,
+        },
+    )
 }
 
 #[tauri::command]

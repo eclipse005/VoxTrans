@@ -1,12 +1,10 @@
-use serde_json::Value;
-use tauri::{AppHandle, Emitter};
-
+use tauri::{AppHandle, Emitter, Manager};
+use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
+use crate::domain::task::runtime_settings::FrozenSettings;
 use crate::domain::task::stage::TaskStage;
 
-mod artifact_migration;
 mod execution_flow;
-mod json_files;
 mod log_payload;
 mod meta;
 mod output_completion;
@@ -21,12 +19,12 @@ mod translation_flow;
 mod types;
 
 use crate::domain::task::runtime_settings::fallback_saved_settings;
-use meta::{ensure_workspace_hydrated_from_disk, persist_task_meta};
+use meta::ensure_workspace_hydrated_from_db;
 use queue_ops::{
     delete_tasks_internal, enqueue_task_run_internal, execute_task_batch_internal,
     register_task_upload_internal, update_task_languages_internal,
 };
-use store::{TaskStore, find_task_mut, lock_workspace_store};
+use store::{TaskStore as _, find_task_mut, is_workspace_hydrated, lock_workspace_store};
 pub use types::*;
 
 #[derive(Debug, Clone)]
@@ -36,20 +34,15 @@ struct WorkspaceTaskRecord {
     source_lang: String,
     target_lang: String,
     max_retries: u32,
-    settings_snapshot: Value,
+    /// Captured at enqueue time; see `FrozenSettings` docs.
+    frozen: FrozenSettings,
 }
 
-const TASK_META_FILE_NAME: &str = "task_meta.json";
-const STEP_01_ASR_FILE: &str = "step_01_asr.json";
-const STEP_02_SEGMENTS_FILE: &str = "step_02_segments.json";
-const STEP_03_TERMINOLOGY_FILE: &str = "step_03_terminology.json";
-const STEP_04_TRANSLATION_FILE: &str = "step_04_translation.json";
-const STEP_05_01_SOURCE_SPLIT_FILE: &str = "step_05_01_source_split.json";
-const STEP_05_02_TRANSLATION_ALIGN_FILE: &str = "step_05_02_translation_align.json";
-
 #[tauri::command]
-pub async fn load_workspace_state() -> Result<WorkspaceStateResponse, String> {
-    ensure_workspace_hydrated_from_disk()?;
+pub async fn load_workspace_state(
+    app: AppHandle,
+) -> Result<WorkspaceStateResponse, String> {
+    ensure_workspace_hydrated_from_db(&app).await?;
     let store = lock_workspace_store()?;
     Ok(WorkspaceStateResponse {
         queue: store.tasks().iter().map(|task| task.item.clone()).collect(),
@@ -58,10 +51,11 @@ pub async fn load_workspace_state() -> Result<WorkspaceStateResponse, String> {
 
 #[tauri::command]
 pub async fn load_workspace_task(
+    app: AppHandle,
     request: LoadWorkspaceTaskCommandRequest,
 ) -> Result<WorkspaceTaskResponse, String> {
     let task_id = require_task_id(&request.task_id)?;
-    ensure_workspace_hydrated_from_disk()?;
+    ensure_workspace_hydrated_from_db(&app).await?;
     let task = get_task_record(task_id)?;
     Ok(WorkspaceTaskResponse {
         item: task.item.clone(),
@@ -69,13 +63,19 @@ pub async fn load_workspace_task(
 }
 
 #[tauri::command]
-pub async fn register_task_upload(request: RegisterTaskUploadCommandRequest) -> Result<(), String> {
-    Ok(register_task_upload_internal(request)?)
+pub async fn register_task_upload(
+    app: AppHandle,
+    request: RegisterTaskUploadCommandRequest,
+) -> Result<(), String> {
+    Ok(register_task_upload_internal(&app, request).await?)
 }
 
 #[tauri::command]
-pub async fn delete_tasks(request: DeleteTasksCommandRequest) -> Result<(), String> {
-    Ok(delete_tasks_internal(request)?)
+pub async fn delete_tasks(
+    app: AppHandle,
+    request: DeleteTasksCommandRequest,
+) -> Result<(), String> {
+    Ok(delete_tasks_internal(&app, request).await?)
 }
 
 #[tauri::command]
@@ -83,7 +83,7 @@ pub async fn enqueue_task_run(
     app: AppHandle,
     request: EnqueueTaskRunCommandRequest,
 ) -> Result<(), String> {
-    Ok(enqueue_task_run_internal(&app, request)?)
+    Ok(enqueue_task_run_internal(&app, request).await?)
 }
 
 #[tauri::command]
@@ -91,7 +91,7 @@ pub async fn update_task_languages(
     app: AppHandle,
     request: UpdateTaskLanguagesCommandRequest,
 ) -> Result<(), String> {
-    Ok(update_task_languages_internal(&app, request)?)
+    Ok(update_task_languages_internal(&app, request).await?)
 }
 
 #[tauri::command]
@@ -100,11 +100,26 @@ pub async fn save_subtitle_editor(
     request: SaveSubtitleEditorCommandRequest,
 ) -> Result<(), String> {
     let task_id = require_task_id(&request.task_id)?;
-    ensure_workspace_hydrated_from_disk()?;
-    Ok(patch_task_item(&app, task_id, |task| {
+    ensure_workspace_hydrated_from_db(&app).await?;
+    let subtitle_segments_json = request.subtitle_segments_json.clone();
+    // Persist segments to DB FIRST: if it fails, surface the error and
+    // leave the task meta untouched so callers see a consistent state.
+    // Doing it in the other order would mark the task with new
+    // result_srt + segments_json while the DB segments table silently
+    // stays stale -- a restart hydrate then resets segments to empty.
+    let store = app.state::<TaskStore>().inner().clone();
+    let segments: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
+        serde_json::from_str(&subtitle_segments_json).unwrap_or_default();
+    store
+        .replace_segments(task_id, &segments)
+        .await
+        .map_err(|e| format!("persist segments: {e}"))?;
+    patch_task_item(&app, task_id, |task| {
         task.item.result_srt = request.content;
         task.item.subtitle_segments_json = request.subtitle_segments_json;
-    })?)
+    })
+    .await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -136,7 +151,7 @@ pub async fn enqueue_and_execute_task_batch(
     let mut execute_items = Vec::<ExecuteTaskRunCommandRequest>::new();
 
     for item in request.items {
-        match enqueue_task_run_internal(&app, item.clone()) {
+        match enqueue_task_run_internal(&app, item.clone()).await {
             Ok(()) => execute_items.push(ExecuteTaskRunCommandRequest {
                 task_id: item.id,
                 intent: Some(item.intent),
@@ -153,9 +168,12 @@ pub async fn enqueue_and_execute_task_batch(
     Ok(response)
 }
 
-pub fn task_subtitle_beautify_context(task_id: &str) -> Result<(bool, String, String), String> {
+pub fn task_subtitle_beautify_context(
+    store: &TaskStore,
+    task_id: &str,
+) -> Result<(bool, String, String), String> {
     let record = get_task_record(task_id)?;
-    let saved = crate::services::preferences::load_saved_settings_from_default_path()
+    let saved = crate::services::preferences::load_saved_settings_from_default_path(store)
         .unwrap_or_else(|_| fallback_saved_settings());
     Ok((
         saved.enable_subtitle_beautify,
@@ -164,40 +182,34 @@ pub fn task_subtitle_beautify_context(task_id: &str) -> Result<(bool, String, St
     ))
 }
 
-fn patch_task_item(
+async fn patch_task_item(
     app: &AppHandle,
     task_id: &str,
     mutator: impl FnOnce(&mut WorkspaceTaskRecord),
 ) -> WorkspaceResult<()> {
-    let updated_item = {
-        let mut store = lock_workspace_store()?;
-        let Some(task) = find_task_mut(&mut store, task_id) else {
+    let mut updated = {
+        let store = lock_workspace_store()?;
+        let Some(task) = store
+            .tasks()
+            .iter()
+            .find(|entry| entry.item.id == task_id)
+        else {
             return Err(WorkspaceError::TaskNotFound(task_id.to_string()));
         };
-        persist_task_record_update(task, mutator)?
+        task.clone()
     };
+    mutator(&mut updated);
+    let db_store = app.state::<TaskStore>().inner();
+    crate::commands::workspace::meta::persist_task_meta(db_store, &updated).await?;
+    let updated_item = updated.item.clone();
+    {
+        let mut store = lock_workspace_store()?;
+        if let Some(task) = find_task_mut(&mut store, task_id) {
+            *task = updated;
+        }
+    }
     emit_task_state_changed(app, &updated_item);
     Ok(())
-}
-
-fn persist_task_record_update(
-    record: &mut WorkspaceTaskRecord,
-    mutator: impl FnOnce(&mut WorkspaceTaskRecord),
-) -> WorkspaceResult<WorkspaceQueueItem> {
-    update_task_record_with_persist(record, mutator, persist_task_meta)
-}
-
-fn update_task_record_with_persist(
-    record: &mut WorkspaceTaskRecord,
-    mutator: impl FnOnce(&mut WorkspaceTaskRecord),
-    persist: impl FnOnce(&WorkspaceTaskRecord) -> WorkspaceResult<()>,
-) -> WorkspaceResult<WorkspaceQueueItem> {
-    let mut updated = record.clone();
-    mutator(&mut updated);
-    persist(&updated)?;
-    let item = updated.item.clone();
-    *record = updated;
-    Ok(item)
 }
 
 fn get_task_record(task_id: &str) -> WorkspaceResult<WorkspaceTaskRecord> {
@@ -220,7 +232,9 @@ fn require_task_id(task_id: &str) -> WorkspaceResult<&str> {
 
 pub fn get_task_queue_item_for_export(task_id: &str) -> WorkspaceResult<WorkspaceQueueItem> {
     let normalized = require_task_id(task_id)?;
-    ensure_workspace_hydrated_from_disk()?;
+    if !is_workspace_hydrated() {
+        return Err(WorkspaceError::NotHydrated);
+    }
     let record = get_task_record(normalized)?;
     Ok(record.item)
 }
@@ -231,32 +245,19 @@ pub fn add_task_total_tokens(task_id: &str, delta_tokens: u64) -> WorkspaceResul
         return Ok(0);
     }
 
-    ensure_workspace_hydrated_from_disk()?;
-    let updated_total = {
-        let mut store = lock_workspace_store()?;
-        let Some(task) = find_task_mut(&mut store, task_id) else {
-            return Ok(0);
-        };
-        let item = persist_task_record_update(task, |task| {
-            task.item.llm_total_tokens = task.item.llm_total_tokens.saturating_add(delta_tokens);
-        })?;
-        item.llm_total_tokens
-    };
-    Ok(updated_total)
-}
-
-pub fn get_task_total_tokens_from_workspace(task_id: &str) -> WorkspaceResult<u64> {
-    let task_id = task_id.trim();
-    if task_id.is_empty() {
+    if !is_workspace_hydrated() {
+        // Workspace not yet hydrated; skip until next persist.
         return Ok(0);
     }
-
-    ensure_workspace_hydrated_from_disk()?;
-    let store = lock_workspace_store()?;
-    let Some(task) = store.tasks().iter().find(|entry| entry.item.id == task_id) else {
+    let mut store = lock_workspace_store()?;
+    let Some(task) = find_task_mut(&mut store, task_id) else {
         return Ok(0);
     };
-    Ok(task.item.llm_total_tokens)
+    task.item.llm_total_tokens = task.item.llm_total_tokens.saturating_add(delta_tokens);
+    let updated = task.item.clone();
+    // The mirrored total is also written through to SQLite by
+    // record_llm_usage() right after this; see services/task_usage.rs.
+    Ok(updated.llm_total_tokens)
 }
 
 fn normalize_media_kind(raw: &str) -> &str {
@@ -337,70 +338,5 @@ mod tests {
 
         assert_eq!(err.code(), "INVALID_REQUEST");
         assert_eq!(err.to_string(), "invalid request: taskId is required");
-    }
-
-    #[test]
-    fn task_record_update_keeps_original_record_when_persist_fails() {
-        let mut record = test_workspace_record("task-1");
-
-        let err = update_task_record_with_persist(
-            &mut record,
-            |task| {
-                task.item.name = "updated.mp4".to_string();
-            },
-            |_| {
-                Err(WorkspaceError::Io(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "cannot persist task meta",
-                )))
-            },
-        )
-        .expect_err("persist failure should abort the record update");
-
-        assert_eq!(err.code(), "IO_ERROR");
-        assert_eq!(record.item.name, "demo.mp4");
-    }
-
-    #[test]
-    fn task_record_update_replaces_record_after_persist_succeeds() {
-        let mut record = test_workspace_record("task-1");
-
-        let item = update_task_record_with_persist(
-            &mut record,
-            |task| {
-                task.item.name = "updated.mp4".to_string();
-            },
-            |_| Ok(()),
-        )
-        .expect("persist success should update the record");
-
-        assert_eq!(item.name, "updated.mp4");
-        assert_eq!(record.item.name, "updated.mp4");
-    }
-
-    fn test_workspace_record(task_id: &str) -> WorkspaceTaskRecord {
-        WorkspaceTaskRecord {
-            item: WorkspaceQueueItem {
-                id: task_id.to_string(),
-                path: String::new(),
-                name: "demo.mp4".to_string(),
-                media_kind: "video".to_string(),
-                size_bytes: 1,
-                source_lang: "en".to_string(),
-                target_lang: "zh-CN".to_string(),
-                transcribe_status: "pending".to_string(),
-                task_progress: WorkspaceTaskProgressState::default(),
-                transcribe_error: String::new(),
-                result_text: String::new(),
-                result_srt: String::new(),
-                subtitle_segments_json: "[]".to_string(),
-                llm_total_tokens: 0,
-            },
-            intent: "TRANSCRIBE".to_string(),
-            source_lang: "en".to_string(),
-            target_lang: "zh-CN".to_string(),
-            max_retries: 0,
-            settings_snapshot: Value::Null,
-        }
     }
 }

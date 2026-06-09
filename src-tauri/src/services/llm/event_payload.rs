@@ -20,12 +20,8 @@ const ATTEMPT_PAYLOAD_KEYS: &[&str] = &[
     "request",
 ];
 
-pub(super) fn should_persist_artifacts(context: &LlmCallContext) -> bool {
-    context.phase != EPHEMERAL_PHASE_CONNECTIVITY_TEST
-}
-
 pub(super) fn logger_for_context(context: &LlmCallContext) -> Option<TaskLogger> {
-    if !should_persist_artifacts(context) {
+    if context.phase == EPHEMERAL_PHASE_CONNECTIVITY_TEST {
         return None;
     }
     match context.media_path.as_deref() {
@@ -41,36 +37,6 @@ pub(super) fn log_llm_call(logger: Option<&TaskLogger>, payload: Value) {
     if let Some(logger) = logger {
         logger.event("llm.call", Some(&payload));
     }
-}
-
-pub(super) fn cache_hit_payload(
-    config: &LlmConfig,
-    context: &LlmCallContext,
-    request_id: &str,
-) -> Value {
-    json!({
-        "status": "cache_hit",
-        "model": &config.model,
-        "baseUrl": normalize_base_url(&config.base_url),
-        "provider": LLM_PROVIDER,
-        "transport": LLM_TRANSPORT,
-        "phase": &context.phase,
-        "llmId": request_id,
-    })
-}
-
-pub(super) fn cache_invalid_payload(
-    status: &str,
-    error: impl Into<String>,
-    context: &LlmCallContext,
-    request_id: &str,
-) -> Value {
-    json!({
-        "status": status,
-        "error": error.into(),
-        "phase": &context.phase,
-        "llmId": request_id,
-    })
 }
 
 pub(super) fn attempt_base_payload(

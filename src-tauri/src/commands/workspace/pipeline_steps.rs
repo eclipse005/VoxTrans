@@ -4,6 +4,6 @@ mod translation;
 
 pub(super) use recognition::{Step1AsrPipelineStep, Step2SegmentsPipelineStep};
 pub(super) use subtitle_layout::{
-    Step51SourceSplitPipelineStep, Step52TranslationAlignPipelineStep,
+    Step5SplitAlignPipelineStep,
 };
 pub(super) use translation::{Step3TerminologyPipelineStep, Step4TranslationPipelineStep};

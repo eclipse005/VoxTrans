@@ -31,6 +31,7 @@ pub async fn test_translate_llm(
         task_id: "settings-llm-test".to_string(),
         media_path: None,
         phase: "connectivity_test".to_string(),
+        store: None,
     };
     let llm_id = next_llm_request_id();
     let result = client

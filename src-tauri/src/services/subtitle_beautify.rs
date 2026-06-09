@@ -1,4 +1,7 @@
 use crate::services::subtitle_srt::SubtitleSrtSegment;
+use crate::services::workspace_subtitle::{
+    WorkspaceSubtitleSegment, WorkspaceSubtitleWord,
+};
 
 pub fn beautify_subtitle_srt_segments(
     segments: &mut Vec<SubtitleSrtSegment>,
@@ -13,6 +16,72 @@ pub fn beautify_subtitle_srt_segments(
         subtitle_length_preset,
         target_lang,
     );
+}
+
+/// Beautify `WorkspaceSubtitleSegment`s in place so the SRT writer, DB,
+/// and the in-app subtitle editor all see the same (beautified) text.
+///
+/// Internally runs `beautify_subtitle_srt_segments` (which only knows
+/// about text), then re-attaches `source_words` to the (possibly
+/// merged) output segments by timing containment — each word from the
+/// originals is appended to whichever output segment covers its
+/// [start_ms, end_ms].
+pub fn beautify_workspace_segments(
+    segments: &mut Vec<WorkspaceSubtitleSegment>,
+    subtitle_length_preset: &str,
+    target_lang: &str,
+) {
+    // Snapshot original words with their timings, source_text BEFORE
+    // beautify (used to fix the source-text side which the SRT helper
+    // does not touch).
+    let original_words: Vec<(u64, u64, WorkspaceSubtitleWord)> = segments
+        .iter()
+        .flat_map(|seg| {
+            seg.source_words
+                .iter()
+                .map(|w| (seg.start_ms, seg.end_ms, w.clone()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    // Run the SRT-level beautify (text + watchability merge).
+    let mut srt_segments: Vec<SubtitleSrtSegment> = segments
+        .iter()
+        .map(|seg| SubtitleSrtSegment {
+            start_ms: seg.start_ms,
+            end_ms: seg.end_ms,
+            source_text: seg.source_text.clone(),
+            translated_text: seg.translated_text.clone(),
+        })
+        .collect();
+    beautify_subtitle_srt_segments(&mut srt_segments, subtitle_length_preset, target_lang);
+
+    // Map back to WorkspaceSubtitleSegment.
+    // - text fields: take the beautified text from srt_segments;
+    //   also beautify source_text (the SRT helper only touches translated_text).
+    // - source_words: re-attach by timing containment so a merged segment
+    //   inherits the union of words from the originals it absorbed.
+    *segments = srt_segments
+        .into_iter()
+        .map(|s| {
+            let mut words: Vec<WorkspaceSubtitleWord> = original_words
+                .iter()
+                .filter(|(_orig_start, _orig_end, w)| {
+                    // Word falls within this segment's window.
+                    w.start_ms >= s.start_ms && w.end_ms <= s.end_ms
+                })
+                .map(|(_, _, w)| w.clone())
+                .collect();
+            words.sort_by_key(|w| w.start_ms);
+            WorkspaceSubtitleSegment {
+                start_ms: s.start_ms,
+                end_ms: s.end_ms,
+                source_text: beautify_subtitle_text(&s.source_text),
+                translated_text: s.translated_text,
+                source_words: words,
+            }
+        })
+        .collect();
 }
 
 fn beautify_subtitle_text(raw: &str) -> String {
@@ -90,6 +159,12 @@ fn remove_internal_commas_for_subtitle(text: &str) -> String {
             continue;
         }
         if ch == '，' {
+            // Mirror the ASCII branch: replace with a space, not silently
+            // drop. Otherwise two CJK words get glued together
+            // ("...很棒，但..." → "...很棒但..." instead of "...很棒 但...")
+            // since CJK↔CJK never triggers normalize_cjk_ascii_spacing.
+            // collapse_multiple_spaces collapses any runs we introduce.
+            out.push(' ');
             continue;
         }
         out.push(ch);
@@ -170,6 +245,12 @@ mod tests {
             beautify_subtitle_text("代码,IPC,sockets"),
             "代码 IPC sockets"
         );
+        // Full-width comma between CJK words must produce a space too,
+        // otherwise the two words glue together (regression: 棒，但 → 棒但).
+        assert_eq!(
+            beautify_subtitle_text("盘整结构也很棒，但我们稍后会讨论"),
+            "盘整结构也很棒 但我们稍后会讨论"
+        );
     }
 
     #[test]
@@ -184,7 +265,7 @@ mod tests {
         beautify_subtitle_srt_segments(&mut segments, "standard", "zh-CN");
 
         assert_eq!(segments[0].source_text, " (Hello, world), ");
-        assert_eq!(segments[0].translated_text, "你好世界");
+        assert_eq!(segments[0].translated_text, "你好 世界");
     }
 
     #[test]
@@ -213,7 +294,7 @@ mod tests {
         );
         assert_eq!(
             segments[0].translated_text,
-            "如果你某周表现不佳可能会怀疑这个系统是否还有效重建系统信心"
+            "如果你某周表现不佳 可能会怀疑这个系统是否还有效 重建系统信心"
         );
     }
 

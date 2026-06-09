@@ -70,8 +70,8 @@ describe("shouldKeepCurrentProcessingStage", () => {
     subtitleSegmentsJson: "[]",
   };
 
-  it("keeps current stage when it is ahead", () => {
-    expect(shouldKeepCurrentProcessingStage(baseItem, basePayload)).toBe(true);
+  it("accepts incoming same-stage event (backend is source of truth)", () => {
+    expect(shouldKeepCurrentProcessingStage(baseItem, basePayload)).toBe(false);
   });
 
   it("does not keep when not processing", () => {

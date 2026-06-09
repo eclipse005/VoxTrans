@@ -1,7 +1,18 @@
+pub mod conversion;
+pub mod models;
+pub mod store;
+
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::path::PathBuf;
 use tauri::Manager;
+
+pub(crate) fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
 
 pub async fn init_pool(app: &tauri::AppHandle) -> Result<SqlitePool, String> {
     let app_data_dir = app
