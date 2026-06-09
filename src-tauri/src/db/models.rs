@@ -77,6 +77,11 @@ pub struct TaskRow {
     pub llm_total_tokens: u64,
     pub intent: String,
     pub max_retries: u32,
+    // Frozen-at-enqueue settings (see migration 20260610000001):
+    pub subtitle_length_preset: String,
+    pub enable_terminology: bool,
+    pub enable_subtitle_beautify: bool,
+    pub terminology_groups_json: String,
     pub updated_at: i64,
 }
 

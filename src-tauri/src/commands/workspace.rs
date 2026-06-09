@@ -1,7 +1,7 @@
-use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
+use crate::domain::task::runtime_settings::FrozenSettings;
 use crate::domain::task::stage::TaskStage;
 
 mod execution_flow;
@@ -34,7 +34,8 @@ struct WorkspaceTaskRecord {
     source_lang: String,
     target_lang: String,
     max_retries: u32,
-    settings_snapshot: Value,
+    /// Captured at enqueue time; see `FrozenSettings` docs.
+    frozen: FrozenSettings,
 }
 
 #[tauri::command]

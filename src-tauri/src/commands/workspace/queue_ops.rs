@@ -1,8 +1,8 @@
-use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
+use crate::domain::task::runtime_settings::FrozenSettings;
 
 use super::execution_flow::execute_single_task;
 use super::meta::{ensure_workspace_hydrated_from_db, persist_task_meta, remove_task_meta};
@@ -66,7 +66,7 @@ pub(super) async fn register_task_upload_internal(
             source_lang: default_task_source_lang(),
             target_lang: default_task_target_lang(),
             max_retries: 0,
-            settings_snapshot: Value::Null,
+            frozen: FrozenSettings::default(),
         };
         persist_task_meta(db_store, &record).await?;
         let mut store = lock_workspace_store()?;
@@ -170,10 +170,7 @@ pub(super) async fn enqueue_task_run_internal(
             source_lang,
             target_lang,
             max_retries: request.max_retries.unwrap_or(0),
-            settings_snapshot:
-                crate::services::preferences::load_saved_settings_from_default_path(db_store)
-                    .map(|settings| serde_json::to_value(settings).unwrap_or(Value::Null))
-                    .unwrap_or(Value::Null),
+            frozen: freeze_current_settings(db_store),
         };
         let emitted = record.item.clone();
         persist_task_meta(db_store, &record).await?;
@@ -432,10 +429,17 @@ fn apply_enqueue_request(
     record.item.source_lang = record.source_lang.clone();
     record.item.target_lang = record.target_lang.clone();
     record.max_retries = request.max_retries.unwrap_or(0);
-    record.settings_snapshot =
-        crate::services::preferences::load_saved_settings_from_default_path(db_store)
-            .map(|settings| serde_json::to_value(settings).unwrap_or(Value::Null))
-            .unwrap_or(Value::Null);
+    record.frozen = freeze_current_settings(db_store);
+}
+
+/// Snapshot the user-frozen subset of the current saved settings. Tasks
+/// keep their own copy so subtitle-shape and terminology decisions stay
+/// consistent across the whole run even if the user edits settings
+/// mid-pipeline.
+fn freeze_current_settings(db_store: &TaskStore) -> FrozenSettings {
+    crate::services::preferences::load_saved_settings_from_default_path(db_store)
+        .map(|saved| FrozenSettings::from_saved(&saved))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -526,7 +530,7 @@ mod tests {
             source_lang: "en".to_string(),
             target_lang: "zh-CN".to_string(),
             max_retries: 0,
-            settings_snapshot: Value::Null,
+            frozen: FrozenSettings::default(),
         }
     }
 }

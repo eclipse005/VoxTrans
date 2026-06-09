@@ -37,7 +37,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
     let intent = normalize_intent(&record.intent).to_string();
     let store = app.state::<TaskStore>().inner();
     let runtime =
-        resolve_runtime_settings(store, &record.settings_snapshot, intent == "TRANSCRIBE_TRANSLATE")?;
+        resolve_runtime_settings(store, &record.frozen, intent == "TRANSCRIBE_TRANSLATE")?;
     let mut source_lang = normalize_task_source_lang(&record.source_lang);
     let target_lang = normalize_task_target_lang(&record.target_lang);
     let step_context = StepContext { task_id, store };

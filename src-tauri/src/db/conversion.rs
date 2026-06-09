@@ -152,10 +152,28 @@ pub fn row_from_segment(
 /// Wrapper-only fields that live on `WorkspaceTaskRecord` but not on
 /// `WorkspaceQueueItem`. `task_from_row` returns them alongside the queue
 /// item so the hydrate path can rebuild a complete record.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TaskMetaExtras {
     pub intent: String,
     pub max_retries: u32,
+    pub subtitle_length_preset: String,
+    pub enable_terminology: bool,
+    pub enable_subtitle_beautify: bool,
+    /// JSON-serialized `Vec<TerminologyGroup>` (frozen at enqueue time).
+    pub terminology_groups_json: String,
+}
+
+impl Default for TaskMetaExtras {
+    fn default() -> Self {
+        Self {
+            intent: String::new(),
+            max_retries: 0,
+            subtitle_length_preset: String::new(),
+            enable_terminology: true,
+            enable_subtitle_beautify: true,
+            terminology_groups_json: "[]".to_string(),
+        }
+    }
 }
 
 pub fn task_from_row(row: TaskRow) -> (WorkspaceQueueItem, TaskMetaExtras) {
@@ -187,6 +205,10 @@ pub fn task_from_row(row: TaskRow) -> (WorkspaceQueueItem, TaskMetaExtras) {
     let extras = TaskMetaExtras {
         intent: row.intent,
         max_retries: row.max_retries,
+        subtitle_length_preset: row.subtitle_length_preset,
+        enable_terminology: row.enable_terminology,
+        enable_subtitle_beautify: row.enable_subtitle_beautify,
+        terminology_groups_json: row.terminology_groups_json,
     };
     (item, extras)
 }
@@ -213,6 +235,10 @@ pub fn row_from_task(item: &WorkspaceQueueItem, extras: &TaskMetaExtras) -> Task
         llm_total_tokens: item.llm_total_tokens,
         intent: extras.intent.clone(),
         max_retries: extras.max_retries,
+        subtitle_length_preset: extras.subtitle_length_preset.clone(),
+        enable_terminology: extras.enable_terminology,
+        enable_subtitle_beautify: extras.enable_subtitle_beautify,
+        terminology_groups_json: extras.terminology_groups_json.clone(),
         updated_at: now_ms(),
     }
 }
@@ -318,6 +344,10 @@ mod tests {
         let extras = TaskMetaExtras {
             intent: "TRANSCRIBE_TRANSLATE".into(),
             max_retries: 3,
+            subtitle_length_preset: "long".into(),
+            enable_terminology: false,
+            enable_subtitle_beautify: false,
+            terminology_groups_json: r#"[{"id":"g","name":"x","terms":[]}]"#.into(),
         };
         let row = row_from_task(&original, &extras);
         let (restored_item, restored_extras) = task_from_row(row);
@@ -338,5 +368,12 @@ mod tests {
         // Wrapper extras roundtrip.
         assert_eq!(restored_extras.intent, "TRANSCRIBE_TRANSLATE");
         assert_eq!(restored_extras.max_retries, 3);
+        assert_eq!(restored_extras.subtitle_length_preset, "long");
+        assert!(!restored_extras.enable_terminology);
+        assert!(!restored_extras.enable_subtitle_beautify);
+        assert_eq!(
+            restored_extras.terminology_groups_json,
+            r#"[{"id":"g","name":"x","terms":[]}]"#
+        );
     }
 }

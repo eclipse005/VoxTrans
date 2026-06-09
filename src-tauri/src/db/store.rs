@@ -405,7 +405,9 @@ impl TaskStore {
              transcribe_status, task_progress_stage_code, task_progress_stage_label, \
              task_progress_stage_order, task_progress_detail, task_progress_current, \
              task_progress_total, transcribe_error, result_text, result_srt, llm_total_tokens, \
-             intent, max_retries, updated_at FROM tasks ORDER BY updated_at DESC",
+             intent, max_retries, subtitle_length_preset, enable_terminology, \
+             enable_subtitle_beautify, terminology_groups_json, updated_at \
+             FROM tasks ORDER BY updated_at DESC",
         )
         .fetch_all(&self.pool)
         .await
@@ -434,6 +436,10 @@ impl TaskStore {
                 llm_total_tokens: r.get::<i64, _>("llm_total_tokens") as u64,
                 intent: r.get("intent"),
                 max_retries: r.get::<i64, _>("max_retries") as u32,
+                subtitle_length_preset: r.get("subtitle_length_preset"),
+                enable_terminology: r.get::<i64, _>("enable_terminology") != 0,
+                enable_subtitle_beautify: r.get::<i64, _>("enable_subtitle_beautify") != 0,
+                terminology_groups_json: r.get("terminology_groups_json"),
                 updated_at: r.get("updated_at"),
             };
             out.push(task_from_row(row));
@@ -452,9 +458,10 @@ impl TaskStore {
              target_lang, transcribe_status, task_progress_stage_code, \
              task_progress_stage_label, task_progress_stage_order, task_progress_detail, \
              task_progress_current, task_progress_total, transcribe_error, result_text, \
-             result_srt, llm_total_tokens, intent, max_retries, \
+             result_srt, llm_total_tokens, intent, max_retries, subtitle_length_preset, \
+             enable_terminology, enable_subtitle_beautify, terminology_groups_json, \
              updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-             ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
+             ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
              media_path=excluded.media_path, name=excluded.name, media_kind=excluded.media_kind, \
              size_bytes=excluded.size_bytes, source_lang=excluded.source_lang, \
              target_lang=excluded.target_lang, transcribe_status=excluded.transcribe_status, \
@@ -467,6 +474,10 @@ impl TaskStore {
              transcribe_error=excluded.transcribe_error, result_text=excluded.result_text, \
              result_srt=excluded.result_srt, llm_total_tokens=excluded.llm_total_tokens, \
              intent=excluded.intent, max_retries=excluded.max_retries, \
+             subtitle_length_preset=excluded.subtitle_length_preset, \
+             enable_terminology=excluded.enable_terminology, \
+             enable_subtitle_beautify=excluded.enable_subtitle_beautify, \
+             terminology_groups_json=excluded.terminology_groups_json, \
              updated_at=excluded.updated_at",
         )
         .bind(&row.id)
@@ -489,6 +500,10 @@ impl TaskStore {
         .bind(row.llm_total_tokens as i64)
         .bind(&row.intent)
         .bind(row.max_retries as i64)
+        .bind(&row.subtitle_length_preset)
+        .bind(row.enable_terminology as i64)
+        .bind(row.enable_subtitle_beautify as i64)
+        .bind(&row.terminology_groups_json)
         .bind(row.updated_at)
         .execute(&self.pool)
         .await
@@ -994,6 +1009,10 @@ mod tests {
         let extras = TaskMetaExtras {
             intent: "TRANSCRIBE_TRANSLATE".to_string(),
             max_retries: 2,
+            subtitle_length_preset: "long".to_string(),
+            enable_terminology: false,
+            enable_subtitle_beautify: false,
+            terminology_groups_json: r#"[{"id":"g","name":"x","terms":[]}]"#.to_string(),
         };
         s.upsert_task(&original, &extras).await.expect("upsert");
 
@@ -1005,6 +1024,13 @@ mod tests {
         assert_eq!(item.task_progress.stage.code, "recognizing");
         assert_eq!(extras.intent, "TRANSCRIBE_TRANSLATE");
         assert_eq!(extras.max_retries, 2);
+        assert_eq!(extras.subtitle_length_preset, "long");
+        assert!(!extras.enable_terminology);
+        assert!(!extras.enable_subtitle_beautify);
+        assert_eq!(
+            extras.terminology_groups_json,
+            r#"[{"id":"g","name":"x","terms":[]}]"#
+        );
     }
 
     #[tokio::test]

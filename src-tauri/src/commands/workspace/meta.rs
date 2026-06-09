@@ -1,4 +1,3 @@
-use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use super::store::{TaskStore as _, lock_workspace_hydrated, lock_workspace_store};
@@ -6,6 +5,7 @@ use super::{WorkspaceQueueItem, WorkspaceTaskRecord};
 use crate::db::conversion::TaskMetaExtras;
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
+use crate::domain::task::runtime_settings::FrozenSettings;
 use crate::services::workspace_subtitle::serialize_segments;
 
 pub(super) async fn ensure_workspace_hydrated_from_db(app: &AppHandle) -> WorkspaceResult<()> {
@@ -35,9 +35,15 @@ pub(super) async fn persist_task_meta(
     store: &TaskStore,
     record: &WorkspaceTaskRecord,
 ) -> WorkspaceResult<()> {
+    let terminology_groups_json = serde_json::to_string(&record.frozen.terminology_groups)
+        .unwrap_or_else(|_| "[]".to_string());
     let extras = TaskMetaExtras {
         intent: record.intent.clone(),
         max_retries: record.max_retries,
+        subtitle_length_preset: record.frozen.subtitle_length_preset.clone(),
+        enable_terminology: record.frozen.enable_terminology,
+        enable_subtitle_beautify: record.frozen.enable_subtitle_beautify,
+        terminology_groups_json,
     };
     store
         .upsert_task(&record.item, &extras)
@@ -70,13 +76,20 @@ async fn hydrate_workspace_from_db(store: &TaskStore) -> WorkspaceResult<()> {
         let source_lang = item.source_lang.clone();
         let target_lang = item.target_lang.clone();
         item.subtitle_segments_json = serialize_segments(&segments);
+        let frozen = FrozenSettings {
+            subtitle_length_preset: extras.subtitle_length_preset,
+            enable_terminology: extras.enable_terminology,
+            enable_subtitle_beautify: extras.enable_subtitle_beautify,
+            terminology_groups: serde_json::from_str(&extras.terminology_groups_json)
+                .unwrap_or_default(),
+        };
         records.push(WorkspaceTaskRecord {
             item,
             intent: extras.intent,
             source_lang,
             target_lang,
             max_retries: extras.max_retries,
-            settings_snapshot: Value::Null,
+            frozen,
         });
     }
 
