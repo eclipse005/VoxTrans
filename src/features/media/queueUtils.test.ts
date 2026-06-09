@@ -114,7 +114,7 @@ describe("mergeTaskStateChanged", () => {
       sizeBytes: 1024,
       sourceLang: "en",
       targetLang: "ja",
-      transcribeStatus: "done",
+      transcribeStatus: "completed",
       taskProgress: createTaskProgress({ code: "finalCheck", current: 1, total: 1 }),
       transcribeError: "",
       resultText: "hello",
@@ -129,7 +129,7 @@ describe("mergeTaskStateChanged", () => {
     expect(merged.sizeBytes).toBe(1024);
     expect(merged.sourceLang).toBe("en");
     expect(merged.targetLang).toBe("ja");
-    expect(merged.transcribeStatus).toBe("done");
+    expect(merged.transcribeStatus).toBe("completed");
     expect(merged.resultText).toBe("hello");
   });
 });

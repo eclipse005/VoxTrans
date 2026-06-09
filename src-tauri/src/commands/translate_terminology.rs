@@ -10,6 +10,7 @@ use super::translate_types::{
 use crate::db::store::TaskStore;
 use tauri::{AppHandle, Manager};
 
+#[tauri::command]
 pub async fn build_terminology_layer(
     app: AppHandle,
     mut request: BuildTerminologyLayerCommandRequest,

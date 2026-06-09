@@ -1,9 +1,8 @@
 //! Tauri command entrypoints grouped by domain.
 //!
 //! Boundary:
+//! - `transcribe`: ASR execution and low-level segmentation command.
 //! - `transcription`: post-ASR pipeline orchestration and phase events.
-//!   ASR execution itself is invoked from `workspace::pipeline_steps`
-//!   via `services::transcribe`, not exposed as its own command.
 pub mod file;
 pub mod logs;
 pub mod model;
@@ -11,9 +10,13 @@ pub mod preferences;
 mod preferences_mapping;
 pub mod preferences_types;
 pub mod system;
+pub mod transcribe;
+mod transcribe_mapping;
+pub mod transcribe_types;
 pub mod transcription;
 mod transcription_types;
 pub mod translate;
+pub mod translate_artifacts;
 pub mod translate_connectivity;
 pub mod translate_llm_settings;
 pub mod translate_step5_commands;

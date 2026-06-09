@@ -9,6 +9,22 @@ use super::translate_types::{
 use crate::db::store::TaskStore;
 use tauri::{AppHandle, Manager};
 
+#[tauri::command]
+pub async fn build_translation_layer(
+    app: AppHandle,
+    request: BuildTranslationLayerCommandRequest,
+) -> Result<BuildTranslationLayerCommandResponse, String> {
+    build_translation_layer_with_progress(app, request, None).await
+}
+
+pub async fn build_translation_layer_with_progress(
+    app: AppHandle,
+    request: BuildTranslationLayerCommandRequest,
+    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+) -> Result<BuildTranslationLayerCommandResponse, String> {
+    build_translation_layer_with_progress_and_unit_store(app, request, on_progress, None).await
+}
+
 pub async fn build_translation_layer_with_progress_and_unit_store(
     app: AppHandle,
     mut request: BuildTranslationLayerCommandRequest,
