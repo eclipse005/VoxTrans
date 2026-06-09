@@ -180,6 +180,22 @@ pub async fn build_step_5_split_align_with_progress(
                 continue;
             };
             if let Ok(aligned) = result {
+                // Persist immediately on completion so resume after a crash
+                // / restart picks up exactly what was done. Saving only
+                // after the whole round loop (the old behavior) lost ALL
+                // in-flight work whenever the process exited mid-round.
+                if let Some(us) = request.unit_store.as_ref() {
+                    if let Ok(json) = serde_json::to_string(&aligned) {
+                        let _ = us
+                            .save_step5_split_align(
+                                &crate::services::pipeline::Step5SplitAlignRow {
+                                    segment_index: works[work_idx].orig_idx,
+                                    parent_json: json,
+                                },
+                            )
+                            .await;
+                    }
+                }
                 works[work_idx].result = Some(aligned);
             }
             cumulative_done += 1;
@@ -233,23 +249,9 @@ pub async fn build_step_5_split_align_with_progress(
         }
     }
 
-    // ── Persist results & build final output ──
-    if let Some(us) = request.unit_store.as_ref() {
-        for work in &works {
-            if let Some(ref parent) = work.result {
-                if let Ok(json) = serde_json::to_string(parent) {
-                    let _ = us
-                        .save_step5_split_align(
-                            &crate::services::pipeline::Step5SplitAlignRow {
-                                segment_index: work.orig_idx,
-                                parent_json: json,
-                            },
-                        )
-                        .await;
-                }
-            }
-        }
-    }
+    // ── Build final output ──
+    // NB: per-work persistence already happens inside the round loop, so we
+    // do NOT save again here -- doing so would just rewrite the same rows.
 
     // Build a map from orig_idx → result for fast lookup
     let mut result_map: HashMap<usize, Step5AlignedParent> = HashMap::new();

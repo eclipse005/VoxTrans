@@ -1,3 +1,53 @@
+//! Pipeline step + checkpoint framework.
+//!
+//! # Two-tier checkpoint model
+//!
+//! voxtrans steps are checkpointed at two granularities; **both are
+//! required** when a step does sub-step parallelism, and they cover
+//! different failure modes:
+//!
+//! 1. **Coarse-grained: `task_artifacts`** — `execute_step` calls
+//!    `store.save_artifact(task_id, step.name(), <step output JSON>)`
+//!    once, AFTER `PipelineStep::run` returns. Saves a successful, fully
+//!    composed step output so the *next* run short-circuits the entire
+//!    step. Only fires on success — does nothing for in-flight work.
+//!
+//! 2. **Fine-grained: `UnitStore::save_*`** — sub-steps (one ASR
+//!    segment, one translation batch, one step5 overlong work) MUST
+//!    call the matching `save_*` method on `UnitStore` **immediately
+//!    when that unit completes** — not after a batch or round
+//!    finishes, not in a "persist all at the end" loop. If the process
+//!    is killed mid-step, the next run will see only the units that
+//!    were persisted; `load_*` is the resume source of truth.
+//!
+//! ## The invariant (what the framework guarantees)
+//!
+//! For any sub-step `unit` of a step `S`:
+//!
+//! - If `unit` was persisted via `UnitStore::save_*` before the process
+//!   exited, the next run will load it back through `UnitStore::load_*`
+//!   and **must skip recomputation** for it.
+//! - If `unit` was NOT persisted, `load_*` reports it as missing — the
+//!   step **must** recompute it.
+//!
+//! Violating this invariant produces user-visible regressions like
+//! "progress jumped backward from 14/21 to 3/21 after restart" — the
+//! UI showed real LLM work that was never written to SQLite and is
+//! therefore not recoverable.
+//!
+//! ## When in doubt
+//!
+//! Wire the `save_*` call inside the same `await` block / callback
+//! that produces the unit result, BEFORE the result is propagated to
+//! anything else. Look at `services/translation/mod.rs::on_item_done`
+//! (step4) or `commands/workspace/pipeline_steps/recognition.rs`
+//! (step1's `fresh_result` handler) for the canonical shape.
+//!
+//! The contract is exercised by `terminology_frozen_contract_no_cross_writes`
+//! and `step5_resume_skips_cached_works`; if you add a new sub-step
+//! resume table, add a matching test or this invariant will silently
+//! rot.
+
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -52,6 +102,12 @@ pub struct Step5SplitAlignRow {
 
 /// Thin handle that steps use to persist / load idempotent computation
 /// results from domain-specific tables, keyed by task_id only.
+///
+/// **Resume contract**: every `save_*` here MUST be called from inside
+/// the per-unit completion handler — NOT batched after the round /
+/// group finishes. The matching `load_*` is the resume source of
+/// truth; anything not yet persisted will be recomputed on the next
+/// run. See the module-level doc for the full rationale.
 #[derive(Clone)]
 pub struct UnitStore {
     store: TaskStore,
@@ -153,6 +209,17 @@ pub trait PipelineStep {
     fn validate(&self, _output: &Self::Output) -> Result<(), String> {
         Ok(())
     }
+    /// Run the step.
+    ///
+    /// **If this step does sub-step parallelism** (one ASR segment, one
+    /// translation batch, one step5 overlong work), each sub-step MUST
+    /// persist its own result through `UnitStore::save_*` the instant
+    /// it completes. Saving only after the whole step returns will lose
+    /// every in-flight unit when the process exits mid-step — even
+    /// though the coarse `task_artifacts` record is written by the
+    /// framework once `run` returns, that record never exists for
+    /// killed runs, so resume falls back to the per-unit tables.
+    /// See the module-level doc for the contract.
     async fn run(&self, ctx: &StepContext<'_>) -> Result<Self::Output, String>;
 }
 
