@@ -112,10 +112,7 @@ pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
 }
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    crate::db::now_ms()
 }
 
 pub fn row_from_segment(
@@ -175,7 +172,7 @@ pub fn task_from_row(row: TaskRow) -> WorkspaceQueueItem {
         transcribe_error: row.transcribe_error,
         result_text: row.result_text,
         result_srt: row.result_srt,
-        subtitle_segments_json: String::new(), // composed in store.rs from subtitle_segments
+        subtitle_segments_json: String::new(), // filled by meta.rs during hydrate or by callers directly
         llm_total_tokens: row.llm_total_tokens,
     }
 }
@@ -318,7 +315,6 @@ mod tests {
         assert_eq!(restored.task_progress.stage.total, original.task_progress.stage.total);
         assert_eq!(restored.llm_total_tokens, original.llm_total_tokens);
 
-        // subtitle_segments_json is a placeholder; composed in store.rs
         assert_eq!(restored.subtitle_segments_json, String::new());
     }
 }

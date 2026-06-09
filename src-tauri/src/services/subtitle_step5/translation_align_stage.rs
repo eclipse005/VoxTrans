@@ -244,6 +244,7 @@ async fn split_aligned_part_for_second_pass(
         task_id: request.task_id.clone(),
         media_path: Some(request.media_path.clone()),
         phase: "step_5_2_second_pass_source_split".to_string(),
+        store: request.unit_store.as_ref().map(|us| us.store().clone()),
     };
     let llm_id = next_llm_request_id();
     let call = llm_client
@@ -370,6 +371,7 @@ async fn align_once(
             task_id: request.task_id.clone(),
             media_path: Some(request.media_path.clone()),
             phase: "step_5_2_translation_align".to_string(),
+            store: request.unit_store.as_ref().map(|us| us.store().clone()),
         };
         let split_tasks_for_worker = split_tasks.clone();
 

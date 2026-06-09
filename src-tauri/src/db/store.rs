@@ -11,13 +11,10 @@ use crate::services::preferences_normalize::default_settings;
 use crate::services::preferences_types::SavedSettings;
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    crate::db::now_ms()
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TaskStore {
     pool: SqlitePool,
 }
@@ -491,6 +488,17 @@ impl TaskStore {
         .execute(&self.pool)
         .await
         .map_err(|e| format!("upsert task: {e}"))?;
+        Ok(())
+    }
+
+    pub async fn update_task_tokens(&self, id: &str, total_tokens: u64) -> Result<(), String> {
+        sqlx::query("UPDATE tasks SET llm_total_tokens = ?, updated_at = ? WHERE id = ?")
+            .bind(total_tokens as i64)
+            .bind(now_ms())
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("update task tokens: {e}"))?;
         Ok(())
     }
 

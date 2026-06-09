@@ -226,7 +226,7 @@ fn require_task_id(task_id: &str) -> WorkspaceResult<&str> {
 pub fn get_task_queue_item_for_export(task_id: &str) -> WorkspaceResult<WorkspaceQueueItem> {
     let normalized = require_task_id(task_id)?;
     if !is_workspace_hydrated() {
-        return Err(WorkspaceError::LockPoisoned);
+        return Err(WorkspaceError::NotHydrated);
     }
     let record = get_task_record(normalized)?;
     Ok(record.item)

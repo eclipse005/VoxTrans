@@ -80,6 +80,7 @@ pub async fn build_translation_layer_with_progress(
         task_id: request.task_id.clone(),
         media_path: Some(request.media_path.clone()),
         phase: "step4_translate_batch".to_string(),
+        store: request.unit_store.as_ref().map(|us| us.store().clone()),
     };
 
     let windows_for_worker = windows.clone();

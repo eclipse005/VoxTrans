@@ -229,6 +229,7 @@ async fn run_llm_split_round(
         task_id: request.task_id.clone(),
         media_path: Some(request.media_path.clone()),
         phase: "step_5_1_source_split".to_string(),
+        store: request.unit_store.as_ref().map(|us| us.store().clone()),
     };
 
     // Build precomputed map from domain table.

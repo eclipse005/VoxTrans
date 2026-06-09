@@ -192,6 +192,7 @@ impl OpenAiCompatLlmClient {
                                     completion_tokens: usage.completion_tokens,
                                     total_tokens: usage.total_tokens,
                                 },
+                                context.store.clone(),
                             );
 
                             return Ok(LlmValidatedJsonResult { value });

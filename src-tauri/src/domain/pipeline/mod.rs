@@ -88,6 +88,10 @@ impl UnitStore {
         &self.task_id
     }
 
+    pub fn store(&self) -> &TaskStore {
+        &self.store
+    }
+
     // ── Step 1: ASR transcripts ──
 
     pub async fn load_asr_transcripts(&self) -> Result<Vec<AsrTranscriptRow>, String> {
