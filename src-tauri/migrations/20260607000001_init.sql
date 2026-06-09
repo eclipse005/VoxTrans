@@ -150,24 +150,6 @@ CREATE TABLE translation_batch_results (
     PRIMARY KEY (task_id, batch_index)
 );
 
--- source_split_results: Step 5.1 原文切分结果
-CREATE TABLE source_split_results (
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    work_index INTEGER NOT NULL,
-    segment_start INTEGER NOT NULL,
-    segment_end INTEGER NOT NULL,
-    boundary_positions TEXT NOT NULL,
-    PRIMARY KEY (task_id, work_index)
-);
-
--- translation_align_results: Step 5.2 译文对齐结果
-CREATE TABLE translation_align_results (
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    parent_index INTEGER NOT NULL,
-    aligned_lines TEXT NOT NULL,
-    PRIMARY KEY (task_id, parent_index)
-);
-
 -- alignment_results: Step 1 强制对齐段级结果
 CREATE TABLE alignment_results (
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

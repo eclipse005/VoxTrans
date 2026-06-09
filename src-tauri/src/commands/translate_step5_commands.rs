@@ -12,14 +12,6 @@ use super::translate_types::{
 use crate::db::store::TaskStore;
 use tauri::{AppHandle, Manager};
 
-#[tauri::command]
-pub async fn build_step_5_split_align(
-    app: AppHandle,
-    request: BuildStep5SplitAlignCommandRequest,
-) -> Result<BuildStep5SplitAlignCommandResponse, String> {
-    build_step_5_split_align_with_progress_and_unit_store(app, request, None, None).await
-}
-
 pub async fn build_step_5_split_align_with_progress_and_unit_store(
     app: AppHandle,
     mut request: BuildStep5SplitAlignCommandRequest,

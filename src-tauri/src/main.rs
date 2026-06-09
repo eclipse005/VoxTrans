@@ -43,15 +43,15 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::transcribe::transcribe,
-            commands::transcribe::separate_vocals,
-            commands::file::save_srt,
-            commands::file::export_srt,
+            // Workspace-driven pipeline only -- low-level commands like
+            // transcribe / build_source_sentences / build_terminology_layer /
+            // build_translation_layer / build_step_5_split_align /
+            // separate_vocals / save_srt / export_srt are NOT exposed
+            // here. They exist as plain async fns used internally by
+            // workspace::pipeline_steps, which threads UnitStore through
+            // so step-resume caches in SQLite are respected. Direct
+            // frontend invokes would bypass that.
             commands::file::export_task_srts,
-            commands::transcription::build_source_sentences,
-            commands::translate_terminology::build_terminology_layer,
-            commands::translate_translation::build_translation_layer,
-            commands::translate_step5_commands::build_step_5_split_align,
             commands::translate_connectivity::test_translate_llm,
             commands::file::get_file_size,
             commands::system::open_in_explorer,
