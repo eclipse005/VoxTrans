@@ -1,10 +1,17 @@
-//! Row structs mirroring the 7 tables in migrations/20260607000001_init.sql.
+//! Row structs mirroring the SQLite schema.
 //!
-//! Each struct is `pub` and derives `Debug, Clone`. Field names match SQL
-//! column names exactly. Conversions to/from business objects live in
-//! `super::conversion`.
+//! Each struct derives `sqlx::FromRow` so reads use `query_as`, removing
+//! the manual `r.get::<i64, _>("col") as u32` boilerplate. Conversions to
+//! business objects live in `super::conversion`.
 
-#[derive(Debug, Clone)]
+use crate::services::preferences_types::SubtitleRenderStyle;
+
+/// One row of the `settings` table (singleton, id=1).
+///
+/// `subtitle_render_style` is decoded from the `subtitle_render_style_json`
+/// TEXT column via `#[sqlx(json)]` — the 18 per-field columns it used to
+/// occupy were collapsed in migration 20260611000001.
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SettingsRow {
     pub provider: String,
     pub chunk_target_seconds: u32,
@@ -22,32 +29,13 @@ pub struct SettingsRow {
     pub enable_click_sound: bool,
     pub auto_burn_hard_subtitle: bool,
     pub subtitle_burn_mode: String,
-    pub source_font_family: String,
-    pub source_font_size: u32,
-    pub source_primary_color: String,
-    pub source_outline_color: String,
-    pub source_back_color: String,
-    pub source_outline: f64,
-    pub source_shadow: f64,
-    pub source_border_style: String,
-    pub source_border_opacity: u8,
-    pub target_font_family: String,
-    pub target_font_size: u32,
-    pub target_primary_color: String,
-    pub target_outline_color: String,
-    pub target_back_color: String,
-    pub target_outline: f64,
-    pub target_shadow: f64,
-    pub target_border_style: String,
-    pub target_border_opacity: u8,
-    pub margin_v: u32,
-    pub alignment: u8,
-    pub bilingual_line_gap: u32,
+    #[sqlx(json, rename = "subtitle_render_style_json")]
+    pub subtitle_render_style: SubtitleRenderStyle,
     pub flat_srt_output: bool,
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 #[allow(dead_code)]
 pub struct FlatSrtItemRow {
     pub id: i64,
@@ -55,12 +43,13 @@ pub struct FlatSrtItemRow {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TaskRow {
     pub id: String,
     pub media_path: String,
     pub name: String,
     pub media_kind: String,
+    #[sqlx(try_from = "i64")]
     pub size_bytes: u64,
     pub source_lang: String,
     pub target_lang: String,
@@ -74,6 +63,7 @@ pub struct TaskRow {
     pub transcribe_error: String,
     pub result_text: String,
     pub result_srt: String,
+    #[sqlx(try_from = "i64")]
     pub llm_total_tokens: u64,
     pub intent: String,
     pub max_retries: u32,
@@ -81,34 +71,45 @@ pub struct TaskRow {
     pub subtitle_length_preset: String,
     pub enable_terminology: bool,
     pub enable_subtitle_beautify: bool,
+    /// JSON-serialized `Vec<TerminologyGroup>` snapshot taken at enqueue
+    /// time. This is the FROZEN copy that the pipeline reads during
+    /// execution -- editing the global terminology library (the
+    /// `terminology_groups` / `terminology_terms` tables that
+    /// `save_settings` writes) does NOT affect already-enqueued tasks.
+    /// See the `terminology_frozen_contract_no_cross_writes` test in
+    /// `db::store` for the invariant.
     pub terminology_groups_json: String,
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SubtitleSegmentRow {
     pub id: String,
     pub task_id: String,
     pub idx: i32,
+    #[sqlx(try_from = "i64")]
     pub start_ms: u64,
+    #[sqlx(try_from = "i64")]
     pub end_ms: u64,
     pub source_text: String,
     pub translated_text: String,
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SubtitleWordRow {
     pub id: String,
     pub segment_id: String,
     pub idx: i32,
+    #[sqlx(try_from = "i64")]
     pub start_ms: u64,
+    #[sqlx(try_from = "i64")]
     pub end_ms: u64,
     pub word: String,
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 #[allow(dead_code)]
 pub struct TerminologyGroupRow {
     pub id: String,
@@ -116,7 +117,7 @@ pub struct TerminologyGroupRow {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 #[allow(dead_code)]
 pub struct TerminologyTermRow {
     pub id: String,

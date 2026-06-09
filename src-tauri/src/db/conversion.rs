@@ -7,9 +7,7 @@ use crate::commands::workspace::{
     WorkspaceQueueItem, WorkspaceTaskProgressState, WorkspaceTaskStageState,
 };
 use crate::db::models::{SettingsRow, SubtitleSegmentRow, SubtitleWordRow, TaskRow};
-use crate::services::preferences_types::{
-    SavedSettings, SubtitleLayoutStyle, SubtitleLineStyle, SubtitleRenderStyle,
-};
+use crate::services::preferences_types::SavedSettings;
 use crate::services::workspace_subtitle::WorkspaceSubtitleSegment;
 
 pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
@@ -32,35 +30,7 @@ pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
         enable_click_sound: row.enable_click_sound,
         auto_burn_hard_subtitle: row.auto_burn_hard_subtitle,
         subtitle_burn_mode: row.subtitle_burn_mode,
-        subtitle_render_style: SubtitleRenderStyle {
-            source: SubtitleLineStyle {
-                font_family: row.source_font_family,
-                font_size: row.source_font_size,
-                primary_color: row.source_primary_color,
-                outline_color: row.source_outline_color,
-                back_color: row.source_back_color,
-                outline: row.source_outline,
-                shadow: row.source_shadow,
-                border_style: row.source_border_style,
-                border_opacity: row.source_border_opacity,
-            },
-            target: SubtitleLineStyle {
-                font_family: row.target_font_family,
-                font_size: row.target_font_size,
-                primary_color: row.target_primary_color,
-                outline_color: row.target_outline_color,
-                back_color: row.target_back_color,
-                outline: row.target_outline,
-                shadow: row.target_shadow,
-                border_style: row.target_border_style,
-                border_opacity: row.target_border_opacity,
-            },
-            layout: SubtitleLayoutStyle {
-                margin_v: row.margin_v,
-                alignment: row.alignment,
-                bilingual_line_gap: row.bilingual_line_gap,
-            },
-        },
+        subtitle_render_style: row.subtitle_render_style,
         flat_srt_output: row.flat_srt_output,
         // flat_srt_items is composed in store.rs from the flat_srt_items table.
         flat_srt_items: Vec::new(),
@@ -85,27 +55,7 @@ pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
         enable_click_sound: settings.enable_click_sound,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         subtitle_burn_mode: settings.subtitle_burn_mode.clone(),
-        source_font_family: settings.subtitle_render_style.source.font_family.clone(),
-        source_font_size: settings.subtitle_render_style.source.font_size,
-        source_primary_color: settings.subtitle_render_style.source.primary_color.clone(),
-        source_outline_color: settings.subtitle_render_style.source.outline_color.clone(),
-        source_back_color: settings.subtitle_render_style.source.back_color.clone(),
-        source_outline: settings.subtitle_render_style.source.outline,
-        source_shadow: settings.subtitle_render_style.source.shadow,
-        source_border_style: settings.subtitle_render_style.source.border_style.clone(),
-        source_border_opacity: settings.subtitle_render_style.source.border_opacity,
-        target_font_family: settings.subtitle_render_style.target.font_family.clone(),
-        target_font_size: settings.subtitle_render_style.target.font_size,
-        target_primary_color: settings.subtitle_render_style.target.primary_color.clone(),
-        target_outline_color: settings.subtitle_render_style.target.outline_color.clone(),
-        target_back_color: settings.subtitle_render_style.target.back_color.clone(),
-        target_outline: settings.subtitle_render_style.target.outline,
-        target_shadow: settings.subtitle_render_style.target.shadow,
-        target_border_style: settings.subtitle_render_style.target.border_style.clone(),
-        target_border_opacity: settings.subtitle_render_style.target.border_opacity,
-        margin_v: settings.subtitle_render_style.layout.margin_v,
-        alignment: settings.subtitle_render_style.layout.alignment,
-        bilingual_line_gap: settings.subtitle_render_style.layout.bilingual_line_gap,
+        subtitle_render_style: settings.subtitle_render_style.clone(),
         flat_srt_output: settings.flat_srt_output,
         updated_at: now_ms(),
     }
@@ -246,6 +196,7 @@ pub fn row_from_task(item: &WorkspaceQueueItem, extras: &TaskMetaExtras) -> Task
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::preferences_types::SubtitleRenderStyle;
 
     fn sample_settings() -> SavedSettings {
         SavedSettings {

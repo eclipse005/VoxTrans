@@ -1,13 +1,18 @@
 //! Centralized SQL operations against the voxtrans SQLite pool.
+//!
+//! Row reads use `sqlx::query_as::<_, RowStruct>` so column→field mapping
+//! is handled by `#[derive(sqlx::FromRow)]` in `db::models`. Writes still
+//! spell out columns explicitly because UPSERT needs the column list in
+//! two spots (`VALUES (...)` and `DO UPDATE SET ...`).
 
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 use crate::commands::workspace::WorkspaceQueueItem;
 use crate::db::conversion::{
     TaskMetaExtras, row_from_segment, row_from_settings, row_from_task, settings_from_row,
     task_from_row,
 };
-use crate::db::models::{SettingsRow, TaskRow};
+use crate::db::models::{SettingsRow, SubtitleSegmentRow, SubtitleWordRow, TaskRow};
 use crate::services::preferences_normalize::default_settings;
 use crate::services::preferences_types::SavedSettings;
 
@@ -35,17 +40,13 @@ impl TaskStore {
     /// Load the single settings row, plus flat_srt_items and terminology_groups.
     /// If the row is missing (first launch), returns default settings.
     pub async fn load_settings(&self) -> Result<SavedSettings, String> {
-        let row = sqlx::query(
+        let row: Option<SettingsRow> = sqlx::query_as(
             "SELECT provider, chunk_target_seconds, subtitle_length_preset, asr_model, \
              align_model, demucs_model, enable_vocal_separation, translate_api_key, \
              translate_base_url, translate_model, llm_concurrency, enable_terminology, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
-             subtitle_burn_mode, source_font_family, source_font_size, source_primary_color, \
-             source_outline_color, source_back_color, source_outline, source_shadow, \
-             source_border_style, source_border_opacity, target_font_family, target_font_size, \
-             target_primary_color, target_outline_color, target_back_color, target_outline, \
-             target_shadow, target_border_style, target_border_opacity, margin_v, alignment, \
-             bilingual_line_gap, flat_srt_output, updated_at FROM settings WHERE id = 1",
+             subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, updated_at \
+             FROM settings WHERE id = 1",
         )
         .fetch_optional(&self.pool)
         .await
@@ -53,58 +54,15 @@ impl TaskStore {
 
         let mut settings = match row {
             None => default_settings(),
-            Some(r) => settings_from_row(SettingsRow {
-                provider: r.get("provider"),
-                chunk_target_seconds: r.get::<i64, _>("chunk_target_seconds") as u32,
-                subtitle_length_preset: r.get("subtitle_length_preset"),
-                asr_model: r.get("asr_model"),
-                align_model: r.get("align_model"),
-                demucs_model: r.get("demucs_model"),
-                enable_vocal_separation: r.get::<i64, _>("enable_vocal_separation") != 0,
-                translate_api_key: r.get("translate_api_key"),
-                translate_base_url: r.get("translate_base_url"),
-                translate_model: r.get("translate_model"),
-                llm_concurrency: r.get::<i64, _>("llm_concurrency") as u32,
-                enable_terminology: r.get::<i64, _>("enable_terminology") != 0,
-                enable_subtitle_beautify: r.get::<i64, _>("enable_subtitle_beautify") != 0,
-                enable_click_sound: r.get::<i64, _>("enable_click_sound") != 0,
-                auto_burn_hard_subtitle: r.get::<i64, _>("auto_burn_hard_subtitle") != 0,
-                subtitle_burn_mode: r.get("subtitle_burn_mode"),
-                source_font_family: r.get("source_font_family"),
-                source_font_size: r.get::<i64, _>("source_font_size") as u32,
-                source_primary_color: r.get("source_primary_color"),
-                source_outline_color: r.get("source_outline_color"),
-                source_back_color: r.get("source_back_color"),
-                source_outline: r.get("source_outline"),
-                source_shadow: r.get("source_shadow"),
-                source_border_style: r.get("source_border_style"),
-                source_border_opacity: r.get::<i64, _>("source_border_opacity") as u8,
-                target_font_family: r.get("target_font_family"),
-                target_font_size: r.get::<i64, _>("target_font_size") as u32,
-                target_primary_color: r.get("target_primary_color"),
-                target_outline_color: r.get("target_outline_color"),
-                target_back_color: r.get("target_back_color"),
-                target_outline: r.get("target_outline"),
-                target_shadow: r.get("target_shadow"),
-                target_border_style: r.get("target_border_style"),
-                target_border_opacity: r.get::<i64, _>("target_border_opacity") as u8,
-                margin_v: r.get::<i64, _>("margin_v") as u32,
-                alignment: r.get::<i64, _>("alignment") as u8,
-                bilingual_line_gap: r.get::<i64, _>("bilingual_line_gap") as u32,
-                flat_srt_output: r.get::<i64, _>("flat_srt_output") != 0,
-                updated_at: r.get("updated_at"),
-            }),
+            Some(row) => settings_from_row(row),
         };
 
         // Compose flat_srt_items.
-        let items = sqlx::query("SELECT value FROM flat_srt_items ORDER BY id")
+        let items: Vec<String> = sqlx::query_scalar("SELECT value FROM flat_srt_items ORDER BY id")
             .fetch_all(&self.pool)
             .await
             .map_err(|e| format!("load flat_srt_items: {e}"))?;
-        settings.flat_srt_items = items
-            .into_iter()
-            .map(|r| r.get::<String, _>("value"))
-            .collect();
+        settings.flat_srt_items = items;
 
         // Compose terminology_groups + terms.
         settings.terminology_groups = self.load_terminology_groups_internal().await?;
@@ -117,83 +75,49 @@ impl TaskStore {
         let mut tx = self.pool.begin().await.map_err(|e| format!("begin tx: {e}"))?;
 
         let row = row_from_settings(settings);
+        let render_style_json = serde_json::to_string(&row.subtitle_render_style)
+            .map_err(|e| format!("serialize subtitle_render_style: {e}"))?;
         sqlx::query(
             "INSERT INTO settings (id, provider, chunk_target_seconds, subtitle_length_preset, \
              asr_model, align_model, demucs_model, enable_vocal_separation, translate_api_key, \
              translate_base_url, translate_model, llm_concurrency, enable_terminology, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
-             subtitle_burn_mode, source_font_family, source_font_size, source_primary_color, \
-             source_outline_color, source_back_color, source_outline, source_shadow, \
-             source_border_style, source_border_opacity, target_font_family, target_font_size, \
-             target_primary_color, target_outline_color, target_back_color, target_outline, \
-             target_shadow, target_border_style, target_border_opacity, margin_v, alignment, \
-             bilingual_line_gap, flat_srt_output, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, \
-             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-             ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
+             subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, updated_at) \
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET \
              provider=excluded.provider, chunk_target_seconds=excluded.chunk_target_seconds, \
              subtitle_length_preset=excluded.subtitle_length_preset, asr_model=excluded.asr_model, \
              align_model=excluded.align_model, demucs_model=excluded.demucs_model, \
              enable_vocal_separation=excluded.enable_vocal_separation, \
-             translate_api_key=excluded.translate_api_key, translate_base_url=excluded.translate_base_url, \
+             translate_api_key=excluded.translate_api_key, \
+             translate_base_url=excluded.translate_base_url, \
              translate_model=excluded.translate_model, llm_concurrency=excluded.llm_concurrency, \
              enable_terminology=excluded.enable_terminology, \
              enable_subtitle_beautify=excluded.enable_subtitle_beautify, \
              enable_click_sound=excluded.enable_click_sound, \
              auto_burn_hard_subtitle=excluded.auto_burn_hard_subtitle, \
              subtitle_burn_mode=excluded.subtitle_burn_mode, \
-             source_font_family=excluded.source_font_family, source_font_size=excluded.source_font_size, \
-             source_primary_color=excluded.source_primary_color, \
-             source_outline_color=excluded.source_outline_color, \
-             source_back_color=excluded.source_back_color, source_outline=excluded.source_outline, \
-             source_shadow=excluded.source_shadow, source_border_style=excluded.source_border_style, \
-             source_border_opacity=excluded.source_border_opacity, \
-             target_font_family=excluded.target_font_family, target_font_size=excluded.target_font_size, \
-             target_primary_color=excluded.target_primary_color, \
-             target_outline_color=excluded.target_outline_color, \
-             target_back_color=excluded.target_back_color, target_outline=excluded.target_outline, \
-             target_shadow=excluded.target_shadow, target_border_style=excluded.target_border_style, \
-             target_border_opacity=excluded.target_border_opacity, margin_v=excluded.margin_v, \
-             alignment=excluded.alignment, bilingual_line_gap=excluded.bilingual_line_gap, \
+             subtitle_render_style_json=excluded.subtitle_render_style_json, \
              flat_srt_output=excluded.flat_srt_output, updated_at=excluded.updated_at",
         )
         .bind(&row.provider)
-        .bind(row.chunk_target_seconds as i64)
+        .bind(row.chunk_target_seconds)
         .bind(&row.subtitle_length_preset)
         .bind(&row.asr_model)
         .bind(&row.align_model)
         .bind(&row.demucs_model)
-        .bind(row.enable_vocal_separation as i64)
+        .bind(row.enable_vocal_separation)
         .bind(&row.translate_api_key)
         .bind(&row.translate_base_url)
         .bind(&row.translate_model)
-        .bind(row.llm_concurrency as i64)
-        .bind(row.enable_terminology as i64)
-        .bind(row.enable_subtitle_beautify as i64)
-        .bind(row.enable_click_sound as i64)
-        .bind(row.auto_burn_hard_subtitle as i64)
+        .bind(row.llm_concurrency)
+        .bind(row.enable_terminology)
+        .bind(row.enable_subtitle_beautify)
+        .bind(row.enable_click_sound)
+        .bind(row.auto_burn_hard_subtitle)
         .bind(&row.subtitle_burn_mode)
-        .bind(&row.source_font_family)
-        .bind(row.source_font_size as i64)
-        .bind(&row.source_primary_color)
-        .bind(&row.source_outline_color)
-        .bind(&row.source_back_color)
-        .bind(row.source_outline)
-        .bind(row.source_shadow)
-        .bind(&row.source_border_style)
-        .bind(row.source_border_opacity as i64)
-        .bind(&row.target_font_family)
-        .bind(row.target_font_size as i64)
-        .bind(&row.target_primary_color)
-        .bind(&row.target_outline_color)
-        .bind(&row.target_back_color)
-        .bind(row.target_outline)
-        .bind(row.target_shadow)
-        .bind(&row.target_border_style)
-        .bind(row.target_border_opacity as i64)
-        .bind(row.margin_v as i64)
-        .bind(row.alignment as i64)
-        .bind(row.bilingual_line_gap as i64)
-        .bind(row.flat_srt_output as i64)
+        .bind(&render_style_json)
+        .bind(row.flat_srt_output)
         .bind(row.updated_at)
         .execute(&mut *tx)
         .await
@@ -214,6 +138,10 @@ impl TaskStore {
         }
 
         // Replace terminology_groups (CASCADE deletes terms).
+        // NB: this writes the LIVE terminology library. The frozen-at-enqueue
+        // snapshot lives in tasks.terminology_groups_json and must NEVER be
+        // touched here -- see terminology frozen contract doc on save_settings
+        // and the matching invariant test in this module.
         sqlx::query("DELETE FROM terminology_groups")
             .execute(&mut *tx)
             .await
@@ -250,40 +178,45 @@ impl TaskStore {
     async fn load_terminology_groups_internal(
         &self,
     ) -> Result<Vec<crate::services::preferences_types::TerminologyGroup>, String> {
-        use std::collections::HashMap;
+        use crate::db::models::{TerminologyGroupRow, TerminologyTermRow};
         use crate::services::preferences_types::{TerminologyGroup, TerminologyTerm};
+        use std::collections::HashMap;
 
-        let group_rows = sqlx::query("SELECT id, name FROM terminology_groups")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| format!("load terminology_groups: {e}"))?;
+        let group_rows: Vec<TerminologyGroupRow> =
+            sqlx::query_as("SELECT id, name, updated_at FROM terminology_groups")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| format!("load terminology_groups: {e}"))?;
 
-        let term_rows = sqlx::query(
-            "SELECT id, group_id, origin, target, note FROM terminology_terms",
+        let term_rows: Vec<TerminologyTermRow> = sqlx::query_as(
+            "SELECT id, group_id, origin, target, note, updated_at FROM terminology_terms",
         )
         .fetch_all(&self.pool)
         .await
         .map_err(|e| format!("load terminology_terms: {e}"))?;
 
         let mut terms_by_group: HashMap<String, Vec<TerminologyTerm>> = HashMap::new();
-        for r in term_rows {
-            let group_id: String = r.get("group_id");
-            let term = TerminologyTerm {
-                id: r.get("id"),
-                origin: r.get("origin"),
-                target: r.get("target"),
-                note: r.get("note"),
-            };
-            terms_by_group.entry(group_id).or_default().push(term);
+        for row in term_rows {
+            terms_by_group
+                .entry(row.group_id)
+                .or_default()
+                .push(TerminologyTerm {
+                    id: row.id,
+                    origin: row.origin,
+                    target: row.target,
+                    note: row.note,
+                });
         }
 
         let mut groups: Vec<TerminologyGroup> = group_rows
             .into_iter()
-            .map(|r| {
-                let id: String = r.get("id");
-                let name: String = r.get("name");
-                let terms = terms_by_group.remove(&id).unwrap_or_default();
-                TerminologyGroup { id, name, terms }
+            .map(|row| {
+                let terms = terms_by_group.remove(&row.id).unwrap_or_default();
+                TerminologyGroup {
+                    id: row.id,
+                    name: row.name,
+                    terms,
+                }
             })
             .collect();
 
@@ -351,7 +284,9 @@ impl TaskStore {
         &self,
         task_id: &str,
     ) -> Result<Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment>, String> {
-        let seg_rows = sqlx::query(
+        use std::collections::HashMap;
+
+        let seg_rows: Vec<SubtitleSegmentRow> = sqlx::query_as(
             "SELECT id, task_id, idx, start_ms, end_ms, source_text, translated_text, updated_at \
              FROM subtitle_segments WHERE task_id = ? ORDER BY idx",
         )
@@ -360,7 +295,7 @@ impl TaskStore {
         .await
         .map_err(|e| format!("load segments: {e}"))?;
 
-        let word_rows = sqlx::query(
+        let word_rows: Vec<SubtitleWordRow> = sqlx::query_as(
             "SELECT w.id, w.segment_id, w.idx, w.start_ms, w.end_ms, w.word, w.updated_at \
              FROM subtitle_words w JOIN subtitle_segments s ON w.segment_id = s.id \
              WHERE s.task_id = ? ORDER BY w.segment_id, w.idx",
@@ -370,37 +305,37 @@ impl TaskStore {
         .await
         .map_err(|e| format!("load words: {e}"))?;
 
-        use std::collections::HashMap;
-        let mut words_by_seg: HashMap<String, Vec<crate::services::workspace_subtitle::WorkspaceSubtitleWord>> = HashMap::new();
-        for r in word_rows {
-            let seg_id: String = r.get("segment_id");
-            words_by_seg.entry(seg_id).or_default().push(
+        let mut words_by_seg: HashMap<
+            String,
+            Vec<crate::services::workspace_subtitle::WorkspaceSubtitleWord>,
+        > = HashMap::new();
+        for w in word_rows {
+            words_by_seg.entry(w.segment_id).or_default().push(
                 crate::services::workspace_subtitle::WorkspaceSubtitleWord {
-                    start_ms: r.get::<i64, _>("start_ms") as u64,
-                    end_ms: r.get::<i64, _>("end_ms") as u64,
-                    word: r.get("word"),
+                    start_ms: w.start_ms,
+                    end_ms: w.end_ms,
+                    word: w.word,
                 },
             );
         }
 
-        let mut out = Vec::with_capacity(seg_rows.len());
-        for r in seg_rows {
-            let id: String = r.get("id");
-            out.push(crate::services::workspace_subtitle::WorkspaceSubtitleSegment {
-                start_ms: r.get::<i64, _>("start_ms") as u64,
-                end_ms: r.get::<i64, _>("end_ms") as u64,
-                source_text: r.get("source_text"),
-                translated_text: r.get("translated_text"),
-                source_words: words_by_seg.remove(&id).unwrap_or_default(),
-            });
-        }
+        let out = seg_rows
+            .into_iter()
+            .map(|s| crate::services::workspace_subtitle::WorkspaceSubtitleSegment {
+                start_ms: s.start_ms,
+                end_ms: s.end_ms,
+                source_text: s.source_text,
+                translated_text: s.translated_text,
+                source_words: words_by_seg.remove(&s.id).unwrap_or_default(),
+            })
+            .collect();
         Ok(out)
     }
 
     // ---- tasks ----
 
     pub async fn load_all_tasks(&self) -> Result<Vec<(WorkspaceQueueItem, TaskMetaExtras)>, String> {
-        let rows = sqlx::query(
+        let rows: Vec<TaskRow> = sqlx::query_as(
             "SELECT id, media_path, name, media_kind, size_bytes, source_lang, target_lang, \
              transcribe_status, task_progress_stage_code, task_progress_stage_label, \
              task_progress_stage_order, task_progress_detail, task_progress_current, \
@@ -413,40 +348,12 @@ impl TaskStore {
         .await
         .map_err(|e| format!("load tasks: {e}"))?;
 
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let row = TaskRow {
-                id: r.get("id"),
-                media_path: r.get("media_path"),
-                name: r.get("name"),
-                media_kind: r.get("media_kind"),
-                size_bytes: r.get::<i64, _>("size_bytes") as u64,
-                source_lang: r.get("source_lang"),
-                target_lang: r.get("target_lang"),
-                transcribe_status: r.get("transcribe_status"),
-                task_progress_stage_code: r.get("task_progress_stage_code"),
-                task_progress_stage_label: r.get("task_progress_stage_label"),
-                task_progress_stage_order: r.get::<i64, _>("task_progress_stage_order") as u32,
-                task_progress_detail: r.get("task_progress_detail"),
-                task_progress_current: r.get::<i64, _>("task_progress_current") as u32,
-                task_progress_total: r.get::<i64, _>("task_progress_total") as u32,
-                transcribe_error: r.get("transcribe_error"),
-                result_text: r.get("result_text"),
-                result_srt: r.get("result_srt"),
-                llm_total_tokens: r.get::<i64, _>("llm_total_tokens") as u64,
-                intent: r.get("intent"),
-                max_retries: r.get::<i64, _>("max_retries") as u32,
-                subtitle_length_preset: r.get("subtitle_length_preset"),
-                enable_terminology: r.get::<i64, _>("enable_terminology") != 0,
-                enable_subtitle_beautify: r.get::<i64, _>("enable_subtitle_beautify") != 0,
-                terminology_groups_json: r.get("terminology_groups_json"),
-                updated_at: r.get("updated_at"),
-            };
-            out.push(task_from_row(row));
-        }
-        Ok(out)
+        Ok(rows.into_iter().map(task_from_row).collect())
     }
 
+    /// Upsert a task row. `llm_total_tokens` is INSERT-only; on conflict the
+    /// existing token total is preserved so concurrent `update_task_tokens`
+    /// progress is not stomped. Use `update_task_tokens` to mutate it.
     pub async fn upsert_task(
         &self,
         item: &WorkspaceQueueItem,
@@ -472,7 +379,7 @@ impl TaskStore {
              task_progress_current=excluded.task_progress_current, \
              task_progress_total=excluded.task_progress_total, \
              transcribe_error=excluded.transcribe_error, result_text=excluded.result_text, \
-             result_srt=excluded.result_srt, llm_total_tokens=excluded.llm_total_tokens, \
+             result_srt=excluded.result_srt, \
              intent=excluded.intent, max_retries=excluded.max_retries, \
              subtitle_length_preset=excluded.subtitle_length_preset, \
              enable_terminology=excluded.enable_terminology, \
@@ -490,19 +397,19 @@ impl TaskStore {
         .bind(&row.transcribe_status)
         .bind(&row.task_progress_stage_code)
         .bind(&row.task_progress_stage_label)
-        .bind(row.task_progress_stage_order as i64)
+        .bind(row.task_progress_stage_order)
         .bind(&row.task_progress_detail)
-        .bind(row.task_progress_current as i64)
-        .bind(row.task_progress_total as i64)
+        .bind(row.task_progress_current)
+        .bind(row.task_progress_total)
         .bind(&row.transcribe_error)
         .bind(&row.result_text)
         .bind(&row.result_srt)
         .bind(row.llm_total_tokens as i64)
         .bind(&row.intent)
-        .bind(row.max_retries as i64)
+        .bind(row.max_retries)
         .bind(&row.subtitle_length_preset)
-        .bind(row.enable_terminology as i64)
-        .bind(row.enable_subtitle_beautify as i64)
+        .bind(row.enable_terminology)
+        .bind(row.enable_subtitle_beautify)
         .bind(&row.terminology_groups_json)
         .bind(row.updated_at)
         .execute(&self.pool)
@@ -525,14 +432,13 @@ impl TaskStore {
     /// DB-first read for the running LLM token total. Returns 0 if the
     /// row doesn't exist (e.g. task was deleted concurrently).
     pub async fn get_task_total_tokens(&self, id: &str) -> Result<u64, String> {
-        let row = sqlx::query("SELECT llm_total_tokens FROM tasks WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| format!("get task tokens: {e}"))?;
-        Ok(row
-            .map(|r| r.get::<i64, _>("llm_total_tokens") as u64)
-            .unwrap_or(0))
+        let total: Option<i64> =
+            sqlx::query_scalar("SELECT llm_total_tokens FROM tasks WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| format!("get task tokens: {e}"))?;
+        Ok(total.unwrap_or(0) as u64)
     }
 
     pub async fn delete_task(&self, id: &str) -> Result<(), String> {
@@ -568,7 +474,7 @@ impl TaskStore {
         task_id: &str,
         step_name: &str,
     ) -> Result<Option<String>, String> {
-        let row = sqlx::query(
+        let payload: Option<String> = sqlx::query_scalar(
             "SELECT payload_json FROM task_artifacts WHERE task_id = ? AND step_name = ?",
         )
         .bind(task_id)
@@ -576,8 +482,7 @@ impl TaskStore {
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| format!("load artifact: {e}"))?;
-
-        Ok(row.map(|r| r.get("payload_json")))
+        Ok(payload)
     }
 
     /// Save (upsert) a pipeline step artifact.
@@ -610,7 +515,7 @@ impl TaskStore {
         &self,
         task_id: &str,
     ) -> Result<Vec<crate::services::pipeline::AsrTranscriptRow>, String> {
-        let rows = sqlx::query(
+        let rows: Vec<AsrTranscriptInternalRow> = sqlx::query_as(
             "SELECT segment_index, text FROM asr_transcripts \
              WHERE task_id = ? ORDER BY segment_index",
         )
@@ -622,8 +527,8 @@ impl TaskStore {
         Ok(rows
             .into_iter()
             .map(|r| crate::services::pipeline::AsrTranscriptRow {
-                segment_index: r.get::<i64, _>("segment_index") as usize,
-                text: r.get("text"),
+                segment_index: r.segment_index as usize,
+                text: r.text,
             })
             .collect())
     }
@@ -653,7 +558,7 @@ impl TaskStore {
         &self,
         task_id: &str,
     ) -> Result<Vec<crate::services::pipeline::AlignmentResultRow>, String> {
-        let rows = sqlx::query(
+        let rows: Vec<AlignmentInternalRow> = sqlx::query_as(
             "SELECT segment_index, result_json FROM alignment_results \
              WHERE task_id = ? ORDER BY segment_index",
         )
@@ -664,11 +569,11 @@ impl TaskStore {
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let json: String = r.get("result_json");
-            let items: Vec<qwen_forced_aligner_rs::ForcedAlignItem> = serde_json::from_str(&json)
-                .map_err(|e| format!("deserialize alignment result: {e}"))?;
+            let items: Vec<qwen_forced_aligner_rs::ForcedAlignItem> =
+                serde_json::from_str(&r.result_json)
+                    .map_err(|e| format!("deserialize alignment result: {e}"))?;
             out.push(crate::services::pipeline::AlignmentResultRow {
-                segment_index: r.get::<i64, _>("segment_index") as usize,
+                segment_index: r.segment_index as usize,
                 items,
             });
         }
@@ -702,7 +607,7 @@ impl TaskStore {
         &self,
         task_id: &str,
     ) -> Result<Vec<crate::services::pipeline::TranslationBatchRow>, String> {
-        let rows = sqlx::query(
+        let rows: Vec<TranslationBatchInternalRow> = sqlx::query_as(
             "SELECT batch_index, segment_translations FROM translation_batch_results \
              WHERE task_id = ? ORDER BY batch_index",
         )
@@ -713,12 +618,11 @@ impl TaskStore {
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let json: String = r.get("segment_translations");
             let segment_translations: std::collections::HashMap<usize, String> =
-                serde_json::from_str(&json)
+                serde_json::from_str(&r.segment_translations)
                     .map_err(|e| format!("deserialize translation batch: {e}"))?;
             out.push(crate::services::pipeline::TranslationBatchRow {
-                batch_index: r.get::<i64, _>("batch_index") as usize,
+                batch_index: r.batch_index as usize,
                 segment_translations,
             });
         }
@@ -753,7 +657,7 @@ impl TaskStore {
         &self,
         task_id: &str,
     ) -> Result<Vec<crate::services::pipeline::Step5SplitAlignRow>, String> {
-        let rows = sqlx::query(
+        let rows: Vec<Step5SplitAlignInternalRow> = sqlx::query_as(
             "SELECT segment_index, parent_json FROM step5_split_align_results \
              WHERE task_id = ? ORDER BY segment_index",
         )
@@ -762,14 +666,13 @@ impl TaskStore {
         .await
         .map_err(|e| format!("load step5 split aligns: {e}"))?;
 
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            out.push(crate::services::pipeline::Step5SplitAlignRow {
-                segment_index: r.get::<i64, _>("segment_index") as usize,
-                parent_json: r.get("parent_json"),
-            });
-        }
-        Ok(out)
+        Ok(rows
+            .into_iter()
+            .map(|r| crate::services::pipeline::Step5SplitAlignRow {
+                segment_index: r.segment_index as usize,
+                parent_json: r.parent_json,
+            })
+            .collect())
     }
 
     pub async fn save_step5_split_align(
@@ -791,6 +694,37 @@ impl TaskStore {
         .map_err(|e| format!("save step5 split align: {e}"))?;
         Ok(())
     }
+}
+
+// ── Internal step-checkpoint rows (private to this module) ────────────
+//
+// These mirror raw column shapes for the four domain checkpoint tables.
+// They're separate from `db::models` because the public `pipeline::*`
+// row types live in `domain/pipeline` and would create a circular dep
+// if `db::models` had to know about them.
+
+#[derive(sqlx::FromRow)]
+struct AsrTranscriptInternalRow {
+    segment_index: i64,
+    text: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct AlignmentInternalRow {
+    segment_index: i64,
+    result_json: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct TranslationBatchInternalRow {
+    batch_index: i64,
+    segment_translations: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct Step5SplitAlignInternalRow {
+    segment_index: i64,
+    parent_json: String,
 }
 
 #[cfg(test)]
@@ -1071,5 +1005,102 @@ mod tests {
             .unwrap();
         s.delete_task("a").await.unwrap();
         assert!(s.load_all_tasks().await.unwrap().is_empty());
+    }
+
+    /// upsert_task must preserve llm_total_tokens when a row already exists.
+    /// Token writes go through update_task_tokens; if upsert_task included
+    /// the token column in its UPDATE SET it would stomp in-flight progress.
+    #[tokio::test]
+    async fn upsert_task_preserves_existing_tokens() {
+        let s = store().await;
+        // Initial insert (tokens default 0 from sample_task).
+        s.upsert_task(&sample_task("t"), &TaskMetaExtras::default())
+            .await
+            .unwrap();
+        // Token writer updates the running total.
+        s.update_task_tokens("t", 12_345).await.unwrap();
+        assert_eq!(s.get_task_total_tokens("t").await.unwrap(), 12_345);
+
+        // Another upsert (e.g. progress patch) MUST NOT reset tokens to 0.
+        let mut task = sample_task("t");
+        task.transcribe_status = "done".into();
+        // Note: WorkspaceQueueItem.llm_total_tokens is whatever upstream
+        // observed, but the DB layer is the source of truth.
+        task.llm_total_tokens = 0; // simulate stale in-memory value
+        s.upsert_task(&task, &TaskMetaExtras::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            s.get_task_total_tokens("t").await.unwrap(),
+            12_345,
+            "upsert_task stomped tokens — the UPDATE SET must omit llm_total_tokens"
+        );
+    }
+
+    /// Terminology frozen contract:
+    /// - `save_settings` writes the LIVE library (terminology_groups/_terms
+    ///   tables) — it MUST NOT touch tasks.terminology_groups_json.
+    /// - `upsert_task` writes the FROZEN snapshot
+    ///   (tasks.terminology_groups_json) — it MUST NOT touch the live
+    ///   library tables.
+    /// Editing one side has zero effect on the other; this test pins the
+    /// no-cross-write invariant by exercising both directions.
+    #[tokio::test]
+    async fn terminology_frozen_contract_no_cross_writes() {
+        let s = store().await;
+
+        // 1) Seed both sides with distinguishable values.
+        let mut library = sample_settings();
+        library.terminology_groups = vec![TerminologyGroup {
+            id: "lib-grp".into(),
+            name: "library-name".into(),
+            terms: vec![TerminologyTerm {
+                id: "lib-term".into(),
+                origin: "alpha".into(),
+                target: "甲".into(),
+                note: "".into(),
+            }],
+        }];
+        s.save_settings(&library).await.unwrap();
+
+        let frozen_extras = TaskMetaExtras {
+            intent: "TRANSCRIBE_TRANSLATE".into(),
+            max_retries: 0,
+            subtitle_length_preset: "default".into(),
+            enable_terminology: true,
+            enable_subtitle_beautify: true,
+            terminology_groups_json:
+                r#"[{"id":"frozen-grp","name":"frozen-name","terms":[]}]"#.into(),
+        };
+        s.upsert_task(&sample_task("t-frozen"), &frozen_extras)
+            .await
+            .unwrap();
+
+        // 2) upsert_task did NOT mutate the live terminology library.
+        let after_upsert = s.load_settings().await.unwrap();
+        assert_eq!(after_upsert.terminology_groups.len(), 1);
+        assert_eq!(after_upsert.terminology_groups[0].id, "lib-grp");
+        assert_eq!(after_upsert.terminology_groups[0].name, "library-name");
+
+        // 3) save_settings (re-saving the library with a NEW snapshot) did
+        //    NOT mutate the task's frozen snapshot.
+        let mut updated_library = library.clone();
+        updated_library.terminology_groups = vec![TerminologyGroup {
+            id: "lib-grp-v2".into(),
+            name: "library-name-v2".into(),
+            terms: vec![],
+        }];
+        s.save_settings(&updated_library).await.unwrap();
+
+        let tasks = s.load_all_tasks().await.unwrap();
+        let (_, frozen_extras_loaded) = tasks
+            .iter()
+            .find(|(item, _)| item.id == "t-frozen")
+            .expect("task missing");
+        assert_eq!(
+            frozen_extras_loaded.terminology_groups_json,
+            r#"[{"id":"frozen-grp","name":"frozen-name","terms":[]}]"#,
+            "save_settings clobbered the frozen task snapshot — terminology contract violated"
+        );
     }
 }
