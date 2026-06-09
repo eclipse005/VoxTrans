@@ -102,17 +102,23 @@ pub async fn save_subtitle_editor(
     let task_id = require_task_id(&request.task_id)?;
     ensure_workspace_hydrated_from_db(&app).await?;
     let subtitle_segments_json = request.subtitle_segments_json.clone();
+    // Persist segments to DB FIRST: if it fails, surface the error and
+    // leave the task meta untouched so callers see a consistent state.
+    // Doing it in the other order would mark the task with new
+    // result_srt + segments_json while the DB segments table silently
+    // stays stale -- a restart hydrate then resets segments to empty.
+    let store = app.state::<TaskStore>().inner().clone();
+    let segments: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
+        serde_json::from_str(&subtitle_segments_json).unwrap_or_default();
+    store
+        .replace_segments(task_id, &segments)
+        .await
+        .map_err(|e| format!("persist segments: {e}"))?;
     patch_task_item(&app, task_id, |task| {
         task.item.result_srt = request.content;
         task.item.subtitle_segments_json = request.subtitle_segments_json;
     })
     .await?;
-    let store = app.state::<TaskStore>().inner().clone();
-    let segments: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
-        serde_json::from_str(&subtitle_segments_json).unwrap_or_default();
-    if let Err(e) = store.replace_segments(task_id, &segments).await {
-        eprintln!("warn: persist segments {task_id} failed: {e}");
-    }
     Ok(())
 }
 

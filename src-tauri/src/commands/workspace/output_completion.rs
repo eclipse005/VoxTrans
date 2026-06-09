@@ -4,7 +4,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::commands::translate_types::BuildTranslationSegmentCommand;
 use crate::db::store::TaskStore;
-use crate::domain::error::WorkspaceResult;
+use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::domain::task::adapters::{
     workspace_subtitle_segments_from_step2_segments,
     workspace_subtitle_segments_from_translation_segments,
@@ -26,12 +26,13 @@ async fn persist_segments_to_db(
     app: &AppHandle,
     task_id: &str,
     subtitle_segments_json: &str,
-) {
+) -> WorkspaceResult<()> {
     let store = app.state::<TaskStore>().inner().clone();
     let segments = parse_segments(subtitle_segments_json);
-    if let Err(e) = store.replace_segments(task_id, &segments).await {
-        eprintln!("warn: persist segments {task_id} failed: {e}");
-    }
+    store
+        .replace_segments(task_id, &segments)
+        .await
+        .map_err(|e| WorkspaceError::TaskFailed(format!("persist segments {task_id}: {e}")))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -60,6 +61,11 @@ pub(super) async fn finish_transcribe_only(
         target_lang,
     )?;
 
+    // Write segments to DB BEFORE marking the task done. If segments
+    // fail, the task stays in its previous status and the next restart
+    // will recover it as orphan-processing -> error rather than seeing
+    // a "done" task with an empty segments table.
+    persist_segments_to_db(app, task_id, &subtitle_segments_json).await?;
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
         task.item.task_progress = done_task_progress_state();
@@ -69,7 +75,6 @@ pub(super) async fn finish_transcribe_only(
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
     })
     .await?;
-    persist_segments_to_db(app, task_id, &subtitle_segments_json).await;
     Ok(())
 }
 
@@ -98,6 +103,8 @@ pub(super) async fn finish_translate_with_step5(
         target_lang,
     )?;
 
+    // See `finish_transcribe_only` for the ordering rationale.
+    persist_segments_to_db(app, task_id, &subtitle_segments_json).await?;
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
         task.item.task_progress = done_task_progress_state();
@@ -107,7 +114,6 @@ pub(super) async fn finish_translate_with_step5(
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
     })
     .await?;
-    persist_segments_to_db(app, task_id, &subtitle_segments_json).await;
     Ok(())
 }
 
