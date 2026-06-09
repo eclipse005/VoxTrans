@@ -522,6 +522,19 @@ impl TaskStore {
         Ok(())
     }
 
+    /// DB-first read for the running LLM token total. Returns 0 if the
+    /// row doesn't exist (e.g. task was deleted concurrently).
+    pub async fn get_task_total_tokens(&self, id: &str) -> Result<u64, String> {
+        let row = sqlx::query("SELECT llm_total_tokens FROM tasks WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| format!("get task tokens: {e}"))?;
+        Ok(row
+            .map(|r| r.get::<i64, _>("llm_total_tokens") as u64)
+            .unwrap_or(0))
+    }
+
     pub async fn delete_task(&self, id: &str) -> Result<(), String> {
         sqlx::query("DELETE FROM tasks WHERE id = ?")
             .bind(id)

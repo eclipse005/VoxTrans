@@ -255,26 +255,9 @@ pub fn add_task_total_tokens(task_id: &str, delta_tokens: u64) -> WorkspaceResul
     };
     task.item.llm_total_tokens = task.item.llm_total_tokens.saturating_add(delta_tokens);
     let updated = task.item.clone();
-    // DB persistence for token counts is plumbed in Task 12 when
-    // AppHandle flows through the LLM call path; the next
-    // persist_task_meta on this task will write the updated count.
+    // The mirrored total is also written through to SQLite by
+    // record_llm_usage() right after this; see services/task_usage.rs.
     Ok(updated.llm_total_tokens)
-}
-
-pub fn get_task_total_tokens_from_workspace(task_id: &str) -> WorkspaceResult<u64> {
-    let task_id = task_id.trim();
-    if task_id.is_empty() {
-        return Ok(0);
-    }
-
-    if !is_workspace_hydrated() {
-        return Ok(0);
-    }
-    let store = lock_workspace_store()?;
-    let Some(task) = store.tasks().iter().find(|entry| entry.item.id == task_id) else {
-        return Ok(0);
-    };
-    Ok(task.item.llm_total_tokens)
 }
 
 fn normalize_media_kind(raw: &str) -> &str {
