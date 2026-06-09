@@ -61,6 +61,21 @@ where
         .join(&request.model);
     std::fs::create_dir_all(&output_root).map_err(|err| err.to_string())?;
 
+    // Resume: if vocals.wav from a previous run already exists for this
+    // task + model, skip the whole demucs pipeline and return it.
+    if let Some(existing) = find_vocals_path(&output_root, &input_path) {
+        logger.event(
+            "demucs.skipped",
+            Some(&json!({
+                "vocalsPath": existing.display().to_string(),
+                "reason": "vocals.wav already exists",
+            })),
+        );
+        return Ok(SeparateVocalsResponse {
+            vocals_path: existing.display().to_string(),
+        });
+    }
+
     let demucs_input = match prepare_demucs_input(&input_path, &output_root) {
         Ok(path) => path,
         Err(err) => {

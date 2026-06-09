@@ -36,6 +36,8 @@ pub struct PipelineRuntimeSettings {
     pub align_model: String,
     pub provider: String,
     pub chunk_target_seconds: u32,
+    pub enable_vocal_separation: bool,
+    pub demucs_model: String,
     pub translate_api_key: String,
     pub translate_base_url: String,
     pub translate_model: String,
@@ -60,6 +62,8 @@ pub fn resolve_runtime_settings(
     let chunk_target_seconds = saved.chunk_target_seconds.clamp(30, 60);
     let asr_model = saved.asr_model.clone();
     let align_model = saved.align_model.clone();
+    let enable_vocal_separation = saved.enable_vocal_separation;
+    let demucs_model = saved.demucs_model.clone();
     let translate_api_key = saved.translate_api_key.clone();
     let translate_base_url = saved.translate_base_url.clone();
     let translate_model = saved.translate_model.clone();
@@ -113,6 +117,8 @@ pub fn resolve_runtime_settings(
         align_model,
         provider,
         chunk_target_seconds,
+        enable_vocal_separation,
+        demucs_model,
         translate_api_key,
         translate_base_url,
         translate_model,

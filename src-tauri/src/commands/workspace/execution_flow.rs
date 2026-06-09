@@ -1,4 +1,6 @@
 use tauri::{AppHandle, Manager};
+use tauri::async_runtime::spawn_blocking;
+use tokio::runtime::Handle;
 
 use crate::db::store::TaskStore;
 use crate::services::pipeline::StepContext;
@@ -51,10 +53,22 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
     })
     .await?;
 
+    let asr_input_path = if runtime.enable_vocal_separation {
+        separate_vocals_for_task(
+            app,
+            task_id,
+            &record.item.path,
+            &runtime.demucs_model,
+        )
+        .await?
+    } else {
+        record.item.path.clone()
+    };
+
     let step1_exec = execute_workspace_step(
         &Step1AsrPipelineStep {
             task_id: task_id.to_string(),
-            media_path: record.item.path.clone(),
+            media_path: asr_input_path,
             source_lang: source_lang.clone(),
             asr_model: runtime.asr_model.clone(),
             align_model: runtime.align_model.clone(),
@@ -154,6 +168,49 @@ where
             Err(err)
         }
     }
+}
+
+async fn separate_vocals_for_task(
+    app: &AppHandle,
+    task_id: &str,
+    audio_path: &str,
+    demucs_model: &str,
+) -> WorkspaceResult<String> {
+    report_task_stage(app, task_id, TaskStage::Separating, "", 0, 100).await?;
+
+    let request = crate::services::demucs::SeparateVocalsRequest {
+        task_id: task_id.to_string(),
+        audio_path: audio_path.to_string(),
+        model: demucs_model.to_string(),
+    };
+    let app_for_progress = app.clone();
+    let task_id_owned = task_id.to_string();
+
+    let join = spawn_blocking(move || {
+        crate::services::demucs::separate_vocals_blocking(request, move |percent| {
+            let report = report_task_stage(
+                &app_for_progress,
+                &task_id_owned,
+                TaskStage::Separating,
+                format!("{percent}/100"),
+                percent,
+                100,
+            );
+            if let Ok(handle) = Handle::try_current() {
+                if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+                    let _ = tokio::task::block_in_place(|| {
+                        handle.block_on(async {
+                            let _ = report.await;
+                        });
+                    });
+                }
+            }
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())??;
+
+    Ok(join.vocals_path)
 }
 
 #[cfg(test)]

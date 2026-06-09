@@ -98,6 +98,7 @@ export type TargetLanguage =
 export type TaskStageCode =
   | "downloading"
   | "preparing"
+  | "separating"
   | "recognizing"
   | "aligning"
   | "segmenting"
@@ -161,6 +162,7 @@ export type QueueItem = {
 const TASK_STAGE_SET = new Set<TaskStageCode>([
   "downloading",
   "preparing",
+  "separating",
   "recognizing",
   "aligning",
   "segmenting",
@@ -174,6 +176,7 @@ const TASK_STAGE_SET = new Set<TaskStageCode>([
 const TASK_STAGE_ORDER: Record<TaskStageCode, number> = {
   downloading: 10,
   preparing: 20,
+  separating: 25,
   recognizing: 30,
   aligning: 35,
   segmenting: 40,

@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, Copy)]
 pub enum TaskStage {
     Preparing,
+    Separating,
     Recognizing,
     Aligning,
     Segmenting,
@@ -13,6 +14,7 @@ impl TaskStage {
     pub fn code(self) -> &'static str {
         match self {
             TaskStage::Preparing => "preparing",
+            TaskStage::Separating => "separating",
             TaskStage::Recognizing => "recognizing",
             TaskStage::Aligning => "aligning",
             TaskStage::Segmenting => "segmenting",
@@ -25,6 +27,7 @@ impl TaskStage {
     pub fn label(self) -> &'static str {
         match self {
             TaskStage::Preparing => "准备中",
+            TaskStage::Separating => "人声分离中",
             TaskStage::Recognizing => "语音识别中",
             TaskStage::Aligning => "智能打轴中",
             TaskStage::Segmenting => "断句中",
@@ -37,6 +40,7 @@ impl TaskStage {
     pub fn order(self) -> u32 {
         match self {
             TaskStage::Preparing => 20,
+            TaskStage::Separating => 25,
             TaskStage::Recognizing => 30,
             TaskStage::Aligning => 35,
             TaskStage::Segmenting => 40,
