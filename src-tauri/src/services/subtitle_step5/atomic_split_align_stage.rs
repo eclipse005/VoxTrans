@@ -204,21 +204,31 @@ pub async fn build_step_5_split_align_with_progress(
                         break;
                     }
                 }
-                if has_overlong {
-                    // Prepare for next round: keep result=None, update split_parts
-                    work.split_parts = aligned
-                        .parts
-                        .iter()
-                        .map(|p| Step5SplitPart {
-                            part_id: 0,
-                            start: p.start,
-                            end: p.end,
-                            source: p.source.clone(),
-                            tokens: p.tokens.clone(),
-                        })
-                        .collect();
-                    work.result = None;
+                if !has_overlong {
+                    continue;
                 }
+                // If the LLM refused to split this round (part count did not grow),
+                // it will almost certainly refuse next round too — skip to avoid
+                // wasting tokens.  Only segments that actually split-but-still-overlong
+                // benefit from another pass.
+                let old_part_count = work.split_parts.len();
+                let new_part_count = aligned.parts.len();
+                if new_part_count <= old_part_count {
+                    continue;
+                }
+                // Prepare for next round: keep result=None, update split_parts
+                work.split_parts = aligned
+                    .parts
+                    .iter()
+                    .map(|p| Step5SplitPart {
+                        part_id: 0,
+                        start: p.start,
+                        end: p.end,
+                        source: p.source.clone(),
+                        tokens: p.tokens.clone(),
+                    })
+                    .collect();
+                work.result = None;
             }
         }
     }
