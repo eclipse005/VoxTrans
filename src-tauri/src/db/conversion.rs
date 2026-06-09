@@ -149,8 +149,17 @@ pub fn row_from_segment(
     (seg_row, word_rows)
 }
 
-pub fn task_from_row(row: TaskRow) -> WorkspaceQueueItem {
-    WorkspaceQueueItem {
+/// Wrapper-only fields that live on `WorkspaceTaskRecord` but not on
+/// `WorkspaceQueueItem`. `task_from_row` returns them alongside the queue
+/// item so the hydrate path can rebuild a complete record.
+#[derive(Debug, Clone, Default)]
+pub struct TaskMetaExtras {
+    pub intent: String,
+    pub max_retries: u32,
+}
+
+pub fn task_from_row(row: TaskRow) -> (WorkspaceQueueItem, TaskMetaExtras) {
+    let item = WorkspaceQueueItem {
         id: row.id,
         path: row.media_path,
         name: row.name,
@@ -174,10 +183,15 @@ pub fn task_from_row(row: TaskRow) -> WorkspaceQueueItem {
         result_srt: row.result_srt,
         subtitle_segments_json: String::new(), // filled by meta.rs during hydrate or by callers directly
         llm_total_tokens: row.llm_total_tokens,
-    }
+    };
+    let extras = TaskMetaExtras {
+        intent: row.intent,
+        max_retries: row.max_retries,
+    };
+    (item, extras)
 }
 
-pub fn row_from_task(item: &WorkspaceQueueItem) -> TaskRow {
+pub fn row_from_task(item: &WorkspaceQueueItem, extras: &TaskMetaExtras) -> TaskRow {
     TaskRow {
         id: item.id.clone(),
         media_path: item.path.clone(),
@@ -197,8 +211,8 @@ pub fn row_from_task(item: &WorkspaceQueueItem) -> TaskRow {
         result_text: item.result_text.clone(),
         result_srt: item.result_srt.clone(),
         llm_total_tokens: item.llm_total_tokens,
-        intent: String::new(),        // set by caller
-        max_retries: 0,               // set by caller
+        intent: extras.intent.clone(),
+        max_retries: extras.max_retries,
         updated_at: now_ms(),
     }
 }
@@ -301,20 +315,28 @@ mod tests {
             subtitle_segments_json: "[]".into(),
             llm_total_tokens: 42,
         };
-        let row = row_from_task(&original);
-        let restored = task_from_row(row);
+        let extras = TaskMetaExtras {
+            intent: "TRANSCRIBE_TRANSLATE".into(),
+            max_retries: 3,
+        };
+        let row = row_from_task(&original, &extras);
+        let (restored_item, restored_extras) = task_from_row(row);
 
-        assert_eq!(restored.id, original.id);
-        assert_eq!(restored.path, original.path);
-        assert_eq!(restored.transcribe_status, original.transcribe_status);
-        assert_eq!(restored.task_progress.stage.code, original.task_progress.stage.code);
-        assert_eq!(restored.task_progress.stage.label, original.task_progress.stage.label);
-        assert_eq!(restored.task_progress.stage.order, original.task_progress.stage.order);
-        assert_eq!(restored.task_progress.stage.detail, original.task_progress.stage.detail);
-        assert_eq!(restored.task_progress.stage.current, original.task_progress.stage.current);
-        assert_eq!(restored.task_progress.stage.total, original.task_progress.stage.total);
-        assert_eq!(restored.llm_total_tokens, original.llm_total_tokens);
+        assert_eq!(restored_item.id, original.id);
+        assert_eq!(restored_item.path, original.path);
+        assert_eq!(restored_item.transcribe_status, original.transcribe_status);
+        assert_eq!(restored_item.task_progress.stage.code, original.task_progress.stage.code);
+        assert_eq!(restored_item.task_progress.stage.label, original.task_progress.stage.label);
+        assert_eq!(restored_item.task_progress.stage.order, original.task_progress.stage.order);
+        assert_eq!(restored_item.task_progress.stage.detail, original.task_progress.stage.detail);
+        assert_eq!(restored_item.task_progress.stage.current, original.task_progress.stage.current);
+        assert_eq!(restored_item.task_progress.stage.total, original.task_progress.stage.total);
+        assert_eq!(restored_item.llm_total_tokens, original.llm_total_tokens);
 
-        assert_eq!(restored.subtitle_segments_json, String::new());
+        assert_eq!(restored_item.subtitle_segments_json, String::new());
+
+        // Wrapper extras roundtrip.
+        assert_eq!(restored_extras.intent, "TRANSCRIBE_TRANSLATE");
+        assert_eq!(restored_extras.max_retries, 3);
     }
 }

@@ -4,7 +4,8 @@ use sqlx::{Row, SqlitePool};
 
 use crate::commands::workspace::WorkspaceQueueItem;
 use crate::db::conversion::{
-    row_from_segment, row_from_settings, row_from_task, settings_from_row, task_from_row,
+    TaskMetaExtras, row_from_segment, row_from_settings, row_from_task, settings_from_row,
+    task_from_row,
 };
 use crate::db::models::{SettingsRow, TaskRow};
 use crate::services::preferences_normalize::default_settings;
@@ -398,7 +399,7 @@ impl TaskStore {
 
     // ---- tasks ----
 
-    pub async fn load_all_tasks(&self) -> Result<Vec<WorkspaceQueueItem>, String> {
+    pub async fn load_all_tasks(&self) -> Result<Vec<(WorkspaceQueueItem, TaskMetaExtras)>, String> {
         let rows = sqlx::query(
             "SELECT id, media_path, name, media_kind, size_bytes, source_lang, target_lang, \
              transcribe_status, task_progress_stage_code, task_progress_stage_label, \
@@ -440,8 +441,12 @@ impl TaskStore {
         Ok(out)
     }
 
-    pub async fn upsert_task(&self, item: &WorkspaceQueueItem) -> Result<(), String> {
-        let row = row_from_task(item);
+    pub async fn upsert_task(
+        &self,
+        item: &WorkspaceQueueItem,
+        extras: &TaskMetaExtras,
+    ) -> Result<(), String> {
+        let row = row_from_task(item, extras);
         sqlx::query(
             "INSERT INTO tasks (id, media_path, name, media_kind, size_bytes, source_lang, \
              target_lang, transcribe_status, task_progress_stage_code, \
@@ -986,26 +991,34 @@ mod tests {
     async fn task_upsert_and_load_roundtrip() {
         let s = store().await;
         let original = sample_task("task-1");
-        s.upsert_task(&original).await.expect("upsert");
+        let extras = TaskMetaExtras {
+            intent: "TRANSCRIBE_TRANSLATE".to_string(),
+            max_retries: 2,
+        };
+        s.upsert_task(&original, &extras).await.expect("upsert");
 
         let loaded = s.load_all_tasks().await.expect("load");
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].id, "task-1");
-        assert_eq!(loaded[0].transcribe_status, "processing");
-        assert_eq!(loaded[0].task_progress.stage.code, "recognizing");
+        let (item, extras) = &loaded[0];
+        assert_eq!(item.id, "task-1");
+        assert_eq!(item.transcribe_status, "processing");
+        assert_eq!(item.task_progress.stage.code, "recognizing");
+        assert_eq!(extras.intent, "TRANSCRIBE_TRANSLATE");
+        assert_eq!(extras.max_retries, 2);
     }
 
     #[tokio::test]
     async fn mark_orphan_processing_as_error_recovers_residuals() {
         let s = store().await;
-        s.upsert_task(&sample_task("a")).await.unwrap();
-        s.upsert_task(&sample_task("b")).await.unwrap();
+        let extras = TaskMetaExtras::default();
+        s.upsert_task(&sample_task("a"), &extras).await.unwrap();
+        s.upsert_task(&sample_task("b"), &extras).await.unwrap();
 
         let n = s.mark_orphan_processing_as_error().await.unwrap();
         assert_eq!(n, 2);
 
         let loaded = s.load_all_tasks().await.unwrap();
-        for item in &loaded {
+        for (item, _) in &loaded {
             assert_eq!(item.transcribe_status, "error");
             assert!(!item.transcribe_error.is_empty());
         }
@@ -1014,7 +1027,9 @@ mod tests {
     #[tokio::test]
     async fn delete_task_removes_row() {
         let s = store().await;
-        s.upsert_task(&sample_task("a")).await.unwrap();
+        s.upsert_task(&sample_task("a"), &TaskMetaExtras::default())
+            .await
+            .unwrap();
         s.delete_task("a").await.unwrap();
         assert!(s.load_all_tasks().await.unwrap().is_empty());
     }

@@ -3,6 +3,7 @@ use tauri::{AppHandle, Manager};
 
 use super::store::{TaskStore as _, lock_workspace_hydrated, lock_workspace_store};
 use super::{WorkspaceQueueItem, WorkspaceTaskRecord};
+use crate::db::conversion::TaskMetaExtras;
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::services::workspace_subtitle::serialize_segments;
@@ -34,8 +35,12 @@ pub(super) async fn persist_task_meta(
     store: &TaskStore,
     record: &WorkspaceTaskRecord,
 ) -> WorkspaceResult<()> {
+    let extras = TaskMetaExtras {
+        intent: record.intent.clone(),
+        max_retries: record.max_retries,
+    };
     store
-        .upsert_task(&record.item)
+        .upsert_task(&record.item, &extras)
         .await
         .map_err(|e| WorkspaceError::TaskFailed(format!("persist task: {e}")))
 }
@@ -51,13 +56,13 @@ pub(super) async fn remove_task_meta(
 }
 
 async fn hydrate_workspace_from_db(store: &TaskStore) -> WorkspaceResult<()> {
-    let mut items = store
+    let mut loaded = store
         .load_all_tasks()
         .await
         .map_err(|e| WorkspaceError::TaskFailed(format!("load tasks: {e}")))?;
 
-    let mut records = Vec::with_capacity(items.len());
-    for mut item in items.drain(..) {
+    let mut records = Vec::with_capacity(loaded.len());
+    for (mut item, extras) in loaded.drain(..) {
         let segments = store
             .load_segments(&item.id)
             .await
@@ -67,10 +72,10 @@ async fn hydrate_workspace_from_db(store: &TaskStore) -> WorkspaceResult<()> {
         item.subtitle_segments_json = serialize_segments(&segments);
         records.push(WorkspaceTaskRecord {
             item,
-            intent: String::new(),
+            intent: extras.intent,
             source_lang,
             target_lang,
-            max_retries: 0,
+            max_retries: extras.max_retries,
             settings_snapshot: Value::Null,
         });
     }
