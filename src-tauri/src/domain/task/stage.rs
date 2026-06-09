@@ -26,7 +26,7 @@ impl TaskStage {
         match self {
             TaskStage::Preparing => "准备中",
             TaskStage::Recognizing => "语音识别中",
-            TaskStage::Aligning => "强制对齐中",
+            TaskStage::Aligning => "智能打轴中",
             TaskStage::Segmenting => "断句中",
             TaskStage::Terminology => "术语提取中",
             TaskStage::Translating => "翻译中",

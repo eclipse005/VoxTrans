@@ -1,6 +1,6 @@
 use crate::commands::translate_types::{
     BuildTranslationSegmentCommand, SegmentTokenForTerminologyCommand,
-    SourceSegmentForTerminologyCommand, Step5AlignedParentCommand, Step5SplitParentCommand,
+    SourceSegmentForTerminologyCommand, Step5AlignedParentCommand,
 };
 use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, WorkspaceSubtitleWord};
 
@@ -48,32 +48,6 @@ pub fn workspace_subtitle_segments_from_translation_segments(
                 .collect(),
         })
         .collect()
-}
-
-pub fn workspace_subtitle_segments_from_step51_parents(
-    parents: &[Step5SplitParentCommand],
-) -> Vec<WorkspaceSubtitleSegment> {
-    let mut segments = Vec::new();
-    for parent in parents {
-        for part in &parent.parts {
-            segments.push(WorkspaceSubtitleSegment {
-                start_ms: seconds_to_millis(part.start),
-                end_ms: seconds_to_millis(part.end),
-                source_text: part.source.clone(),
-                translated_text: String::new(),
-                source_words: part
-                    .tokens
-                    .iter()
-                    .map(|token| WorkspaceSubtitleWord {
-                        start_ms: seconds_to_millis(token.start),
-                        end_ms: seconds_to_millis(token.end),
-                        word: token.text.clone(),
-                    })
-                    .collect(),
-            });
-        }
-    }
-    segments
 }
 
 pub fn workspace_subtitle_segments_from_step52_parents(

@@ -34,15 +34,6 @@ pub struct TranslationBatchRow {
     pub segment_translations: HashMap<usize, String>,
 }
 
-/// Step 5.1: Source split result for a single LLM work unit.
-#[derive(Debug, Clone)]
-pub struct SourceSplitRow {
-    pub work_index: usize,
-    pub segment_start: usize,
-    pub segment_end: usize,
-    pub boundary_positions: Vec<usize>,
-}
-
 /// Step 1 alignment: Cached ForcedAlignResult for a single segment.
 #[derive(Debug, Clone)]
 pub struct AlignmentResultRow {
@@ -50,11 +41,11 @@ pub struct AlignmentResultRow {
     pub items: Vec<qwen_forced_aligner_rs::ForcedAlignItem>,
 }
 
-/// Step 5.2: Translation alignment result for a single parent segment.
+/// Step 5 (combined): Split + align result for a single segment.
 #[derive(Debug, Clone)]
-pub struct TranslationAlignRow {
-    pub parent_index: usize,
-    pub aligned_lines: Vec<String>,
+pub struct Step5SplitAlignRow {
+    pub segment_index: usize,
+    pub parent_json: String,
 }
 
 // ── UnitStore: task-scoped accessor for domain tables ───────────
@@ -122,24 +113,14 @@ impl UnitStore {
         self.store.save_translation_batch(&self.task_id, row).await
     }
 
-    // ── Step 5.1: Source splits ──
+    // ── Step 5 combined: Split + align per segment ──
 
-    pub async fn load_source_splits(&self) -> Result<Vec<SourceSplitRow>, String> {
-        self.store.load_source_splits(&self.task_id).await
+    pub async fn load_step5_split_aligns(&self) -> Result<Vec<Step5SplitAlignRow>, String> {
+        self.store.load_step5_split_aligns(&self.task_id).await
     }
 
-    pub async fn save_source_split(&self, row: &SourceSplitRow) -> Result<(), String> {
-        self.store.save_source_split(&self.task_id, row).await
-    }
-
-    // ── Step 5.2: Translation alignment ──
-
-    pub async fn load_translation_aligns(&self) -> Result<Vec<TranslationAlignRow>, String> {
-        self.store.load_translation_aligns(&self.task_id).await
-    }
-
-    pub async fn save_translation_align(&self, row: &TranslationAlignRow) -> Result<(), String> {
-        self.store.save_translation_align(&self.task_id, row).await
+    pub async fn save_step5_split_align(&self, row: &Step5SplitAlignRow) -> Result<(), String> {
+        self.store.save_step5_split_align(&self.task_id, row).await
     }
 }
 

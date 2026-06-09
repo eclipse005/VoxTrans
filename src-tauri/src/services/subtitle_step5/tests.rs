@@ -15,7 +15,6 @@ use crate::services::subtitle_length::{
     SubtitleLengthPreset, effective_subtitle_limits, normalize_subtitle_length_preset,
 };
 
-mod source_split_tests;
 
 #[test]
 fn subtitle_length_presets_cover_supported_source_and_target_languages() {

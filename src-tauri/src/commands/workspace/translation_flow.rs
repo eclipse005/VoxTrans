@@ -5,7 +5,6 @@ use crate::db::store::TaskStore;
 use crate::domain::error::WorkspaceResult;
 use crate::domain::task::adapters::{
     map_step2_segments_for_translate, translation_segments_from_step52_parents,
-    workspace_subtitle_segments_from_step51_parents,
     workspace_subtitle_segments_from_step52_parents,
     workspace_subtitle_segments_from_translation_segments,
 };
@@ -15,8 +14,7 @@ use crate::services::pipeline::{StepContext, StepSource};
 use super::output_completion::finish_translate_with_step5;
 use super::pipeline_runner::execute_workspace_step;
 use super::pipeline_steps::{
-    Step3TerminologyPipelineStep, Step4TranslationPipelineStep, Step51SourceSplitPipelineStep,
-    Step52TranslationAlignPipelineStep,
+    Step3TerminologyPipelineStep, Step4TranslationPipelineStep, Step5SplitAlignPipelineStep,
 };
 use super::preview::update_subtitle_preview;
 use super::progress::report_task_stage;
@@ -102,52 +100,14 @@ pub(super) async fn execute_translate_steps(
     )
     .await?;
 
-    let step51_exec = execute_workspace_step(
-        &Step51SourceSplitPipelineStep {
-            task_id: task_id.to_string(),
-            media_path: record.item.path.clone(),
-            source_lang: source_lang.clone(),
-            target_lang: target_lang.clone(),
-            segments: step4_exec.output.segments.clone(),
-            translate_api_key: runtime.translate_api_key.clone(),
-            translate_base_url: runtime.translate_base_url.clone(),
-            translate_model: runtime.translate_model.clone(),
-            llm_concurrency: runtime.llm_concurrency,
-            subtitle_length_preset: runtime.subtitle_length_preset.clone(),
-            app: app.clone(),
-        },
-        &step_context,
-        store,
-    )
-    .await?;
-
-    if step51_exec.source == StepSource::Cache {
-        report_task_stage(
-            app,
-            task_id,
-            TaskStage::SubtitleLayout,
-            "原文切分缓存命中",
-            1,
-            1,
-        )
-        .await?;
-    }
-    update_subtitle_preview(
-        app,
-        task_id,
-        &source_text,
-        workspace_subtitle_segments_from_step51_parents(&step51_exec.output.parents),
-    )
-    .await?;
-
-    let step52_exec = execute_workspace_step(
-        &Step52TranslationAlignPipelineStep {
+    let step5_exec = execute_workspace_step(
+        &Step5SplitAlignPipelineStep {
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
             source_lang: source_lang.clone(),
             target_lang: target_lang.clone(),
             theme_summary: step3_response.theme_summary.clone(),
-            parents: step51_exec.output.parents.clone(),
+            segments: step4_exec.output.segments.clone(),
             terminology_entries: step3_response.terminology_entries.clone(),
             subtitle_length_preset: runtime.subtitle_length_preset.clone(),
             translate_api_key: runtime.translate_api_key.clone(),
@@ -161,12 +121,12 @@ pub(super) async fn execute_translate_steps(
     )
     .await?;
 
-    if step52_exec.source == StepSource::Cache {
+    if step5_exec.source == StepSource::Cache {
         report_task_stage(
             app,
             task_id,
             TaskStage::SubtitleLayout,
-            "译文对齐缓存命中",
+            "断句对齐缓存命中",
             1,
             1,
         )
@@ -176,10 +136,10 @@ pub(super) async fn execute_translate_steps(
         app,
         task_id,
         &source_text,
-        workspace_subtitle_segments_from_step52_parents(&step52_exec.output.parents),
+        workspace_subtitle_segments_from_step52_parents(&step5_exec.output.parents),
     )
     .await?;
-    let step5_segments = translation_segments_from_step52_parents(&step52_exec.output.parents);
+    let step5_segments = translation_segments_from_step52_parents(&step5_exec.output.parents);
 
     finalize_translate_with_step5(
         app,

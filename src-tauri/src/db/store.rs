@@ -714,109 +714,48 @@ impl TaskStore {
         Ok(())
     }
 
-    // Step 5.1: Source split results
+    // Step 5 combined: Split + align per segment
 
-    pub async fn load_source_splits(
+    pub async fn load_step5_split_aligns(
         &self,
         task_id: &str,
-    ) -> Result<Vec<crate::services::pipeline::SourceSplitRow>, String> {
+    ) -> Result<Vec<crate::services::pipeline::Step5SplitAlignRow>, String> {
         let rows = sqlx::query(
-            "SELECT work_index, segment_start, segment_end, boundary_positions \
-             FROM source_split_results \
-             WHERE task_id = ? ORDER BY work_index",
+            "SELECT segment_index, parent_json FROM step5_split_align_results \
+             WHERE task_id = ? ORDER BY segment_index",
         )
         .bind(task_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| format!("load source splits: {e}"))?;
+        .map_err(|e| format!("load step5 split aligns: {e}"))?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let bp_json: String = r.get("boundary_positions");
-            let boundary_positions: Vec<usize> = serde_json::from_str(&bp_json)
-                .map_err(|e| format!("deserialize boundary positions: {e}"))?;
-            out.push(crate::services::pipeline::SourceSplitRow {
-                work_index: r.get::<i64, _>("work_index") as usize,
-                segment_start: r.get::<i64, _>("segment_start") as usize,
-                segment_end: r.get::<i64, _>("segment_end") as usize,
-                boundary_positions,
+            out.push(crate::services::pipeline::Step5SplitAlignRow {
+                segment_index: r.get::<i64, _>("segment_index") as usize,
+                parent_json: r.get("parent_json"),
             });
         }
         Ok(out)
     }
 
-    pub async fn save_source_split(
+    pub async fn save_step5_split_align(
         &self,
         task_id: &str,
-        row: &crate::services::pipeline::SourceSplitRow,
+        row: &crate::services::pipeline::Step5SplitAlignRow,
     ) -> Result<(), String> {
-        let bp_json = serde_json::to_string(&row.boundary_positions)
-            .map_err(|e| format!("serialize boundary positions: {e}"))?;
         sqlx::query(
-            "INSERT INTO source_split_results \
-             (task_id, work_index, segment_start, segment_end, boundary_positions) \
-             VALUES (?, ?, ?, ?, ?) ON CONFLICT(task_id, work_index) DO UPDATE SET \
-             segment_start=excluded.segment_start, segment_end=excluded.segment_end, \
-             boundary_positions=excluded.boundary_positions",
+            "INSERT INTO step5_split_align_results \
+             (task_id, segment_index, parent_json) \
+             VALUES (?, ?, ?) ON CONFLICT(task_id, segment_index) DO UPDATE SET \
+             parent_json=excluded.parent_json",
         )
         .bind(task_id)
-        .bind(row.work_index as i64)
-        .bind(row.segment_start as i64)
-        .bind(row.segment_end as i64)
-        .bind(&bp_json)
+        .bind(row.segment_index as i64)
+        .bind(&row.parent_json)
         .execute(&self.pool)
         .await
-        .map_err(|e| format!("save source split: {e}"))?;
-        Ok(())
-    }
-
-    // Step 5.2: Translation alignment results
-
-    pub async fn load_translation_aligns(
-        &self,
-        task_id: &str,
-    ) -> Result<Vec<crate::services::pipeline::TranslationAlignRow>, String> {
-        let rows = sqlx::query(
-            "SELECT parent_index, aligned_lines FROM translation_align_results \
-             WHERE task_id = ? ORDER BY parent_index",
-        )
-        .bind(task_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| format!("load translation aligns: {e}"))?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let json: String = r.get("aligned_lines");
-            let aligned_lines: Vec<String> = serde_json::from_str(&json)
-                .map_err(|e| format!("deserialize aligned lines: {e}"))?;
-            out.push(crate::services::pipeline::TranslationAlignRow {
-                parent_index: r.get::<i64, _>("parent_index") as usize,
-                aligned_lines,
-            });
-        }
-        Ok(out)
-    }
-
-    pub async fn save_translation_align(
-        &self,
-        task_id: &str,
-        row: &crate::services::pipeline::TranslationAlignRow,
-    ) -> Result<(), String> {
-        let json = serde_json::to_string(&row.aligned_lines)
-            .map_err(|e| format!("serialize aligned lines: {e}"))?;
-        sqlx::query(
-            "INSERT INTO translation_align_results \
-             (task_id, parent_index, aligned_lines) \
-             VALUES (?, ?, ?) ON CONFLICT(task_id, parent_index) DO UPDATE SET \
-             aligned_lines=excluded.aligned_lines",
-        )
-        .bind(task_id)
-        .bind(row.parent_index as i64)
-        .bind(&json)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| format!("save translation align: {e}"))?;
+        .map_err(|e| format!("save step5 split align: {e}"))?;
         Ok(())
     }
 }

@@ -5,12 +5,11 @@ use tauri::AppHandle;
 use tokio::runtime::Handle;
 
 use crate::commands::translate_step5_commands::{
-    build_step_5_1_source_split_with_progress_and_unit_store, build_step_5_2_translation_align_with_progress_and_unit_store,
+    build_step_5_split_align_with_progress_and_unit_store,
 };
 use crate::commands::translate_types::{
-    BuildStep51SourceSplitCommandRequest, BuildStep51SourceSplitCommandResponse,
-    BuildStep52TranslationAlignCommandRequest, BuildStep52TranslationAlignCommandResponse,
-    BuildTranslationSegmentCommand, Step5SplitParentCommand, TranslateTerminologyEntryCommand,
+    BuildStep5SplitAlignCommandRequest, BuildStep5SplitAlignCommandResponse,
+    BuildTranslationSegmentCommand, TranslateTerminologyEntryCommand,
 };
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 
@@ -69,76 +68,13 @@ fn validate_step5_artifact(
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::commands::workspace) struct Step51SourceSplitPipelineStep {
-    pub(in crate::commands::workspace) task_id: String,
-    pub(in crate::commands::workspace) media_path: String,
-    pub(in crate::commands::workspace) source_lang: String,
-    pub(in crate::commands::workspace) target_lang: String,
-    pub(in crate::commands::workspace) segments: Vec<BuildTranslationSegmentCommand>,
-    pub(in crate::commands::workspace) translate_api_key: String,
-    pub(in crate::commands::workspace) translate_base_url: String,
-    pub(in crate::commands::workspace) translate_model: String,
-    pub(in crate::commands::workspace) llm_concurrency: u32,
-    pub(in crate::commands::workspace) subtitle_length_preset: String,
-    pub(in crate::commands::workspace) app: AppHandle,
-}
-
-#[async_trait]
-impl PipelineStep for Step51SourceSplitPipelineStep {
-    type Output = BuildStep51SourceSplitCommandResponse;
-
-    fn name(&self) -> &'static str {
-        "step_5_1_source_split"
-    }
-
-    fn policy(&self) -> CheckpointPolicy {
-        CheckpointPolicy::SkipIfExists
-    }
-
-    fn validate(&self, output: &Self::Output) -> Result<(), String> {
-        validate_step5_artifact(
-            &output.task_id,
-            &output.media_path,
-            !output.parents.is_empty(),
-            "step5_1",
-        )
-    }
-
-    async fn run(&self, ctx: &StepContext<'_>) -> Result<Self::Output, String> {
-        let unit_store = ctx.unit_store();
-        build_step_5_1_source_split_with_progress_and_unit_store(
-            self.app.clone(),
-            BuildStep51SourceSplitCommandRequest {
-                task_id: self.task_id.clone(),
-                media_path: self.media_path.clone(),
-                source_lang: self.source_lang.clone(),
-                target_lang: self.target_lang.clone(),
-                segments: self.segments.clone(),
-                translate_api_key: self.translate_api_key.clone(),
-                translate_base_url: self.translate_base_url.clone(),
-                translate_model: self.translate_model.clone(),
-                llm_concurrency: self.llm_concurrency,
-                subtitle_length_preset: self.subtitle_length_preset.clone(),
-            },
-            Some(subtitle_layout_progress(
-                &self.app,
-                &self.task_id,
-                "原文切分",
-            )),
-            Some(unit_store),
-        )
-        .await
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::commands::workspace) struct Step52TranslationAlignPipelineStep {
+pub(in crate::commands::workspace) struct Step5SplitAlignPipelineStep {
     pub(in crate::commands::workspace) task_id: String,
     pub(in crate::commands::workspace) media_path: String,
     pub(in crate::commands::workspace) source_lang: String,
     pub(in crate::commands::workspace) target_lang: String,
     pub(in crate::commands::workspace) theme_summary: String,
-    pub(in crate::commands::workspace) parents: Vec<Step5SplitParentCommand>,
+    pub(in crate::commands::workspace) segments: Vec<BuildTranslationSegmentCommand>,
     pub(in crate::commands::workspace) terminology_entries: Vec<TranslateTerminologyEntryCommand>,
     pub(in crate::commands::workspace) subtitle_length_preset: String,
     pub(in crate::commands::workspace) translate_api_key: String,
@@ -149,11 +85,11 @@ pub(in crate::commands::workspace) struct Step52TranslationAlignPipelineStep {
 }
 
 #[async_trait]
-impl PipelineStep for Step52TranslationAlignPipelineStep {
-    type Output = BuildStep52TranslationAlignCommandResponse;
+impl PipelineStep for Step5SplitAlignPipelineStep {
+    type Output = BuildStep5SplitAlignCommandResponse;
 
     fn name(&self) -> &'static str {
-        "step_5_2_translation_align"
+        "step_5_split_align"
     }
 
     fn policy(&self) -> CheckpointPolicy {
@@ -165,21 +101,21 @@ impl PipelineStep for Step52TranslationAlignPipelineStep {
             &output.task_id,
             &output.media_path,
             !output.parents.is_empty(),
-            "step5_2",
+            "step5",
         )
     }
 
     async fn run(&self, ctx: &StepContext<'_>) -> Result<Self::Output, String> {
         let unit_store = ctx.unit_store();
-        build_step_5_2_translation_align_with_progress_and_unit_store(
+        build_step_5_split_align_with_progress_and_unit_store(
             self.app.clone(),
-            BuildStep52TranslationAlignCommandRequest {
+            BuildStep5SplitAlignCommandRequest {
                 task_id: self.task_id.clone(),
                 media_path: self.media_path.clone(),
                 source_lang: self.source_lang.clone(),
                 target_lang: self.target_lang.clone(),
                 theme_summary: self.theme_summary.clone(),
-                parents: self.parents.clone(),
+                segments: self.segments.clone(),
                 terminology_entries: self.terminology_entries.clone(),
                 subtitle_length_preset: self.subtitle_length_preset.clone(),
                 translate_api_key: self.translate_api_key.clone(),
@@ -190,7 +126,7 @@ impl PipelineStep for Step52TranslationAlignPipelineStep {
             Some(subtitle_layout_progress(
                 &self.app,
                 &self.task_id,
-                "译文对齐",
+                "断句对齐",
             )),
             Some(unit_store),
         )
