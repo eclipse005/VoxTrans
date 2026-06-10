@@ -7,5 +7,5 @@ resolver = "2"
 default-members = ["src-tauri"]
 
 [patch.crates-io]
-candle-kernels = { path = "../qwen-aligner/vendor/candle-kernels" }
-cudaforge = { path = "../qwen-aligner/vendor/cudaforge" }
+candle-kernels = { path = "vendor/candle-kernels" }
+cudaforge = { path = "vendor/cudaforge" }

@@ -30,5 +30,5 @@ dashmap = "6"
 thiserror = "2"
 ts-rs = "10"
 open = "5"
-qwen3-asr = { path = "../../qwen3-asr-rs", default-features = false }
-qwen-forced-aligner-rs = { path = "../../qwen-aligner", default-features = false }
+qwen3-asr = { git = "https://github.com/eclipse005/qwen3-asr-rs", default-features = false }
+qwen-forced-aligner-rs = { git = "https://github.com/eclipse005/qwen-aligner", default-features = false }

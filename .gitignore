@@ -37,5 +37,13 @@ runtime/
 output/
 src-tauri/output/
 release/
-build-release.ps1
 src-tauri/bin/cuda/
+
+# Vendored crate build artifacts
+vendor/*/target/
+
+# Large binary dependencies (download via scripts/download-binaries.ps1)
+src-tauri/bin/ffmpeg.exe
+src-tauri/bin/demucs.exe
+src-tauri/bin/yt-dlp.exe
+src-tauri/bin/fireredvad.exe
