@@ -81,29 +81,27 @@ npm run tauri build -- --features cuda   # CUDA 版本（需 NVIDIA GPU + CUDA T
 - 默认使用 CPU 运行
 - 若有 NVIDIA 显卡，可通过构建脚本启用 CUDA 加速（参考 `scripts/tauri-cuda.ps1`），可显著缩短转录与对齐耗时
 
-## 流程约定（Checkpoint）
+## 数据持久化与断点续跑
 
-任务输出目录按 step 落地中间结果，采用“**文件存在即跳过**”策略。
+任务的转录进度、中间结果和最终字幕全部持久化到 SQLite 数据库（`voxtrans.db`），位于系统应用数据目录（Windows: `%APPDATA%\com.voxtrans.app\`）。
 
-- `step_01_asr.json`：转录词级时间戳
-- `step_02_segments.json`：组句结果
-- `step_03_terminology.json`：术语层
-- `step_04_translation.json`：翻译草稿层
-- `step_05_01_source_split.json`：原文展示断句（带时间戳重映射）
-- `step_05_02_translation_align.json`：译文按断句对齐
-- `step_05_03_translation_polish.json`：译文压缩/润色（最终同构输出）
+### 自动恢复
 
-重跑规则：
+- 任务中途关闭程序，下次启动自动从断点继续。
+- 意外崩溃后，卡在"处理中"状态的任务会自动标记为失败，可手动重试。
 
-1. 仅重跑 step5：删除 `step_05_01_source_split.json`、`step_05_02_translation_align.json`、`step_05_03_translation_polish.json`
-2. 重跑术语+翻译+step5：删除 `step_03_terminology.json`、`step_04_translation.json` 及所有 `step_05_*`
-3. 从组句后重跑：删除 `step_02_segments.json`、`step_03_terminology.json`、`step_04_translation.json` 及所有 `step_05_*`
-4. 从头重跑：删除 `step_01_asr.json` 到 `step_05_03_translation_polish.json` 全部 step 文件
+### 重跑规则
 
-说明：
+在任务列表中右键点击任务，选择：
 
-- 这是显式可控的断点续跑机制，不做输入指纹自动失效。
-- 用户希望重算时，按上述规则手动删除对应 step 文件即可。
+- **重试**：从上次失败处继续，已完成步骤不重跑。
+- **从头重跑**：清空所有步骤缓存，重新开始整个流水线。
+
+也支持选择性重跑——删除 `voxtrans.db` 中 `task_artifacts` 表对应步骤的记录即可。无需手动操作文件。
+
+### 设置快照
+
+每个任务创建时会冻结当前全局设置（字幕长度预设、术语开关、术语库内容），后续修改设置不影响已创建的任务。
 
 ## 更新记录
 
