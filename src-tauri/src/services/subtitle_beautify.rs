@@ -57,8 +57,8 @@ pub fn beautify_workspace_segments(
     beautify_subtitle_srt_segments(&mut srt_segments, subtitle_length_preset, target_lang);
 
     // Map back to WorkspaceSubtitleSegment.
-    // - text fields: take the beautified text from srt_segments;
-    //   also beautify source_text (the SRT helper only touches translated_text).
+    // - text fields: translated_text comes from srt_segments (already beautified);
+    //   source_text is preserved as-is (beautify should only affect translation).
     // - source_words: re-attach by timing containment so a merged segment
     //   inherits the union of words from the originals it absorbed.
     *segments = srt_segments
@@ -76,7 +76,7 @@ pub fn beautify_workspace_segments(
             WorkspaceSubtitleSegment {
                 start_ms: s.start_ms,
                 end_ms: s.end_ms,
-                source_text: beautify_subtitle_text(&s.source_text),
+                source_text: s.source_text,
                 translated_text: s.translated_text,
                 source_words: words,
             }
