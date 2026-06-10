@@ -112,33 +112,7 @@ fn trim_bounding_punctuation(text: &str) -> String {
 }
 
 fn is_subtitle_boundary_punctuation(ch: char) -> bool {
-    ch.is_ascii_punctuation()
-        || matches!(
-            ch,
-            '，' | '。'
-                | '、'
-                | '；'
-                | '：'
-                | '！'
-                | '？'
-                | '…'
-                | '「'
-                | '」'
-                | '『'
-                | '』'
-                | '《'
-                | '》'
-                | '“'
-                | '”'
-                | '‘'
-                | '’'
-                | '（'
-                | '）'
-                | '［'
-                | '］'
-                | '【'
-                | '】'
-        )
+    matches!(ch, '.' | '。')
 }
 
 fn remove_internal_commas_for_subtitle(text: &str) -> String {
@@ -240,16 +214,21 @@ mod tests {
 
     #[test]
     fn subtitle_beautify_text_removes_boundary_punctuation_and_commas() {
-        assert_eq!(beautify_subtitle_text(" (Hello, world), "), "Hello world");
+        // Only periods (。 .) are trimmed from edges; commas are replaced
+        // with spaces internally.
+        assert_eq!(beautify_subtitle_text(" (Hello, world), "), "(Hello world)");
         assert_eq!(
             beautify_subtitle_text("代码,IPC,sockets"),
             "代码 IPC sockets"
         );
-        // Full-width comma between CJK words must produce a space too,
-        // otherwise the two words glue together (regression: 棒，但 → 棒但).
         assert_eq!(
             beautify_subtitle_text("盘整结构也很棒，但我们稍后会讨论"),
             "盘整结构也很棒 但我们稍后会讨论"
+        );
+        // Trailing period removed, closing paren left intact.
+        assert_eq!(
+            beautify_subtitle_text("中间/过渡状态）。"),
+            "中间/过渡状态）"
         );
     }
 
@@ -264,8 +243,10 @@ mod tests {
 
         beautify_subtitle_srt_segments(&mut segments, "standard", "zh-CN");
 
+        // source_text is untouched.
         assert_eq!(segments[0].source_text, " (Hello, world), ");
-        assert_eq!(segments[0].translated_text, "你好 世界");
+        // translated_text: commas → spaces; parens kept; periods trimmed.
+        assert_eq!(segments[0].translated_text, "(你好 世界)");
     }
 
     #[test]
@@ -355,6 +336,6 @@ mod tests {
         assert!(need_cjk_ascii_space('码', 'v'));
         assert!(!need_cjk_ascii_space('码', ','));
         assert_eq!(collapse_multiple_spaces("a   b"), "a b");
-        assert_eq!(trim_bounding_punctuation("「Hello，"), "Hello");
+        assert_eq!(trim_bounding_punctuation("「Hello，"), "「Hello，");
     }
 }
