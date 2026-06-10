@@ -2,6 +2,8 @@
 
 VoxTrans 是一个本地化的音视频转录与字幕翻译工具，支持多语种转录与多语种互译；翻译需在设置中配置 LLM 接口参数。
 
+> 原帖发布于 [52破解论坛](https://www.52pojie.cn/thread-2099216-1-1.html)
+
 ## 下载地址
 
 - 下载: https://wwbxg.lanzouq.com/b00jf5bdch
@@ -105,16 +107,4 @@ npm run tauri build -- --features cuda   # CUDA 版本（需 NVIDIA GPU + CUDA T
 
 ## 更新记录
 
-### v1.0.3
-- 多语种转录支持（10 种源语言）
-- 多语种翻译支持（18 种目标语言）
-- 新增人声分离（Demucs）功能
-- 字幕导出支持 4 种格式（原文 / 译文 / 双语 × 2）
-- 模型架构升级为 ASR + ForcedAligner + Demucs 三套模型
-
-### v0.1.2
-- 缺陷修复
-
-### v0.1.1
-- 增加字幕压制功能
-- 修复翻译后字幕时间戳异常拆分的问题
+详见 [GitHub Releases](https://github.com/eclipse005/VoxTrans/releases)。
