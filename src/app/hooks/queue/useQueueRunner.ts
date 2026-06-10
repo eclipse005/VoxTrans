@@ -5,7 +5,6 @@ import {
 } from "../../api/workspace";
 import {
   createEmptyTaskProgress,
-  type QueueItem,
 } from "../../../features/media/types";
 import type { AppAction } from "../../state/appReducer";
 import { patchQueueItem } from "../../state/queueDomainActions";
