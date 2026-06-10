@@ -27,6 +27,10 @@ dist-ssr
 .claude/
 .worktrees/
 
+# Internal planning / CI
+ROADMAP.md
+.github/
+
 # Rust / local assets
 target/
 src-tauri/target/
