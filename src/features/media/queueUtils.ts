@@ -27,6 +27,7 @@ type TaskStateChangedEvent = {
   resultText: string;
   resultSrt: string;
   subtitleSegmentsJson: string;
+  terminologyGroupId?: string;
 };
 
 export function stageOrder(stage: Partial<TaskStageProgress> | null | undefined): number {
@@ -82,6 +83,7 @@ export function mergeTaskStateChanged(current: QueueItem, payload: TaskStateChan
     resultText: payload.resultText || "",
     resultSrt: payload.resultSrt || "",
     subtitleSegmentsJson: payload.subtitleSegmentsJson || "",
+    terminologyGroupId: payload.terminologyGroupId || current.terminologyGroupId,
   };
 }
 
@@ -98,6 +100,7 @@ export function toEnqueuePayload(
   sourceLang: SourceLanguage;
   targetLang: TargetLanguage;
   maxRetries: number;
+  terminologyGroupId: string;
 } {
   return {
     id: item.id,
@@ -109,6 +112,7 @@ export function toEnqueuePayload(
     sourceLang: normalizeSourceLanguage(item.sourceLang),
     targetLang: normalizeTargetLanguage(item.targetLang),
     maxRetries: 0,
+    terminologyGroupId: item.terminologyGroupId ?? "",
   };
 }
 
