@@ -11,10 +11,10 @@ use super::task_logs::log_task_failure_to_main;
 use super::{
     DeleteTasksCommandRequest, EnqueueTaskRunCommandRequest, ExecuteTaskBatchCommandResponse,
     ExecuteTaskBatchFailedItem, ExecuteTaskRunCommandRequest, RegisterTaskUploadCommandRequest,
-    UpdateTaskLanguagesCommandRequest, WorkspaceQueueItem, WorkspaceTaskProgressState,
-    WorkspaceTaskRecord, default_task_source_lang, default_task_target_lang,
-    emit_task_state_changed, normalize_intent, normalize_media_kind, normalize_task_source_lang,
-    normalize_task_target_lang, patch_task_item,
+    UpdateTaskLanguagesCommandRequest, UpdateTaskTerminologyCommandRequest, WorkspaceQueueItem,
+    WorkspaceTaskProgressState, WorkspaceTaskRecord, default_task_source_lang,
+    default_task_target_lang, emit_task_state_changed, normalize_intent, normalize_media_kind,
+    normalize_task_source_lang, normalize_task_target_lang, patch_task_item,
 };
 
 pub(super) async fn register_task_upload_internal(
@@ -154,6 +154,13 @@ pub(super) async fn enqueue_task_run_internal(
             .as_deref()
             .map(normalize_task_target_lang)
             .unwrap_or_else(default_task_target_lang);
+        let terminology_group_id = request
+            .terminology_group_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_default();
         let mut item = new_workspace_queue_item(
             id,
             media_path,
@@ -164,13 +171,14 @@ pub(super) async fn enqueue_task_run_internal(
         );
         item.source_lang = source_lang.clone();
         item.target_lang = target_lang.clone();
+        item.terminology_group_id = terminology_group_id.clone();
         let record = WorkspaceTaskRecord {
             item,
             intent: normalize_intent(&request.intent).to_string(),
             source_lang,
             target_lang,
             max_retries: request.max_retries.unwrap_or(0),
-            frozen: freeze_current_settings(db_store),
+            frozen: freeze_current_settings(db_store, &terminology_group_id),
         };
         let emitted = record.item.clone();
         persist_task_meta(db_store, &record).await?;
@@ -215,6 +223,54 @@ pub(super) async fn update_task_languages_internal(
         task.target_lang = target_lang.clone();
         task.item.source_lang = source_lang;
         task.item.target_lang = target_lang;
+    })
+    .await?;
+    let updated_item = {
+        let store = lock_workspace_store()?;
+        store
+            .tasks()
+            .iter()
+            .find(|entry| entry.item.id == task_id)
+            .map(|task| task.item.clone())
+            .ok_or_else(|| WorkspaceError::TaskNotFound(task_id.to_string()))?
+    };
+    emit_task_state_changed(app, &updated_item);
+    Ok(())
+}
+
+pub(super) async fn update_task_terminology_internal(
+    app: &AppHandle,
+    request: UpdateTaskTerminologyCommandRequest,
+) -> WorkspaceResult<()> {
+    ensure_workspace_hydrated_from_db(app).await?;
+    let task_id = request.task_id.trim();
+    if task_id.is_empty() {
+        return Err(WorkspaceError::InvalidRequest(
+            "taskId is required".to_string(),
+        ));
+    }
+
+    {
+        let store = lock_workspace_store()?;
+        let Some(task) = store
+            .tasks()
+            .iter()
+            .find(|entry| entry.item.id == task_id)
+        else {
+            return Err(WorkspaceError::TaskNotFound(task_id.to_string()));
+        };
+        if task.item.transcribe_status == "processing" || task.item.transcribe_status == "queued" {
+            return Err(WorkspaceError::TaskBusy);
+        }
+    }
+
+    let terminology_group_id = request.terminology_group_id.trim().to_string();
+    let db_store = app.state::<TaskStore>().inner().clone();
+    let frozen = freeze_current_settings(&db_store, &terminology_group_id);
+    // patch_task_item persists the full record (including frozen settings) to DB.
+    patch_task_item(app, task_id, |task| {
+        task.item.terminology_group_id = terminology_group_id.clone();
+        task.frozen.terminology_groups = frozen.terminology_groups.clone();
     })
     .await?;
     let updated_item = {
@@ -379,6 +435,7 @@ fn new_workspace_queue_item(
         result_srt: String::new(),
         subtitle_segments_json: "[]".to_string(),
         llm_total_tokens: 0,
+        terminology_group_id: String::new(),
     }
 }
 
@@ -426,19 +483,27 @@ fn apply_enqueue_request(
         .as_deref()
         .map(normalize_task_target_lang)
         .unwrap_or_else(default_task_target_lang);
+    let terminology_group_id = request
+        .terminology_group_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_default();
     record.item.source_lang = record.source_lang.clone();
     record.item.target_lang = record.target_lang.clone();
+    record.item.terminology_group_id = terminology_group_id.clone();
     record.max_retries = request.max_retries.unwrap_or(0);
-    record.frozen = freeze_current_settings(db_store);
+    record.frozen = freeze_current_settings(db_store, &terminology_group_id);
 }
 
 /// Snapshot the user-frozen subset of the current saved settings. Tasks
 /// keep their own copy so subtitle-shape and terminology decisions stay
 /// consistent across the whole run even if the user edits settings
 /// mid-pipeline.
-fn freeze_current_settings(db_store: &TaskStore) -> FrozenSettings {
+fn freeze_current_settings(db_store: &TaskStore, selected_group_id: &str) -> FrozenSettings {
     crate::services::preferences::load_saved_settings_from_default_path(db_store)
-        .map(|saved| FrozenSettings::from_saved(&saved))
+        .map(|saved| FrozenSettings::from_saved(&saved, selected_group_id))
         .unwrap_or_default()
 }
 
