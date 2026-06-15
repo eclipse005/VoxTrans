@@ -252,7 +252,10 @@ fn hard_pause_forces_micro_chunk_boundary() {
         },
     ];
 
-    let chunks = build_micro_chunks(&words);
+    // VAD detects two speech segments separated by silence [0.2, 2.4]; the
+    // cut midpoint (1.3) falls inside that gap, so hard_split_after fires.
+    let vad_index = super::vad_align::SpeechSegmentIndex::new(vec![(0.0, 0.2), (2.4, 2.7)]);
+    let chunks = build_micro_chunks(&words, &vad_index);
     assert_eq!(chunks.len(), 2);
     assert!(chunks[0].hard_split_after);
     // gap_after_ms is the raw wall-clock gap between word.end (0.2s) and the

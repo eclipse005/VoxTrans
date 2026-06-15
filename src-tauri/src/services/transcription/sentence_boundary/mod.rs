@@ -50,7 +50,7 @@ pub async fn build_source_sentences_from_words_with_progress(
 
     let vad_index = vad_align::SpeechSegmentIndex::new(request.vad_speech_segments.clone());
 
-    let micro_chunks = build_micro_chunks(&normalized_words);
+    let micro_chunks = build_micro_chunks(&normalized_words, &vad_index);
     if micro_chunks.is_empty() {
         return Err("failed to build micro chunks".to_string());
     }

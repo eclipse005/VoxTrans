@@ -1,13 +1,13 @@
 use crate::services::transcribe::WordTokenDto;
 use voxtrans_core::subtitle::srt::{SrtCue, to_srt_from_cues};
 
-use super::HARD_SPLIT_GAP_MS;
 use super::text::join_words;
 use super::timing::{gap_ms, seconds_to_ms};
 use super::types::{
     BoundaryDecision, BoundaryDecisionKind, MicroChunk, SourceSentence, SourceSentenceStep2,
     SplitReason,
 };
+use super::vad_align::SpeechSegmentIndex;
 
 pub fn source_sentences_to_srt(step2: &SourceSentenceStep2) -> String {
     let cues = step2
@@ -23,7 +23,10 @@ pub fn source_sentences_to_srt(step2: &SourceSentenceStep2) -> String {
     to_srt_from_cues(&cues)
 }
 
-pub(super) fn build_micro_chunks(words: &[WordTokenDto]) -> Vec<MicroChunk> {
+pub(super) fn build_micro_chunks(
+    words: &[WordTokenDto],
+    vad_index: &SpeechSegmentIndex,
+) -> Vec<MicroChunk> {
     words
         .iter()
         .enumerate()
@@ -37,6 +40,15 @@ pub(super) fn build_micro_chunks(words: &[WordTokenDto]) -> Vec<MicroChunk> {
                 .get(index + 1)
                 .map(|next| gap_ms(word.end, next.start))
                 .unwrap_or(0);
+            let hard_split_before = index
+                .checked_sub(1)
+                .and_then(|prev| words.get(prev))
+                .map(|prev| vad_index.crosses_silence(prev.end, word.start))
+                .unwrap_or(false);
+            let hard_split_after = words
+                .get(index + 1)
+                .map(|next| vad_index.crosses_silence(word.end, next.start))
+                .unwrap_or(false);
             MicroChunk {
                 chunk_id: index + 1,
                 start_ms: seconds_to_ms(word.start),
@@ -46,8 +58,8 @@ pub(super) fn build_micro_chunks(words: &[WordTokenDto]) -> Vec<MicroChunk> {
                 word_end: index,
                 gap_before_ms,
                 gap_after_ms,
-                hard_split_before: gap_before_ms >= HARD_SPLIT_GAP_MS,
-                hard_split_after: gap_after_ms >= HARD_SPLIT_GAP_MS,
+                hard_split_before,
+                hard_split_after,
             }
         })
         .collect()
