@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use fireredvad::VadConfig;
+use fireredvad::{Vad, VadConfig};
 
 #[derive(Debug, Clone)]
 pub(crate) struct AudioSegment {
@@ -23,7 +23,8 @@ pub(crate) fn build_segments_from_vad(
 ) -> Result<(Vec<AudioSegment>, f64), Box<dyn std::error::Error>> {
     let vad_started_at = Instant::now();
     let chunk_target_seconds = chunk_target_seconds.max(30.0);
-    let vad = fireredvad::detect(audio_path, &VadConfig::default())?;
+    let engine = Vad::new()?;
+    let vad = engine.detect_wav(audio_path, &VadConfig::default())?;
     let vad_elapsed_sec = vad_started_at.elapsed().as_secs_f64();
     let effective_total_duration = if total_duration_sec > 0.0 {
         total_duration_sec
