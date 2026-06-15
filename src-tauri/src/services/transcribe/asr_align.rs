@@ -1,12 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use candle_core::Device;
+use qwen3_asr::{AsrInference, Backend as AsrBackend, TranscribeOptions as AsrTranscribeOptions};
 use qwen_forced_aligner_rs::{
-    AlignRequest, AudioInput, DTypeRequest, DeviceRequest, ForcedAlignItem, ForcedAlignResult,
+    AlignRequest, AudioInput, DeviceRequest, ForcedAlignItem, ForcedAlignResult,
     ModelOptions, TextInput, load_model,
 };
-use qwen3_asr::{AsrInference, TranscribeOptions as AsrTranscribeOptions};
 use voxtrans_core::subtitle::{alignment::align_text_to_timestamps, segmenter::WordToken};
 
 pub(super) struct AsrAlignRequest {
@@ -180,7 +179,6 @@ where
             &aligner_model_dir,
             ModelOptions {
                 device: device.qwen_device,
-                dtype: DTypeRequest::F16,
             },
         )
         .map_err(|err| {
@@ -261,7 +259,7 @@ pub(crate) enum FreshSegmentResult {
 }
 
 struct RuntimeDevice {
-    asr_device: Device,
+    asr_device: AsrBackend,
     qwen_device: DeviceRequest,
     label: String,
 }
@@ -312,23 +310,19 @@ fn provider_to_device(provider: &str) -> Result<RuntimeDevice, String> {
     let normalized = provider.trim().to_ascii_lowercase();
     if normalized == "cpu" {
         return Ok(RuntimeDevice {
-            asr_device: Device::Cpu,
+            asr_device: AsrBackend::Cpu,
             qwen_device: DeviceRequest::Cpu,
             label: "cpu".to_string(),
         });
     }
 
-    Ok(RuntimeDevice {
-        asr_device: cuda_device()?,
-        qwen_device: DeviceRequest::Cuda(0),
-        label: "cuda".to_string(),
-    })
-}
-
-fn cuda_device() -> Result<Device, String> {
     #[cfg(feature = "cuda")]
     {
-        return Device::new_cuda(0).map_err(|err| format!("failed to create CUDA device: {err}"));
+        Ok(RuntimeDevice {
+            asr_device: AsrBackend::Cuda,
+            qwen_device: DeviceRequest::Cuda(0),
+            label: "cuda".to_string(),
+        })
     }
     #[cfg(not(feature = "cuda"))]
     {

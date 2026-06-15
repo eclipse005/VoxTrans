@@ -2,6 +2,7 @@
 name = "voxtrans"
 version = "1.0.4"
 edition = "2024"
+default-run = "voxtrans"
 
 [features]
 default = []
@@ -25,10 +26,9 @@ voxtrans-core = { path = "../voxtrans-core" }
 tokio = { version = "1", features = ["rt", "sync", "time", "macros", "rt-multi-thread"] }
 font-kit = "0.14"
 async-trait = "0.1"
-candle-core = "0.10.2"
 dashmap = "6"
 thiserror = "2"
 ts-rs = "10"
 open = "5"
-qwen3-asr = { git = "https://github.com/eclipse005/qwen3-asr-rs", default-features = false }
-qwen-forced-aligner-rs = { git = "https://github.com/eclipse005/qwen-aligner", default-features = false }
+qwen3-asr = { path = "D:/qwen3-asr", default-features = false }
+qwen-forced-aligner-rs = { path = "D:/qwen-aligner-rs", default-features = false }
