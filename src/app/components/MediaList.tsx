@@ -14,10 +14,11 @@ import type {
   QueueStatus,
   SourceLanguage,
   TargetLanguage,
+  TerminologyGroup,
 } from "../../features/media/types";
 import { canDeleteQueueItem } from "../../features/media/queuePolicy";
 import { formatBytes, statusLabel } from "../../features/media/utils";
-import { AudioFileIcon, ChevronDownIcon, MicIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
+import { AudioFileIcon, BookIcon, ChevronDownIcon, MicIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
 
 type QueueBatchMode = "transcribe" | "transcribe_translate";
 const QUEUE_BATCH_MODE_KEY = "voxtrans.queueBatchMode.v1";
@@ -62,6 +63,11 @@ type MediaListProps = {
     sourceLang?: SourceLanguage,
     targetLang?: TargetLanguage,
   ) => void | Promise<void>;
+  onUpdateTaskTerminology: (
+    item: QueueItem,
+    terminologyGroupId: string,
+  ) => void | Promise<void>;
+  terminologyGroups: TerminologyGroup[];
   onRemoveItem: (id: string) => void;
 };
 
@@ -161,6 +167,8 @@ export default function MediaList({
   onProcessSingleTranscribeTranslate,
   onUpdateTaskLanguages,
   onUpdateAllTaskLanguages,
+  onUpdateTaskTerminology,
+  terminologyGroups,
   onRemoveItem,
 }: MediaListProps) {
   const listBusy = isProcessing || !workspaceHydrated;
@@ -168,8 +176,10 @@ export default function MediaList({
   const [batchMenuOpen, setBatchMenuOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [languageMenuTaskId, setLanguageMenuTaskId] = useState("");
+  const [terminologyMenuTaskId, setTerminologyMenuTaskId] = useState("");
   const batchMenuRef = useRef<HTMLDivElement | null>(null);
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
+  const terminologyMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     saveBatchMode(batchMode);
@@ -202,6 +212,20 @@ export default function MediaList({
     window.addEventListener("mousedown", onMouseDown);
     return () => window.removeEventListener("mousedown", onMouseDown);
   }, [languageMenuTaskId]);
+
+  useEffect(() => {
+    if (!terminologyMenuTaskId) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (!terminologyMenuRef.current) return;
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!terminologyMenuRef.current.contains(target)) {
+        setTerminologyMenuTaskId("");
+      }
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [terminologyMenuTaskId]);
 
   const modeLabel = batchMode === "transcribe" ? "转录" : "转译";
   const batchSourceLang = commonSourceLanguage(queue);
@@ -364,107 +388,175 @@ export default function MediaList({
             const targetOption = targetLanguageOption(item.targetLang);
             const languageBusy = item.transcribeStatus === "processing" || item.transcribeStatus === "queued";
             const languageMenuOpen = languageMenuTaskId === item.id;
+            const terminologyMenuOpen = terminologyMenuTaskId === item.id;
+            const terminologyGroupId = item.terminologyGroupId ?? "";
+            const terminologySelectedGroup =
+              terminologyGroups.find((group) => group.id === terminologyGroupId) ?? null;
 
             return (
               <div key={item.id} className={`file-item ${item.id === activeId ? "active" : ""}`} onClick={() => onSetActiveId(item.id)}>
-                <div className="file-info">
-                  <div className="file-icon">{inferMediaKind(item) === "video" ? <VideoFileIcon /> : <AudioFileIcon />}</div>
-                  <div className="file-details">
-                    <div className="file-name" title={item.name}>
-                      {item.name}
-                    </div>
-                    <div className="file-bottom-row">
-                      <div className="file-meta-stack">
-                        <div className="file-meta-line">
-                          <span className="file-meta">{formatBytes(item.sizeBytes)}</span>
-                          <div
-                            className="task-language-menu"
-                            ref={languageMenuOpen ? languageMenuRef : undefined}
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <button
-                              className="task-language-chip"
-                              disabled={languageBusy}
-                              title={`${sourceOption.label} -> ${targetOption.label}`}
-                              aria-label={`${sourceOption.label} 到 ${targetOption.label}`}
-                              onClick={() => setLanguageMenuTaskId((current) => (
-                                current === item.id ? "" : item.id
-                              ))}
+                {/* Row 1: inline media tag + title (no truncation). */}
+                <div className="file-title-row">
+                  <span className="file-type-tag" aria-hidden="true">
+                    {inferMediaKind(item) === "video" ? <VideoFileIcon /> : <AudioFileIcon />}
+                  </span>
+                  <span className="file-name" title={item.name}>
+                    {item.name}
+                  </span>
+                </div>
+
+                {/* Row 2: file size (left) + status/progress badge (right). */}
+                <div className="file-status-row">
+                  <span className="file-meta">{formatBytes(item.sizeBytes)}</span>
+                  {transcribeProcessing ? (
+                    <span className="task-step task-step-progress">
+                      {transcribeProgressText}
+                    </span>
+                  ) : primaryStatus === "processing" ? (
+                    <span className="task-status status-processing">准备中</span>
+                  ) : (
+                    <span className={`task-status status-${primaryStatus}`}>
+                      {statusLabel(primaryStatus)}
+                    </span>
+                  )}
+                </div>
+
+                {/* Row 3: language (and later terminology) chips (left) + action buttons (right). */}
+                <div className="file-actions-row">
+                  <div className="file-chips">
+                    <div
+                      className="task-language-menu"
+                      ref={languageMenuOpen ? languageMenuRef : undefined}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        className="task-language-chip"
+                        disabled={languageBusy}
+                        title={`${sourceOption.label} -> ${targetOption.label}`}
+                        aria-label={`${sourceOption.label} 到 ${targetOption.label}`}
+                        onClick={() => setLanguageMenuTaskId((current) => (
+                          current === item.id ? "" : item.id
+                        ))}
+                      >
+                        {sourceOption.short} -&gt; {targetOption.short}
+                      </button>
+                      {languageMenuOpen ? (
+                        <div className="task-language-popover">
+                          <label className="task-language-field">
+                            <span>音频语言</span>
+                            <select
+                              className="task-language-select"
+                              value={normalizeSourceLanguage(item.sourceLang)}
+                              onChange={(event) => {
+                                void onUpdateTaskLanguages(
+                                  item,
+                                  normalizeSourceLanguage(event.currentTarget.value),
+                                  normalizeTargetLanguage(item.targetLang),
+                                );
+                              }}
                             >
-                              {sourceOption.short} -&gt; {targetOption.short}
-                            </button>
-                            {languageMenuOpen ? (
-                              <div className="task-language-popover">
-                                <label className="task-language-field">
-                                  <span>音频语言</span>
-                                  <select
-                                    className="task-language-select"
-                                    value={normalizeSourceLanguage(item.sourceLang)}
-                                    onChange={(event) => {
-                                      void onUpdateTaskLanguages(
-                                        item,
-                                        normalizeSourceLanguage(event.currentTarget.value),
-                                        normalizeTargetLanguage(item.targetLang),
-                                      );
-                                    }}
-                                  >
-                                    {SOURCE_LANGUAGE_OPTIONS.map((option) => (
-                                      <option key={option.id} value={option.id}>
-                                        {option.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                                <label className="task-language-field">
-                                  <span>翻译语言</span>
-                                  <select
-                                    className="task-language-select"
-                                    value={normalizeTargetLanguage(item.targetLang)}
-                                    onChange={(event) => {
-                                      void onUpdateTaskLanguages(
-                                        item,
-                                        normalizeSourceLanguage(item.sourceLang),
-                                        normalizeTargetLanguage(event.currentTarget.value),
-                                      );
-                                    }}
-                                  >
-                                    {TARGET_LANGUAGE_OPTIONS.map((option) => (
-                                      <option key={option.id} value={option.id}>
-                                        {option.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                              </div>
-                            ) : null}
-                          </div>
+                              {SOURCE_LANGUAGE_OPTIONS.map((option) => (
+                                <option key={option.id} value={option.id}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="task-language-field">
+                            <span>翻译语言</span>
+                            <select
+                              className="task-language-select"
+                              value={normalizeTargetLanguage(item.targetLang)}
+                              onChange={(event) => {
+                                void onUpdateTaskLanguages(
+                                  item,
+                                  normalizeSourceLanguage(item.sourceLang),
+                                  normalizeTargetLanguage(event.currentTarget.value),
+                                );
+                              }}
+                            >
+                              {TARGET_LANGUAGE_OPTIONS.map((option) => (
+                                <option key={option.id} value={option.id}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
                         </div>
-                        <div className="file-task-info">
-                          {transcribeProcessing ? (
-                            <span className="task-step task-step-progress">
-                              {transcribeProgressText}
-                            </span>
-                          ) : primaryStatus === "processing" ? (
-                            <span className="task-status status-processing">准备中</span>
-                          ) : (
-                            <span className={`task-status status-${primaryStatus}`}>
-                              {statusLabel(primaryStatus)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="file-actions">
-                        <button className="file-action-btn" title="转译" disabled={item.transcribeStatus === "processing"} onClick={(e) => { e.stopPropagation(); void onProcessSingleTranscribeTranslate(item); }}>
-                          <TranslateIcon />
-                        </button>
-                        <button className="file-action-btn" title="转录" disabled={item.transcribeStatus === "processing"} onClick={(e) => { e.stopPropagation(); void onProcessSingle(item); }}>
-                          <MicIcon />
-                        </button>
-                        <button className="file-action-btn delete" title="删除" disabled={!canDeleteQueueItem(item)} onClick={(e) => { e.stopPropagation(); onRemoveItem(item.id); }}>
-                          <TrashIcon />
-                        </button>
-                      </div>
+                      ) : null}
                     </div>
+                    <div
+                      className="task-terminology-menu"
+                      ref={terminologyMenuOpen ? terminologyMenuRef : undefined}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        className={`task-terminology-chip ${terminologySelectedGroup ? "has-group" : "no-group"}`}
+                        disabled={languageBusy}
+                        title={terminologySelectedGroup ? terminologySelectedGroup.name : "不使用术语"}
+                        aria-label={terminologySelectedGroup ? `术语组:${terminologySelectedGroup.name}` : "不使用术语"}
+                        onClick={() => setTerminologyMenuTaskId((current) => (
+                          current === item.id ? "" : item.id
+                        ))}
+                      >
+                        <BookIcon />
+                        {terminologySelectedGroup ? terminologySelectedGroup.name : "术语:未使用"}
+                      </button>
+                      {terminologyMenuOpen ? (
+                        <div className="task-terminology-popover">
+                          <label className="task-language-field">
+                            <span>术语组</span>
+                            <select
+                              className="task-language-select"
+                              value={terminologyGroupId}
+                              onChange={(event) => {
+                                setTerminologyMenuTaskId("");
+                                void onUpdateTaskTerminology(item, event.currentTarget.value);
+                              }}
+                            >
+                              <option value="">不使用</option>
+                              {terminologyGroups.length === 0 ? (
+                                <option value="" disabled>暂未配置术语组,请前往术语管理</option>
+                              ) : null}
+                              {terminologyGroups.map((group) => (
+                                <option key={group.id} value={group.id}>
+                                  {group.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="file-actions">
+                    <button
+                      className="file-action-btn"
+                      title="转译"
+                      aria-label="转译"
+                      disabled={item.transcribeStatus === "processing"}
+                      onClick={(event) => { event.stopPropagation(); void onProcessSingleTranscribeTranslate(item); }}
+                    >
+                      <TranslateIcon />
+                    </button>
+                    <button
+                      className="file-action-btn"
+                      title="转录"
+                      aria-label="转录"
+                      disabled={item.transcribeStatus === "processing"}
+                      onClick={(event) => { event.stopPropagation(); void onProcessSingle(item); }}
+                    >
+                      <MicIcon />
+                    </button>
+                    <button
+                      className="file-action-btn delete"
+                      title="删除"
+                      aria-label="删除"
+                      disabled={!canDeleteQueueItem(item)}
+                      onClick={(event) => { event.stopPropagation(); onRemoveItem(item.id); }}
+                    >
+                      <TrashIcon />
+                    </button>
                   </div>
                 </div>
               </div>

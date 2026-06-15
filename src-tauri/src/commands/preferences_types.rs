@@ -98,8 +98,8 @@ pub struct SavedSettingsCommand {
     pub llm_concurrency: u32,
     #[serde(default)]
     pub terminology_groups: Vec<TerminologyGroupCommand>,
-    #[serde(default = "default_true")]
-    pub enable_terminology: bool,
+    #[serde(default)]
+    pub active_terminology_group_id: String,
     #[serde(default = "default_true")]
     pub enable_subtitle_beautify: bool,
     #[serde(default = "default_true")]

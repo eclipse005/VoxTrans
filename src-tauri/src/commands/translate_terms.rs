@@ -30,9 +30,6 @@ pub fn load_terminology_entries_from_saved_settings(
     store: &crate::db::store::TaskStore,
 ) -> Result<Vec<TranslateTerminologyEntryCommand>, String> {
     let settings = crate::services::preferences::load_saved_settings_from_default_path(store)?;
-    if !settings.enable_terminology {
-        return Ok(Vec::new());
-    }
 
     let terms = settings
         .terminology_groups

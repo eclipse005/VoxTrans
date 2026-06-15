@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::services::prompts::translation::{
     TranslationPromptLine, TranslationPromptTerm, build_batch_translate_prompt,
 };
@@ -86,39 +88,102 @@ fn select_batch_terms(
         return Vec::new();
     }
 
-    let batch_text = current_segments
-        .iter()
-        .map(|segment| segment.source.as_str())
-        .collect::<Vec<_>>()
-        .join("\n")
-        .to_lowercase();
-
-    let mut matched = entries
-        .iter()
-        .filter(|entry| {
-            let source = entry.source.trim().to_lowercase();
-            !source.is_empty() && batch_text.contains(&source)
-        })
-        .take(max_terms)
-        .cloned()
-        .collect::<Vec<_>>();
-
-    if matched.len() >= max_terms {
-        return matched;
-    }
-
-    for entry in entries {
-        if matched.len() >= max_terms {
-            break;
-        }
-        if matched
+    // Recall-oriented fuzzy match. Normalize (lowercase + drop whitespace) so a
+    // term covers its spacing/case variants — "orderblock" matches "order
+    // block" / "Order Block" in the batch. Every term that appears in this
+    // batch MUST be sent: never drop a relevant term (可以多送不能少送).
+    // Over-inclusion is acceptable; the translator LLM ignores terms that
+    // don't fit a given line.
+    let batch_norm = normalize_for_match(
+        &current_segments
             .iter()
-            .any(|existing| existing.source.eq_ignore_ascii_case(&entry.source))
-        {
+            .map(|segment| segment.source.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+
+    let mut selected = Vec::<TranslationTerminologyEntry>::new();
+    let mut seen = HashSet::<String>::new();
+
+    // 1. All fuzzy-matched terms — uncapped (不能少送).
+    for entry in entries {
+        let src_norm = normalize_for_match(&entry.source);
+        if src_norm.is_empty() || !batch_norm.contains(&src_norm) {
             continue;
         }
-        matched.push(entry.clone());
+        if seen.insert(src_norm) {
+            selected.push(entry.clone());
+        }
     }
 
-    matched
+    // 2. Backfill up to max_terms with the rest (broader context for the LLM).
+    for entry in entries {
+        if selected.len() >= max_terms {
+            break;
+        }
+        let src_norm = normalize_for_match(&entry.source);
+        if src_norm.is_empty() || !seen.insert(src_norm) {
+            continue;
+        }
+        selected.push(entry.clone());
+    }
+
+    selected
+}
+
+/// Lowercase and drop whitespace so term matching is invariant to spacing and
+/// capitalization ("orderblock" ≡ "order block" ≡ "Order Block").
+fn normalize_for_match(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_batch_terms;
+    use super::super::types::{NormalizedSegment, TranslationTerminologyEntry, TranslationToken};
+
+    fn term(source: &str, target: &str) -> TranslationTerminologyEntry {
+        TranslationTerminologyEntry {
+            source: source.to_string(),
+            target: target.to_string(),
+            note: String::new(),
+        }
+    }
+
+    fn seg(source: &str) -> NormalizedSegment {
+        NormalizedSegment {
+            segment_id: 1,
+            start: 0.0,
+            end: 1.0,
+            source: source.to_string(),
+            tokens: Vec::<TranslationToken>::new(),
+        }
+    }
+
+    #[test]
+    fn fuzzy_matches_spacing_and_case_variants() {
+        // The regression: a configured "orderblock" must match "order block"
+        // (with a space) in the batch. Exact substring matching dropped it.
+        let entries = vec![term("orderblock", "订单块")];
+        let batch = [seg("We trade into the order block here.")];
+        let selected = select_batch_terms(&batch, &entries, 16);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].target, "订单块");
+    }
+
+    #[test]
+    fn never_drops_a_matched_term_even_past_max() {
+        // 可以多送不能少送: matched terms are kept even when they exceed
+        // max_terms (max_terms only bounds the backfill, not the matches).
+        let entries = vec![
+            term("orderblock", "订单块"),
+            term("FVG", "公允价值缺口"),
+        ];
+        let batch = [seg("order block and FVG together")];
+        let selected = select_batch_terms(&batch, &entries, 1);
+        assert_eq!(selected.len(), 2);
+    }
 }

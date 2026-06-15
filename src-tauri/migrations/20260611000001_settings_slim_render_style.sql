@@ -21,7 +21,7 @@ CREATE TABLE settings_new (
     translate_base_url TEXT NOT NULL,
     translate_model TEXT NOT NULL,
     llm_concurrency INTEGER NOT NULL,
-    enable_terminology INTEGER NOT NULL,
+    active_terminology_group_id TEXT NOT NULL DEFAULT '',
     enable_subtitle_beautify INTEGER NOT NULL,
     enable_click_sound INTEGER NOT NULL,
     auto_burn_hard_subtitle INTEGER NOT NULL,
@@ -37,7 +37,7 @@ INSERT INTO settings_new (
     id, provider, chunk_target_seconds, subtitle_length_preset,
     asr_model, align_model, demucs_model, enable_vocal_separation,
     translate_api_key, translate_base_url, translate_model, llm_concurrency,
-    enable_terminology, enable_subtitle_beautify, enable_click_sound,
+    active_terminology_group_id, enable_subtitle_beautify, enable_click_sound,
     auto_burn_hard_subtitle, subtitle_burn_mode,
     subtitle_render_style_json,
     flat_srt_output, updated_at
@@ -46,7 +46,7 @@ SELECT
     id, provider, chunk_target_seconds, subtitle_length_preset,
     asr_model, align_model, demucs_model, enable_vocal_separation,
     translate_api_key, translate_base_url, translate_model, llm_concurrency,
-    enable_terminology, enable_subtitle_beautify, enable_click_sound,
+    active_terminology_group_id, enable_subtitle_beautify, enable_click_sound,
     auto_burn_hard_subtitle, subtitle_burn_mode,
     json_object(
         'source', json_object(

@@ -49,7 +49,10 @@ export function useAppPersistence(dispatch: DispatchState) {
           ? res.settings.terminologyGroups
           : [];
         const terminologyGroups = normalizeTerminologyGroups(terminologyGroupsRaw);
-        const enableTerminology = Boolean(res.settings.enableTerminology ?? true);
+        const activeTerminologyGroupId =
+          typeof res.settings.activeTerminologyGroupId === "string"
+            ? res.settings.activeTerminologyGroupId
+            : "";
         const enableSubtitleBeautify = Boolean(res.settings.enableSubtitleBeautify ?? true);
         const enableClickSound = Boolean(res.settings.enableClickSound ?? true);
         const autoBurnHardSubtitle = Boolean(res.settings.autoBurnHardSubtitle ?? false);
@@ -126,7 +129,7 @@ export function useAppPersistence(dispatch: DispatchState) {
             translateModel,
             llmConcurrency,
             terminologyGroups,
-            enableTerminology,
+            activeTerminologyGroupId,
             enableSubtitleBeautify,
             enableClickSound,
             autoBurnHardSubtitle,

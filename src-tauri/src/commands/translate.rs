@@ -7,11 +7,6 @@ use super::translate_terms::{count_source_tokens, normalize_command_terminology_
 
 pub use super::translate_types::*;
 
-pub(crate) fn is_tail_ellipsis(text: &str) -> bool {
-    let trimmed = text.trim_end();
-    trimmed.ends_with("...") || trimmed.ends_with('…')
-}
-
 #[cfg(test)]
 mod tests {
     use super::{

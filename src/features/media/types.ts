@@ -63,7 +63,7 @@ export type SavedSettings = {
   translateModel: string;
   llmConcurrency: number;
   terminologyGroups: TerminologyGroup[];
-  enableTerminology: boolean;
+  activeTerminologyGroupId: string;
   enableSubtitleBeautify: boolean;
   enableClickSound: boolean;
   autoBurnHardSubtitle: boolean;
@@ -157,6 +157,10 @@ export type QueueItem = {
   resultText: string;
   resultSrt: string;
   subtitleSegmentsJson: string;
+  // Per-task selected terminology group ("" = none). Optional in the type
+  // because the backend sends it with #[serde(default)]; runtime always
+  // normalizes it (useWorkspacePersistence / useQueueInput). UI guards `?? ""`.
+  terminologyGroupId?: string;
 };
 
 const TASK_STAGE_SET = new Set<TaskStageCode>([

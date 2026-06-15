@@ -9,72 +9,48 @@ pub struct IndexedUserTermPromptItem {
     pub note: String,
 }
 
-pub fn build_theme_prompt(source_lang: &str, target_lang: &str, context_text: &str) -> String {
-    serde_json::json!({
-        "task": "summarize_video_theme_for_terminology",
-        "rule": "Return JSON only.",
-        "sourceLanguage": source_lang,
-        "targetLanguage": target_lang,
-        "transcript": context_text,
-        "goal": "Summarize the dominant topic and field of this transcript for terminology selection.",
-        "output": {
-            "theme": "One concise sentence."
-        }
-    })
-    .to_string()
-}
-
-pub fn build_user_filter_prompt(
+/// Build the per-window briefing prompt for Step3. One call per transcript
+/// window produces a partial briefing (glossary + style guide); the caller
+/// unions glossaries across windows and keeps the first window's style guide.
+///
+/// Open-ended by design: the model adapts what it extracts to the content
+/// (names for a drama, abbreviations for finance, definitions for a lecture)
+/// without any domain hard-coding. `user_terms` are authoritative; the model
+/// only extracts NEW terms beyond them.
+pub fn build_briefing_prompt(
     source_lang: &str,
     target_lang: &str,
-    theme: &str,
-    context_text: &str,
-    terms: &[IndexedUserTermPromptItem],
+    transcript_window: &str,
+    user_terms: &[IndexedUserTermPromptItem],
 ) -> String {
-    serde_json::json!({
-        "task": "filter_user_terminology_by_video_relevance",
+    let default = serde_json::json!({
+        "task": "build_translation_briefing",
         "rule": "Return JSON only.",
         "sourceLanguage": source_lang,
         "targetLanguage": target_lang,
-        "theme": theme,
-        "transcript": context_text,
-        "userTerms": terms,
-        "goal": "Keep only terms that are relevant to this video's domain and content.",
-        "output": {
-            "keepIndexes": [1, 2]
-        }
-    })
-    .to_string()
-}
-
-pub fn build_extract_terms_prompt(
-    source_lang: &str,
-    target_lang: &str,
-    theme: &str,
-    context_text: &str,
-    max_terms: usize,
-) -> String {
-    serde_json::json!({
-        "task": "extract_domain_terminology_for_translation_consistency",
-        "rule": "Return JSON only.",
-        "sourceLanguage": source_lang,
-        "targetLanguage": target_lang,
-        "theme": theme,
-        "transcript": context_text,
+        "transcript": transcript_window,
+        "userTerms": user_terms,
+        "goal": "Produce a briefing (style guide + glossary) that keeps this video's translation consistent and fluent across batches. The style guide drives the translator's decisions.",
+        "extraction": {
+            "glossary": "Anything needing ONE consistent translation: names, proper nouns, domain terms, abbreviations/acronyms, recurring fixed phrases. Adapt to THIS content; do not force fields that do not apply. Do NOT repeat entries already covered by userTerms.",
+            "styleGuide": "A concise STYLE GUIDE for this content. Cover whatever is relevant and leave the rest empty: register/tone (e.g. casual spoken), abbreviation handling principle, number/unit/currency convention, subject/pronoun explicitation (when the source drops them), naming convention (romanize vs translate), readability (sentence length, punctuation). Be specific, not generic."
+        },
         "constraints": {
-            "maxTerms": max_terms,
-            "focus": "domain terminology, named entities, fixed expressions in this context",
-            "avoid": "full clauses, long sentence fragments, generic filler words"
+            "abbreviations": "For each abbreviation/acronym, DECIDE in target: preserve the source form (target == source) when that is the field convention, OR give the standard translation. Do not auto-expand abbreviations into long phrases unless that is the convention.",
+            "userTermsAuthority": "userTerms are AUTHORITATIVE: keep their source->target exactly and never change an abbreviation userTerm's target. Extract only NEW terms beyond userTerms.",
+            "scope": "Only terms/notes relevant to this transcript window. Avoid generic filler, full clauses, and long fragments."
         },
         "output": {
-            "terms": [
+            "glossary": [
                 {
                     "source": "term in source language",
-                    "target": "target translation",
-                    "note": "optional short context note"
+                    "target": "preserved source form OR standard translation",
+                    "note": "optional short context"
                 }
-            ]
+            ],
+            "styleGuide": "concise style guide, or empty if nothing notable in this window"
         }
     })
-    .to_string()
+    .to_string();
+    default
 }

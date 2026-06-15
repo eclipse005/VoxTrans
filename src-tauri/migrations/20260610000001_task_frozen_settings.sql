@@ -5,6 +5,6 @@
 -- settings row so the user can swap them and have running tasks pick up
 -- the change on the next call/chunk.
 ALTER TABLE tasks ADD COLUMN subtitle_length_preset TEXT NOT NULL DEFAULT '';
-ALTER TABLE tasks ADD COLUMN enable_terminology INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE tasks ADD COLUMN enable_subtitle_beautify INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE tasks ADD COLUMN terminology_groups_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE tasks ADD COLUMN terminology_group_id TEXT NOT NULL DEFAULT '';

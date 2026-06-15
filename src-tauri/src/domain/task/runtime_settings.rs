@@ -14,18 +14,35 @@ use crate::services::preferences_types::TerminologyGroup;
 #[derive(Debug, Clone, Default)]
 pub struct FrozenSettings {
     pub subtitle_length_preset: String,
-    pub enable_terminology: bool,
     pub enable_subtitle_beautify: bool,
     pub terminology_groups: Vec<TerminologyGroup>,
 }
 
 impl FrozenSettings {
-    pub fn from_saved(saved: &crate::services::preferences::SavedSettings) -> Self {
+    /// Snapshot the user-frozen settings, keeping ONLY the per-task selected
+    /// terminology group. `selected_group_id` == "" means no terminology
+    /// (empty frozen groups); otherwise only the matching group (by id) is
+    /// frozen, so each task translates with exactly one group's terms.
+    pub fn from_saved(
+        saved: &crate::services::preferences::SavedSettings,
+        selected_group_id: &str,
+    ) -> Self {
+        let selected = selected_group_id.trim();
+        let terminology_groups = if selected.is_empty() {
+            Vec::new()
+        } else {
+            saved
+                .terminology_groups
+                .iter()
+                .find(|group| group.id == selected)
+                .cloned()
+                .map(|group| vec![group])
+                .unwrap_or_default()
+        };
         Self {
             subtitle_length_preset: saved.subtitle_length_preset.clone(),
-            enable_terminology: saved.enable_terminology,
             enable_subtitle_beautify: saved.enable_subtitle_beautify,
-            terminology_groups: saved.terminology_groups.clone(),
+            terminology_groups,
         }
     }
 }
@@ -86,31 +103,28 @@ pub fn resolve_runtime_settings(
         );
     let enable_subtitle_beautify = frozen.enable_subtitle_beautify;
 
-    let terminology_entries = if frozen.enable_terminology {
-        let mut seen = HashSet::<(String, String)>::new();
-        let mut out = Vec::<TranslateTerminologyEntryCommand>::new();
-        for group in &frozen.terminology_groups {
-            for term in &group.terms {
-                let source = term.origin.trim().to_string();
-                let target = term.target.trim().to_string();
-                if source.is_empty() || target.is_empty() {
-                    continue;
-                }
-                let key = (source.to_ascii_lowercase(), target.to_ascii_lowercase());
-                if !seen.insert(key) {
-                    continue;
-                }
-                out.push(TranslateTerminologyEntryCommand {
-                    source,
-                    target,
-                    note: term.note.trim().to_string(),
-                });
+    // Terminology is driven by the per-task frozen selection: terminology_groups
+    // holds 0 or 1 group (0 == "none"/no terminology). Flatten whatever is there.
+    let mut seen = HashSet::<(String, String)>::new();
+    let mut terminology_entries = Vec::<TranslateTerminologyEntryCommand>::new();
+    for group in &frozen.terminology_groups {
+        for term in &group.terms {
+            let source = term.origin.trim().to_string();
+            let target = term.target.trim().to_string();
+            if source.is_empty() || target.is_empty() {
+                continue;
             }
+            let key = (source.to_ascii_lowercase(), target.to_ascii_lowercase());
+            if !seen.insert(key) {
+                continue;
+            }
+            terminology_entries.push(TranslateTerminologyEntryCommand {
+                source,
+                target,
+                note: term.note.trim().to_string(),
+            });
         }
-        out
-    } else {
-        Vec::new()
-    };
+    }
 
     Ok(PipelineRuntimeSettings {
         asr_model,
@@ -144,7 +158,7 @@ pub fn fallback_saved_settings() -> crate::services::preferences::SavedSettings 
         translate_model: "gpt-4.1-mini".to_string(),
         llm_concurrency: 4,
         terminology_groups: Vec::new(),
-        enable_terminology: true,
+        active_terminology_group_id: String::new(),
         enable_subtitle_beautify: true,
         enable_click_sound: true,
         auto_burn_hard_subtitle: false,
@@ -169,7 +183,6 @@ mod tests {
     fn frozen_subtitle_preset_is_preserved_across_calls() {
         let frozen = FrozenSettings {
             subtitle_length_preset: "loose".to_string(),
-            enable_terminology: false,
             enable_subtitle_beautify: false,
             terminology_groups: Vec::new(),
         };
@@ -184,7 +197,6 @@ mod tests {
     fn frozen_terminology_entries_are_normalized_and_deduplicated() {
         let frozen = FrozenSettings {
             subtitle_length_preset: "default".to_string(),
-            enable_terminology: true,
             enable_subtitle_beautify: true,
             terminology_groups: vec![TerminologyGroup {
                 id: "g1".to_string(),
@@ -210,27 +222,5 @@ mod tests {
         assert_eq!(settings.terminology_entries.len(), 1);
         assert_eq!(settings.terminology_entries[0].source, "NATO");
         assert_eq!(settings.terminology_entries[0].target, "北约");
-    }
-
-    #[test]
-    fn disabled_terminology_emits_no_entries_even_with_groups() {
-        let frozen = FrozenSettings {
-            subtitle_length_preset: "default".to_string(),
-            enable_terminology: false,
-            enable_subtitle_beautify: true,
-            terminology_groups: vec![TerminologyGroup {
-                id: "g1".to_string(),
-                name: "x".to_string(),
-                terms: vec![TerminologyTerm {
-                    id: "t1".to_string(),
-                    origin: "x".to_string(),
-                    target: "y".to_string(),
-                    note: "".to_string(),
-                }],
-            }],
-        };
-        let settings = resolve_runtime_settings(&dummy_store(), &frozen, false)
-            .expect("resolve");
-        assert!(settings.terminology_entries.is_empty());
     }
 }

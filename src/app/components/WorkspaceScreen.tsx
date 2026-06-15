@@ -31,6 +31,8 @@ type WorkspaceScreenProps = {
   onProcessSingleTranscribeTranslate: (item: QueueItem) => void | Promise<void>;
   onUpdateTaskLanguages: Parameters<typeof MediaList>[0]["onUpdateTaskLanguages"];
   onUpdateAllTaskLanguages: Parameters<typeof MediaList>[0]["onUpdateAllTaskLanguages"];
+  onUpdateTaskTerminology: Parameters<typeof MediaList>[0]["onUpdateTaskTerminology"];
+  terminologyGroups: Parameters<typeof MediaList>[0]["terminologyGroups"];
   onRemoveItem: (id: string) => void | Promise<void>;
   onUpdateCue: Parameters<typeof SubtitleEditorModal>[0]["onUpdateCue"];
   onAddCueAfter: Parameters<typeof SubtitleEditorModal>[0]["onAddCueAfter"];
@@ -69,6 +71,8 @@ export function WorkspaceScreen({
   onProcessSingleTranscribeTranslate,
   onUpdateTaskLanguages,
   onUpdateAllTaskLanguages,
+  onUpdateTaskTerminology,
+  terminologyGroups,
   onRemoveItem,
   onUpdateCue,
   onAddCueAfter,
@@ -109,6 +113,8 @@ export function WorkspaceScreen({
           onProcessSingleTranscribeTranslate={onProcessSingleTranscribeTranslate}
           onUpdateTaskLanguages={onUpdateTaskLanguages}
           onUpdateAllTaskLanguages={onUpdateAllTaskLanguages}
+          onUpdateTaskTerminology={onUpdateTaskTerminology}
+          terminologyGroups={terminologyGroups}
           onRemoveItem={onRemoveItem}
         />
       </section>

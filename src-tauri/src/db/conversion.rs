@@ -25,7 +25,7 @@ pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
         llm_concurrency: row.llm_concurrency,
         // terminology_groups is composed in store.rs from terminology tables.
         terminology_groups: Vec::new(),
-        enable_terminology: row.enable_terminology,
+        active_terminology_group_id: row.active_terminology_group_id,
         enable_subtitle_beautify: row.enable_subtitle_beautify,
         enable_click_sound: row.enable_click_sound,
         auto_burn_hard_subtitle: row.auto_burn_hard_subtitle,
@@ -50,7 +50,7 @@ pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
         translate_base_url: settings.translate_base_url.clone(),
         translate_model: settings.translate_model.clone(),
         llm_concurrency: settings.llm_concurrency,
-        enable_terminology: settings.enable_terminology,
+        active_terminology_group_id: settings.active_terminology_group_id.clone(),
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         enable_click_sound: settings.enable_click_sound,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
@@ -107,7 +107,6 @@ pub struct TaskMetaExtras {
     pub intent: String,
     pub max_retries: u32,
     pub subtitle_length_preset: String,
-    pub enable_terminology: bool,
     pub enable_subtitle_beautify: bool,
     /// JSON-serialized `Vec<TerminologyGroup>` (frozen at enqueue time).
     pub terminology_groups_json: String,
@@ -119,7 +118,6 @@ impl Default for TaskMetaExtras {
             intent: String::new(),
             max_retries: 0,
             subtitle_length_preset: String::new(),
-            enable_terminology: true,
             enable_subtitle_beautify: true,
             terminology_groups_json: "[]".to_string(),
         }
@@ -151,12 +149,12 @@ pub fn task_from_row(row: TaskRow) -> (WorkspaceQueueItem, TaskMetaExtras) {
         result_srt: row.result_srt,
         subtitle_segments_json: String::new(), // filled by meta.rs during hydrate or by callers directly
         llm_total_tokens: row.llm_total_tokens,
+        terminology_group_id: row.terminology_group_id,
     };
     let extras = TaskMetaExtras {
         intent: row.intent,
         max_retries: row.max_retries,
         subtitle_length_preset: row.subtitle_length_preset,
-        enable_terminology: row.enable_terminology,
         enable_subtitle_beautify: row.enable_subtitle_beautify,
         terminology_groups_json: row.terminology_groups_json,
     };
@@ -186,9 +184,9 @@ pub fn row_from_task(item: &WorkspaceQueueItem, extras: &TaskMetaExtras) -> Task
         intent: extras.intent.clone(),
         max_retries: extras.max_retries,
         subtitle_length_preset: extras.subtitle_length_preset.clone(),
-        enable_terminology: extras.enable_terminology,
         enable_subtitle_beautify: extras.enable_subtitle_beautify,
         terminology_groups_json: extras.terminology_groups_json.clone(),
+        terminology_group_id: item.terminology_group_id.clone(),
         updated_at: now_ms(),
     }
 }
@@ -212,7 +210,7 @@ mod tests {
             translate_model: "gpt-4o".into(),
             llm_concurrency: 4,
             terminology_groups: Vec::new(),
-            enable_terminology: true,
+            active_terminology_group_id: String::new(),
             enable_subtitle_beautify: true,
             enable_click_sound: true,
             auto_burn_hard_subtitle: false,
@@ -240,7 +238,7 @@ mod tests {
         assert_eq!(restored.translate_base_url, original.translate_base_url);
         assert_eq!(restored.translate_model, original.translate_model);
         assert_eq!(restored.llm_concurrency, original.llm_concurrency);
-        assert_eq!(restored.enable_terminology, original.enable_terminology);
+        assert_eq!(restored.active_terminology_group_id, original.active_terminology_group_id);
         assert_eq!(restored.enable_subtitle_beautify, original.enable_subtitle_beautify);
         assert_eq!(restored.enable_click_sound, original.enable_click_sound);
         assert_eq!(restored.auto_burn_hard_subtitle, original.auto_burn_hard_subtitle);
@@ -291,12 +289,12 @@ mod tests {
             result_srt: "1\n00:00:00,000 --> 00:00:01,000\nhello".into(),
             subtitle_segments_json: "[]".into(),
             llm_total_tokens: 42,
+            terminology_group_id: "g1".into(),
         };
         let extras = TaskMetaExtras {
             intent: "TRANSCRIBE_TRANSLATE".into(),
             max_retries: 3,
             subtitle_length_preset: "long".into(),
-            enable_terminology: false,
             enable_subtitle_beautify: false,
             terminology_groups_json: r#"[{"id":"g","name":"x","terms":[]}]"#.into(),
         };
@@ -313,6 +311,7 @@ mod tests {
         assert_eq!(restored_item.task_progress.stage.current, original.task_progress.stage.current);
         assert_eq!(restored_item.task_progress.stage.total, original.task_progress.stage.total);
         assert_eq!(restored_item.llm_total_tokens, original.llm_total_tokens);
+        assert_eq!(restored_item.terminology_group_id, original.terminology_group_id);
 
         assert_eq!(restored_item.subtitle_segments_json, String::new());
 
@@ -320,7 +319,6 @@ mod tests {
         assert_eq!(restored_extras.intent, "TRANSCRIBE_TRANSLATE");
         assert_eq!(restored_extras.max_retries, 3);
         assert_eq!(restored_extras.subtitle_length_preset, "long");
-        assert!(!restored_extras.enable_terminology);
         assert!(!restored_extras.enable_subtitle_beautify);
         assert_eq!(
             restored_extras.terminology_groups_json,

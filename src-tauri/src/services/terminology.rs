@@ -1,20 +1,9 @@
-use std::collections::HashSet;
-
 use crate::services::llm::client::OpenAiCompatLlmClient;
-use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, next_llm_request_id};
-use crate::services::prompts::terminology::{
-    IndexedUserTermPromptItem, build_extract_terms_prompt, build_theme_prompt,
-    build_user_filter_prompt,
-};
-use crate::services::terminology_responses::{
-    parse_extracted_terms_response, parse_theme_response, parse_user_term_filter_response,
-};
-use crate::services::terminology_terms::{merge_terms_with_user_priority, normalize_entries};
-use crate::services::terminology_text::{build_context_text, normalize_theme};
-
-const DEFAULT_THEME: &str = "内容围绕一个明确主题展开。";
-const MAX_EXTRACT_TERMS: usize = 24;
+use crate::services::prompts::terminology::{IndexedUserTermPromptItem, build_briefing_prompt};
+use crate::services::terminology_responses::{BriefingResponse, parse_briefing_response};
+use crate::services::terminology_terms::{force_include_user_terms, normalize_entries};
+use crate::services::terminology_text::{build_context_text, chunk_text};
 
 #[derive(Debug, Clone)]
 pub struct TerminologyToken {
@@ -47,6 +36,9 @@ pub struct BuildTerminologyLayerRequest {
     pub translate_model: String,
 }
 
+/// `theme_summary` is a legacy field name kept for checkpoint/command
+/// compatibility; it now carries the briefing STYLE GUIDE (free-form,
+/// content-adaptive translator guidance) rather than a one-line topic.
 #[derive(Debug, Clone)]
 pub struct BuildTerminologyLayerResponse {
     pub theme_summary: String,
@@ -85,80 +77,76 @@ pub async fn build_terminology_layer(
         request.translate_base_url.clone(),
         request.translate_api_key.clone(),
         request.translate_model.clone(),
-    ))
-    ?;
+    ))?;
 
-    let context_text = build_context_text(&request.segments);
-    if context_text.trim().is_empty() {
+    let full_context = build_context_text(&request.segments);
+    if full_context.trim().is_empty() {
         return Err("segments contain no text".to_string());
     }
-
-    let theme = extract_theme(&request, &llm_client, &context_text).await?;
+    let windows = chunk_text(&full_context);
     let user_terms = normalize_entries(request.terminology_entries.clone());
-    let filtered_user_terms =
-        filter_user_terms(&request, &llm_client, &context_text, &theme, &user_terms)
-            .await
-            .unwrap_or(user_terms);
-    let extracted_terms = extract_terms(&request, &llm_client, &context_text, &theme).await?;
-    let merged = merge_terms_with_user_priority(&filtered_user_terms, &extracted_terms);
+    let user_prompt_items = indexed_user_terms(&user_terms);
+
+    // One briefing call per window. Glossary terms are unioned across
+    // windows (full transcript coverage); the style guide is taken from the
+    // first window (high-level guidance that frames the whole video).
+    let mut all_extracted: Vec<TerminologyEntry> = Vec::new();
+    let mut style_guide: Option<String> = None;
+    for (idx, window) in windows.iter().enumerate() {
+        let briefing =
+            build_briefing_for_window(&request, &llm_client, window, &user_prompt_items).await?;
+        all_extracted.extend(briefing.glossary);
+        if idx == 0 {
+            style_guide = Some(briefing.style_guide);
+        }
+    }
+
+    let extracted = normalize_entries(all_extracted);
+    let glossary = force_include_user_terms(&user_terms, &extracted);
 
     Ok(BuildTerminologyLayerResponse {
-        theme_summary: theme,
-        terminology_entries: merged,
+        theme_summary: style_guide.unwrap_or_default(),
+        terminology_entries: glossary,
     })
 }
 
-async fn extract_theme(
+/// Number of Step3 briefing windows a transcript will produce. Exposed so the
+/// eval harness can report an accurate per-call count without a data-contract
+/// change.
+pub fn briefing_window_count(segments: &[TerminologySegment]) -> usize {
+    chunk_text(&build_context_text(segments)).len()
+}
+
+async fn build_briefing_for_window(
     request: &BuildTerminologyLayerRequest,
     llm_client: &OpenAiCompatLlmClient,
-    context_text: &str,
-) -> Result<String, String> {
-    let prompt = build_theme_prompt(&request.source_lang, &request.target_lang, context_text);
-    let validator = JsonResponseValidator::with_required_keys(&["theme"]);
+    window: &str,
+    user_terms: &[IndexedUserTermPromptItem],
+) -> Result<BriefingResponse, String> {
+    let prompt =
+        build_briefing_prompt(&request.source_lang, &request.target_lang, window, user_terms);
     let context = LlmCallContext {
         task_id: request.task_id.clone(),
         media_path: Some(request.media_path.clone()),
-        phase: "step3_theme".to_string(),
+        phase: "step3_briefing".to_string(),
         store: None,
     };
     let llm_id = next_llm_request_id();
 
-    let result = llm_client
-        .call_json_validated(
-            &context,
-            &llm_id,
-            &prompt,
-            Some(&validator),
-            parse_theme_response,
-        )
+    llm_client
+        .call_json_validated(&context, &llm_id, &prompt, None, parse_briefing_response)
         .await
+        .map(|result| result.value)
         .map_err(|err| {
             format!(
-                "build terminology theme failed (llmId={}): {}",
+                "build terminology briefing failed (llmId={}): {}",
                 llm_id, err.message
             )
-        })?;
-
-    let normalized = normalize_theme(&result.value);
-    if normalized.is_empty() {
-        Ok(DEFAULT_THEME.to_string())
-    } else {
-        Ok(normalized)
-    }
+        })
 }
 
-async fn filter_user_terms(
-    request: &BuildTerminologyLayerRequest,
-    llm_client: &OpenAiCompatLlmClient,
-    context_text: &str,
-    theme: &str,
-    user_terms: &[TerminologyEntry],
-) -> Result<Vec<TerminologyEntry>, String> {
-    if user_terms.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let indexed = user_terms
+fn indexed_user_terms(user_terms: &[TerminologyEntry]) -> Vec<IndexedUserTermPromptItem> {
+    user_terms
         .iter()
         .enumerate()
         .map(|(idx, entry)| IndexedUserTermPromptItem {
@@ -167,90 +155,5 @@ async fn filter_user_terms(
             target: entry.target.clone(),
             note: entry.note.clone(),
         })
-        .collect::<Vec<_>>();
-
-    let prompt = build_user_filter_prompt(
-        &request.source_lang,
-        &request.target_lang,
-        theme,
-        context_text,
-        &indexed,
-    );
-    let context = LlmCallContext {
-        task_id: request.task_id.clone(),
-        media_path: Some(request.media_path.clone()),
-        phase: "step3_filter_user_terms".to_string(),
-        store: None,
-    };
-    let llm_id = next_llm_request_id();
-
-    let result = llm_client
-        .call_json_validated(
-            &context,
-            &llm_id,
-            &prompt,
-            None,
-            parse_user_term_filter_response,
-        )
-        .await
-        .map_err(|err| {
-            format!(
-                "filter user terminology failed (llmId={}): {}",
-                llm_id, err.message
-            )
-        })?;
-
-    let mut selected = Vec::<TerminologyEntry>::new();
-    let mut seen = HashSet::<usize>::new();
-    for raw in result.value {
-        if raw == 0 || raw > user_terms.len() {
-            continue;
-        }
-        if !seen.insert(raw) {
-            continue;
-        }
-        selected.push(user_terms[raw - 1].clone());
-    }
-
-    Ok(selected)
-}
-
-async fn extract_terms(
-    request: &BuildTerminologyLayerRequest,
-    llm_client: &OpenAiCompatLlmClient,
-    context_text: &str,
-    theme: &str,
-) -> Result<Vec<TerminologyEntry>, String> {
-    let prompt = build_extract_terms_prompt(
-        &request.source_lang,
-        &request.target_lang,
-        theme,
-        context_text,
-        MAX_EXTRACT_TERMS,
-    );
-    let context = LlmCallContext {
-        task_id: request.task_id.clone(),
-        media_path: Some(request.media_path.clone()),
-        phase: "step3_extract_terms".to_string(),
-        store: None,
-    };
-    let llm_id = next_llm_request_id();
-
-    let result = llm_client
-        .call_json_validated(
-            &context,
-            &llm_id,
-            &prompt,
-            None,
-            parse_extracted_terms_response,
-        )
-        .await
-        .map_err(|err| {
-            format!(
-                "extract terminology failed (llmId={}): {}",
-                llm_id, err.message
-            )
-        })?;
-
-    Ok(normalize_entries(result.value))
+        .collect()
 }

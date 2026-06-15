@@ -42,12 +42,18 @@ type EnqueueTaskRunRequest = {
   sourceLang?: SourceLanguage;
   targetLang?: TargetLanguage;
   maxRetries?: number;
+  terminologyGroupId?: string;
 };
 
 type UpdateTaskLanguagesRequest = {
   taskId: string;
   sourceLang: SourceLanguage;
   targetLang: TargetLanguage;
+};
+
+type UpdateTaskTerminologyRequest = {
+  taskId: string;
+  terminologyGroupId: string;
 };
 
 export type RegisterTaskUploadRequest = {
@@ -89,4 +95,8 @@ export async function registerTaskUpload(request: RegisterTaskUploadRequest): Pr
 
 export async function updateTaskLanguages(request: UpdateTaskLanguagesRequest): Promise<void> {
   await invoke("update_task_languages", { request });
+}
+
+export async function updateTaskTerminology(request: UpdateTaskTerminologyRequest): Promise<void> {
+  await invoke("update_task_terminology", { request });
 }

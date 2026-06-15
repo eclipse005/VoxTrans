@@ -73,6 +73,8 @@ function normalizeQueueItem(item: QueueItem): QueueItem {
     taskProgress: normalizeTaskProgress(item.taskProgress),
     transcribeError: item.transcribeError || "",
     subtitleSegmentsJson: normalizeSubtitleSegmentsJson(item.subtitleSegmentsJson),
+    terminologyGroupId:
+      typeof item.terminologyGroupId === "string" ? item.terminologyGroupId : "",
   });
 }
 

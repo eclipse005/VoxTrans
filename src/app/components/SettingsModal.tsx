@@ -285,19 +285,6 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                   </div>
-                  <label className="setting-toggle" htmlFor="enable-terminology">
-                    <input
-                      id="enable-terminology"
-                      type="checkbox"
-                      checked={ctx.form.enableTerminology}
-                      onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableTerminology: e.target.checked }))}
-                    />
-                    <div className="toggle-label">
-                      <span className="toggle-title">启用术语库</span>
-                      <span className="toggle-desc">关闭后翻译不注入术语，按通用语义翻译。</span>
-                    </div>
-                    <span className="toggle-switch" />
-                  </label>
                 </div>
               </div>
             </div>

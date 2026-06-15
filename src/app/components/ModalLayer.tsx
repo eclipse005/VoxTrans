@@ -107,8 +107,12 @@ export function ModalLayer({
       <TerminologyModal
         visible={showTerminologyModal}
         groups={form.terminologyGroups}
+        activeGroupId={form.activeTerminologyGroupId}
         onClose={() => setShowTerminologyModal(false)}
         onChange={(value) => setForm((prev) => ({ ...prev, terminologyGroups: value }))}
+        onChangeActiveGroupId={(groupId) =>
+          setForm((prev) => ({ ...prev, activeTerminologyGroupId: groupId }))
+        }
         onSave={saveTerminologyGroups}
       />
 

@@ -15,7 +15,7 @@ mod types;
 
 use batches::build_batch_windows;
 use responses::validate_batch_translation_response;
-use segments::{merge_dangling_source_segments, normalize_segments};
+use segments::normalize_segments;
 pub use types::{
     BuildTranslationLayerRequest, BuildTranslationLayerResponse, TranslationSegmentInput,
     TranslationSegmentOutput, TranslationTerminologyEntry, TranslationToken,
@@ -32,7 +32,7 @@ pub async fn build_translation_layer_with_progress(
 ) -> Result<BuildTranslationLayerResponse, String> {
     validate_request(&request)?;
 
-    let normalized_segments = merge_dangling_source_segments(normalize_segments(&request.segments));
+    let normalized_segments = normalize_segments(&request.segments);
     if normalized_segments.is_empty() {
         return Err("segments contain no translatable text".to_string());
     }

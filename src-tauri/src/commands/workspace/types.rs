@@ -20,6 +20,8 @@ pub struct WorkspaceQueueItem {
     pub subtitle_segments_json: String,
     #[serde(default)]
     pub llm_total_tokens: u64,
+    #[serde(default)]
+    pub terminology_group_id: String,
 }
 
 fn default_source_lang() -> String {
@@ -94,6 +96,8 @@ pub struct EnqueueTaskRunCommandRequest {
     pub target_lang: Option<String>,
     #[serde(default)]
     pub max_retries: Option<u32>,
+    #[serde(default)]
+    pub terminology_group_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -102,6 +106,14 @@ pub struct UpdateTaskLanguagesCommandRequest {
     pub task_id: String,
     pub source_lang: String,
     pub target_lang: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTaskTerminologyCommandRequest {
+    pub task_id: String,
+    /// Selected terminology group id for this task ("" = none).
+    pub terminology_group_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

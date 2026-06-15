@@ -15,3 +15,8 @@ opt-level = 2
 # is equally slow under opt-level 0.
 [profile.dev.package.qwen-forced-aligner-rs]
 opt-level = 2
+
+# VAD model forward (gemm matrix multiplies + fbank FFT) is compute-bound and
+# very slow at opt-level 0.
+[profile.dev.package.fireredvad]
+opt-level = 2

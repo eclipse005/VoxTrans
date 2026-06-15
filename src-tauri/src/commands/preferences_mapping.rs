@@ -36,7 +36,7 @@ pub(super) fn to_service_settings(
                     .collect(),
             })
             .collect(),
-        enable_terminology: settings.enable_terminology,
+        active_terminology_group_id: settings.active_terminology_group_id.clone(),
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         enable_click_sound: settings.enable_click_sound,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
@@ -80,7 +80,7 @@ pub(super) fn from_service_settings(
                     .collect(),
             })
             .collect(),
-        enable_terminology: settings.enable_terminology,
+        active_terminology_group_id: settings.active_terminology_group_id.clone(),
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         enable_click_sound: settings.enable_click_sound,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,

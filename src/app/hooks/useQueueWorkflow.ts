@@ -15,7 +15,7 @@ import type {
 } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { QueueBatchMode } from "./queue/useQueueScheduler";
-import { updateTaskLanguages } from "../api/workspace";
+import { updateTaskLanguages, updateTaskTerminology } from "../api/workspace";
 import { patchQueueItem } from "../state/queueDomainActions";
 import { reportError, toUserErrorMessage } from "../utils/errors";
 
@@ -26,12 +26,14 @@ type UseQueueWorkflowArgs = {
   queue: QueueItem[];
   dispatch: DispatchState;
   pushToast: PushToast;
+  activeTerminologyGroupId: string;
 };
 
 export function useQueueWorkflow({
   queue,
   dispatch,
   pushToast,
+  activeTerminologyGroupId,
 }: UseQueueWorkflowArgs) {
   const queueRef = useRef(queue);
 
@@ -47,6 +49,7 @@ export function useQueueWorkflow({
   const { appendPaths, pickFiles } = useQueueInput({
     dispatch,
     pushToast,
+    activeTerminologyGroupId,
   });
 
   const { runQueuedByTaskIds } = useQueueRunner({
@@ -172,6 +175,40 @@ export function useQueueWorkflow({
     [dispatch, pushToast],
   );
 
+  const updateTaskTerminologyForItem = useCallback(
+    async (item: QueueItem, terminologyGroupId: string) => {
+      if (
+        item.transcribeStatus === "processing" ||
+        item.transcribeStatus === "queued"
+      ) {
+        pushToast("任务正在处理或排队，不能修改术语组", "error");
+        return;
+      }
+
+      const nextGroupId = typeof terminologyGroupId === "string" ? terminologyGroupId : "";
+      const previousGroupId = item.terminologyGroupId ?? "";
+      patchQueueItem(dispatch, item.id, (current) => ({
+        ...current,
+        terminologyGroupId: nextGroupId,
+      }));
+
+      try {
+        await updateTaskTerminology({
+          taskId: item.id,
+          terminologyGroupId: nextGroupId,
+        });
+      } catch (error) {
+        reportError(error, "updateTaskTerminology");
+        patchQueueItem(dispatch, item.id, (current) => ({
+          ...current,
+          terminologyGroupId: previousGroupId,
+        }));
+        pushToast(toUserErrorMessage(error, "术语组保存失败"), "error");
+      }
+    },
+    [dispatch, pushToast],
+  );
+
   const updateAllTaskLanguages = useCallback(
     async (sourceLang?: SourceLanguage, targetLang?: TargetLanguage) => {
       const editableItems = queueRef.current.filter(
@@ -274,6 +311,7 @@ export function useQueueWorkflow({
     processSingle,
     processSingleTranscribeTranslate,
     updateTaskLanguages: updateTaskLanguagesForItem,
+    updateTaskTerminology: updateTaskTerminologyForItem,
     updateAllTaskLanguages,
     clearQueue,
     removeItem,

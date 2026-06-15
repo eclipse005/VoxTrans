@@ -19,9 +19,10 @@ type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
 type UseQueueInputArgs = {
   dispatch: DispatchState;
   pushToast: PushToast;
+  activeTerminologyGroupId: string;
 };
 
-export function useQueueInput({ dispatch, pushToast }: UseQueueInputArgs) {
+export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }: UseQueueInputArgs) {
   const appendPaths = useCallback(async (paths: string[]) => {
     if (!paths.length) return;
 
@@ -48,6 +49,7 @@ export function useQueueInput({ dispatch, pushToast }: UseQueueInputArgs) {
           resultText: "",
           resultSrt: "",
           subtitleSegmentsJson: "[]",
+          terminologyGroupId: activeTerminologyGroupId,
         } satisfies QueueItem;
       }),
     );
@@ -77,7 +79,7 @@ export function useQueueInput({ dispatch, pushToast }: UseQueueInputArgs) {
     if (failedCount > 0) {
       pushToast(`有 ${failedCount} 个文件入队失败，请重试`, "error");
     }
-  }, [dispatch, pushToast]);
+  }, [dispatch, pushToast, activeTerminologyGroupId]);
 
   useEffect(() => {
     let disposed = false;

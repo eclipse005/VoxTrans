@@ -7,6 +7,31 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use std::path::PathBuf;
 use tauri::Manager;
 
+/// Resolve the platform-specific default path of the GUI's SQLite database.
+/// Used by `voxeval` so it reads the same data the Tauri app uses.
+pub fn default_db_path() -> Result<PathBuf, String> {
+    let appdata = std::env::var("APPDATA")
+        .map_err(|e| format!("APPDATA env not set (Windows-only): {e}"))?;
+    Ok(PathBuf::from(appdata)
+        .join("com.voxtrans.desktop")
+        .join("voxtrans.db"))
+}
+
+/// Open a `SqlitePool` against `path` with the same options the GUI uses.
+/// Skips the migration step because the GUI's process has already migrated.
+pub async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, String> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal);
+    SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .map_err(|e| format!("failed to open sqlite at {:?}: {e}", path))
+}
+
 pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

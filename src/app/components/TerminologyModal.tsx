@@ -11,22 +11,37 @@ import {
 type TerminologyModalProps = {
   visible: boolean;
   groups: TerminologyGroup[];
+  activeGroupId: string;
   onClose: () => void;
   onChange: (groups: TerminologyGroup[]) => void;
+  onChangeActiveGroupId: (groupId: string) => void;
   onSave?: (groups: TerminologyGroup[]) => void | Promise<void>;
 };
 
-export default function TerminologyModal({ visible, groups, onClose, onChange, onSave }: TerminologyModalProps) {
+export default function TerminologyModal({
+  visible,
+  groups,
+  activeGroupId,
+  onClose,
+  onChange,
+  onChangeActiveGroupId,
+  onSave,
+}: TerminologyModalProps) {
   const dialogRef = useDialogA11y(visible, onClose);
-  const [selectedGroupId, setSelectedGroupId] = useState<string>("");
   const [editingGroupId, setEditingGroupId] = useState<string>("");
   const [editingGroupName, setEditingGroupName] = useState<string>("");
   const [singleInput, setSingleInput] = useState("");
 
   const selectedGroup = useMemo(
-    () => groups.find((g) => g.id === selectedGroupId) ?? groups[0] ?? null,
-    [groups, selectedGroupId],
+    () => groups.find((g) => g.id === activeGroupId) ?? null,
+    [groups, activeGroupId],
   );
+
+  // Click a group tab to toggle it as the active (task-default) group; click
+  // again to deselect (no default). The active group is also the edit target.
+  function toggleActive(groupId: string) {
+    onChangeActiveGroupId(activeGroupId === groupId ? "" : groupId);
+  }
 
   useEffect(() => {
     if (!visible) return;
@@ -38,19 +53,15 @@ export default function TerminologyModal({ visible, groups, onClose, onChange, o
   if (!visible) return null;
 
   function ensureSelection(next: TerminologyGroup[]) {
-    if (next.length === 0) {
-      setSelectedGroupId("");
-      return;
-    }
-    if (!next.some((g) => g.id === selectedGroupId)) {
-      setSelectedGroupId(next[0].id);
+    if (activeGroupId && !next.some((g) => g.id === activeGroupId)) {
+      onChangeActiveGroupId("");
     }
   }
 
   function addGroup() {
     const next = [...groups, createTerminologyGroup()];
     onChange(next);
-    setSelectedGroupId(next[next.length - 1].id);
+    onChangeActiveGroupId(next[next.length - 1].id);
   }
 
   function removeGroup(groupId: string) {
@@ -119,14 +130,14 @@ export default function TerminologyModal({ visible, groups, onClose, onChange, o
                 {groups.map((group) => (
                   <div
                     key={group.id}
-                    className={`terminology-group-tab ${selectedGroup?.id === group.id ? "active" : ""}`}
+                    className={`terminology-group-tab ${activeGroupId === group.id ? "active" : ""}`}
                     role="button"
                     tabIndex={0}
-                    onClick={() => setSelectedGroupId(group.id)}
+                    onClick={() => toggleActive(group.id)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        setSelectedGroupId(group.id);
+                        toggleActive(group.id);
                       }
                     }}
                   >
@@ -230,7 +241,11 @@ export default function TerminologyModal({ visible, groups, onClose, onChange, o
               <h4 className="apple-heading-small">术语编辑</h4>
             </div>
             {!selectedGroup ? (
-              <div className="terms-empty">请先新建一个分组。</div>
+              <div className="terms-empty">
+                {groups.length === 0
+                  ? "请先新建一个分组。"
+                  : "点击上方分组选中并编辑(选中即为新任务的默认术语组)。"}
+              </div>
             ) : (
               <>
                 <div className="terms-add-form">

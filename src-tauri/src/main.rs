@@ -1,10 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod app_state;
-mod commands;
-mod db;
-mod domain;
-mod services;
+use voxtrans::app_state;
+use voxtrans::commands;
+use voxtrans::db;
 
 use std::sync::Arc;
 use tauri::Manager;
@@ -22,13 +20,13 @@ fn main() {
                     if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
                 {
                     tokio::task::block_in_place(|| {
-                        handle.block_on(crate::db::init_pool(&app_handle))
+                        handle.block_on(db::init_pool(&app_handle))
                     })
                 }
-                _ => tauri::async_runtime::block_on(crate::db::init_pool(&app_handle)),
+                _ => tauri::async_runtime::block_on(db::init_pool(&app_handle)),
             }
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            app.manage(crate::db::store::TaskStore::new(pool));
+            app.manage(db::store::TaskStore::new(pool));
             app.manage(app_state::AppState {
                 asr_model_download: Arc::new(std::sync::Mutex::new(
                     app_state::ModelDownloadRuntime::default(),
@@ -51,7 +49,6 @@ fn main() {
             commands::transcription::build_source_sentences,
             commands::translate_terminology::build_terminology_layer,
             commands::translate_translation::build_translation_layer,
-            commands::translate_step5_commands::build_step_5_split_align,
             commands::translate_connectivity::test_translate_llm,
             commands::file::get_file_size,
             commands::system::open_in_explorer,
@@ -71,6 +68,7 @@ fn main() {
             commands::workspace::register_task_upload,
             commands::workspace::enqueue_task_run,
             commands::workspace::update_task_languages,
+            commands::workspace::update_task_terminology,
             commands::workspace::save_subtitle_editor,
             commands::workspace::execute_task_run,
             commands::workspace::execute_task_batch,

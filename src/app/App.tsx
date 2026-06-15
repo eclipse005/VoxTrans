@@ -97,6 +97,7 @@ function App() {
     processSingle,
     processSingleTranscribeTranslate,
     updateTaskLanguages,
+    updateTaskTerminology,
     updateAllTaskLanguages,
     clearQueue,
     removeItem,
@@ -108,6 +109,7 @@ function App() {
     queue,
     dispatch,
     pushToast,
+    activeTerminologyGroupId: settings.activeTerminologyGroupId,
   });
 
   const {
@@ -269,6 +271,8 @@ function App() {
         onProcessSingle={processSingle}
         onProcessSingleTranscribeTranslate={processSingleTranscribeTranslate}
         onUpdateTaskLanguages={updateTaskLanguages}
+        onUpdateTaskTerminology={updateTaskTerminology}
+        terminologyGroups={settings.terminologyGroups}
         onUpdateAllTaskLanguages={updateAllTaskLanguages}
         onRemoveItem={removeItem}
         onUpdateCue={updateCue}

@@ -97,7 +97,7 @@ pub struct WordTokenDto {
     pub word: String,
 }
 
-pub fn transcribe_blocking<F>(
+pub(crate) fn transcribe_blocking<F>(
     request: TranscribeRequest,
     mut on_progress: F,
 ) -> Result<TranscribeResponse, String>

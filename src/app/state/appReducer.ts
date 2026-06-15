@@ -90,7 +90,7 @@ export const defaultSettings: SavedSettings = {
   translateModel: "gpt-4.1-mini",
   llmConcurrency: 4,
   terminologyGroups: [createTerminologyGroup()],
-  enableTerminology: true,
+  activeTerminologyGroupId: "",
   enableSubtitleBeautify: true,
   enableClickSound: true,
   autoBurnHardSubtitle: false,

@@ -24,7 +24,7 @@ pub struct SettingsRow {
     pub translate_base_url: String,
     pub translate_model: String,
     pub llm_concurrency: u32,
-    pub enable_terminology: bool,
+    pub active_terminology_group_id: String,
     pub enable_subtitle_beautify: bool,
     pub enable_click_sound: bool,
     pub auto_burn_hard_subtitle: bool,
@@ -69,7 +69,6 @@ pub struct TaskRow {
     pub max_retries: u32,
     // Frozen-at-enqueue settings (see migration 20260610000001):
     pub subtitle_length_preset: String,
-    pub enable_terminology: bool,
     pub enable_subtitle_beautify: bool,
     /// JSON-serialized `Vec<TerminologyGroup>` snapshot taken at enqueue
     /// time. This is the FROZEN copy that the pipeline reads during
@@ -79,6 +78,9 @@ pub struct TaskRow {
     /// See the `terminology_frozen_contract_no_cross_writes` test in
     /// `db::store` for the invariant.
     pub terminology_groups_json: String,
+    /// Per-task selected terminology group id ("" = none). The matching
+    /// group's terms are frozen into `terminology_groups_json` at enqueue.
+    pub terminology_group_id: String,
     pub updated_at: i64,
 }
 

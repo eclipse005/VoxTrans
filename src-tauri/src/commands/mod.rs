@@ -19,7 +19,6 @@ pub mod translate;
 pub mod translate_artifacts;
 pub mod translate_connectivity;
 pub mod translate_llm_settings;
-pub mod translate_step5_commands;
 pub mod translate_terminology;
 pub mod translate_terms;
 pub mod translate_translation;

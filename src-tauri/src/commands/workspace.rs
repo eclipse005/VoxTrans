@@ -23,6 +23,7 @@ use meta::ensure_workspace_hydrated_from_db;
 use queue_ops::{
     delete_tasks_internal, enqueue_task_run_internal, execute_task_batch_internal,
     register_task_upload_internal, update_task_languages_internal,
+    update_task_terminology_internal,
 };
 use store::{TaskStore as _, find_task_mut, is_workspace_hydrated, lock_workspace_store};
 pub use types::*;
@@ -92,6 +93,14 @@ pub async fn update_task_languages(
     request: UpdateTaskLanguagesCommandRequest,
 ) -> Result<(), String> {
     Ok(update_task_languages_internal(&app, request).await?)
+}
+
+#[tauri::command]
+pub async fn update_task_terminology(
+    app: AppHandle,
+    request: UpdateTaskTerminologyCommandRequest,
+) -> Result<(), String> {
+    Ok(update_task_terminology_internal(&app, request).await?)
 }
 
 #[tauri::command]

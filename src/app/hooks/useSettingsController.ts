@@ -37,7 +37,7 @@ export type SettingsForm = {
   translateModel: string;
   llmConcurrencyInput: string;
   terminologyGroups: SavedSettings["terminologyGroups"];
-  enableTerminology: boolean;
+  activeTerminologyGroupId: string;
   enableSubtitleBeautify: boolean;
   enableClickSound: boolean;
   autoBurnHardSubtitle: boolean;
@@ -61,7 +61,7 @@ function settingsToForm(settings: SavedSettings): SettingsForm {
     translateModel: settings.translateModel,
     llmConcurrencyInput: String(settings.llmConcurrency),
     terminologyGroups: settings.terminologyGroups,
-    enableTerminology: settings.enableTerminology,
+    activeTerminologyGroupId: settings.activeTerminologyGroupId,
     enableSubtitleBeautify: settings.enableSubtitleBeautify,
     enableClickSound: settings.enableClickSound,
     autoBurnHardSubtitle: settings.autoBurnHardSubtitle,
@@ -97,8 +97,12 @@ export function useSettingsController({
   // terms are invisible. Sync terminologyGroups whenever the upstream
   // settings change so the modal always reflects the latest DB state.
   useEffect(() => {
-    setForm((prev) => ({ ...prev, terminologyGroups: settings.terminologyGroups }));
-  }, [settings.terminologyGroups]);
+    setForm((prev) => ({
+      ...prev,
+      terminologyGroups: settings.terminologyGroups,
+      activeTerminologyGroupId: settings.activeTerminologyGroupId,
+    }));
+  }, [settings.terminologyGroups, settings.activeTerminologyGroupId]);
 
   const openSettings = useCallback(() => {
     void refreshModelStatus();
@@ -134,7 +138,7 @@ export function useSettingsController({
       translateModel: form.translateModel.trim() || "gpt-4.1-mini",
       llmConcurrency: clampedConcurrency,
       terminologyGroups: normalizeTerminologyGroups(form.terminologyGroups),
-      enableTerminology: form.enableTerminology,
+      activeTerminologyGroupId: form.activeTerminologyGroupId,
       enableSubtitleBeautify: form.enableSubtitleBeautify,
       enableClickSound: form.enableClickSound,
       autoBurnHardSubtitle: form.autoBurnHardSubtitle,
@@ -192,6 +196,7 @@ export function useSettingsController({
     const nextSettings: SavedSettings = {
       ...settings,
       terminologyGroups: normalizedGroups,
+      activeTerminologyGroupId: form.activeTerminologyGroupId,
     };
     dispatch({ type: "set_settings", settings: nextSettings });
     setForm((prev) => ({ ...prev, terminologyGroups: normalizedGroups }));
@@ -202,7 +207,7 @@ export function useSettingsController({
       const message = error instanceof Error ? error.message : "术语保存失败";
       pushToast(message, "error");
     }
-  }, [settings, dispatch, pushToast]);
+  }, [settings, form.activeTerminologyGroupId, dispatch, pushToast]);
 
   const testTranslateConnection = useCallback(async () => {
     const apiKey = form.translateApiKey.trim();

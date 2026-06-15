@@ -65,6 +65,7 @@ pub fn next_llm_request_id() -> String {
 }
 
 pub trait LlmPort {
+    #[allow(async_fn_in_trait)]
     async fn call_json(
         &self,
         context: &LlmCallContext,
