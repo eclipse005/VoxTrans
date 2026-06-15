@@ -124,12 +124,12 @@ fn greedy_split_span(
 
 /// Find the best cut position after some index in `[seg_start, end)`.
 ///
-/// Scans the whole span (no early break), collecting candidates by quality:
-///   - `best_ideal`: left in `[min_units, limit]`, right `>= min_units`
-///   - `best_extended`: left in `(limit, limit*1.5]`, right `>= min_units`
-///
-/// Returns the best candidate, or `None` if no position satisfies both-side
-/// `min_units` (caller falls back to `force_cut_near_limit`).
+/// Scans the span collecting candidates where left >= min_units and right
+/// remainder >= min_units. Selection priority:
+///   1. Boundary rank (lower = better): a comma at acc=limit+1 beats a
+///      mid-word cut at acc=limit. This prevents splitting "之一，" into
+///      "之" + "一，" in CJK text where every char boundary is rank 6.
+///   2. Among same rank, prefer acc closest to `limit` (fill the line).
 fn find_best_greedy_cut(
     words: &[WordTokenDto],
     seg_start: usize,
@@ -139,15 +139,14 @@ fn find_best_greedy_cut(
     min_units: f64,
 ) -> Option<usize> {
     let total_from = span_units(words, seg_start, end, source_lang);
-    let scan_cap = (limit * 1.5).max(total_from);
+    let scan_cap = limit * 1.5;
 
     let mut acc = 0.0_f64;
-    let mut best_ideal: Option<(usize, u8, f64)> = None;
-    let mut best_extended: Option<(usize, u8, f64)> = None;
+    let mut best: Option<(usize, u8, f64)> = None;
 
     for i in seg_start..end {
         acc += token_units(&words[i].word, source_lang);
-        if acc > scan_cap {
+        if acc > scan_cap && best.is_some() {
             break;
         }
         if acc < min_units {
@@ -161,14 +160,19 @@ fn find_best_greedy_cut(
         let rank = boundary_rank(words, i);
         let candidate = (i, rank, acc);
 
-        if acc <= limit {
-            best_ideal = pick_better(best_ideal, candidate);
-        } else {
-            best_extended = pick_better(best_extended, candidate);
-        }
+        best = match best {
+            None => Some(candidate),
+            Some((_bi, br, bu)) => {
+                if rank < br || (rank == br && acc > bu) {
+                    Some(candidate)
+                } else {
+                    best
+                }
+            }
+        };
     }
 
-    best_ideal.or(best_extended).map(|(i, _, _)| i)
+    best.map(|(i, _, _)| i)
 }
 
 /// Last-resort cut: used when `find_best_greedy_cut` returns `None` (no
@@ -202,22 +206,6 @@ fn force_cut_near_limit(
         }
     }
     best.map(|(i, _)| i)
-}
-
-/// Tie-breaker helper: lower rank wins; among equal ranks, prefer left units
-/// closer to `limit` (i.e. larger left within budget, to fill the line).
-fn pick_better(current: Option<(usize, u8, f64)>, candidate: (usize, u8, f64)) -> Option<(usize, u8, f64)> {
-    match current {
-        None => Some(candidate),
-        Some((_cur_i, cur_rank, cur_units)) => {
-            let (_cand_i, cand_rank, cand_units) = candidate;
-            if cand_rank < cur_rank || (cand_rank == cur_rank && cand_units > cur_units) {
-                Some(candidate)
-            } else {
-                current
-            }
-        }
-    }
 }
 
 /// Classify the boundary after word `i`. Lower rank = better place to cut.
