@@ -27,6 +27,7 @@ pub async fn build_source_sentences_with_progress(
             subtitle_length_preset: request.subtitle_length_preset,
             use_subtitle_layout_split: request.use_subtitle_layout_split,
             words: request.words.into_iter().map(to_service_word).collect(),
+            vad_speech_segments: request.vad_speech_segments,
         },
         on_progress,
     )

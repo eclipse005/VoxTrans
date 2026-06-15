@@ -39,6 +39,7 @@ fn request_with_lang_preset_and_layout(
         subtitle_length_preset: subtitle_length_preset.to_string(),
         use_subtitle_layout_split,
         words,
+        vad_speech_segments: Vec::new(),
     }
 }
 

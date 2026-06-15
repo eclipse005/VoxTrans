@@ -110,6 +110,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             // already-length-correct rows for the 1:1 translation.
             use_subtitle_layout_split: true,
             words: step2_words,
+            vad_speech_segments: step1_exec.output.vad_speech_segments.clone(),
         },
         &step_context,
         store,

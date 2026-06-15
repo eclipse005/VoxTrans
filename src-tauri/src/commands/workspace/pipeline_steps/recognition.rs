@@ -20,6 +20,8 @@ pub(in crate::commands::workspace) struct Step1AsrArtifact {
     pub(in crate::commands::workspace) aligned_text: String,
     pub(in crate::commands::workspace) words:
         Vec<crate::commands::transcription::WordTokenCommandDto>,
+    #[serde(default)]
+    pub(in crate::commands::workspace) vad_speech_segments: Vec<(f64, f64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -184,6 +186,7 @@ impl PipelineStep for Step1AsrPipelineStep {
             text: transcribe_response.text,
             aligned_text: transcribe_response.aligned_text,
             words,
+            vad_speech_segments: transcribe_response.vad_speech_segments,
         })
     }
 }
@@ -197,6 +200,7 @@ pub(in crate::commands::workspace) struct Step2SegmentsPipelineStep {
     pub(in crate::commands::workspace) use_subtitle_layout_split: bool,
     pub(in crate::commands::workspace) words:
         Vec<crate::commands::transcription::WordTokenCommandDto>,
+    pub(in crate::commands::workspace) vad_speech_segments: Vec<(f64, f64)>,
 }
 
 #[async_trait]
@@ -226,6 +230,7 @@ impl PipelineStep for Step2SegmentsPipelineStep {
             subtitle_length_preset: self.subtitle_length_preset.clone(),
             use_subtitle_layout_split: self.use_subtitle_layout_split,
             words: self.words.clone(),
+            vad_speech_segments: self.vad_speech_segments.clone(),
         };
         let step2_response = crate::commands::transcription::build_source_sentences_with_progress(
             step2_request,

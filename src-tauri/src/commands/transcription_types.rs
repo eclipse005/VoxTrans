@@ -57,6 +57,8 @@ pub struct BuildSourceSentencesCommandRequest {
     #[serde(default = "default_use_subtitle_layout_split")]
     pub use_subtitle_layout_split: bool,
     pub words: Vec<WordTokenCommandDto>,
+    #[serde(default)]
+    pub vad_speech_segments: Vec<(f64, f64)>,
 }
 
 fn default_use_subtitle_layout_split() -> bool {

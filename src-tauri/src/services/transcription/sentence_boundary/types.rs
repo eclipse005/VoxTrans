@@ -11,6 +11,7 @@ pub struct SentenceBoundaryRequest {
     pub subtitle_length_preset: String,
     pub use_subtitle_layout_split: bool,
     pub words: Vec<WordTokenDto>,
+    pub vad_speech_segments: Vec<(f64, f64)>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
