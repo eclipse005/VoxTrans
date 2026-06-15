@@ -10,3 +10,8 @@ default-members = ["src-tauri"]
 # Force opt-level 2 so dev builds don't spend 40+ seconds on model loading.
 [profile.dev.package.qwen3-asr]
 opt-level = 2
+
+# Same applies to the forced aligner — its safetensors weight loading (to_f16_vec)
+# is equally slow under opt-level 0.
+[profile.dev.package.qwen-forced-aligner-rs]
+opt-level = 2
