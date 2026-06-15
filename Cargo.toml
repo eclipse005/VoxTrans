@@ -6,6 +6,7 @@ members = [
 resolver = "2"
 default-members = ["src-tauri"]
 
-[patch.crates-io]
-candle-kernels = { path = "vendor/candle-kernels" }
-cudaforge = { path = "vendor/cudaforge" }
+# qwen3-asr's weight conversion loops are devastatingly slow without optimization.
+# Force opt-level 2 so dev builds don't spend 40+ seconds on model loading.
+[profile.dev.package.qwen3-asr]
+opt-level = 2
