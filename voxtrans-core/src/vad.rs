@@ -20,7 +20,7 @@ pub(crate) fn build_segments_from_vad(
     audio_path: &Path,
     total_duration_sec: f64,
     chunk_target_seconds: f64,
-) -> Result<(Vec<AudioSegment>, f64), Box<dyn std::error::Error>> {
+) -> Result<(Vec<AudioSegment>, f64, Vec<(f64, f64)>), Box<dyn std::error::Error>> {
     let vad_started_at = Instant::now();
     let chunk_target_seconds = chunk_target_seconds.max(30.0);
     let engine = Vad::new()?;
@@ -39,6 +39,7 @@ pub(crate) fn build_segments_from_vad(
                 end_sec: effective_total_duration,
             }],
             vad_elapsed_sec,
+            vec![(0.0, effective_total_duration)],
         ));
     }
 
@@ -80,7 +81,7 @@ pub(crate) fn build_segments_from_vad(
         start_sec: start,
         end_sec: effective_total_duration,
     });
-    Ok((segments, vad_elapsed_sec))
+    Ok((segments, vad_elapsed_sec, speech_ranges))
 }
 
 fn normalize_ranges(ranges: &[(f32, f32)], total_duration_sec: f64) -> Vec<(f64, f64)> {

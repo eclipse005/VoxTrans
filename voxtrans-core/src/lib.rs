@@ -24,6 +24,7 @@ pub struct PreparedAudioSegments {
     pub mono_samples: Vec<f32>,
     pub audio_duration_sec: f64,
     pub vad_elapsed_sec: f64,
+    pub vad_speech_segments: Vec<(f64, f64)>,
     pub segment_summaries: Vec<SegmentSummary>,
 }
 
@@ -33,7 +34,7 @@ pub fn prepare_audio_segments_for_asr(
 ) -> Result<PreparedAudioSegments, Box<dyn std::error::Error>> {
     let prepared_audio = prepare_audio_for_transcription(audio_path)?;
     let audio_duration_sec = prepared_audio.duration_sec;
-    let (segments, vad_elapsed_sec) = build_segments_from_vad(
+    let (segments, vad_elapsed_sec, vad_speech_segments) = build_segments_from_vad(
         &prepared_audio.vad_wav.path,
         audio_duration_sec,
         chunk_target_seconds,
@@ -52,6 +53,7 @@ pub fn prepare_audio_segments_for_asr(
         mono_samples: prepared_audio.mono_samples,
         audio_duration_sec,
         vad_elapsed_sec,
+        vad_speech_segments,
         segment_summaries,
     })
 }
