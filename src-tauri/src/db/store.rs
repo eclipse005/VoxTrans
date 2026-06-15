@@ -756,10 +756,10 @@ pub async fn test_pool_with_migrations() -> SqlitePool {
         .execute(&pool)
         .await
         .expect("enable FK");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
+    sqlx::query(super::SCHEMA_SQL)
+        .execute(&pool)
         .await
-        .expect("run migrations");
+        .expect("apply schema");
     pool
 }
 

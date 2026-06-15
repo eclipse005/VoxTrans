@@ -39,6 +39,13 @@ pub(crate) fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Idempotent schema bootstrap. `migrations/schema.sql` is plain SQL with
+/// `CREATE TABLE/INDEX IF NOT EXISTS`, so it builds a fresh DB and is a no-op
+/// on an existing one. We deliberately avoid `sqlx::migrate!`'s checksum
+/// tracking: this is a local desktop app, schema changes go through hand-written
+/// ALTERs or a DB rebuild, not a migration framework.
+const SCHEMA_SQL: &str = include_str!("../../migrations/schema.sql");
+
 pub async fn init_pool(app: &tauri::AppHandle) -> Result<SqlitePool, String> {
     let app_data_dir = app
         .path()
@@ -62,10 +69,10 @@ pub async fn init_pool(app: &tauri::AppHandle) -> Result<SqlitePool, String> {
         .await
         .map_err(|e| format!("failed to enable foreign keys: {e}"))?;
 
-    sqlx::migrate!("./migrations")
-        .run(&pool)
+    sqlx::query(SCHEMA_SQL)
+        .execute(&pool)
         .await
-        .map_err(|e| format!("failed to run sqlite migrations: {e}"))?;
+        .map_err(|e| format!("failed to apply schema: {e}"))?;
 
     Ok(pool)
 }

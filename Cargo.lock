@@ -4195,6 +4195,7 @@ name = "qwen-forced-aligner-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "cudarc",
  "env_logger",
@@ -4203,6 +4204,7 @@ dependencies = [
  "libm",
  "lindera",
  "log",
+ "memmap2",
  "rustfft",
  "safetensors",
  "serde",
@@ -4216,7 +4218,7 @@ name = "qwen3-asr"
 version = "0.2.2"
 dependencies = [
  "anyhow",
- "bytemuck",
+ "bytes",
  "cudarc",
  "gemm",
  "half",

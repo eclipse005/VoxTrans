@@ -1,5 +1,17 @@
+-- Voxtrans 数据库 schema —— 幂等初始化
+--
+-- 设计原则（见 ROADMAP / 用户决策）：桌面本地工具，不需要"老用户平滑迁移"
+-- 这套复杂度。启动时执行本文件，所有对象都用 IF NOT EXISTS 保护：
+--   - 新库：建出全部表/索引
+--   - 老库：所有对象已存在 → 全部跳过，什么都不改
+--
+-- 不再使用 sqlx::migrate! 的 checksum 校验机制（它会因 migration 文件任意
+-- 改动而 panic）。schema 演进时：要么 ALTER TABLE（手写一次性补丁），要么
+-- 让用户删库重建 —— Voxtrans 的数据全是可再生的转录产物，不值得为它维护
+-- 迁移框架。
+
 -- settings: 单行配置（1:1 全平铺 SavedSettings）
-CREATE TABLE settings (
+CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     provider TEXT NOT NULL,
     chunk_target_seconds INTEGER NOT NULL,
@@ -17,40 +29,20 @@ CREATE TABLE settings (
     enable_click_sound INTEGER NOT NULL,
     auto_burn_hard_subtitle INTEGER NOT NULL,
     subtitle_burn_mode TEXT NOT NULL,
-    source_font_family TEXT NOT NULL,
-    source_font_size INTEGER NOT NULL,
-    source_primary_color TEXT NOT NULL,
-    source_outline_color TEXT NOT NULL,
-    source_back_color TEXT NOT NULL,
-    source_outline REAL NOT NULL,
-    source_shadow REAL NOT NULL,
-    source_border_style TEXT NOT NULL,
-    source_border_opacity INTEGER NOT NULL,
-    target_font_family TEXT NOT NULL,
-    target_font_size INTEGER NOT NULL,
-    target_primary_color TEXT NOT NULL,
-    target_outline_color TEXT NOT NULL,
-    target_back_color TEXT NOT NULL,
-    target_outline REAL NOT NULL,
-    target_shadow REAL NOT NULL,
-    target_border_style TEXT NOT NULL,
-    target_border_opacity INTEGER NOT NULL,
-    margin_v INTEGER NOT NULL,
-    alignment INTEGER NOT NULL,
-    bilingual_line_gap INTEGER NOT NULL,
+    subtitle_render_style_json TEXT NOT NULL,
     flat_srt_output INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
 
 -- flat_srt_items: settings 的 1:N 子表
-CREATE TABLE flat_srt_items (
+CREATE TABLE IF NOT EXISTS flat_srt_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     value TEXT NOT NULL UNIQUE,
     updated_at INTEGER NOT NULL
 );
 
 -- tasks: 1:1 全平铺 WorkspaceQueueItem + wrapper
-CREATE TABLE tasks (
+CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     media_path TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -71,16 +63,21 @@ CREATE TABLE tasks (
     llm_total_tokens INTEGER NOT NULL DEFAULT 0,
     intent TEXT NOT NULL DEFAULT '',
     max_retries INTEGER NOT NULL DEFAULT 0,
+    -- frozen per-task settings（见 migration 20260610000001）
+    subtitle_length_preset TEXT NOT NULL DEFAULT '',
+    enable_subtitle_beautify INTEGER NOT NULL DEFAULT 1,
+    terminology_groups_json TEXT NOT NULL DEFAULT '[]',
+    terminology_group_id TEXT NOT NULL DEFAULT '',
     updated_at INTEGER NOT NULL
 );
 
-CREATE INDEX idx_tasks_status ON tasks(transcribe_status);
-CREATE INDEX idx_tasks_updated_at ON tasks(updated_at DESC);
-CREATE INDEX idx_tasks_langs ON tasks(source_lang, target_lang);
-CREATE INDEX idx_tasks_media_kind ON tasks(media_kind);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(transcribe_status);
+CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_langs ON tasks(source_lang, target_lang);
+CREATE INDEX IF NOT EXISTS idx_tasks_media_kind ON tasks(media_kind);
 
 -- task_artifacts: pipeline step checkpoint 缓存（tasks 的 1:N，CASCADE 删除）
-CREATE TABLE task_artifacts (
+CREATE TABLE IF NOT EXISTS task_artifacts (
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     step_name TEXT NOT NULL,
     payload_json TEXT NOT NULL,
@@ -89,7 +86,7 @@ CREATE TABLE task_artifacts (
 );
 
 -- subtitle_segments: tasks 的 1:N
-CREATE TABLE subtitle_segments (
+CREATE TABLE IF NOT EXISTS subtitle_segments (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     idx INTEGER NOT NULL,
@@ -100,10 +97,10 @@ CREATE TABLE subtitle_segments (
     updated_at INTEGER NOT NULL
 );
 
-CREATE INDEX idx_segments_task_idx ON subtitle_segments(task_id, idx);
+CREATE INDEX IF NOT EXISTS idx_segments_task_idx ON subtitle_segments(task_id, idx);
 
 -- subtitle_words: segments 的 1:N（无豁免）
-CREATE TABLE subtitle_words (
+CREATE TABLE IF NOT EXISTS subtitle_words (
     id TEXT PRIMARY KEY,
     segment_id TEXT NOT NULL REFERENCES subtitle_segments(id) ON DELETE CASCADE,
     idx INTEGER NOT NULL,
@@ -113,17 +110,17 @@ CREATE TABLE subtitle_words (
     updated_at INTEGER NOT NULL
 );
 
-CREATE INDEX idx_words_segment_idx ON subtitle_words(segment_id, idx);
+CREATE INDEX IF NOT EXISTS idx_words_segment_idx ON subtitle_words(segment_id, idx);
 
 -- terminology_groups
-CREATE TABLE terminology_groups (
+CREATE TABLE IF NOT EXISTS terminology_groups (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
 
 -- terminology_terms
-CREATE TABLE terminology_terms (
+CREATE TABLE IF NOT EXISTS terminology_terms (
     id TEXT PRIMARY KEY,
     group_id TEXT NOT NULL REFERENCES terminology_groups(id) ON DELETE CASCADE,
     origin TEXT NOT NULL,
@@ -132,10 +129,10 @@ CREATE TABLE terminology_terms (
     updated_at INTEGER NOT NULL
 );
 
-CREATE INDEX idx_terms_group_id ON terminology_terms(group_id);
+CREATE INDEX IF NOT EXISTS idx_terms_group_id ON terminology_terms(group_id);
 
 -- asr_transcripts: Step 1 ASR 段级转录结果
-CREATE TABLE asr_transcripts (
+CREATE TABLE IF NOT EXISTS asr_transcripts (
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     segment_index INTEGER NOT NULL,
     text TEXT NOT NULL,
@@ -143,35 +140,25 @@ CREATE TABLE asr_transcripts (
 );
 
 -- translation_batch_results: Step 4 翻译批次结果
-CREATE TABLE translation_batch_results (
+CREATE TABLE IF NOT EXISTS translation_batch_results (
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     batch_index INTEGER NOT NULL,
     segment_translations TEXT NOT NULL,
     PRIMARY KEY (task_id, batch_index)
 );
 
--- source_split_results: Step 5.1 原文切分结果
-CREATE TABLE source_split_results (
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    work_index INTEGER NOT NULL,
-    segment_start INTEGER NOT NULL,
-    segment_end INTEGER NOT NULL,
-    boundary_positions TEXT NOT NULL,
-    PRIMARY KEY (task_id, work_index)
-);
-
--- translation_align_results: Step 5.2 译文对齐结果
-CREATE TABLE translation_align_results (
-    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    parent_index INTEGER NOT NULL,
-    aligned_lines TEXT NOT NULL,
-    PRIMARY KEY (task_id, parent_index)
-);
-
 -- alignment_results: Step 1 强制对齐段级结果
-CREATE TABLE alignment_results (
+CREATE TABLE IF NOT EXISTS alignment_results (
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     segment_index INTEGER NOT NULL,
     result_json TEXT NOT NULL,
+    PRIMARY KEY (task_id, segment_index)
+);
+
+-- step5_split_align_results: Step 5 拆分+对齐 段级幂等结果
+CREATE TABLE IF NOT EXISTS step5_split_align_results (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    segment_index INTEGER NOT NULL,
+    parent_json TEXT NOT NULL,
     PRIMARY KEY (task_id, segment_index)
 );
