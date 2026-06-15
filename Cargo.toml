@@ -16,7 +16,13 @@ opt-level = 2
 [profile.dev.package.qwen-forced-aligner-rs]
 opt-level = 2
 
-# VAD model forward (gemm matrix multiplies + fbank FFT) is compute-bound and
-# very slow at opt-level 0.
+# VAD model forward (gemm matrix multiplies + fbank FFT) is compute-bound.
+# Use opt-level 3 so gemm's runtime CPU-feature detection (AVX2/SSE) kicks in.
 [profile.dev.package.fireredvad]
-opt-level = 2
+opt-level = 3
+
+# FFT and matrix kernels used by fireredvad — equally compute-bound.
+[profile.dev.package.realfft]
+opt-level = 3
+[profile.dev.package.gemm]
+opt-level = 3
