@@ -12,6 +12,7 @@ mod tests;
 mod text;
 mod timing;
 mod types;
+mod vad_align;
 mod words;
 
 use assembly::{
