@@ -22,7 +22,7 @@ pub(super) async fn ensure_workspace_hydrated_from_store(store: &TaskStore) -> W
     }
 
     store
-        .mark_orphan_processing_as_error()
+        .recover_orphan_processing()
         .await
         .map_err(|e| WorkspaceError::TaskFailed(format!("recover orphans: {e}")))?;
     hydrate_workspace_from_db(store).await?;
@@ -41,7 +41,6 @@ pub(super) async fn persist_task_meta(
         intent: record.intent.clone(),
         max_retries: record.max_retries,
         subtitle_length_preset: record.frozen.subtitle_length_preset.clone(),
-        enable_terminology: record.frozen.enable_terminology,
         enable_subtitle_beautify: record.frozen.enable_subtitle_beautify,
         terminology_groups_json,
     };
@@ -78,7 +77,6 @@ async fn hydrate_workspace_from_db(store: &TaskStore) -> WorkspaceResult<()> {
         item.subtitle_segments_json = serialize_segments(&segments);
         let frozen = FrozenSettings {
             subtitle_length_preset: extras.subtitle_length_preset,
-            enable_terminology: extras.enable_terminology,
             enable_subtitle_beautify: extras.enable_subtitle_beautify,
             terminology_groups: serde_json::from_str(&extras.terminology_groups_json)
                 .unwrap_or_default(),

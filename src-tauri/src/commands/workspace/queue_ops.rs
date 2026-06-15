@@ -211,7 +211,7 @@ pub(super) async fn update_task_languages_internal(
         else {
             return Err(WorkspaceError::TaskNotFound(task_id.to_string()));
         };
-        if task.item.transcribe_status == "processing" || task.item.transcribe_status == "queued" {
+        if task.item.transcribe_status == "processing" {
             return Err(WorkspaceError::TaskBusy);
         }
     }
@@ -259,7 +259,7 @@ pub(super) async fn update_task_terminology_internal(
         else {
             return Err(WorkspaceError::TaskNotFound(task_id.to_string()));
         };
-        if task.item.transcribe_status == "processing" || task.item.transcribe_status == "queued" {
+        if task.item.transcribe_status == "processing" {
             return Err(WorkspaceError::TaskBusy);
         }
     }
@@ -404,7 +404,10 @@ fn task_matches_delete(
 }
 
 fn delete_is_blocked_by_task_state(item: &WorkspaceQueueItem) -> bool {
-    let busy = item.transcribe_status == "processing" || item.transcribe_status == "queued";
+    // Only 'processing' is truly busy (a runner thread owns it). 'queued' is
+    // just "in the memory queue" and can be removed at any time — especially
+    // after a restart when the queue is empty but the DB still shows 'queued'.
+    let busy = item.transcribe_status == "processing";
     busy && !is_youtube_placeholder_path(&item.path)
 }
 

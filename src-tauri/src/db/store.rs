@@ -43,7 +43,7 @@ impl TaskStore {
         let row: Option<SettingsRow> = sqlx::query_as(
             "SELECT provider, chunk_target_seconds, subtitle_length_preset, asr_model, \
              align_model, demucs_model, enable_vocal_separation, translate_api_key, \
-             translate_base_url, translate_model, llm_concurrency, enable_terminology, \
+             translate_base_url, translate_model, llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, updated_at \
              FROM settings WHERE id = 1",
@@ -80,7 +80,7 @@ impl TaskStore {
         sqlx::query(
             "INSERT INTO settings (id, provider, chunk_target_seconds, subtitle_length_preset, \
              asr_model, align_model, demucs_model, enable_vocal_separation, translate_api_key, \
-             translate_base_url, translate_model, llm_concurrency, enable_terminology, \
+             translate_base_url, translate_model, llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, updated_at) \
              VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
@@ -92,7 +92,7 @@ impl TaskStore {
              translate_api_key=excluded.translate_api_key, \
              translate_base_url=excluded.translate_base_url, \
              translate_model=excluded.translate_model, llm_concurrency=excluded.llm_concurrency, \
-             enable_terminology=excluded.enable_terminology, \
+             active_terminology_group_id=excluded.active_terminology_group_id, \
              enable_subtitle_beautify=excluded.enable_subtitle_beautify, \
              enable_click_sound=excluded.enable_click_sound, \
              auto_burn_hard_subtitle=excluded.auto_burn_hard_subtitle, \
@@ -111,7 +111,7 @@ impl TaskStore {
         .bind(&row.translate_base_url)
         .bind(&row.translate_model)
         .bind(row.llm_concurrency)
-        .bind(row.enable_terminology)
+        .bind(&row.active_terminology_group_id)
         .bind(row.enable_subtitle_beautify)
         .bind(row.enable_click_sound)
         .bind(row.auto_burn_hard_subtitle)
@@ -340,8 +340,8 @@ impl TaskStore {
              transcribe_status, task_progress_stage_code, task_progress_stage_label, \
              task_progress_stage_order, task_progress_detail, task_progress_current, \
              task_progress_total, transcribe_error, result_text, result_srt, llm_total_tokens, \
-             intent, max_retries, subtitle_length_preset, enable_terminology, \
-             enable_subtitle_beautify, terminology_groups_json, updated_at \
+             intent, max_retries, subtitle_length_preset, \
+             enable_subtitle_beautify, terminology_groups_json, terminology_group_id, updated_at \
              FROM tasks ORDER BY updated_at DESC",
         )
         .fetch_all(&self.pool)
@@ -366,9 +366,9 @@ impl TaskStore {
              task_progress_stage_label, task_progress_stage_order, task_progress_detail, \
              task_progress_current, task_progress_total, transcribe_error, result_text, \
              result_srt, llm_total_tokens, intent, max_retries, subtitle_length_preset, \
-             enable_terminology, enable_subtitle_beautify, terminology_groups_json, \
-             updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-             ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
+             enable_subtitle_beautify, terminology_groups_json, terminology_group_id, \
+             updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
              media_path=excluded.media_path, name=excluded.name, media_kind=excluded.media_kind, \
              size_bytes=excluded.size_bytes, source_lang=excluded.source_lang, \
              target_lang=excluded.target_lang, transcribe_status=excluded.transcribe_status, \
@@ -382,9 +382,9 @@ impl TaskStore {
              result_srt=excluded.result_srt, \
              intent=excluded.intent, max_retries=excluded.max_retries, \
              subtitle_length_preset=excluded.subtitle_length_preset, \
-             enable_terminology=excluded.enable_terminology, \
              enable_subtitle_beautify=excluded.enable_subtitle_beautify, \
              terminology_groups_json=excluded.terminology_groups_json, \
+             terminology_group_id=excluded.terminology_group_id, \
              updated_at=excluded.updated_at",
         )
         .bind(&row.id)
@@ -408,9 +408,9 @@ impl TaskStore {
         .bind(&row.intent)
         .bind(row.max_retries)
         .bind(&row.subtitle_length_preset)
-        .bind(row.enable_terminology)
         .bind(row.enable_subtitle_beautify)
         .bind(&row.terminology_groups_json)
+        .bind(&row.terminology_group_id)
         .bind(row.updated_at)
         .execute(&self.pool)
         .await
@@ -450,9 +450,16 @@ impl TaskStore {
         Ok(())
     }
 
-    /// Mark all tasks with transcribe_status='processing' as 'error' (startup recovery).
-    /// Returns the count of affected rows.
-    pub async fn mark_orphan_processing_as_error(&self) -> Result<u64, String> {
+    /// On startup, mark orphaned 'processing' tasks as 'error'.
+    ///
+    /// `processing` means a runner thread owns the task. After a restart the
+    /// thread is gone, so any 'processing' task is an orphan — it was killed
+    /// mid-run and its output may be incomplete. Mark it as 'error' so the
+    /// user knows it needs to be re-run.
+    ///
+    /// 'queued' tasks are left untouched: they were never running, so they're
+    /// not orphans. They simply wait for the user to start the queue again.
+    pub async fn recover_orphan_processing(&self) -> Result<u64, String> {
         let n = sqlx::query(
             "UPDATE tasks SET transcribe_status = 'error', \
              transcribe_error = '任务在运行中被中断，请重新开始', \
@@ -805,7 +812,7 @@ mod tests {
             translate_model: "gpt-4o".into(),
             llm_concurrency: 4,
             terminology_groups: Vec::new(),
-            enable_terminology: true,
+            active_terminology_group_id: String::new(),
             enable_subtitle_beautify: true,
             enable_click_sound: true,
             auto_burn_hard_subtitle: false,
@@ -946,6 +953,7 @@ mod tests {
             result_srt: "".into(),
             subtitle_segments_json: "[]".into(),
             llm_total_tokens: 0,
+            terminology_group_id: "".into(),
         }
     }
 
@@ -957,7 +965,6 @@ mod tests {
             intent: "TRANSCRIBE_TRANSLATE".to_string(),
             max_retries: 2,
             subtitle_length_preset: "long".to_string(),
-            enable_terminology: false,
             enable_subtitle_beautify: false,
             terminology_groups_json: r#"[{"id":"g","name":"x","terms":[]}]"#.to_string(),
         };
@@ -972,7 +979,6 @@ mod tests {
         assert_eq!(extras.intent, "TRANSCRIBE_TRANSLATE");
         assert_eq!(extras.max_retries, 2);
         assert_eq!(extras.subtitle_length_preset, "long");
-        assert!(!extras.enable_terminology);
         assert!(!extras.enable_subtitle_beautify);
         assert_eq!(
             extras.terminology_groups_json,
@@ -981,13 +987,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mark_orphan_processing_as_error_recovers_residuals() {
+    async fn recover_orphan_processing_marks_error() {
         let s = store().await;
         let extras = TaskMetaExtras::default();
         s.upsert_task(&sample_task("a"), &extras).await.unwrap();
         s.upsert_task(&sample_task("b"), &extras).await.unwrap();
 
-        let n = s.mark_orphan_processing_as_error().await.unwrap();
+        let n = s.recover_orphan_processing().await.unwrap();
         assert_eq!(n, 2);
 
         let loaded = s.load_all_tasks().await.unwrap();
@@ -1067,7 +1073,6 @@ mod tests {
             intent: "TRANSCRIBE_TRANSLATE".into(),
             max_retries: 0,
             subtitle_length_preset: "default".into(),
-            enable_terminology: true,
             enable_subtitle_beautify: true,
             terminology_groups_json:
                 r#"[{"id":"frozen-grp","name":"frozen-name","terms":[]}]"#.into(),
