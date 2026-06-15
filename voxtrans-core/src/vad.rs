@@ -1,10 +1,7 @@
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 use std::time::Instant;
 
-use serde::Deserialize;
-
-use crate::binary::resolve_bundled_or_path;
+use fireredvad::VadConfig;
 
 #[derive(Debug, Clone)]
 pub(crate) struct AudioSegment {
@@ -19,12 +16,6 @@ impl AudioSegment {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct VadOutput {
-    dur: f64,
-    timestamps: Vec<[f64; 2]>,
-}
-
 pub(crate) fn build_segments_from_vad(
     audio_path: &Path,
     total_duration_sec: f64,
@@ -32,12 +23,12 @@ pub(crate) fn build_segments_from_vad(
 ) -> Result<(Vec<AudioSegment>, f64), Box<dyn std::error::Error>> {
     let vad_started_at = Instant::now();
     let chunk_target_seconds = chunk_target_seconds.max(30.0);
-    let vad = detect_speech_with_fireredvad(audio_path)?;
+    let vad = fireredvad::detect(audio_path, &VadConfig::default())?;
     let vad_elapsed_sec = vad_started_at.elapsed().as_secs_f64();
     let effective_total_duration = if total_duration_sec > 0.0 {
         total_duration_sec
     } else {
-        vad.dur
+        vad.dur as f64
     };
     if effective_total_duration <= chunk_target_seconds {
         return Ok((
@@ -91,54 +82,14 @@ pub(crate) fn build_segments_from_vad(
     Ok((segments, vad_elapsed_sec))
 }
 
-fn detect_speech_with_fireredvad(
-    audio_path: &Path,
-) -> Result<VadOutput, Box<dyn std::error::Error>> {
-    let output = fireredvad_command().arg(audio_path).output()?;
-    if !output.status.success() {
-        return Err(format!(
-            "fireredvad failed for {}: {}",
-            audio_path.display(),
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
-    }
-
-    let stdout = String::from_utf8(output.stdout)?;
-    let parsed: VadOutput = serde_json::from_str(stdout.trim())?;
-    Ok(parsed)
-}
-
-fn fireredvad_command() -> Command {
-    let mut cmd = Command::new(resolve_fireredvad_program());
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW
-        cmd.creation_flags(0x08000000);
-    }
-    cmd
-}
-
-fn resolve_fireredvad_program() -> PathBuf {
-    if let Ok(custom) = std::env::var("VOXTRANS_VAD_PATH") {
-        let custom_path = PathBuf::from(custom);
-        if custom_path.exists() {
-            return custom_path;
-        }
-    }
-
-    resolve_bundled_or_path("fireredvad")
-}
-
-fn normalize_ranges(ranges: &[[f64; 2]], total_duration_sec: f64) -> Vec<(f64, f64)> {
+fn normalize_ranges(ranges: &[(f32, f32)], total_duration_sec: f64) -> Vec<(f64, f64)> {
     if total_duration_sec <= 0.0 {
         return Vec::new();
     }
 
     let mut normalized: Vec<(f64, f64)> = ranges
         .iter()
-        .map(|pair| (pair[0].max(0.0), pair[1].min(total_duration_sec)))
+        .map(|(start, end)| ((*start as f64).max(0.0), (*end as f64).min(total_duration_sec)))
         .filter(|(start, end)| *end > *start)
         .collect();
     normalized.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
