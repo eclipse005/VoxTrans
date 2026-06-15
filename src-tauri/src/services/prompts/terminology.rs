@@ -33,7 +33,7 @@ pub fn build_briefing_prompt(
         "goal": "Produce a briefing (style guide + glossary) that keeps this video's translation consistent and fluent across batches. The style guide drives the translator's decisions.",
         "extraction": {
             "glossary": "Anything needing ONE consistent translation: names, proper nouns, domain terms, abbreviations/acronyms, recurring fixed phrases. Adapt to THIS content; do not force fields that do not apply. Do NOT repeat entries already covered by userTerms.",
-            "styleGuide": "A concise STYLE GUIDE for this content. Cover whatever is relevant and leave the rest empty: register/tone (e.g. casual spoken), abbreviation handling principle, number/unit/currency convention, subject/pronoun explicitation (when the source drops them), naming convention (romanize vs translate), readability (sentence length, punctuation). Be specific, not generic."
+            "styleGuide": "Write styleGuide as ONE plain string (not an object): a few sentences of free-form guidance for the translator. Touch on whatever matters for THIS content — tone, how to handle abbreviations and names, number/currency conventions, pronoun clarity, readability — woven into flowing text. Empty string if nothing notable. Never use an object/map with keys like registerTone, abbreviationHandling, namingConvention, etc."
         },
         "constraints": {
             "abbreviations": "For each abbreviation/acronym, DECIDE in target: preserve the source form (target == source) when that is the field convention, OR give the standard translation. Do not auto-expand abbreviations into long phrases unless that is the convention.",
@@ -48,7 +48,7 @@ pub fn build_briefing_prompt(
                     "note": "optional short context"
                 }
             ],
-            "styleGuide": "concise style guide, or empty if nothing notable in this window"
+            "styleGuide": "Casual, direct teaching tone. Keep domain jargon (e.g. OB, FVG) in English; translate concept terms. Render timeframes as 月图/日图/4小时图. Add dropped subjects (你们/我们) where English omits them. Prefer short punchy lines."
         }
     })
     .to_string();

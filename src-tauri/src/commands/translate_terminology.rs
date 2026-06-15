@@ -81,6 +81,7 @@ pub async fn build_terminology_layer(
         translate_api_key: request.translate_api_key,
         translate_base_url: request.translate_base_url,
         translate_model: request.translate_model,
+        llm_concurrency: request.llm_concurrency,
     };
 
     let service_response =
