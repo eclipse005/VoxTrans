@@ -386,3 +386,75 @@ fn local_subtitle_layout_never_crosses_hard_pause() {
     assert_eq!(response.translation_sentences[1].text, "after pause");
     assert_eq!(response.boundaries[1].reason_tag, "hard_pause".to_string());
 }
+
+/// Ablation: VAD sustains hard-split segmentation when terminal punctuation is
+/// absent. This is the core proof that VAD adds positive value — without it,
+/// unpunctuated speech with real pauses has no acoustic signal to split on.
+#[test]
+fn vad_sustains_segmentation_when_punctuation_stripped() {
+    fn word(start: f64, end: f64, text: &str) -> WordTokenDto {
+        WordTokenDto {
+            start,
+            end,
+            word: text.to_string(),
+        }
+    }
+
+    // Two natural sentences: "Hello world." and "Again today is great."
+    // A silence gap sits between "world" (ends 1.5s) and "Again" (starts 4.2s).
+    let words_with_punct = vec![
+        word(0.6, 1.0, "Hello"),
+        word(1.1, 1.5, "world."),
+        word(4.2, 4.8, "Again"),
+        word(4.9, 5.3, "today"),
+        word(5.4, 5.8, "is"),
+        word(5.9, 6.5, "great."),
+    ];
+    // Same words, punctuation stripped — simulates ASR missing the periods.
+    let words_stripped: Vec<WordTokenDto> = words_with_punct
+        .iter()
+        .map(|w| WordTokenDto {
+            start: w.start,
+            end: w.end,
+            word: w
+                .word
+                .trim_end_matches(['.', ',', '!', '?'])
+                .to_string(),
+        })
+        .collect();
+
+    let vad_segments = vec![
+        (0.0, 1.6), // "Hello world"
+        (4.1, 6.6), // "Again today is great"
+    ];
+
+    // With punctuation + VAD: splits after "world." (terminal punctuation).
+    let idx_vad = super::vad_align::SpeechSegmentIndex::new(vad_segments.clone());
+    let splits_punct =
+        super::semantic::build_split_points_from_hard_boundaries(&words_with_punct, &idx_vad);
+    assert!(
+        splits_punct.iter().any(|(i, _)| *i == 1),
+        "punctuation should split after 'world'"
+    );
+
+    // Stripped, NO VAD: no terminal punctuation, no VAD signal => no hard split.
+    // This is the degraded behavior for old checkpoints / VAD failures.
+    let idx_empty = super::vad_align::SpeechSegmentIndex::new(Vec::new());
+    let splits_no_vad =
+        super::semantic::build_split_points_from_hard_boundaries(&words_stripped, &idx_empty);
+    assert!(
+        splits_no_vad.is_empty(),
+        "without VAD or punctuation, no hard split"
+    );
+
+    // Stripped, WITH VAD: the silence gap is detected, splits after "world"
+    // with HardPause reason — segmentation quality is restored.
+    let splits_vad =
+        super::semantic::build_split_points_from_hard_boundaries(&words_stripped, &idx_vad);
+    assert!(
+        splits_vad
+            .iter()
+            .any(|(i, r)| *i == 1 && *r == super::types::SplitReason::HardPause),
+        "VAD should split after 'world' even without punctuation"
+    );
+}
