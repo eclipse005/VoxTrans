@@ -1,6 +1,6 @@
 use super::{
-    BoundaryDecisionKind, HARD_SPLIT_GAP_MS, build_deterministic_sentence_spans,
-    build_micro_chunks, build_source_sentences_from_words_with_progress,
+    BoundaryDecisionKind, build_deterministic_sentence_spans, build_micro_chunks,
+    build_source_sentences_from_words_with_progress,
 };
 use crate::services::transcribe::WordTokenDto;
 use voxtrans_core::subtitle::text_rules::ends_with_terminal_punctuation;
@@ -32,6 +32,22 @@ fn request_with_lang_preset_and_layout(
     subtitle_length_preset: &str,
     use_subtitle_layout_split: bool,
 ) -> super::SentenceBoundaryRequest {
+    request_with_vad(
+        words,
+        source_lang,
+        subtitle_length_preset,
+        use_subtitle_layout_split,
+        Vec::new(),
+    )
+}
+
+fn request_with_vad(
+    words: Vec<WordTokenDto>,
+    source_lang: &str,
+    subtitle_length_preset: &str,
+    use_subtitle_layout_split: bool,
+    vad_speech_segments: Vec<(f64, f64)>,
+) -> super::SentenceBoundaryRequest {
     super::SentenceBoundaryRequest {
         task_id: "task-1".to_string(),
         media_path: "demo.mp4".to_string(),
@@ -39,7 +55,7 @@ fn request_with_lang_preset_and_layout(
         subtitle_length_preset: subtitle_length_preset.to_string(),
         use_subtitle_layout_split,
         words,
-        vad_speech_segments: Vec::new(),
+        vad_speech_segments,
     }
 }
 
@@ -187,7 +203,12 @@ fn hard_pause_splits_even_without_punctuation() {
         },
     ];
 
-    let spans = build_deterministic_sentence_spans(&words);
+    // VAD detects two speech segments separated by silence [0.2, 2.4]; the
+    // cut midpoint (1.3) falls inside that gap, so the hard split fires.
+    let vad_segments = vec![(0.0, 0.2), (2.4, 2.7)];
+    let vad_index = super::vad_align::SpeechSegmentIndex::new(vad_segments);
+    let split_points = super::build_deterministic_split_points(&words, &vad_index);
+    let spans = super::split_points_to_spans(words.len(), &split_points);
 
     assert_eq!(spans, vec![(0, 0), (1, 1)]);
 }
@@ -234,7 +255,9 @@ fn hard_pause_forces_micro_chunk_boundary() {
     let chunks = build_micro_chunks(&words);
     assert_eq!(chunks.len(), 2);
     assert!(chunks[0].hard_split_after);
-    assert_eq!(chunks[0].gap_after_ms, HARD_SPLIT_GAP_MS + 200);
+    // gap_after_ms is the raw wall-clock gap between word.end (0.2s) and the
+    // next word.start (2.4s) = 2200ms, independent of any threshold constant.
+    assert_eq!(chunks[0].gap_after_ms, 2_200);
 }
 
 #[test]
@@ -343,7 +366,14 @@ fn local_subtitle_layout_never_crosses_hard_pause() {
     ];
 
     let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
-        request_with_lang_and_preset(words, "en", "short"),
+        request_with_vad(
+            words,
+            "en",
+            "short",
+            true,
+            // VAD detects a silence gap [0.5, 2.8] between "pause" and "after".
+            vec![(0.0, 0.5), (2.8, 3.3)],
+        ),
         None,
     ))
     .expect("step2 should preserve hard pause boundary");

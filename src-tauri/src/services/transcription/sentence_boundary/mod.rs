@@ -28,6 +28,9 @@ use words::{from_core_words, to_core_words};
 pub use assembly::source_sentences_to_srt;
 pub use types::{BoundaryDecisionKind, SentenceBoundaryRequest};
 
+/// Informational field surfaced in `SourceSentenceStep2` / the Step2 response.
+/// Retained for backward compatibility with older frontends; the actual hard
+/// split now keys off VAD speech segments, not a fixed gap threshold.
 const HARD_SPLIT_GAP_MS: u64 = 2_000;
 
 pub async fn build_source_sentences_from_words_with_progress(
@@ -45,12 +48,14 @@ pub async fn build_source_sentences_from_words_with_progress(
         return Err("words is empty".to_string());
     }
 
+    let vad_index = vad_align::SpeechSegmentIndex::new(request.vad_speech_segments.clone());
+
     let micro_chunks = build_micro_chunks(&normalized_words);
     if micro_chunks.is_empty() {
         return Err("failed to build micro chunks".to_string());
     }
 
-    let hard_split_points = build_split_points_from_hard_boundaries(&normalized_words);
+    let hard_split_points = build_split_points_from_hard_boundaries(&normalized_words, &vad_index);
     let split_points = if request.use_subtitle_layout_split {
         let semantic_spans = split_points_to_spans(normalized_words.len(), &hard_split_points);
         merge_split_points(
@@ -107,11 +112,15 @@ fn split_reason_priority(reason: types::SplitReason) -> u8 {
 
 #[cfg(test)]
 fn build_deterministic_sentence_spans(words: &[WordTokenDto]) -> Vec<(usize, usize)> {
-    let split_points = build_deterministic_split_points(words);
+    let vad_index = vad_align::SpeechSegmentIndex::new(Vec::new());
+    let split_points = build_deterministic_split_points(words, &vad_index);
     split_points_to_spans(words.len(), &split_points)
 }
 
 #[cfg(test)]
-fn build_deterministic_split_points(words: &[WordTokenDto]) -> Vec<(usize, types::SplitReason)> {
-    semantic::build_deterministic_split_points(words)
+fn build_deterministic_split_points(
+    words: &[WordTokenDto],
+    vad_index: &vad_align::SpeechSegmentIndex,
+) -> Vec<(usize, types::SplitReason)> {
+    semantic::build_deterministic_split_points(words, vad_index)
 }

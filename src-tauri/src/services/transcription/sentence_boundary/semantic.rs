@@ -1,24 +1,28 @@
 use crate::services::transcribe::WordTokenDto;
 use voxtrans_core::subtitle::text_rules::should_split_after_terminal_token;
 
-use super::HARD_SPLIT_GAP_MS;
-use super::timing::gap_ms;
 use super::types::SplitReason;
+use super::vad_align::SpeechSegmentIndex;
 
 pub(super) fn build_split_points_from_hard_boundaries(
     words: &[WordTokenDto],
+    vad_index: &SpeechSegmentIndex,
 ) -> Vec<(usize, SplitReason)> {
-    build_high_priority_split_points(words)
+    build_high_priority_split_points(words, vad_index)
 }
 
 #[cfg(test)]
 pub(super) fn build_deterministic_split_points(
     words: &[WordTokenDto],
+    vad_index: &SpeechSegmentIndex,
 ) -> Vec<(usize, SplitReason)> {
-    build_high_priority_split_points(words)
+    build_high_priority_split_points(words, vad_index)
 }
 
-fn build_high_priority_split_points(words: &[WordTokenDto]) -> Vec<(usize, SplitReason)> {
+fn build_high_priority_split_points(
+    words: &[WordTokenDto],
+    vad_index: &SpeechSegmentIndex,
+) -> Vec<(usize, SplitReason)> {
     let mut out = Vec::<(usize, SplitReason)>::new();
     for index in 0..words.len() {
         let next_word = words.get(index + 1).map(|word| word.word.as_str());
@@ -26,7 +30,7 @@ fn build_high_priority_split_points(words: &[WordTokenDto]) -> Vec<(usize, Split
             if should_split_after_terminal_token(&words[index].word, next_word) {
                 Some(SplitReason::TerminalPunctuation)
             } else if index + 1 < words.len()
-                && gap_ms(words[index].end, words[index + 1].start) >= HARD_SPLIT_GAP_MS
+                && vad_index.crosses_silence(words[index].end, words[index + 1].start)
             {
                 Some(SplitReason::HardPause)
             } else {
