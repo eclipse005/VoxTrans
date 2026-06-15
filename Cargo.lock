@@ -4216,11 +4216,13 @@ name = "qwen3-asr"
 version = "0.2.2"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "cudarc",
  "gemm",
  "half",
  "hound",
  "log",
+ "memmap2",
  "rayon",
  "rubato 0.15.0",
  "rustfft",

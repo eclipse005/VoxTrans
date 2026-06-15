@@ -20,7 +20,6 @@ pub struct SourceSentenceStep2 {
     pub task_id: String,
     pub media_path: String,
     pub source_lang: String,
-    pub hard_split_gap_ms: u64,
     pub micro_chunk_total: usize,
     pub boundary_total: usize,
     pub sentence_total: usize,

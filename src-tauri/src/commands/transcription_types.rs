@@ -68,7 +68,6 @@ fn default_use_subtitle_layout_split() -> bool {
 #[derive(Debug, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildSourceSentencesCommandResponse {
-    pub hard_split_gap_ms: u64,
     pub micro_chunk_total: usize,
     pub boundary_total: usize,
     pub sentence_total: usize,

@@ -49,7 +49,6 @@ pub async fn build_source_sentences_with_progress(
         .collect::<Vec<_>>();
     let segments = build_grouped_sentence_segments(&original_words, &translation_sentences);
     Ok(BuildSourceSentencesCommandResponse {
-        hard_split_gap_ms: step2.hard_split_gap_ms,
         micro_chunk_total: step2.micro_chunk_total,
         boundary_total: step2.boundary_total,
         sentence_total: step2.sentence_total,

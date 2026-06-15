@@ -28,11 +28,6 @@ use words::{from_core_words, to_core_words};
 pub use assembly::source_sentences_to_srt;
 pub use types::{BoundaryDecisionKind, SentenceBoundaryRequest};
 
-/// Informational field surfaced in `SourceSentenceStep2` / the Step2 response.
-/// Retained for backward compatibility with older frontends; the actual hard
-/// split now keys off VAD speech segments, not a fixed gap threshold.
-const HARD_SPLIT_GAP_MS: u64 = 2_000;
-
 pub async fn build_source_sentences_from_words_with_progress(
     request: SentenceBoundaryRequest,
     _on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
@@ -83,7 +78,6 @@ pub async fn build_source_sentences_from_words_with_progress(
         task_id: request.task_id,
         media_path: request.media_path,
         source_lang: request.source_lang,
-        hard_split_gap_ms: HARD_SPLIT_GAP_MS,
         micro_chunk_total: micro_chunks.len(),
         boundary_total: boundaries.len(),
         sentence_total: translation_sentences.len(),
