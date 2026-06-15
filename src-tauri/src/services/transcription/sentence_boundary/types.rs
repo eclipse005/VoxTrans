@@ -82,6 +82,5 @@ pub enum BoundaryDecisionKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SplitReason {
     TerminalPunctuation,
-    HardPause,
     SubtitleLayout,
 }

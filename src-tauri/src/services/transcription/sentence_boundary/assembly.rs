@@ -118,13 +118,6 @@ pub(super) fn build_boundaries_from_split_points(
                         1.0,
                         "terminal_punctuation",
                     ),
-                    Some(SplitReason::HardPause) => (
-                        BoundaryDecisionKind::HardSplit,
-                        BoundaryDecisionKind::Unknown,
-                        BoundaryDecisionKind::HardSplit,
-                        1.0,
-                        "hard_pause",
-                    ),
                     Some(SplitReason::SubtitleLayout) => (
                         BoundaryDecisionKind::Split,
                         BoundaryDecisionKind::Unknown,

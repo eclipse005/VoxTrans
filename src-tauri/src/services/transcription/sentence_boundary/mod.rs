@@ -50,7 +50,7 @@ pub async fn build_source_sentences_from_words_with_progress(
         return Err("failed to build micro chunks".to_string());
     }
 
-    let hard_split_points = build_split_points_from_hard_boundaries(&normalized_words, &vad_index);
+    let hard_split_points = build_split_points_from_hard_boundaries(&normalized_words);
     let split_points = if request.use_subtitle_layout_split {
         let semantic_spans = split_points_to_spans(normalized_words.len(), &hard_split_points);
         merge_split_points(
@@ -99,7 +99,6 @@ fn merge_split_points(
 
 fn split_reason_priority(reason: types::SplitReason) -> u8 {
     match reason {
-        types::SplitReason::HardPause => 0,
         types::SplitReason::TerminalPunctuation => 1,
         types::SplitReason::SubtitleLayout => 2,
     }
@@ -107,15 +106,13 @@ fn split_reason_priority(reason: types::SplitReason) -> u8 {
 
 #[cfg(test)]
 fn build_deterministic_sentence_spans(words: &[WordTokenDto]) -> Vec<(usize, usize)> {
-    let vad_index = vad_align::SpeechSegmentIndex::new(Vec::new());
-    let split_points = build_deterministic_split_points(words, &vad_index);
+    let split_points = build_deterministic_split_points(words);
     split_points_to_spans(words.len(), &split_points)
 }
 
 #[cfg(test)]
 fn build_deterministic_split_points(
     words: &[WordTokenDto],
-    vad_index: &vad_align::SpeechSegmentIndex,
 ) -> Vec<(usize, types::SplitReason)> {
-    semantic::build_deterministic_split_points(words, vad_index)
+    semantic::build_deterministic_split_points(words)
 }
