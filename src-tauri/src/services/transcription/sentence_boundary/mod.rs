@@ -65,6 +65,7 @@ pub async fn build_source_sentences_from_words_with_progress(
                 &semantic_spans,
                 &request.source_lang,
                 &request.subtitle_length_preset,
+                &vad_index,
             ),
         )
     } else {

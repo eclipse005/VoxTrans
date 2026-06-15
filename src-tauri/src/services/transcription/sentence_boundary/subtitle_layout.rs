@@ -16,10 +16,9 @@
 use crate::services::transcribe::WordTokenDto;
 use voxtrans_core::subtitle::text_rules::has_break_terminal_punctuation;
 
-use super::timing::gap_ms;
 use super::types::SplitReason;
+use super::vad_align::SpeechSegmentIndex;
 
-const PAUSE_BONUS_GAP_MS: u64 = 350;
 /// Hard ceiling: a segment up to this ratio of `limit` is kept intact. Above
 /// it, the greedy splitter must find a cut.
 const KEEP_INTACT_RATIO: f64 = 1.15;
@@ -33,6 +32,7 @@ pub(super) fn build_subtitle_layout_split_points(
     semantic_spans: &[(usize, usize)],
     source_lang: &str,
     subtitle_length_preset: &str,
+    vad_index: &SpeechSegmentIndex,
 ) -> Vec<(usize, SplitReason)> {
     if words.len() < 2 {
         return Vec::new();
@@ -57,6 +57,7 @@ pub(super) fn build_subtitle_layout_split_points(
             limit,
             min_units,
             max_units,
+            vad_index,
         ) {
             out.push((cut, SplitReason::SubtitleLayout));
         }
@@ -75,6 +76,7 @@ fn greedy_split_span(
     limit: f64,
     min_units: f64,
     max_units: f64,
+    vad_index: &SpeechSegmentIndex,
 ) -> Vec<usize> {
     let total = span_units(words, start, end, source_lang);
     if total <= max_units {
@@ -93,7 +95,15 @@ fn greedy_split_span(
         if remaining <= max_units {
             break;
         }
-        match find_best_greedy_cut(words, seg_start, end, source_lang, limit, min_units) {
+        match find_best_greedy_cut(
+            words,
+            seg_start,
+            end,
+            source_lang,
+            limit,
+            min_units,
+            vad_index,
+        ) {
             Some(i) => {
                 if i >= end {
                     break;
@@ -137,6 +147,7 @@ fn find_best_greedy_cut(
     source_lang: &str,
     limit: f64,
     min_units: f64,
+    vad_index: &SpeechSegmentIndex,
 ) -> Option<usize> {
     let total_from = span_units(words, seg_start, end, source_lang);
     let scan_cap = limit * 1.5;
@@ -157,7 +168,7 @@ fn find_best_greedy_cut(
             continue;
         }
 
-        let rank = boundary_rank(words, i);
+        let rank = boundary_rank(words, i, vad_index);
         let candidate = (i, rank, acc);
 
         best = match best {
@@ -209,7 +220,7 @@ fn force_cut_near_limit(
 }
 
 /// Classify the boundary after word `i`. Lower rank = better place to cut.
-fn boundary_rank(words: &[WordTokenDto], i: usize) -> u8 {
+fn boundary_rank(words: &[WordTokenDto], i: usize, vad_index: &SpeechSegmentIndex) -> u8 {
     let Some(left) = words.get(i) else {
         return 9;
     };
@@ -241,8 +252,8 @@ fn boundary_rank(words: &[WordTokenDto], i: usize) -> u8 {
     if is_connector_like(&right.word) && !is_connector_like(&left.word) {
         return 4;
     }
-    // Rank 5: notable pause (>= 350ms).
-    if gap_ms(left.end, right.start) >= PAUSE_BONUS_GAP_MS {
+    // Rank 5: cut point falls inside a VAD silence gap (cross speech segment).
+    if vad_index.crosses_silence(left.end, right.start) {
         return 5;
     }
     // Rank 6: plain word boundary.
