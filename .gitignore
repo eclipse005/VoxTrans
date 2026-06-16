@@ -46,6 +46,9 @@ src-tauri/bin/cuda/
 # Vendored crate build artifacts
 vendor/*/target/
 
+# Step2-repl fixtures (generated from DB, not checked in)
+src-tauri/fixtures/
+
 # Large binary dependencies (download via scripts/download-binaries.ps1)
 src-tauri/bin/ffmpeg.exe
 src-tauri/bin/demucs.exe
