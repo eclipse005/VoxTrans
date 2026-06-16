@@ -5,6 +5,7 @@ use crate::services::transcribe::WordTokenDto;
 use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
 
 mod assembly;
+mod language;
 mod semantic;
 mod subtitle_layout;
 #[cfg(test)]

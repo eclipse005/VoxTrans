@@ -35,6 +35,7 @@ tauri-plugin-dialog = "2.6.0"
 chrono = { version = "0.4", features = ["clock"] }
 hound = "3.5"
 pinyin = "0.10"
+jieba-rs = "0.10"
 voxtrans-core = { path = "../voxtrans-core" }
 tokio = { version = "1", features = ["rt", "sync", "time", "macros", "rt-multi-thread"] }
 font-kit = "0.14"

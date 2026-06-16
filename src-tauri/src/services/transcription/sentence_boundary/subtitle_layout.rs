@@ -34,7 +34,13 @@ const FORBIDDEN_COST: f64 = f64::INFINITY;
 /// Cost of cutting after word `i` (between `words[i]` and `words[i+1]`).
 /// Lower = better place to cut. Replaces the old `boundary_rank` ordinal with
 /// a continuous cost that the DP minimizes globally.
-fn boundary_base_cost(words: &[WordTokenDto], i: usize, vad_index: &SpeechSegmentIndex) -> f64 {
+fn boundary_base_cost(
+    words: &[WordTokenDto],
+    i: usize,
+    vad_index: &SpeechSegmentIndex,
+    advisor: &super::language::Advisor,
+    byte_offset: usize,
+) -> f64 {
     let Some(left) = words.get(i) else {
         return FORBIDDEN_COST;
     };
@@ -72,8 +78,13 @@ fn boundary_base_cost(words: &[WordTokenDto], i: usize, vad_index: &SpeechSegmen
     if is_connector_like(&right.word) && !is_connector_like(&left.word) {
         return 2.5;
     }
-    // Plain word boundary — least preferred legal cut.
-    6.0
+    // Plain word boundary — least preferred legal cut. For CJK languages,
+    // the advisor may report this gap is inside a word (jieba), in which case
+    // we penalize heavily to discourage splitting words mid-character.
+    match advisor.is_word_boundary(byte_offset) {
+        Some(false) => 9.0, // inside a word — strongly avoid
+        _ => 6.0,           // word boundary or no info — default
+    }
 }
 
 /// Split overlong semantic spans into subtitle-length segments via DP.
@@ -141,6 +152,24 @@ fn dp_split_span(
         return Vec::new();
     }
 
+    // Build the advisor for this span. For CJK languages, jieba tokenizes the
+    // span text to learn word boundaries; the advisor tells the cost function
+    // whether each token gap is a word boundary or inside a word.
+    let span_text: String = words[start..=end]
+        .iter()
+        .map(|w| w.word.as_str())
+        .collect();
+    let advisor = super::language::advisor_for_lang(source_lang, &span_text);
+    // Precompute byte offsets: byte_offset[k] = byte position in span_text
+    // immediately after the k-th token (k = 0..n). The gap between token k-1
+    // and token k is queried with byte_offset[k].
+    let mut byte_offset = vec![0usize; n + 1];
+    let mut acc = 0usize;
+    for k in 0..n {
+        acc += words[start + k].word.len(); // byte length of this token
+        byte_offset[k + 1] = acc;
+    }
+
     // Prefix sums of language-aware units for O(1) segment-length queries.
     // prefix[k] = total units of words[start .. start+k].
     let mut prefix = vec![0.0_f64; n + 1];
@@ -161,7 +190,7 @@ fn dp_split_span(
     // costs nothing (they delimit the span, not internal word gaps).
     base_cost[0] = 0.0;
     for k in 1..n {
-        base_cost[k] = boundary_base_cost(words, start + k - 1, vad_index);
+        base_cost[k] = boundary_base_cost(words, start + k - 1, vad_index, &advisor, byte_offset[k]);
     }
     base_cost[n] = 0.0;
 
