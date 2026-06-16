@@ -51,6 +51,12 @@ fn default_preset() -> String {
     "standard".to_string()
 }
 
+/// True for CJK languages that use character-based (not word-based) counting.
+fn is_cjk_lang(lang: &str) -> bool {
+    let l = lang.trim().to_ascii_lowercase();
+    l.starts_with("zh") || l.starts_with("yue") || l.starts_with("ja") || l.starts_with("ko")
+}
+
 struct Args {
     input: PathBuf,
     preset: Option<String>,
@@ -144,13 +150,25 @@ fn main() {
     };
 
     // --- statistics ---
+    // Language-aware unit counting: CJK languages have no word boundaries, so
+    // count characters instead of whitespace-split words.
+    let is_cjk = is_cjk_lang(&input.source_lang);
     let sentences = &step2.translation_sentences;
     let total = sentences.len();
     let word_counts: Vec<usize> = sentences
         .iter()
-        .map(|s| s.text.split_whitespace().count())
+        .map(|s| {
+            if is_cjk {
+                s.text.chars().filter(|c| !c.is_whitespace()).count()
+            } else {
+                s.text.split_whitespace().count()
+            }
+        })
         .collect();
-    let short = word_counts.iter().filter(|&&w| w <= 4).count();
+    let unit_label = if is_cjk { "chars" } else { "words" };
+    // For CJK the "short" threshold is higher (chars are finer-grained).
+    let short_threshold = if is_cjk { 8 } else { 4 };
+    let short = word_counts.iter().filter(|&&w| w <= short_threshold).count();
     let max_words = word_counts.iter().copied().max().unwrap_or(0);
     let avg_words = if total > 0 {
         word_counts.iter().sum::<usize>() as f64 / total as f64
@@ -179,8 +197,8 @@ fn main() {
     println!("vad segments:    {vad_count_actual}");
     println!("sentences:       {total}");
     println!("short (<=4 w):   {short} ({pct}%)", pct = if total > 0 { short * 100 / total } else { 0 });
-    println!("avg words/sent:  {avg_words:.1}");
-    println!("max words/sent:  {max_words}");
+    println!("avg {unit_label}/sent:  {avg_words:.1}");
+    println!("max {unit_label}/sent:  {max_words}");
     println!("splits:          terminal_punctuation={terminal}, subtitle_layout={layout}, merge={merge}");
     println!("elapsed:         {:.2}ms", elapsed.as_secs_f64() * 1000.0);
 

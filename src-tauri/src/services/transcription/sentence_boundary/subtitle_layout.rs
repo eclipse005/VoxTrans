@@ -56,12 +56,12 @@ fn boundary_base_cost(words: &[WordTokenDto], i: usize, vad_index: &SpeechSegmen
     if has_break_terminal_punctuation(&left.word) {
         return 0.5;
     }
-    // Soft clause punctuation (; : ， ； ：).
+    // Soft clause punctuation (; : ； ：).
     if ends_with_soft_punctuation(&left.word) {
         return 1.0;
     }
-    // Comma.
-    if left.word.trim_end().ends_with(',') {
+    // Comma (ASCII and CJK) — clause-internal pause.
+    if left.word.trim_end().ends_with(',') || left.word.trim_end().ends_with('，') {
         return 1.5;
     }
     // VAD silence crossing — acoustic boundary, better than a plain word gap.
@@ -173,7 +173,10 @@ fn dp_split_span(
     for i in 1..=n {
         // The last segment is words[start+j .. start+i]. Scan candidate starts
         // j from i-1 downward; once a segment exceeds max_units, earlier j only
-        // makes it longer, so we break.
+        // makes it longer, so we break. A single pathological token longer than
+        // max_units (e.g. an ASR encoding artifact) is left intact in its own
+        // segment — DP cannot split a token internally, and forcing a cut would
+        // only mangle the text.
         for j in (0..i).rev() {
             let seg_len = prefix[i] - prefix[j];
             if seg_len > max_units {
@@ -298,7 +301,7 @@ fn ends_with_soft_punctuation(token: &str) -> bool {
         .trim_end()
         .chars()
         .last()
-        .map(|ch| matches!(ch, ',' | ';' | ':' | '，' | '、' | '；' | '：'))
+        .map(|ch| matches!(ch, ';' | ':' | '，' | '；' | '：'))
         .unwrap_or(false)
 }
 
