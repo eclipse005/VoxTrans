@@ -11,13 +11,14 @@
 //! budget, where it contributes a lower cost (better cut) than a plain word
 //! boundary.
 //!
-//! All length accounting is language-aware via `token_units` / `use_char_units`
-//! (CJK languages count characters; Latin/Germanic count words), so the same
-//! algorithm works across every supported source language.
+//! All length accounting and connector/abbreviation data is language-aware
+//! via the [`LanguageProfile`] trait — this module never branches on language.
 
+use crate::services::subtitle_length::SubtitleLengthPreset;
 use crate::services::transcribe::WordTokenDto;
 use voxtrans_core::subtitle::text_rules::has_break_terminal_punctuation;
 
+use super::language::{Advisor, LanguageProfile};
 use super::types::SplitReason;
 use super::vad_align::SpeechSegmentIndex;
 
@@ -38,7 +39,8 @@ fn boundary_base_cost(
     words: &[WordTokenDto],
     i: usize,
     vad_index: &SpeechSegmentIndex,
-    advisor: &super::language::Advisor,
+    profile: &dyn LanguageProfile,
+    advisor: &Advisor,
     byte_offset: usize,
 ) -> f64 {
     let Some(left) = words.get(i) else {
@@ -71,11 +73,17 @@ fn boundary_base_cost(
         return 1.5;
     }
     // VAD silence crossing — acoustic boundary, better than a plain word gap.
+    // Cost scales with silence width: a long pause (≥1.2s, strength ~0.85)
+    // costs ~1.15 (nearly as good as soft punctuation), a short breath
+    // (<0.5s) costs ~1.9 (barely better than a word boundary). This makes the
+    // DP prefer cutting at long acoustic pauses inside overlong spans.
     if vad_index.crosses_silence(left.end, right.start) {
-        return 2.0;
+        let sil = vad_index.silence_duration_sec(left.end, right.start);
+        return 2.0 - super::vad_align::vad_strength(sil);
     }
-    // Before a connector word (and/but/so/because ...).
-    if is_connector_like(&right.word) && !is_connector_like(&left.word) {
+    // Before a connector word (and/but/so ... / 但是/因为 ... / しかし ...).
+    // The connector table is language-specific via the profile.
+    if is_connector_like(right.word.as_str(), profile) && !is_connector_like(left.word.as_str(), profile) {
         return 2.5;
     }
     // Plain word boundary — least preferred legal cut. For CJK languages,
@@ -87,23 +95,29 @@ fn boundary_base_cost(
     }
 }
 
+/// Is `token` a coordinator/subordinator in this language? Queries the
+/// profile's connector table (lowercased, alphabetic-only comparison).
+fn is_connector_like(token: &str, profile: &dyn LanguageProfile) -> bool {
+    let lower = token
+        .trim_matches(|ch: char| !ch.is_alphanumeric())
+        .to_ascii_lowercase();
+    profile.connectors().iter().any(|c| *c == lower.as_str())
+}
+
 /// Split overlong semantic spans into subtitle-length segments via DP.
 ///
 /// Returns absolute word indices with the dominant `SplitReason` for each cut.
 pub(super) fn build_subtitle_layout_split_points(
     words: &[WordTokenDto],
     semantic_spans: &[(usize, usize)],
-    source_lang: &str,
-    subtitle_length_preset: &str,
+    profile: &dyn LanguageProfile,
+    preset: SubtitleLengthPreset,
     vad_index: &SpeechSegmentIndex,
 ) -> Vec<(usize, SplitReason)> {
     if words.len() < 2 {
         return Vec::new();
     }
-    let limit = crate::services::subtitle_length::source_limit_for_preset(
-        source_lang,
-        subtitle_length_preset,
-    ) as f64;
+    let limit = profile.source_limit(preset) as f64;
     if limit <= 0.0 {
         return Vec::new();
     }
@@ -118,7 +132,7 @@ pub(super) fn build_subtitle_layout_split_points(
             words,
             span_start,
             span_end,
-            source_lang,
+            profile,
             limit,
             max_units,
             vad_index,
@@ -128,6 +142,8 @@ pub(super) fn build_subtitle_layout_split_points(
     }
     out
 }
+
+
 
 /// One DP-chosen cut: absolute word index + the dominant boundary reason.
 struct DpCut {
@@ -142,7 +158,7 @@ fn dp_split_span(
     words: &[WordTokenDto],
     start: usize,
     end: usize,
-    source_lang: &str,
+    profile: &dyn LanguageProfile,
     limit: f64,
     max_units: f64,
     vad_index: &SpeechSegmentIndex,
@@ -152,14 +168,15 @@ fn dp_split_span(
         return Vec::new();
     }
 
-    // Build the advisor for this span. For CJK languages, jieba tokenizes the
-    // span text to learn word boundaries; the advisor tells the cost function
-    // whether each token gap is a word boundary or inside a word.
+    // Build the advisor for this span. For Chinese (zh/yue), jieba tokenizes
+    // the span text to learn word boundaries; the advisor tells the cost
+    // function whether each token gap is a word boundary or inside a word.
+    // All other languages use the no-op DefaultAdvisor.
     let span_text: String = words[start..=end]
         .iter()
         .map(|w| w.word.as_str())
         .collect();
-    let advisor = super::language::advisor_for_lang(source_lang, &span_text);
+    let advisor = profile.word_boundary_advisor(&span_text);
     // Precompute byte offsets: byte_offset[k] = byte position in span_text
     // immediately after the k-th token (k = 0..n). The gap between token k-1
     // and token k is queried with byte_offset[k].
@@ -174,7 +191,7 @@ fn dp_split_span(
     // prefix[k] = total units of words[start .. start+k].
     let mut prefix = vec![0.0_f64; n + 1];
     for k in 0..n {
-        prefix[k + 1] = prefix[k] + token_units(&words[start + k].word, source_lang);
+        prefix[k + 1] = prefix[k] + profile.token_units(&words[start + k].word);
     }
 
     // Total span length under budget → no split needed (core guarantee).
@@ -190,7 +207,8 @@ fn dp_split_span(
     // costs nothing (they delimit the span, not internal word gaps).
     base_cost[0] = 0.0;
     for k in 1..n {
-        base_cost[k] = boundary_base_cost(words, start + k - 1, vad_index, &advisor, byte_offset[k]);
+        base_cost[k] =
+            boundary_base_cost(words, start + k - 1, vad_index, profile, &advisor, byte_offset[k]);
     }
     base_cost[n] = 0.0;
 
@@ -250,80 +268,7 @@ fn dp_split_span(
         .collect()
 }
 
-// ---- language-aware length accounting (shared) ----
-
-fn token_units(token: &str, source_lang: &str) -> f64 {
-    if use_char_units(source_lang, token) {
-        let units = count_char_units(token);
-        if units == 0 { 0.0 } else { units as f64 }
-    } else if token
-        .chars()
-        .any(|ch| ch.is_alphanumeric() || is_cjk_char(ch))
-    {
-        1.0
-    } else {
-        0.0
-    }
-}
-
-/// CJK/Korean languages count characters; everything else counts words.
-/// A token containing any CJK char also uses char units regardless of the
-/// declared language (handles mixed-language tokens).
-fn use_char_units(source_lang: &str, text: &str) -> bool {
-    let lang = source_lang.trim().to_ascii_lowercase();
-    lang.starts_with("zh")
-        || lang.starts_with("yue")
-        || lang.starts_with("ja")
-        || lang.starts_with("ko")
-        || text.chars().any(is_cjk_char)
-}
-
-/// Character-based unit count for CJK: each CJK/alphabetic char is 1 unit;
-/// a run of ASCII alphanumeric chars (e.g. "GDP") counts as 1 unit so Latin
-/// words embedded in CJK text don't inflate the count.
-fn count_char_units(text: &str) -> usize {
-    let mut total = 0usize;
-    let mut in_ascii_group = false;
-    for ch in text.chars() {
-        if ch.is_whitespace() {
-            if in_ascii_group {
-                total += 1;
-                in_ascii_group = false;
-            }
-            continue;
-        }
-        if ch.is_ascii_alphanumeric() {
-            in_ascii_group = true;
-            continue;
-        }
-        if in_ascii_group {
-            total += 1;
-            in_ascii_group = false;
-        }
-        if is_counted_char(ch) {
-            total += 1;
-        }
-    }
-    if in_ascii_group {
-        total += 1;
-    }
-    total
-}
-
-fn is_counted_char(ch: char) -> bool {
-    is_cjk_char(ch) || ch.is_alphanumeric()
-}
-
-fn is_cjk_char(ch: char) -> bool {
-    matches!(
-        ch as u32,
-        0x3040..=0x30FF
-            | 0x3400..=0x4DBF
-            | 0x4E00..=0x9FFF
-            | 0xF900..=0xFAFF
-            | 0xAC00..=0xD7AF
-    )
-}
+// ---- punctuation / number helpers (language-independent) ----
 
 fn ends_with_soft_punctuation(token: &str) -> bool {
     token
@@ -372,36 +317,4 @@ fn is_numeric_continuation(left: &str, right: &str) -> bool {
     let right_head = right.trim_start().chars().next();
     matches!(left_tail, Some('$' | '¥' | '€' | '£' | '.' | ',' | '%'))
         || matches!(right_head, Some('%' | '.' | ',' | '$' | '¥' | '€' | '£'))
-}
-
-fn is_connector_like(token: &str) -> bool {
-    let lower = token
-        .trim_matches(|ch: char| !ch.is_alphanumeric())
-        .to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "and"
-            | "but"
-            | "or"
-            | "so"
-            | "because"
-            | "when"
-            | "while"
-            | "which"
-            | "that"
-            | "if"
-            | "then"
-            | "though"
-            | "although"
-            | "however"
-            | "therefore"
-            | "pero"
-            | "porque"
-            | "donc"
-            | "mais"
-            | "und"
-            | "oder"
-            | "aber"
-            | "quindi"
-    )
 }

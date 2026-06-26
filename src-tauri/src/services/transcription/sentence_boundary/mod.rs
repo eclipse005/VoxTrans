@@ -45,28 +45,30 @@ pub async fn build_source_sentences_from_words_with_progress(
     }
 
     let vad_index = vad_align::SpeechSegmentIndex::new(request.vad_speech_segments.clone());
+    let profile = language::profile_for_lang(&request.source_lang);
+    let preset =
+        crate::services::subtitle_length::subtitle_length_preset_from_id(
+            &request.subtitle_length_preset,
+        );
 
     let micro_chunks = build_micro_chunks(&normalized_words, &vad_index);
     if micro_chunks.is_empty() {
         return Err("failed to build micro chunks".to_string());
     }
 
-    let hard_split_points = build_split_points_from_hard_boundaries(&normalized_words);
-    let split_points = if request.use_subtitle_layout_split {
-        let semantic_spans = split_points_to_spans(normalized_words.len(), &hard_split_points);
-        merge_split_points(
-            hard_split_points,
-            build_subtitle_layout_split_points(
-                &normalized_words,
-                &semantic_spans,
-                &request.source_lang,
-                &request.subtitle_length_preset,
-                &vad_index,
-            ),
-        )
-    } else {
-        hard_split_points
-    };
+    let hard_split_points =
+        build_split_points_from_hard_boundaries(&normalized_words, &*profile);
+    let semantic_spans = split_points_to_spans(normalized_words.len(), &hard_split_points);
+    let split_points = merge_split_points(
+        hard_split_points,
+        build_subtitle_layout_split_points(
+            &normalized_words,
+            &semantic_spans,
+            &*profile,
+            preset,
+            &vad_index,
+        ),
+    );
     let spans = split_points_to_spans(normalized_words.len(), &split_points);
     if spans.is_empty() {
         return Err("failed to build sentence spans".to_string());

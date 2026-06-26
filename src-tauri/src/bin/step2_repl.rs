@@ -129,7 +129,6 @@ fn main() {
         media_path: String::new(),
         source_lang: input.source_lang.clone(),
         subtitle_length_preset: preset.clone(),
-        use_subtitle_layout_split: true,
         words: input.words,
         vad_speech_segments: input.vad_speech_segments,
     };

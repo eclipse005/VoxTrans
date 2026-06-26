@@ -55,6 +55,75 @@ impl SpeechSegmentIndex {
         }
         false
     }
+
+    /// Width (seconds) of the VAD silence gap that the cut point between
+    /// `left_end_sec` and `right_start_sec` falls inside. Returns 0.0 when the
+    /// cut does not cross a silence gap (same tolerance window as
+    /// [`Self::crosses_silence`]). Used to weigh the DP cost: a longer silence
+    /// is a stronger sentence-end signal.
+    pub(super) fn silence_duration_sec(
+        &self,
+        left_end_sec: f64,
+        right_start_sec: f64,
+    ) -> f64 {
+        if self.segments.len() < 2 {
+            return 0.0;
+        }
+        let cut = (left_end_sec + right_start_sec) / 2.0;
+        for window in self.segments.windows(2) {
+            let silence_start = window[0].1;
+            let silence_end = window[1].0;
+            if cut >= silence_start - CUT_POINT_TOLERANCE_SEC
+                && cut <= silence_end + CUT_POINT_TOLERANCE_SEC
+            {
+                return (silence_end - silence_start).max(0.0);
+            }
+        }
+        0.0
+    }
+}
+
+/// Map a VAD silence duration to a normalized strength in `[0.0, 1.0]`.
+///
+/// The curve is piecewise-linear: breath pauses (<0.3s) contribute nothing;
+/// the signal ramps up through 0.5s (0.25), 0.8s (0.55), 1.2s (0.85), and
+/// saturates at 1.0 beyond 2.0s. Longer silences are progressively stronger
+/// sentence-end signals — a speaker who pauses for 1.2s almost certainly
+/// finished a thought. Language-independent (purely acoustic).
+///
+/// Used by the DP cost function: `cost = 2.0 - vad_strength(silence)`, so a
+/// 1.2s pause (strength 0.85) costs 1.15 — nearly as good as soft clause
+/// punctuation (1.0) — while a 0.4s breath (strength ~0.07) costs ~1.93,
+/// barely better than a plain word boundary.
+pub(super) fn vad_strength(silence_sec: f64) -> f64 {
+    // Anchor points: (silence_seconds, strength)
+    const ANCHORS: [(f64, f64); 6] = [
+        (0.0, 0.0),
+        (0.3, 0.0),   // below this: noise/breath, no signal
+        (0.5, 0.25),
+        (0.8, 0.55),
+        (1.2, 0.85),
+        (2.0, 1.0),   // saturated
+    ];
+    if silence_sec <= 0.3 {
+        return 0.0;
+    }
+    if silence_sec >= 2.0 {
+        return 1.0;
+    }
+    // Linear interpolation between the two surrounding anchors.
+    for window in ANCHORS.windows(2) {
+        let (lo_s, lo_v) = window[0];
+        let (hi_s, hi_v) = window[1];
+        if silence_sec >= lo_s && silence_sec <= hi_s {
+            if (hi_s - lo_s).abs() < f64::EPSILON {
+                return hi_v;
+            }
+            let t = (silence_sec - lo_s) / (hi_s - lo_s);
+            return lo_v + t * (hi_v - lo_v);
+        }
+    }
+    1.0
 }
 
 #[cfg(test)]
@@ -114,5 +183,47 @@ mod tests {
         let i = idx();
         // Words span the [5.0, 6.0] gap.
         assert!(i.crosses_silence(5.1, 5.9));
+    }
+
+    #[test]
+    fn silence_duration_returns_gap_width() {
+        // Custom index: a 1.5s gap between [0,1] and [2.5,4].
+        let i = SpeechSegmentIndex::new(vec![(0.0, 1.0), (2.5, 4.0)]);
+        // Words spanning the gap: midpoint falls inside [1.0, 2.5].
+        assert_eq!(i.silence_duration_sec(1.2, 2.3), 1.5);
+    }
+
+    #[test]
+    fn silence_duration_zero_when_not_crossing() {
+        let i = idx();
+        // Words both inside [3.0, 5.0] — no crossing.
+        assert_eq!(i.silence_duration_sec(3.5, 4.0), 0.0);
+    }
+
+    #[test]
+    fn vad_strength_curve_anchors() {
+        // Breath / noise: no signal.
+        assert_eq!(vad_strength(0.0), 0.0);
+        assert_eq!(vad_strength(0.2), 0.0);
+        assert_eq!(vad_strength(0.3), 0.0);
+        // Ramp-up anchors.
+        assert!((vad_strength(0.5) - 0.25).abs() < 1e-9);
+        assert!((vad_strength(0.8) - 0.55).abs() < 1e-9);
+        assert!((vad_strength(1.2) - 0.85).abs() < 1e-9);
+        // Saturation.
+        assert_eq!(vad_strength(2.0), 1.0);
+        assert_eq!(vad_strength(5.0), 1.0);
+    }
+
+    #[test]
+    fn vad_strength_monotonic_non_decreasing() {
+        let mut prev = 0.0;
+        let mut t = 0.0;
+        while t <= 3.0 {
+            let s = vad_strength(t);
+            assert!(s >= prev - 1e-9, "strength decreased at t={t}: {s} < {prev}");
+            prev = s;
+            t += 0.05;
+        }
     }
 }

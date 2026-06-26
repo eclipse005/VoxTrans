@@ -104,11 +104,6 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             media_path: record.item.path.clone(),
             source_lang: source_lang.clone(),
             subtitle_length_preset: runtime.subtitle_length_preset.clone(),
-            // DP length-split is now always on. Previously it was disabled for
-            // TRANSLATE mode because step5 (LLM split/align) handled long lines
-            // downstream; step5 has been removed, so segmentation must produce
-            // already-length-correct rows for the 1:1 translation.
-            use_subtitle_layout_split: true,
             words: step2_words,
             vad_speech_segments: step1_exec.output.vad_speech_segments.clone(),
         },

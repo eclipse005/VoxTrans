@@ -197,7 +197,6 @@ pub(in crate::commands::workspace) struct Step2SegmentsPipelineStep {
     pub(in crate::commands::workspace) media_path: String,
     pub(in crate::commands::workspace) source_lang: String,
     pub(in crate::commands::workspace) subtitle_length_preset: String,
-    pub(in crate::commands::workspace) use_subtitle_layout_split: bool,
     pub(in crate::commands::workspace) words:
         Vec<crate::commands::transcription::WordTokenCommandDto>,
     pub(in crate::commands::workspace) vad_speech_segments: Vec<(f64, f64)>,
@@ -228,7 +227,6 @@ impl PipelineStep for Step2SegmentsPipelineStep {
             audio_path: self.media_path.clone(),
             source_lang: self.source_lang.clone(),
             subtitle_length_preset: self.subtitle_length_preset.clone(),
-            use_subtitle_layout_split: self.use_subtitle_layout_split,
             words: self.words.clone(),
             vad_speech_segments: self.vad_speech_segments.clone(),
         };

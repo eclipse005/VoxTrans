@@ -23,29 +23,21 @@ fn request_with_lang_and_preset(
     source_lang: &str,
     subtitle_length_preset: &str,
 ) -> super::SentenceBoundaryRequest {
-    request_with_lang_preset_and_layout(words, source_lang, subtitle_length_preset, true)
+    request_with_lang_preset_and_layout(words, source_lang, subtitle_length_preset)
 }
 
 fn request_with_lang_preset_and_layout(
     words: Vec<WordTokenDto>,
     source_lang: &str,
     subtitle_length_preset: &str,
-    use_subtitle_layout_split: bool,
 ) -> super::SentenceBoundaryRequest {
-    request_with_vad(
-        words,
-        source_lang,
-        subtitle_length_preset,
-        use_subtitle_layout_split,
-        Vec::new(),
-    )
+    request_with_vad(words, source_lang, subtitle_length_preset, Vec::new())
 }
 
 fn request_with_vad(
     words: Vec<WordTokenDto>,
     source_lang: &str,
     subtitle_length_preset: &str,
-    use_subtitle_layout_split: bool,
     vad_speech_segments: Vec<(f64, f64)>,
 ) -> super::SentenceBoundaryRequest {
     super::SentenceBoundaryRequest {
@@ -53,7 +45,6 @@ fn request_with_vad(
         media_path: "demo.mp4".to_string(),
         source_lang: source_lang.to_string(),
         subtitle_length_preset: subtitle_length_preset.to_string(),
-        use_subtitle_layout_split,
         words,
         vad_speech_segments,
     }
@@ -177,6 +168,42 @@ fn abbreviation_terminal_punctuation_does_not_split_step2_sentence() {
     let spans = build_deterministic_sentence_spans(&words);
 
     assert_eq!(spans, vec![(0, 2)]);
+}
+
+#[test]
+fn single_letter_enumeration_token_forces_step2_split() {
+    // Reproduces the "step one B. So ..." regression: a single-letter dotted
+    // token is NOT a name initial — it's a spoken enumeration end. The `.`
+    // must force a split, and the following capitalized sentence becomes its
+    // own span.
+    let words = vec![
+        w(0, "step"),
+        w(1, "one"),
+        w(2, "B."),
+        w(3, "So"),
+        w(4, "let's"),
+        w(5, "go."),
+    ];
+
+    let spans = build_deterministic_sentence_spans(&words);
+
+    assert_eq!(spans, vec![(0, 2), (3, 5)]);
+}
+
+#[test]
+fn consecutive_single_letter_initials_chain_only_protects_internal_pairs() {
+    // "J. K. Rowling" — the chain J.→K. is protected (both single-letter), so
+    // no split between them. But K.→Rowling is NOT protected (Rowling is a
+    // normal word), so K. is treated as an isolated terminal and splits.
+    // This is the intended design: single-letter protection is pairwise, so
+    // the *internal* bond of an initial chain holds, but a trailing isolated
+    // initial still acts as a sentence end. Real ASR rarely emits initial
+    // chains, so the common case ("step one B.") splits correctly.
+    let words = vec![w(0, "J."), w(1, "K."), w(2, "Rowling")];
+
+    let spans = build_deterministic_sentence_spans(&words);
+
+    assert_eq!(spans, vec![(0, 1), (2, 2)]);
 }
 
 #[test]
@@ -320,34 +347,6 @@ fn local_subtitle_layout_splits_long_semantic_sentence_near_punctuation() {
 }
 
 #[test]
-fn translation_mode_keeps_long_semantic_sentence_without_layout_split() {
-    let text = "Today the translation pipeline keeps complete semantic sentences for accurate review, but it should leave subtitle readability splitting to the later LLM alignment stage.";
-    let words = text
-        .split_whitespace()
-        .enumerate()
-        .map(|(index, token)| w(index, token))
-        .collect::<Vec<_>>();
-
-    let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
-        request_with_lang_preset_and_layout(words, "en", "short", false),
-        None,
-    ))
-    .expect("step2 should build translation source sentences");
-
-    assert_eq!(response.sentence_total, 1);
-    assert_eq!(
-        response.translation_sentences[0].text,
-        "Today the translation pipeline keeps complete semantic sentences for accurate review, but it should leave subtitle readability splitting to the later LLM alignment stage."
-    );
-    assert!(
-        response
-            .boundaries
-            .iter()
-            .all(|boundary| boundary.reason_tag != "subtitle_layout")
-    );
-}
-
-#[test]
 fn short_sentence_with_vad_pause_stays_intact() {
     // 4 words with a VAD silence gap in the middle, but well under the length
     // budget (short preset = 12 words). After the DP rewrite, this is NOT
@@ -380,7 +379,6 @@ fn short_sentence_with_vad_pause_stays_intact() {
             words,
             "en",
             "short",
-            true,
             // VAD detects a silence gap [0.5, 2.8] between "pause" and "after".
             vec![(0.0, 0.5), (2.8, 3.3)],
         ),
@@ -431,8 +429,9 @@ fn vad_sustains_segmentation_when_punctuation_stripped() {
     ];
 
     // semantic.rs: no terminal punctuation → no hard split (correct).
+    let en_profile = super::language::profile_for_lang("en");
     let splits_semantic =
-        super::semantic::build_split_points_from_hard_boundaries(&words_stripped);
+        super::semantic::build_split_points_from_hard_boundaries(&words_stripped, &*en_profile);
     assert!(
         splits_semantic.is_empty(),
         "no punctuation → no semantic hard split"
@@ -441,14 +440,18 @@ fn vad_sustains_segmentation_when_punctuation_stripped() {
     // Build semantic spans (one span: 0..19, since no hard split).
     let semantic_spans = super::split_points_to_spans(words_stripped.len(), &splits_semantic);
 
+    let en_profile = super::language::profile_for_lang("en");
+    let short_preset =
+        crate::services::subtitle_length::subtitle_length_preset_from_id("short");
+
     // DP with VAD: overlong span must be split, and the VAD silence gap
     // (cost 2.0) should be chosen over plain word boundaries (cost 6.0).
     let idx_vad = super::vad_align::SpeechSegmentIndex::new(vad_segments);
     let splits_vad = super::subtitle_layout::build_subtitle_layout_split_points(
         &words_stripped,
         &semantic_spans,
-        "en",
-        "short",
+        &*en_profile,
+        short_preset,
         &idx_vad,
     );
     assert!(
@@ -463,8 +466,8 @@ fn vad_sustains_segmentation_when_punctuation_stripped() {
     let splits_no_vad = super::subtitle_layout::build_subtitle_layout_split_points(
         &words_stripped,
         &semantic_spans,
-        "en",
-        "short",
+        &*en_profile,
+        short_preset,
         &idx_empty,
     );
     assert!(
