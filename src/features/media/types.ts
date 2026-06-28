@@ -1,7 +1,7 @@
 export const PROVIDER_IDS = ["cpu", "cuda"] as const;
 export type Provider = (typeof PROVIDER_IDS)[number];
 export type ModelTarget = "asr" | "align" | "demucs";
-export type AsrModel = "Qwen3-ASR-0.6B" | "Qwen3-ASR-1.7B";
+export type AsrModel = "Qwen3-ASR-0.6B" | "Qwen3-ASR-1.7B" | "cohere-transcribe-03-2026";
 export type AlignModel = "Qwen3-ForcedAligner-0.6B";
 export type DemucsModel = "htdemucs_ft";
 

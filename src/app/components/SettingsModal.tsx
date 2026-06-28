@@ -770,6 +770,19 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
               />
 
               <ModelDownloadCard
+                target="asr"
+                title="ASR 模型"
+                description="Cohere Transcribe 开源 2B 参数语音识别模型，支持 14 种语言，负责从音频生成纯文本，时间戳同样由独立对齐模型处理。"
+                modelName="cohere-transcribe-03-2026"
+                selected={ctx.form.asrModel === "cohere-transcribe-03-2026"}
+                status={ctx.asrStatusByModel["cohere-transcribe-03-2026"] ?? (ctx.form.asrModel === "cohere-transcribe-03-2026" ? ctx.asrStatus : null)}
+                onSelect={() => ctx.setForm((prev) => ({ ...prev, asrModel: "cohere-transcribe-03-2026" }))}
+                onOpenModelDir={ctx.openModelDir}
+                onStartModelDownload={ctx.startModelDownload}
+                onCancelModelDownload={ctx.cancelModelDownload}
+              />
+
+              <ModelDownloadCard
                 target="align"
                 title="对齐模型"
                 description="Qwen3 Forced Aligner 负责把转录文本对齐回音频，生成词级时间戳。"

@@ -42,6 +42,7 @@ const initialModelStatus: ModelStatusByTarget = {
 const initialAsrStatusByModel: AsrStatusByModel = {
   "Qwen3-ASR-0.6B": null,
   "Qwen3-ASR-1.7B": null,
+  "cohere-transcribe-03-2026": null,
 };
 
 export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }: UseModelManagerArgs) {
@@ -58,15 +59,17 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
 
   const refreshModelStatus = useCallback(async () => {
     try {
-      const [asr06b, asr17b, align, demucs] = await Promise.all([
+      const [asr06b, asr17b, cohere, align, demucs] = await Promise.all([
         getModelStatus("asr", "Qwen3-ASR-0.6B"),
         getModelStatus("asr", "Qwen3-ASR-1.7B"),
+        getModelStatus("asr", "cohere-transcribe-03-2026"),
         getModelStatus("align", alignModelRef.current),
         getModelStatus("demucs", demucsModelRef.current),
       ]);
       const nextAsrStatusByModel = {
         "Qwen3-ASR-0.6B": asr06b,
         "Qwen3-ASR-1.7B": asr17b,
+        "cohere-transcribe-03-2026": cohere,
       };
       setAsrStatusByModel(nextAsrStatusByModel);
       setStatusByTarget({
@@ -96,7 +99,13 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
       const payload = event.payload;
       if (!payload?.target) return;
       const target = payload.target;
-      if (target === "asr" && payload.model !== "Qwen3-ASR-0.6B" && payload.model !== "Qwen3-ASR-1.7B") return;
+      if (
+        target === "asr" &&
+        payload.model !== "Qwen3-ASR-0.6B" &&
+        payload.model !== "Qwen3-ASR-1.7B" &&
+        payload.model !== "cohere-transcribe-03-2026"
+      )
+        return;
       if (target === "align" && payload.model !== alignModelRef.current) return;
       if (target === "demucs" && payload.model !== demucsModelRef.current) return;
       if (target === "asr") {
@@ -224,7 +233,12 @@ function modelForTarget(
   demucsModel: DemucsModel,
   overrideModel?: string,
 ): AsrModel | AlignModel | DemucsModel {
-  if (target === "asr" && (overrideModel === "Qwen3-ASR-0.6B" || overrideModel === "Qwen3-ASR-1.7B")) {
+  if (
+    target === "asr" &&
+    (overrideModel === "Qwen3-ASR-0.6B" ||
+      overrideModel === "Qwen3-ASR-1.7B" ||
+      overrideModel === "cohere-transcribe-03-2026")
+  ) {
     return overrideModel;
   }
   if (target === "asr") return asrModel;

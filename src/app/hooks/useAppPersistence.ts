@@ -155,7 +155,7 @@ function normalizeSubtitleLengthPreset(value: unknown): SubtitleLengthPreset {
 }
 
 function normalizeAsrModel(value: unknown): AsrModel {
-  if (value === "Qwen3-ASR-0.6B" || value === "Qwen3-ASR-1.7B") {
+  if (value === "Qwen3-ASR-0.6B" || value === "Qwen3-ASR-1.7B" || value === "cohere-transcribe-03-2026") {
     return value;
   }
   return "Qwen3-ASR-0.6B";
