@@ -4,19 +4,6 @@ version = "1.0.4"
 edition = "2024"
 default-run = "voxtrans"
 
-# Offline Step2 segmentation REPL — runs the sentence-boundary pipeline on a
-# JSON fixture (words + VAD + lang + preset) without the GPU/ASR stack. Used
-# to iterate cost parameters in milliseconds.
-[[bin]]
-name = "step2-repl"
-path = "src/bin/step2_repl.rs"
-
-# One-shot exporter: dump step_01_asr artifacts from the GUI SQLite DB into
-# JSON fixtures consumable by step2-repl.
-[[bin]]
-name = "export-asr-artifacts"
-path = "src/bin/export_asr_artifacts.rs"
-
 [features]
 default = []
 cuda = ["qwen3-asr/cuda", "qwen-forced-aligner-rs/cuda"]
