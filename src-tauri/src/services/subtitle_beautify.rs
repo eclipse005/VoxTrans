@@ -8,6 +8,9 @@ pub fn beautify_subtitle_srt_segments(
     subtitle_length_preset: &str,
     target_lang: &str,
 ) {
+    if target_lang != "zh-CN" {
+        return;
+    }
     for segment in &mut *segments {
         segment.translated_text = beautify_subtitle_text(&segment.translated_text);
     }
@@ -112,7 +115,7 @@ fn trim_bounding_punctuation(text: &str) -> String {
 }
 
 fn is_subtitle_boundary_punctuation(ch: char) -> bool {
-    matches!(ch, '.' | '。')
+    matches!(ch, '.' | '。' | ',' | '，')
 }
 
 fn remove_internal_commas_for_subtitle(text: &str) -> String {
@@ -120,28 +123,26 @@ fn remove_internal_commas_for_subtitle(text: &str) -> String {
     let mut out = String::new();
     for idx in 0..chars.len() {
         let ch = chars[idx];
-        if ch == ',' {
-            let prev = chars.get(idx.wrapping_sub(1)).copied();
-            let next = chars.get(idx + 1).copied();
-            if prev.is_some_and(|value| value.is_ascii_digit())
-                && next.is_some_and(|value| value.is_ascii_digit())
-            {
-                out.push(ch);
-            } else {
+        match ch {
+            ',' => {
+                // Keep digit-separator commas like "3,000", replace all others with space.
+                let prev = chars.get(idx.wrapping_sub(1)).copied();
+                let next = chars.get(idx + 1).copied();
+                if prev.is_some_and(|value| value.is_ascii_digit())
+                    && next.is_some_and(|value| value.is_ascii_digit())
+                {
+                    out.push(ch);
+                } else {
+                    out.push(' ');
+                }
+            }
+            '，' | '.' | '。' => {
+                // ponytail: Chinese commas/periods and ASCII periods become spaces.
+                // Other punctuation (？！、！ etc.) is left untouched.
                 out.push(' ');
             }
-            continue;
+            _ => out.push(ch),
         }
-        if ch == '，' {
-            // Mirror the ASCII branch: replace with a space, not silently
-            // drop. Otherwise two CJK words get glued together
-            // ("...很棒，但..." → "...很棒但..." instead of "...很棒 但...")
-            // since CJK↔CJK never triggers normalize_cjk_ascii_spacing.
-            // collapse_multiple_spaces collapses any runs we introduce.
-            out.push(' ');
-            continue;
-        }
-        out.push(ch);
     }
     out
 }
@@ -233,6 +234,27 @@ mod tests {
     }
 
     #[test]
+    fn subtitle_beautify_text_handles_chinese_commas_and_periods() {
+        // Leading/trailing Chinese comma and period are stripped.
+        assert_eq!(beautify_subtitle_text("，你好，世界。"), "你好 世界");
+        // Internal commas and periods become spaces.
+        assert_eq!(
+            beautify_subtitle_text("你好，世界。你好。世界，"),
+            "你好 世界 你好 世界"
+        );
+        // Mixed: leading period, internal comma+period.
+        assert_eq!(
+            beautify_subtitle_text("。你好，世界。再见，"),
+            "你好 世界 再见"
+        );
+        // Other punctuation (？！、！) is left untouched.
+        assert_eq!(
+            beautify_subtitle_text("你好！真的吗？"),
+            "你好！真的吗？"
+        );
+    }
+
+    #[test]
     fn subtitle_beautify_srt_segments_only_changes_translation() {
         let mut segments = vec![SubtitleSrtSegment {
             start_ms: 0,
@@ -247,6 +269,22 @@ mod tests {
         assert_eq!(segments[0].source_text, " (Hello, world), ");
         // translated_text: commas → spaces; parens kept; periods trimmed.
         assert_eq!(segments[0].translated_text, "(你好 世界)");
+    }
+
+    #[test]
+    fn subtitle_beautify_srt_segments_skips_non_chinese() {
+        let mut segments = vec![SubtitleSrtSegment {
+            start_ms: 0,
+            end_ms: 1000,
+            source_text: "Hello, world.".to_string(),
+            translated_text: "Hola, mundo.".to_string(),
+        }];
+
+        beautify_subtitle_srt_segments(&mut segments, "standard", "en");
+
+        // Non-Chinese: text should be completely untouched.
+        assert_eq!(segments[0].translated_text, "Hola, mundo.");
+        assert_eq!(segments.len(), 1);
     }
 
     #[test]
@@ -336,6 +374,7 @@ mod tests {
         assert!(need_cjk_ascii_space('码', 'v'));
         assert!(!need_cjk_ascii_space('码', ','));
         assert_eq!(collapse_multiple_spaces("a   b"), "a b");
-        assert_eq!(trim_bounding_punctuation("「Hello，"), "「Hello，");
+        // Commas are now also boundary punctuation.
+        assert_eq!(trim_bounding_punctuation("，Hello，"), "Hello");
     }
 }
