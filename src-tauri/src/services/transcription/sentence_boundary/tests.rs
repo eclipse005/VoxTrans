@@ -14,6 +14,10 @@ fn w(index: usize, text: &str) -> WordTokenDto {
     }
 }
 
+/// Mirrors the production `MIN_FRAGMENT_UNITS` floor (subtitle_layout.rs).
+/// Kept here as a literal so tests don't reach into a private module constant.
+const MIN_FRAGMENT_WORDS: usize = 2;
+
 fn request(words: Vec<WordTokenDto>) -> super::SentenceBoundaryRequest {
     request_with_lang_and_preset(words, "en", "standard")
 }
@@ -474,4 +478,116 @@ fn vad_sustains_segmentation_when_punctuation_stripped() {
         !splits_no_vad.is_empty(),
         "overlong span must be split even without VAD"
     );
+}
+
+/// Regression: an overlong semantic span that *starts* with a short discourse
+/// marker + comma (e.g. "Now, the first step ...") must NOT have that marker
+/// isolated as its own subtitle line. Before the short-fragment absorption,
+/// the DP preferred the cheap comma cut (cost 1.5) and produced a lone "Now,"
+/// cue. After the fix the marker is absorbed into the following segment.
+#[test]
+fn dp_does_not_isolate_leading_discourse_marker() {
+    // "Now," + an 18-word body well past the "short" preset limit (12 words).
+    let body = [
+        "the", "first", "step", "is", "basically", "determining", "your",
+        "directional", "bias", "and", "your", "drawn", "liquidity", "on",
+        "the", "daily", "time", "frame.",
+    ];
+    let mut words = vec![w(0, "Now,")];
+    for (i, tok) in body.iter().enumerate() {
+        words.push(w(i + 1, tok));
+    }
+
+    let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
+        request_with_lang_and_preset(words, "en", "short"),
+        None,
+    ))
+    .expect("step2 should build sentences");
+
+    // No cue may read exactly "Now," — it must have been absorbed.
+    assert!(
+        !response
+            .translation_sentences
+            .iter()
+            .any(|s| s.text.trim() == "Now,"),
+        "leading discourse marker was isolated as its own cue: {:?}",
+        response
+            .translation_sentences
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+    );
+    // And the first cue must still begin with "Now," (the marker survived, just
+    // merged with the following body).
+    assert!(
+        response.translation_sentences[0]
+            .text
+            .starts_with("Now,"),
+        "marker text was lost during absorption: {:?}",
+        response.translation_sentences[0].text
+    );
+}
+
+/// A trailing fragment (last DP segment below the floor) is absorbed into the
+/// preceding segment by dropping its left cut, not orphaned.
+#[test]
+fn dp_absorbs_trailing_short_fragment() {
+    // Body of ~14 words (over the short limit of 12) ending in a 1-word
+    // trailing fragment that DP would otherwise leave dangling.
+    let tokens = [
+        "this", "is", "a", "long", "unpunctuated", "run", "of", "words", "that",
+        "must", "be", "split", "into", "two", "parts", "now",
+    ];
+    let words = tokens
+        .iter()
+        .enumerate()
+        .map(|(i, t)| w(i, t))
+        .collect::<Vec<_>>();
+
+    let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
+        request_with_lang_and_preset(words, "en", "short"),
+        None,
+    ))
+    .expect("step2 should build sentences");
+
+    // No cue may be a single short word ("now") left dangling at the end.
+    let last = response
+        .translation_sentences
+        .last()
+        .expect("at least one sentence");
+    assert!(
+        last.text.split_whitespace().count() > MIN_FRAGMENT_WORDS,
+        "trailing single-word fragment was not absorbed: {:?}",
+        last.text
+    );
+}
+
+/// Smoke test: the pre-existing overlong-split behavior still produces two
+/// reasonable cues (no regression from the absorption pass).
+#[test]
+fn overlong_split_survives_fragment_absorption() {
+    let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
+        request_with_lang_and_preset(
+            "Today the local transcription pipeline keeps complete semantic sentences for accurate review, but it should split long subtitle lines near punctuation for comfortable offline viewing."
+                .split_whitespace()
+                .enumerate()
+                .map(|(i, t)| w(i, t))
+                .collect::<Vec<_>>(),
+            "en",
+            "short",
+        ),
+        None,
+    ))
+    .expect("step2 should split overlong sentence");
+
+    // Should still split into two cues, neither of which is a ≤2-word fragment.
+    assert_eq!(response.sentence_total, 2);
+    for s in &response.translation_sentences {
+        let wc = s.text.split_whitespace().count();
+        assert!(
+            wc > MIN_FRAGMENT_WORDS,
+            "a cue collapsed to a fragment after absorption: {:?}",
+            s.text
+        );
+    }
 }

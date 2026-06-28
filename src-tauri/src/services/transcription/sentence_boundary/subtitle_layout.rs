@@ -25,6 +25,11 @@ use super::vad_align::SpeechSegmentIndex;
 /// Hard ceiling: a segment up to this ratio of `limit` is kept intact. Above
 /// it, the DP splitter must find cuts.
 const KEEP_INTACT_RATIO: f64 = 1.15;
+/// Floor: a DP-produced segment at or below this many length units is an
+/// unreadable fragment (e.g. a lone "Now," / "Okay," discourse marker) and is
+/// absorbed into an adjacent segment after backtracking. Measured in the same
+/// language-aware units as the length budget (words for Latin, chars for CJK).
+const MIN_FRAGMENT_UNITS: f64 = 2.0;
 /// Weight of the length-penalty term relative to boundary base-costs. Kept
 /// small (0.3) so boundary quality dominates: a soft-punctuation cut (cost 1.0)
 /// always beats a plain word boundary (cost 6.0) regardless of length fit.
@@ -256,6 +261,14 @@ fn dp_split_span(
     }
     cuts_rel.reverse();
 
+    // Absorb DP fragments that are too short to stand alone as a subtitle line
+    // (e.g. a lone "Now," / "Okay," discourse marker isolated by a cheap comma
+    // cut). This merges them into an adjacent segment, accepting a segment that
+    // slightly exceeds `max_units` — readability over length precision. Only DP
+    // cuts are touched; terminal-punctuation boundaries from semantic.rs stay
+    // sacred (the spans this function receives are already delimited by them).
+    absorb_short_fragments(&mut cuts_rel, &prefix, n);
+
     // Map relative cut positions to absolute indices. All DP-chosen cuts are
     // length-budget-driven, so they carry `SubtitleLayout` regardless of which
     // boundary (comma / VAD / connector) the cost function preferred.
@@ -266,6 +279,55 @@ fn dp_split_span(
             reason: SplitReason::SubtitleLayout,
         })
         .collect()
+}
+
+/// Merge DP segments shorter than [`MIN_FRAGMENT_UNITS`] into an adjacent
+/// segment by dropping the cut that isolates them.
+///
+/// Given `cuts_rel` (sorted cut positions, each `k` meaning "cut after the
+/// k-th word, 1-indexed") and `prefix` (prefix sums of length units over the
+/// `n`-word span), repeatedly find the first too-short segment and dissolve
+/// its boundary:
+/// - **Leading / interior fragment**: drop its right cut → merges with the
+///   following segment. A leading fragment (e.g. `Now,` at the span head) has
+///   no preceding semantic sentence to fall back into, so it must join the
+///   following segment even if that briefly exceeds the budget.
+/// - **Trailing fragment**: no right cut exists → drop its left cut → merges
+///   with the preceding segment.
+///
+/// A span reduced to a single segment with no cuts is left untouched (it is a
+/// complete semantic sentence, never to be fragmented or force-merged across a
+/// terminal boundary).
+fn absorb_short_fragments(cuts_rel: &mut Vec<usize>, prefix: &[f64], n: usize) {
+    loop {
+        if cuts_rel.is_empty() {
+            return;
+        }
+        // Segment endpoints in word-index space: [c1, c2, ..., last_cut, n].
+        // Segment i spans words [prev_end .. end), so its unit count is
+        // prefix[end] - prefix[prev_end] (prefix[k] = units of words[0..k]).
+        let mut boundaries: Vec<usize> = cuts_rel.clone();
+        boundaries.push(n);
+        let mut prev_end = 0usize;
+        let mut found = None;
+        for (seg_idx, &end) in boundaries.iter().enumerate() {
+            let units = prefix[end] - prefix[prev_end];
+            if units <= MIN_FRAGMENT_UNITS {
+                found = Some((seg_idx, end));
+                break;
+            }
+            prev_end = end;
+        }
+        let Some((seg_idx, seg_end)) = found else { return; };
+
+        if seg_idx < cuts_rel.len() {
+            // Interior/leading fragment: its right cut is cuts_rel[seg_idx].
+            cuts_rel.remove(seg_idx);
+        } else {
+            // Trailing fragment (seg_end == n): its left cut is the last one.
+            cuts_rel.pop();
+        }
+    }
 }
 
 // ---- punctuation / number helpers (language-independent) ----
