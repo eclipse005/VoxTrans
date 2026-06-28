@@ -318,7 +318,7 @@ fn absorb_short_fragments(cuts_rel: &mut Vec<usize>, prefix: &[f64], n: usize) {
             }
             prev_end = end;
         }
-        let Some((seg_idx, seg_end)) = found else { return; };
+        let Some((seg_idx, _seg_end)) = found else { return; };
 
         if seg_idx < cuts_rel.len() {
             // Interior/leading fragment: its right cut is cuts_rel[seg_idx].
