@@ -38,6 +38,7 @@ impl ModelTarget {
 pub(crate) const DEFAULT_ASR_MODEL: &str = QWEN3_ASR_06B_MODEL;
 pub(crate) const QWEN3_ASR_06B_MODEL: &str = "Qwen3-ASR-0.6B";
 pub(crate) const QWEN3_ASR_17B_MODEL: &str = "Qwen3-ASR-1.7B";
+pub(crate) const COHERE_ASR_MODEL: &str = "cohere-transcribe-03-2026";
 pub(crate) const DEFAULT_ALIGN_MODEL: &str = "Qwen3-ForcedAligner-0.6B";
 
 pub(crate) const REQUIRED_QWEN3_ASR_06B_MODEL_FILES: [&str; 3] =
@@ -49,6 +50,20 @@ pub(crate) const REQUIRED_QWEN3_ASR_17B_MODEL_FILES: [&str; 5] = [
     "model-00002-of-00002.safetensors",
     "model.safetensors.index.json",
     "tokenizer.json",
+];
+
+// Cohere ASR model files. Unlike Qwen (which uses a HuggingFace
+// `tokenizer.json`), Cohere uses a SentencePiece tokenizer, so the required
+// files are `tokenizer.model` + `vocab.json` + `tokenizer_config.json`.
+// `preprocessor_config.json` is required by Cohere's
+// `FeatureConfig::from_model_dir` (mel/window frontend).
+pub(crate) const REQUIRED_COHERE_ASR_MODEL_FILES: [&str; 6] = [
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "tokenizer.model",
+    "tokenizer_config.json",
+    "vocab.json",
 ];
 
 pub(crate) const REQUIRED_QWEN_ALIGNER_MODEL_FILES: [&str; 5] = [

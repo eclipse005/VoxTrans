@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
 use super::{
-    DEFAULT_ALIGN_MODEL, DEFAULT_ASR_MODEL, DEMUCS_MODEL_DOWNLOAD_FILES, ModelTarget,
-    QWEN3_ASR_06B_MODEL, QWEN3_ASR_17B_MODEL, REQUIRED_QWEN_ALIGNER_MODEL_FILES,
-    REQUIRED_QWEN3_ASR_06B_MODEL_FILES, REQUIRED_QWEN3_ASR_17B_MODEL_FILES, resolve_model_dir,
+    COHERE_ASR_MODEL, DEFAULT_ALIGN_MODEL, DEFAULT_ASR_MODEL, DEMUCS_MODEL_DOWNLOAD_FILES,
+    ModelTarget, QWEN3_ASR_06B_MODEL, QWEN3_ASR_17B_MODEL, REQUIRED_COHERE_ASR_MODEL_FILES,
+    REQUIRED_QWEN_ALIGNER_MODEL_FILES, REQUIRED_QWEN3_ASR_06B_MODEL_FILES,
+    REQUIRED_QWEN3_ASR_17B_MODEL_FILES, resolve_model_dir,
 };
 
 #[derive(Debug, Clone)]
@@ -29,7 +30,7 @@ pub(crate) fn model_definition(
     let model = normalize_model_name(target, model);
     match target {
         ModelTarget::Asr => {
-            let files = qwen3_asr_download_files(&model)?;
+            let files = asr_download_files(&model)?;
             Ok(ModelDefinition {
                 target,
                 model: model.clone(),
@@ -99,17 +100,48 @@ pub(crate) fn normalize_model_name(target: ModelTarget, model: Option<&str>) -> 
     }
 }
 
-fn qwen3_asr_download_files(model: &str) -> Result<Vec<(&'static str, u64)>, String> {
+/// Resolve the (file, expected_size) download list for an ASR model. Dispatches
+/// to the Qwen or Cohere backend based on the model name.
+fn asr_download_files(model: &str) -> Result<Vec<(&'static str, u64)>, String> {
     match model {
-        QWEN3_ASR_06B_MODEL => Ok(REQUIRED_QWEN3_ASR_06B_MODEL_FILES
-            .iter()
-            .map(|file| (*file, qwen3_asr_file_size(model, file)))
-            .collect()),
-        QWEN3_ASR_17B_MODEL => Ok(REQUIRED_QWEN3_ASR_17B_MODEL_FILES
-            .iter()
-            .map(|file| (*file, qwen3_asr_file_size(model, file)))
-            .collect()),
+        QWEN3_ASR_06B_MODEL | QWEN3_ASR_17B_MODEL => Ok(qwen3_asr_download_files(model)),
+        COHERE_ASR_MODEL => Ok(cohere_asr_download_files()),
         _ => Err(format!("unknown asr model: {model}")),
+    }
+}
+
+fn qwen3_asr_download_files(model: &str) -> Vec<(&'static str, u64)> {
+    match model {
+        QWEN3_ASR_06B_MODEL => REQUIRED_QWEN3_ASR_06B_MODEL_FILES
+            .iter()
+            .map(|file| (*file, qwen3_asr_file_size(model, file)))
+            .collect(),
+        QWEN3_ASR_17B_MODEL => REQUIRED_QWEN3_ASR_17B_MODEL_FILES
+            .iter()
+            .map(|file| (*file, qwen3_asr_file_size(model, file)))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn cohere_asr_download_files() -> Vec<(&'static str, u64)> {
+    REQUIRED_COHERE_ASR_MODEL_FILES
+        .iter()
+        .map(|file| (*file, cohere_asr_file_size(file)))
+        .collect()
+}
+
+// Cohere model file sizes (measured from the local source model). Used for
+// download-progress accounting; the weight file dominates.
+fn cohere_asr_file_size(file: &str) -> u64 {
+    match file {
+        "config.json" => 3_998,
+        "model.safetensors" => 4_131_862_976,
+        "preprocessor_config.json" => 420,
+        "tokenizer.model" => 492_827,
+        "tokenizer_config.json" => 48_141,
+        "vocab.json" => 305_750,
+        _ => 1,
     }
 }
 

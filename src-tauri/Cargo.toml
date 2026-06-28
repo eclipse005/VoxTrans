@@ -46,3 +46,6 @@ ts-rs = "10"
 open = "5"
 qwen3-asr = { path = "D:/qwen3-asr", default-features = false }
 qwen-forced-aligner-rs = { path = "D:/qwen-aligner-rs", default-features = false }
+# Cohere ASR — second backend, selected at runtime by `asr_model` name.
+# Built with the `cuda` feature so CUDA is available; CPU inference also works.
+native-transcribe = { path = "D:/cohere-transcribe-rs/native" }

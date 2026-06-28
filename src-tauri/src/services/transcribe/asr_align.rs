@@ -1,12 +1,49 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use native_transcribe::transcribe::{Device as CohereDevice, Transcriber as CohereTranscriber};
 use qwen3_asr::{AsrInference, Backend as AsrBackend, TranscribeOptions as AsrTranscribeOptions};
 use qwen_forced_aligner_rs::{
     AlignRequest, AudioInput, DeviceRequest, ForcedAlignItem, ForcedAlignResult,
     ModelOptions, TextInput, load_model,
 };
 use voxtrans_core::subtitle::{alignment::align_text_to_timestamps, segmenter::WordToken};
+
+/// The two ASR backends, abstracted behind a uniform `transcribe` call so the
+/// segment loop below never branches on engine identity. Selection is by the
+/// `asr_model` name string ("cohere-transcribe-03-2026" → Cohere, anything else →
+/// Qwen3-ASR). The aligner (qwen-forced-aligner) is the same for both.
+enum AsrEngine {
+    Qwen(AsrInference),
+    Cohere(CohereTranscriber),
+}
+
+impl AsrEngine {
+    /// Transcribe one segment of raw f32 mono samples → cleaned text. Both
+    /// backends take `&[f32]`; the language code is backend-specific
+    /// ("english" full-name for Qwen, "en" short code for Cohere).
+    fn transcribe(&self, samples: &[f32], language: &str) -> Result<String, String> {
+        match self {
+            AsrEngine::Qwen(engine) => {
+                let mut options = AsrTranscribeOptions::default();
+                options.language = Some(language.to_string());
+                let report = engine
+                    .transcribe_samples(samples, options)
+                    .map_err(|err| format!("asr transcription failed: {err:#}"))?;
+                Ok(clean_asr_text(&report.text))
+            }
+            AsrEngine::Cohere(engine) => engine
+                .transcribe_samples(samples, language)
+                .map_err(|err| format!("cohere transcription failed: {err:#}"))
+                .map(|text| clean_asr_text(&text)),
+        }
+    }
+}
+
+/// Is this ASR model name the Cohere backend?
+fn is_cohere_asr(model: &str) -> bool {
+    model == crate::services::model::COHERE_ASR_MODEL
+}
 
 pub(super) struct AsrAlignRequest {
     pub(super) audio_path: PathBuf,
@@ -77,7 +114,14 @@ where
         .unwrap_or_else(|| crate::services::model::resolve_asr_model_dir(&request.asr_model));
     let aligner_model_dir = crate::services::model::resolve_aligner_model_dir(&request.align_model);
     let device = provider_to_device(&request.provider)?;
-    let language = asr_language(&request.source_lang)?;
+    let cohere = is_cohere_asr(&request.asr_model);
+    // Language code is backend-specific: Qwen wants the full name ("english"),
+    // Cohere wants the short code ("en") that becomes the `<|en|>` prompt tag.
+    let language = if cohere {
+        cohere_language(&request.source_lang)?
+    } else {
+        asr_language(&request.source_lang)?
+    };
     let aligner_language = qwen_language(&request.source_lang)?;
     let total_segments = prepared.segment_summaries.len();
     let sample_len = prepared.mono_samples.len();
@@ -89,13 +133,25 @@ where
 
     let segment_transcripts = {
         let load_started_at = Instant::now();
-        let transcriber =
-            AsrInference::load(&asr_model_dir, device.asr_device.clone()).map_err(|err| {
-                format!(
-                    "failed to load ASR model from {}: {err:#}",
-                    asr_model_dir.display()
-                )
-            })?;
+        let engine = if cohere {
+            let t = CohereTranscriber::load_with_device(&asr_model_dir, device.cohere_device, false)
+                .map_err(|err| {
+                    format!(
+                        "failed to load Cohere ASR model from {}: {err:#}",
+                        asr_model_dir.display()
+                    )
+                })?;
+            AsrEngine::Cohere(t)
+        } else {
+            let t =
+                AsrInference::load(&asr_model_dir, device.asr_device.clone()).map_err(|err| {
+                    format!(
+                        "failed to load ASR model from {}: {err:#}",
+                        asr_model_dir.display()
+                    )
+                })?;
+            AsrEngine::Qwen(t)
+        };
         timing.asr_load_sec = load_started_at.elapsed().as_secs_f64();
 
         let mut transcripts = Vec::new();
@@ -137,13 +193,8 @@ where
                 .map_err(|err| format!("failed to write temporary wav: {err}"))?;
             timing.temp_wav_write_sec += wav_started_at.elapsed().as_secs_f64();
             let transcribe_started_at = Instant::now();
-            let mut options = AsrTranscribeOptions::default();
-            options.language = Some(language.clone());
-            let report = transcriber
-                .transcribe_samples(segment_samples, options)
-                .map_err(|err| format!("asr transcription failed: {err:#}"))?;
+            let text = engine.transcribe(segment_samples, &language)?;
             timing.asr_transcribe_sec += transcribe_started_at.elapsed().as_secs_f64();
-            let text = clean_asr_text(&report.text);
             if text.is_empty() {
                 on_progress(TranscribeProgressStage::Asr, segment.index, total_segments, None);
                 continue;
@@ -262,6 +313,7 @@ pub(crate) enum FreshSegmentResult {
 
 struct RuntimeDevice {
     asr_device: AsrBackend,
+    cohere_device: CohereDevice,
     qwen_device: DeviceRequest,
     label: String,
 }
@@ -313,6 +365,7 @@ fn provider_to_device(provider: &str) -> Result<RuntimeDevice, String> {
     if normalized == "cpu" {
         return Ok(RuntimeDevice {
             asr_device: AsrBackend::Cpu,
+            cohere_device: CohereDevice::Cpu,
             qwen_device: DeviceRequest::Cpu,
             label: "cpu".to_string(),
         });
@@ -322,6 +375,7 @@ fn provider_to_device(provider: &str) -> Result<RuntimeDevice, String> {
     {
         Ok(RuntimeDevice {
             asr_device: AsrBackend::Cuda,
+            cohere_device: CohereDevice::Cuda,
             qwen_device: DeviceRequest::Cuda(0),
             label: "cuda".to_string(),
         })
@@ -347,6 +401,27 @@ fn asr_language(source_lang: &str) -> Result<String, String> {
         "yue" | "yue-hk" | "zh-yue" | "cantonese" | "粤语" | "廣東話" | "广东话" => {
             "cantonese"
         }
+        _ => return Err(format!("unsupported source language: {source_lang}")),
+    };
+    Ok(language.to_string())
+}
+
+/// Map a source language to the short code Cohere's prompt expects. Cohere's
+/// `build_prompt` substitutes the code into a `<|{lang}|>` tag, so a short
+/// ISO-639-1 code ("en"/"zh"/...) is what the model was trained on.
+fn cohere_language(source_lang: &str) -> Result<String, String> {
+    let normalized = source_lang.trim().to_ascii_lowercase();
+    let language = match normalized.as_str() {
+        "en" | "en-us" | "english" => "en",
+        "zh" | "zh-cn" | "zh-hans" | "chinese" | "mandarin" => "zh",
+        "ja" | "ja-jp" | "japanese" => "ja",
+        "ko" | "ko-kr" | "korean" => "ko",
+        "fr" | "fr-fr" | "french" => "fr",
+        "de" | "de-de" | "german" => "de",
+        "it" | "it-it" | "italian" => "it",
+        "es" | "es-es" | "spanish" => "es",
+        "pt" | "pt-pt" | "pt-br" | "portuguese" => "pt",
+        "yue" | "yue-hk" | "zh-yue" | "cantonese" | "粤语" | "廣東話" | "广东话" => "yue",
         _ => return Err(format!("unsupported source language: {source_lang}")),
     };
     Ok(language.to_string())
@@ -668,6 +743,45 @@ mod tests {
         for source in ["", "auto", "ru", "ar", "vi", "nl", "pl", "el"] {
             assert!(asr_language(source).is_err());
             assert!(qwen_language(source).is_err());
+        }
+    }
+
+    #[test]
+    fn cohere_language_maps_to_short_codes() {
+        // Cohere wants ISO-639-1 short codes for the <|lang|> prompt tag,
+        // not the full names Qwen uses.
+        let cases = [
+            ("en", "en"),
+            ("en-us", "en"),
+            ("english", "en"),
+            ("zh", "zh"),
+            ("zh-cn", "zh"),
+            ("mandarin", "zh"),
+            ("ja", "ja"),
+            ("ko", "ko"),
+            ("fr", "fr"),
+            ("de", "de"),
+            ("it", "it"),
+            ("es", "es"),
+            ("pt", "pt"),
+            ("pt-br", "pt"),
+            ("yue", "yue"),
+            ("cantonese", "yue"),
+            ("广东话", "yue"),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(
+                cohere_language(source).as_deref(),
+                Ok(expected),
+                "source={source}"
+            );
+        }
+    }
+
+    #[test]
+    fn cohere_language_rejects_unsupported() {
+        for source in ["", "auto", "ru", "vi", "nl", "pl", "el"] {
+            assert!(cohere_language(source).is_err(), "source={source}");
         }
     }
 
