@@ -81,6 +81,7 @@ pub(super) async fn execute_translate_steps(
             translate_base_url: runtime.translate_base_url.clone(),
             translate_model: runtime.translate_model.clone(),
             llm_concurrency: runtime.llm_concurrency,
+            enable_vision_assist: runtime.enable_vision_assist,
             app: app.clone(),
         },
         &step_context,
@@ -111,7 +112,7 @@ pub(super) async fn execute_translate_steps(
         &step4_exec.output.segments,
         source_text,
         runtime.enable_subtitle_beautify,
-        &runtime.subtitle_length_preset,
+        runtime.subtitle_length_preset.as_str(),
     )
     .await
 }

@@ -83,6 +83,7 @@ pub(in crate::commands::workspace) struct Step4TranslationPipelineStep {
     pub(in crate::commands::workspace) translate_base_url: String,
     pub(in crate::commands::workspace) translate_model: String,
     pub(in crate::commands::workspace) llm_concurrency: u32,
+    pub(in crate::commands::workspace) enable_vision_assist: bool,
     pub(in crate::commands::workspace) app: AppHandle,
 }
 
@@ -160,6 +161,7 @@ impl PipelineStep for Step4TranslationPipelineStep {
             },
             Some(on_progress),
             Some(unit_store),
+            self.enable_vision_assist,
         )
         .await
     }

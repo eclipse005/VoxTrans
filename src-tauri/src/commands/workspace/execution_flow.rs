@@ -4,6 +4,7 @@ use tokio::runtime::Handle;
 
 use crate::db::store::TaskStore;
 use crate::services::pipeline::StepContext;
+use crate::services::task_log::{TaskLogger, event};
 
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::domain::task::adapters::{
@@ -44,6 +45,59 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
     let target_lang = normalize_task_target_lang(&record.target_lang);
     let step_context = StepContext { task_id, store };
 
+    // Snapshot the full settings used for this run into main.log so any
+    // task can be debugged/reproduced without guessing. API key is masked.
+    let main_logger = TaskLogger::main_with_media(
+        task_id.to_string(),
+        record.item.path.clone(),
+    );
+    let api_key_masked = if runtime.translate_api_key.is_empty() {
+        String::new()
+    } else if runtime.translate_api_key.chars().count() > 6 {
+        // Long key: show a prefix so it can be recognized without leaking it.
+        let prefix: String = runtime.translate_api_key.chars().take(6).collect();
+        format!("{prefix}…")
+    } else {
+        // Short secret: a prefix would reveal the whole thing, so mask fully.
+        "••••".to_string()
+    };
+    // `enable_vision_assist` comes from `runtime` (read once in
+    // resolve_runtime_settings) so the logged value matches the value that
+    // translation actually applies — no second live DB read that could race
+    // with a mid-run toggle.
+    main_logger.event(
+        event::TASK_STARTED,
+        Some(&serde_json::json!({
+            "taskId": task_id,
+            "intent": intent,
+            "mediaPath": record.item.path,
+            "sourceLang": source_lang,
+            "targetLang": target_lang,
+            "terminologyGroupId": record.item.terminology_group_id,
+            "runtime": {
+                "provider": runtime.provider,
+                "asrModel": runtime.asr_model,
+                "alignModel": runtime.align_model,
+                "demucsModel": runtime.demucs_model,
+                "chunkTargetSeconds": runtime.chunk_target_seconds,
+                "enableVocalSeparation": runtime.enable_vocal_separation,
+                "translateBaseUrl": runtime.translate_base_url,
+                "translateModel": runtime.translate_model,
+                "translateApiKey": api_key_masked,
+                "llmConcurrency": runtime.llm_concurrency,
+                "subtitleLengthPreset": runtime.subtitle_length_preset,
+                "enableSubtitleBeautify": runtime.enable_subtitle_beautify,
+                "enableVisionAssist": runtime.enable_vision_assist,
+                "terminologyEntriesCount": runtime.terminology_entries.len(),
+            },
+            "frozen": {
+                "subtitleLengthPreset": record.frozen.subtitle_length_preset,
+                "enableSubtitleBeautify": record.frozen.enable_subtitle_beautify,
+                "terminologyGroupsCount": record.frozen.terminology_groups.len(),
+            },
+        })),
+    );
+
     report_task_stage(app, task_id, TaskStage::Preparing, "", 1, 1).await?;
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_error = String::new();
@@ -72,7 +126,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             source_lang: source_lang.clone(),
             asr_model: runtime.asr_model.clone(),
             align_model: runtime.align_model.clone(),
-            provider: runtime.provider.clone(),
+            provider: runtime.provider.as_str().to_string(),
             chunk_target_seconds: runtime.chunk_target_seconds,
             app: app.clone(),
         },
@@ -103,7 +157,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
             source_lang: source_lang.clone(),
-            subtitle_length_preset: runtime.subtitle_length_preset.clone(),
+            subtitle_length_preset: runtime.subtitle_length_preset.as_str().to_string(),
             words: step2_words,
             vad_speech_segments: step1_exec.output.vad_speech_segments.clone(),
         },
@@ -144,7 +198,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             step2_srt,
             source_text,
             runtime.enable_subtitle_beautify,
-            &runtime.subtitle_length_preset,
+            runtime.subtitle_length_preset.as_str(),
             &target_lang,
         )
         .await

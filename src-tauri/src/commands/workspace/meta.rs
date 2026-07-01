@@ -40,7 +40,7 @@ pub(super) async fn persist_task_meta(
     let extras = TaskMetaExtras {
         intent: record.intent.clone(),
         max_retries: record.max_retries,
-        subtitle_length_preset: record.frozen.subtitle_length_preset.clone(),
+        subtitle_length_preset: record.frozen.subtitle_length_preset.as_str().to_string(),
         enable_subtitle_beautify: record.frozen.enable_subtitle_beautify,
         terminology_groups_json,
         enqueue_seq: record.enqueue_seq,
@@ -77,7 +77,7 @@ async fn hydrate_workspace_from_db(store: &TaskStore) -> WorkspaceResult<()> {
         let target_lang = item.target_lang.clone();
         item.subtitle_segments_json = serialize_segments(&segments);
         let frozen = FrozenSettings {
-            subtitle_length_preset: extras.subtitle_length_preset,
+            subtitle_length_preset: crate::services::preferences_types::SubtitleLengthPreset::parse(&extras.subtitle_length_preset),
             enable_subtitle_beautify: extras.enable_subtitle_beautify,
             terminology_groups: serde_json::from_str(&extras.terminology_groups_json)
                 .unwrap_or_default(),

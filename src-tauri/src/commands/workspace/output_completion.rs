@@ -153,7 +153,7 @@ fn write_completion_srts(
             let flat_items: Vec<crate::services::subtitle_srt::ExportSrtItem> = settings
                 .flat_srt_items
                 .iter()
-                .filter_map(|s| crate::services::subtitle_srt::ExportSrtItem::parse(s))
+                .filter_map(|s| crate::services::subtitle_srt::ExportSrtItem::parse(s.as_str()))
                 .collect();
             if !flat_items.is_empty() {
                 let output_dir = crate::services::output::resolve_output_dir();

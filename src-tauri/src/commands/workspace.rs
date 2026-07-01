@@ -18,7 +18,6 @@ mod task_logs;
 mod translation_flow;
 mod types;
 
-use crate::domain::task::runtime_settings::fallback_saved_settings;
 use meta::ensure_workspace_hydrated_from_db;
 use queue_ops::{
     delete_tasks_internal, enqueue_task_run_internal, execute_task_batch_internal,
@@ -186,10 +185,10 @@ pub fn task_subtitle_beautify_context(
 ) -> Result<(bool, String, String), String> {
     let record = get_task_record(task_id)?;
     let saved = crate::services::preferences::load_saved_settings_from_default_path(store)
-        .unwrap_or_else(|_| fallback_saved_settings());
+        .unwrap_or_else(|_| crate::services::preferences_normalize::default_settings());
     Ok((
         saved.enable_subtitle_beautify,
-        saved.subtitle_length_preset,
+        saved.subtitle_length_preset.as_str().to_string(),
         record.target_lang,
     ))
 }

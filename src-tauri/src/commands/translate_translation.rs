@@ -14,15 +14,31 @@ pub async fn build_translation_layer(
     app: AppHandle,
     request: BuildTranslationLayerCommandRequest,
 ) -> Result<BuildTranslationLayerCommandResponse, String> {
-    build_translation_layer_with_progress(app, request, None).await
+    // Live setting: read fresh so the user can toggle vision assist without
+    // re-enqueuing. This is the only DB read for the value on the IPC path.
+    let store = app.state::<TaskStore>().inner();
+    let enable_vision_assist = crate::services::preferences::load_saved_settings_from_default_path(
+        store,
+    )
+    .map(|s| s.enable_vision_assist)
+    .unwrap_or(false);
+    build_translation_layer_with_progress(app, request, None, enable_vision_assist).await
 }
 
 pub async fn build_translation_layer_with_progress(
     app: AppHandle,
     request: BuildTranslationLayerCommandRequest,
     on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+    enable_vision_assist: bool,
 ) -> Result<BuildTranslationLayerCommandResponse, String> {
-    build_translation_layer_with_progress_and_unit_store(app, request, on_progress, None).await
+    build_translation_layer_with_progress_and_unit_store(
+        app,
+        request,
+        on_progress,
+        None,
+        enable_vision_assist,
+    )
+    .await
 }
 
 pub async fn build_translation_layer_with_progress_and_unit_store(
@@ -30,6 +46,7 @@ pub async fn build_translation_layer_with_progress_and_unit_store(
     mut request: BuildTranslationLayerCommandRequest,
     on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
     unit_store: Option<crate::services::pipeline::UnitStore>,
+    enable_vision_assist: bool,
 ) -> Result<BuildTranslationLayerCommandResponse, String> {
     if request.task_id.trim().is_empty() {
         return Err("taskId is required".to_string());
@@ -100,6 +117,7 @@ pub async fn build_translation_layer_with_progress_and_unit_store(
         llm_concurrency: request.llm_concurrency,
         batch_size: request.batch_size,
         unit_store,
+        enable_vision_assist,
     };
 
     let service_response = crate::services::translation::build_translation_layer_with_progress(
