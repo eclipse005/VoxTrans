@@ -1,9 +1,7 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubtitleLengthPreset {
-    Short,
-    Standard,
-    Loose,
-}
+// The preset enum is defined once in `preferences_types` (the serde/ts-rs
+// source of truth) and reused here so the domain limits logic and the DB/
+// settings layer can never drift apart. Re-exported for call-site locality.
+pub use crate::services::preferences_types::SubtitleLengthPreset;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubtitleLengthLimits {
@@ -11,19 +9,10 @@ pub struct SubtitleLengthLimits {
     pub target_limit: u32,
 }
 
-pub const DEFAULT_SUBTITLE_LENGTH_PRESET: &str = "standard";
-
-pub fn normalize_subtitle_length_preset(value: &str) -> String {
-    subtitle_length_preset_from_id(value).as_id().to_string()
-}
-
+/// Parse a preset from its lowercase string id. Thin wrapper over the
+/// canonical enum's `parse` so there is a single mapping to maintain.
 pub fn subtitle_length_preset_from_id(value: &str) -> SubtitleLengthPreset {
-    match value.trim() {
-        "short" => SubtitleLengthPreset::Short,
-        "loose" => SubtitleLengthPreset::Loose,
-        "standard" => SubtitleLengthPreset::Standard,
-        _ => SubtitleLengthPreset::Standard,
-    }
+    SubtitleLengthPreset::parse(value)
 }
 
 pub fn source_limit_for_preset(source_lang: &str, preset_id: &str) -> u32 {
@@ -54,16 +43,6 @@ pub fn effective_subtitle_limits(
     SubtitleLengthLimits {
         source_limit: source_limit_for_language(source_lang, preset),
         target_limit: target_limit_for_language(target_lang, preset),
-    }
-}
-
-impl SubtitleLengthPreset {
-    pub fn as_id(self) -> &'static str {
-        match self {
-            SubtitleLengthPreset::Short => "short",
-            SubtitleLengthPreset::Standard => "standard",
-            SubtitleLengthPreset::Loose => "loose",
-        }
     }
 }
 
