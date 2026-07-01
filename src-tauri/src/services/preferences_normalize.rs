@@ -2,19 +2,19 @@ use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::preferences_types::{
-    SavedSettings, SubtitleLayoutStyle, SubtitleLineStyle, SubtitleRenderStyle, TerminologyGroup,
-    TerminologyTerm,
+    AlignModel, AsrModel, DemucsModel, Provider, SavedSettings, SubtitleBurnMode,
+    SubtitleLayoutStyle, SubtitleLineStyle, SubtitleLengthPreset, SubtitleRenderStyle,
+    TerminologyGroup, TerminologyTerm,
 };
 
 pub fn default_settings() -> SavedSettings {
     SavedSettings {
-        provider: "cpu".to_string(),
+        provider: Provider::Cpu,
         chunk_target_seconds: 30,
-        subtitle_length_preset: crate::services::subtitle_length::DEFAULT_SUBTITLE_LENGTH_PRESET
-            .to_string(),
-        asr_model: crate::services::model::DEFAULT_ASR_MODEL.to_string(),
-        align_model: "Qwen3-ForcedAligner-0.6B".to_string(),
-        demucs_model: "htdemucs_ft".to_string(),
+        subtitle_length_preset: SubtitleLengthPreset::Standard,
+        asr_model: AsrModel::default(),
+        align_model: AlignModel::default(),
+        demucs_model: DemucsModel::default(),
         enable_vocal_separation: false,
         translate_api_key: String::new(),
         translate_base_url: "https://api.deepseek.com/v1".to_string(),
@@ -25,47 +25,22 @@ pub fn default_settings() -> SavedSettings {
         enable_subtitle_beautify: true,
         enable_click_sound: true,
         auto_burn_hard_subtitle: false,
-        subtitle_burn_mode: "bilingualSourceFirst".to_string(),
+        subtitle_burn_mode: SubtitleBurnMode::BilingualSourceFirst,
         subtitle_render_style: SubtitleRenderStyle::default(),
         flat_srt_output: false,
-        flat_srt_items: vec!["source".to_string(), "target".to_string()],
+        flat_srt_items: vec![SubtitleBurnMode::Source, SubtitleBurnMode::Target],
+        enable_vision_assist: false,
     }
 }
 
 pub(super) fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings {
     SavedSettings {
-        provider: {
-            let trimmed = settings.provider.trim();
-            if trimmed.is_empty() {
-                "cpu".to_string()
-            } else {
-                trimmed.to_string()
-            }
-        },
+        provider: settings.provider,
         chunk_target_seconds: settings.chunk_target_seconds.clamp(30, 60),
-        subtitle_length_preset: crate::services::subtitle_length::normalize_subtitle_length_preset(
-            &settings.subtitle_length_preset,
-        ),
-        asr_model: {
-            let trimmed = settings.asr_model.trim();
-            if trimmed.is_empty() {
-                crate::services::model::DEFAULT_ASR_MODEL.to_string()
-            } else {
-                trimmed.to_string()
-            }
-        },
-        align_model: {
-            let trimmed = settings.align_model.trim();
-            if trimmed.is_empty() {
-                "Qwen3-ForcedAligner-0.6B".to_string()
-            } else {
-                trimmed.to_string()
-            }
-        },
-        demucs_model: match settings.demucs_model.trim() {
-            "htdemucs_ft" => "htdemucs_ft".to_string(),
-            _ => "htdemucs_ft".to_string(),
-        },
+        subtitle_length_preset: settings.subtitle_length_preset,
+        asr_model: settings.asr_model,
+        align_model: settings.align_model,
+        demucs_model: settings.demucs_model,
         enable_vocal_separation: settings.enable_vocal_separation,
         translate_api_key: settings.translate_api_key.trim().to_string(),
         translate_base_url: {
@@ -90,67 +65,34 @@ pub(super) fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         enable_click_sound: settings.enable_click_sound,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
-        subtitle_burn_mode: normalize_subtitle_burn_mode(&settings.subtitle_burn_mode).to_string(),
+        subtitle_burn_mode: settings.subtitle_burn_mode,
         subtitle_render_style: normalize_subtitle_render_style(settings.subtitle_render_style),
         flat_srt_output: settings.flat_srt_output,
         flat_srt_items: normalize_flat_srt_items(settings.flat_srt_items),
+        enable_vision_assist: settings.enable_vision_assist,
     }
 }
 
-fn normalize_subtitle_burn_mode(value: &str) -> &str {
-    match value.trim() {
-        "source" | "target" | "bilingualSourceFirst" | "bilingualTargetFirst" => value.trim(),
-        _ => "bilingualSourceFirst",
-    }
-}
-
-fn normalize_flat_srt_items(items: Vec<String>) -> Vec<String> {
-    let valid = ["source", "target", "bilingualSourceFirst", "bilingualTargetFirst"];
+fn normalize_flat_srt_items(items: Vec<SubtitleBurnMode>) -> Vec<SubtitleBurnMode> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     for item in items {
-        let trimmed = item.trim();
-        if valid.contains(&trimmed) && seen.insert(trimmed.to_string()) {
-            result.push(trimmed.to_string());
+        if seen.insert(item) {
+            result.push(item);
         }
     }
     if result.is_empty() {
-        vec!["source".to_string(), "target".to_string()]
+        vec![SubtitleBurnMode::Source, SubtitleBurnMode::Target]
     } else {
         result
     }
 }
 
 fn normalize_subtitle_render_style(style: SubtitleRenderStyle) -> SubtitleRenderStyle {
+    let defaults = SubtitleRenderStyle::default();
     SubtitleRenderStyle {
-        source: normalize_subtitle_line_style(
-            style.source,
-            SubtitleLineStyle {
-                font_family: "Arial".to_string(),
-                font_size: 44,
-                primary_color: "#FFFFFF".to_string(),
-                outline_color: "#101010".to_string(),
-                back_color: "#000000".to_string(),
-                outline: 2.5,
-                shadow: 1.0,
-                border_style: "outline".to_string(),
-                border_opacity: 88,
-            },
-        ),
-        target: normalize_subtitle_line_style(
-            style.target,
-            SubtitleLineStyle {
-                font_family: "Microsoft YaHei".to_string(),
-                font_size: 40,
-                primary_color: "#EAF6FF".to_string(),
-                outline_color: "#101010".to_string(),
-                back_color: "#000000".to_string(),
-                outline: 2.5,
-                shadow: 1.0,
-                border_style: "outline".to_string(),
-                border_opacity: 88,
-            },
-        ),
+        source: normalize_subtitle_line_style(style.source, defaults.source),
+        target: normalize_subtitle_line_style(style.target, defaults.target),
         layout: SubtitleLayoutStyle {
             margin_v: style.layout.margin_v.clamp(0, 200),
             alignment: match style.layout.alignment {
@@ -181,15 +123,8 @@ fn normalize_subtitle_line_style(
         back_color: normalize_hex_color(&style.back_color, &fallback.back_color),
         outline: style.outline.clamp(0.0, 8.0),
         shadow: style.shadow.clamp(0.0, 8.0),
-        border_style: normalize_border_style(&style.border_style).to_string(),
+        border_style: style.border_style,
         border_opacity: style.border_opacity.clamp(0, 100),
-    }
-}
-
-fn normalize_border_style(value: &str) -> &str {
-    match value.trim() {
-        "box" => "box",
-        _ => "outline",
     }
 }
 

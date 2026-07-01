@@ -62,6 +62,7 @@ fn main() {
             commands::model::cancel_model_download,
             commands::preferences::load_user_preferences,
             commands::preferences::save_app_settings,
+            commands::preferences::get_default_settings,
             commands::workspace::load_workspace_state,
             commands::workspace::load_workspace_task,
             commands::workspace::delete_tasks,

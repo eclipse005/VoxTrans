@@ -7,17 +7,20 @@ use crate::commands::workspace::{
     WorkspaceQueueItem, WorkspaceTaskProgressState, WorkspaceTaskStageState,
 };
 use crate::db::models::{SettingsRow, SubtitleSegmentRow, SubtitleWordRow, TaskRow};
-use crate::services::preferences_types::SavedSettings;
+use crate::services::preferences_types::{
+    AlignModel, AsrModel, DemucsModel, Provider, SavedSettings, SubtitleBurnMode,
+    SubtitleLengthPreset,
+};
 use crate::services::workspace_subtitle::WorkspaceSubtitleSegment;
 
 pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
     SavedSettings {
-        provider: row.provider,
+        provider: Provider::parse(&row.provider),
         chunk_target_seconds: row.chunk_target_seconds,
-        subtitle_length_preset: row.subtitle_length_preset,
-        asr_model: row.asr_model,
-        align_model: row.align_model,
-        demucs_model: row.demucs_model,
+        subtitle_length_preset: SubtitleLengthPreset::parse(&row.subtitle_length_preset),
+        asr_model: AsrModel::parse(&row.asr_model),
+        align_model: AlignModel::parse(&row.align_model),
+        demucs_model: DemucsModel::parse(&row.demucs_model),
         enable_vocal_separation: row.enable_vocal_separation,
         translate_api_key: row.translate_api_key,
         translate_base_url: row.translate_base_url,
@@ -29,9 +32,10 @@ pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
         enable_subtitle_beautify: row.enable_subtitle_beautify,
         enable_click_sound: row.enable_click_sound,
         auto_burn_hard_subtitle: row.auto_burn_hard_subtitle,
-        subtitle_burn_mode: row.subtitle_burn_mode,
+        subtitle_burn_mode: SubtitleBurnMode::parse(&row.subtitle_burn_mode),
         subtitle_render_style: row.subtitle_render_style,
         flat_srt_output: row.flat_srt_output,
+        enable_vision_assist: row.enable_vision_assist,
         // flat_srt_items is composed in store.rs from the flat_srt_items table.
         flat_srt_items: Vec::new(),
     }
@@ -39,12 +43,12 @@ pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
 
 pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
     SettingsRow {
-        provider: settings.provider.clone(),
+        provider: settings.provider.as_str().to_string(),
         chunk_target_seconds: settings.chunk_target_seconds,
-        subtitle_length_preset: settings.subtitle_length_preset.clone(),
-        asr_model: settings.asr_model.clone(),
-        align_model: settings.align_model.clone(),
-        demucs_model: settings.demucs_model.clone(),
+        subtitle_length_preset: settings.subtitle_length_preset.as_str().to_string(),
+        asr_model: settings.asr_model.as_str().to_string(),
+        align_model: settings.align_model.as_str().to_string(),
+        demucs_model: settings.demucs_model.as_str().to_string(),
         enable_vocal_separation: settings.enable_vocal_separation,
         translate_api_key: settings.translate_api_key.clone(),
         translate_base_url: settings.translate_base_url.clone(),
@@ -54,9 +58,10 @@ pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         enable_click_sound: settings.enable_click_sound,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
-        subtitle_burn_mode: settings.subtitle_burn_mode.clone(),
+        subtitle_burn_mode: settings.subtitle_burn_mode.as_str().to_string(),
         subtitle_render_style: settings.subtitle_render_style.clone(),
         flat_srt_output: settings.flat_srt_output,
+        enable_vision_assist: settings.enable_vision_assist,
         updated_at: now_ms(),
     }
 }
@@ -199,16 +204,19 @@ pub fn row_from_task(item: &WorkspaceQueueItem, extras: &TaskMetaExtras) -> Task
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::preferences_types::SubtitleRenderStyle;
+    use crate::services::preferences_types::{
+        AlignModel, AsrModel, DemucsModel, Provider, SubtitleBurnMode, SubtitleLengthPreset,
+        SubtitleRenderStyle,
+    };
 
     fn sample_settings() -> SavedSettings {
         SavedSettings {
-            provider: "openai".into(),
+            provider: Provider::Cpu,
             chunk_target_seconds: 30,
-            subtitle_length_preset: "default".into(),
-            asr_model: "Qwen3-ASR".into(),
-            align_model: "Qwen3-ForcedAligner-0.6B".into(),
-            demucs_model: "htdemucs".into(),
+            subtitle_length_preset: SubtitleLengthPreset::Standard,
+            asr_model: AsrModel::Qwen3Asr06B,
+            align_model: AlignModel::Qwen3ForcedAligner06B,
+            demucs_model: DemucsModel::HtdemucsFt,
             enable_vocal_separation: true,
             translate_api_key: "k".into(),
             translate_base_url: "https://api.example.com".into(),
@@ -219,10 +227,11 @@ mod tests {
             enable_subtitle_beautify: true,
             enable_click_sound: true,
             auto_burn_hard_subtitle: false,
-            subtitle_burn_mode: "bilingualSourceFirst".into(),
+            subtitle_burn_mode: SubtitleBurnMode::BilingualSourceFirst,
             subtitle_render_style: SubtitleRenderStyle::default(),
             flat_srt_output: false,
             flat_srt_items: Vec::new(),
+            enable_vision_assist: false,
         }
     }
 

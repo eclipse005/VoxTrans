@@ -45,7 +45,8 @@ impl TaskStore {
              align_model, demucs_model, enable_vocal_separation, translate_api_key, \
              translate_base_url, translate_model, llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
-             subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, updated_at \
+             subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
+             enable_vision_assist, updated_at \
              FROM settings WHERE id = 1",
         )
         .fetch_optional(&self.pool)
@@ -62,7 +63,10 @@ impl TaskStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| format!("load flat_srt_items: {e}"))?;
-        settings.flat_srt_items = items;
+        settings.flat_srt_items = items
+            .iter()
+            .map(|s| crate::services::preferences_types::SubtitleBurnMode::parse(s))
+            .collect();
 
         // Compose terminology_groups + terms.
         settings.terminology_groups = self.load_terminology_groups_internal().await?;
@@ -82,8 +86,9 @@ impl TaskStore {
              asr_model, align_model, demucs_model, enable_vocal_separation, translate_api_key, \
              translate_base_url, translate_model, llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
-             subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, updated_at) \
-             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
+             enable_vision_assist, updated_at) \
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(id) DO UPDATE SET \
              provider=excluded.provider, chunk_target_seconds=excluded.chunk_target_seconds, \
              subtitle_length_preset=excluded.subtitle_length_preset, asr_model=excluded.asr_model, \
@@ -98,7 +103,9 @@ impl TaskStore {
              auto_burn_hard_subtitle=excluded.auto_burn_hard_subtitle, \
              subtitle_burn_mode=excluded.subtitle_burn_mode, \
              subtitle_render_style_json=excluded.subtitle_render_style_json, \
-             flat_srt_output=excluded.flat_srt_output, updated_at=excluded.updated_at",
+             flat_srt_output=excluded.flat_srt_output, \
+             enable_vision_assist=excluded.enable_vision_assist, \
+             updated_at=excluded.updated_at",
         )
         .bind(&row.provider)
         .bind(row.chunk_target_seconds)
@@ -118,6 +125,7 @@ impl TaskStore {
         .bind(&row.subtitle_burn_mode)
         .bind(&render_style_json)
         .bind(row.flat_srt_output)
+        .bind(row.enable_vision_assist)
         .bind(row.updated_at)
         .execute(&mut *tx)
         .await
@@ -130,7 +138,7 @@ impl TaskStore {
             .map_err(|e| format!("delete flat_srt_items: {e}"))?;
         for value in &settings.flat_srt_items {
             sqlx::query("INSERT INTO flat_srt_items (value, updated_at) VALUES (?, ?)")
-                .bind(value)
+                .bind(value.as_str())
                 .bind(row.updated_at)
                 .execute(&mut *tx)
                 .await
@@ -820,12 +828,12 @@ mod tests {
 
     fn sample_settings() -> SavedSettings {
         let mut s = SavedSettings {
-            provider: "openai".into(),
+            provider: crate::services::preferences_types::Provider::Cpu,
             chunk_target_seconds: 30,
-            subtitle_length_preset: "default".into(),
-            asr_model: "Qwen3-ASR".into(),
-            align_model: "Qwen3-ForcedAligner-0.6B".into(),
-            demucs_model: "htdemucs".into(),
+            subtitle_length_preset: crate::services::preferences_types::SubtitleLengthPreset::Standard,
+            asr_model: crate::services::preferences_types::AsrModel::Qwen3Asr06B,
+            align_model: crate::services::preferences_types::AlignModel::Qwen3ForcedAligner06B,
+            demucs_model: crate::services::preferences_types::DemucsModel::HtdemucsFt,
             enable_vocal_separation: true,
             translate_api_key: "k".into(),
             translate_base_url: "https://api.example.com".into(),
@@ -836,12 +844,13 @@ mod tests {
             enable_subtitle_beautify: true,
             enable_click_sound: true,
             auto_burn_hard_subtitle: false,
-            subtitle_burn_mode: "bilingualSourceFirst".into(),
+            subtitle_burn_mode: crate::services::preferences_types::SubtitleBurnMode::BilingualSourceFirst,
             subtitle_render_style: SubtitleRenderStyle::default(),
             flat_srt_output: false,
             flat_srt_items: Vec::new(),
+            enable_vision_assist: false,
         };
-        s.flat_srt_items = vec!["source".into(), "target".into()];
+        s.flat_srt_items = vec![crate::services::preferences_types::SubtitleBurnMode::Source, crate::services::preferences_types::SubtitleBurnMode::Target];
         s.terminology_groups = vec![TerminologyGroup {
             id: "g1".into(),
             name: "Default".into(),
@@ -860,7 +869,7 @@ mod tests {
         let s = store().await;
         let settings = s.load_settings().await.expect("load");
         // Default has flat_srt_items from defaults; assert provider default
-        assert!(!settings.provider.is_empty() || settings.provider == "openai");
+        assert_eq!(settings.provider, crate::services::preferences_types::Provider::Cpu);
     }
 
     #[tokio::test]

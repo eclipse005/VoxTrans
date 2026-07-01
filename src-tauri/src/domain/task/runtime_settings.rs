@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::commands::translate_types::TranslateTerminologyEntryCommand;
 use crate::db::store::TaskStore;
-use crate::services::preferences_types::TerminologyGroup;
+use crate::services::preferences_types::{Provider, SubtitleLengthPreset, TerminologyGroup};
 
 /// Task-frozen settings: captured at enqueue time and never read live from
 /// the saved settings row during execution. These all affect "what the
@@ -13,7 +13,7 @@ use crate::services::preferences_types::TerminologyGroup;
 /// each call, so the user can swap providers without re-enqueuing.
 #[derive(Debug, Clone, Default)]
 pub struct FrozenSettings {
-    pub subtitle_length_preset: String,
+    pub subtitle_length_preset: SubtitleLengthPreset,
     pub enable_subtitle_beautify: bool,
     pub terminology_groups: Vec<TerminologyGroup>,
 }
@@ -40,7 +40,7 @@ impl FrozenSettings {
                 .unwrap_or_default()
         };
         Self {
-            subtitle_length_preset: saved.subtitle_length_preset.clone(),
+            subtitle_length_preset: saved.subtitle_length_preset,
             enable_subtitle_beautify: saved.enable_subtitle_beautify,
             terminology_groups,
         }
@@ -51,7 +51,7 @@ impl FrozenSettings {
 pub struct PipelineRuntimeSettings {
     pub asr_model: String,
     pub align_model: String,
-    pub provider: String,
+    pub provider: Provider,
     pub chunk_target_seconds: u32,
     pub enable_vocal_separation: bool,
     pub demucs_model: String,
@@ -59,9 +59,14 @@ pub struct PipelineRuntimeSettings {
     pub translate_base_url: String,
     pub translate_model: String,
     pub llm_concurrency: u32,
-    pub subtitle_length_preset: String,
+    pub subtitle_length_preset: SubtitleLengthPreset,
     pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
     pub enable_subtitle_beautify: bool,
+    /// Whether vision-assisted translation samples video frames. Read live
+    /// (like the other LLM connection settings) so the user can toggle it
+    /// mid-run; captured here once so the value logged at task start and the
+    /// value actually applied to translation stay identical.
+    pub enable_vision_assist: bool,
 }
 
 pub fn resolve_runtime_settings(
@@ -73,14 +78,14 @@ pub fn resolve_runtime_settings(
     // LLM endpoint/model, concurrency, ASR/align model, or chunk length
     // and have the next call/chunk pick it up.
     let saved = crate::services::preferences::load_saved_settings_from_default_path(store)
-        .unwrap_or_else(|_| fallback_saved_settings());
+        .unwrap_or_else(|_| crate::services::preferences_normalize::default_settings());
 
-    let provider = saved.provider.clone();
+    let provider = saved.provider;
     let chunk_target_seconds = saved.chunk_target_seconds.clamp(30, 60);
-    let asr_model = saved.asr_model.clone();
-    let align_model = saved.align_model.clone();
+    let asr_model = saved.asr_model.as_str().to_string();
+    let align_model = saved.align_model.as_str().to_string();
     let enable_vocal_separation = saved.enable_vocal_separation;
-    let demucs_model = saved.demucs_model.clone();
+    let demucs_model = saved.demucs_model.as_str().to_string();
     let translate_api_key = saved.translate_api_key.clone();
     let translate_base_url = saved.translate_base_url.clone();
     let translate_model = saved.translate_model.clone();
@@ -97,11 +102,11 @@ pub fn resolve_runtime_settings(
     }
 
     // Frozen settings: captured at enqueue time, do not change mid-task.
-    let subtitle_length_preset =
-        crate::services::subtitle_length::normalize_subtitle_length_preset(
-            &frozen.subtitle_length_preset,
-        );
+    let subtitle_length_preset = frozen.subtitle_length_preset;
     let enable_subtitle_beautify = frozen.enable_subtitle_beautify;
+    // Vision assist is a live setting (user-toggleable mid-run); read it once
+    // here so the logged value and the applied value are guaranteed identical.
+    let enable_vision_assist = saved.enable_vision_assist;
 
     // Terminology is driven by the per-task frozen selection: terminology_groups
     // holds 0 or 1 group (0 == "none"/no terminology). Flatten whatever is there.
@@ -140,39 +145,14 @@ pub fn resolve_runtime_settings(
         subtitle_length_preset,
         terminology_entries,
         enable_subtitle_beautify,
+        enable_vision_assist,
     })
-}
-
-pub fn fallback_saved_settings() -> crate::services::preferences::SavedSettings {
-    crate::services::preferences::SavedSettings {
-        provider: "cpu".to_string(),
-        chunk_target_seconds: 45,
-        subtitle_length_preset: crate::services::subtitle_length::DEFAULT_SUBTITLE_LENGTH_PRESET
-            .to_string(),
-        asr_model: crate::services::model::DEFAULT_ASR_MODEL.to_string(),
-        align_model: "Qwen3-ForcedAligner-0.6B".to_string(),
-        demucs_model: "htdemucs_ft".to_string(),
-        enable_vocal_separation: false,
-        translate_api_key: String::new(),
-        translate_base_url: "https://api.openai.com/v1".to_string(),
-        translate_model: "gpt-4.1-mini".to_string(),
-        llm_concurrency: 4,
-        terminology_groups: Vec::new(),
-        active_terminology_group_id: String::new(),
-        enable_subtitle_beautify: true,
-        enable_click_sound: true,
-        auto_burn_hard_subtitle: false,
-        subtitle_burn_mode: "bilingualSourceFirst".to_string(),
-        subtitle_render_style: crate::services::preferences::SubtitleRenderStyle::default(),
-        flat_srt_output: false,
-        flat_srt_items: vec!["source".to_string(), "target".to_string()],
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::preferences_types::TerminologyTerm;
+    use crate::services::preferences_types::{SubtitleLengthPreset, TerminologyTerm};
 
     fn dummy_store() -> TaskStore {
         let pool = tauri::async_runtime::block_on(crate::db::store::test_pool());
@@ -182,13 +162,13 @@ mod tests {
     #[test]
     fn frozen_subtitle_preset_is_preserved_across_calls() {
         let frozen = FrozenSettings {
-            subtitle_length_preset: "loose".to_string(),
+            subtitle_length_preset: SubtitleLengthPreset::Loose,
             enable_subtitle_beautify: false,
             terminology_groups: Vec::new(),
         };
         let settings = resolve_runtime_settings(&dummy_store(), &frozen, false)
             .expect("resolve");
-        assert_eq!(settings.subtitle_length_preset, "loose");
+        assert_eq!(settings.subtitle_length_preset, SubtitleLengthPreset::Loose);
         assert!(!settings.enable_subtitle_beautify);
         assert!(settings.terminology_entries.is_empty());
     }
@@ -196,7 +176,7 @@ mod tests {
     #[test]
     fn frozen_terminology_entries_are_normalized_and_deduplicated() {
         let frozen = FrozenSettings {
-            subtitle_length_preset: "default".to_string(),
+            subtitle_length_preset: SubtitleLengthPreset::Standard,
             enable_subtitle_beautify: true,
             terminology_groups: vec![TerminologyGroup {
                 id: "g1".to_string(),

@@ -7,8 +7,6 @@ pub mod file;
 pub mod logs;
 pub mod model;
 pub mod preferences;
-mod preferences_mapping;
-pub mod preferences_types;
 pub mod system;
 pub mod transcribe;
 mod transcribe_mapping;
