@@ -81,6 +81,9 @@ pub struct TaskRow {
     /// Per-task selected terminology group id ("" = none). The matching
     /// group's terms are frozen into `terminology_groups_json` at enqueue.
     pub terminology_group_id: String,
+    /// 入队顺序，单调递增；只在 INSERT 时赋值，ON CONFLICT 不更新。
+    /// `load_all_tasks` 按 `ORDER BY enqueue_seq ASC` 返回稳定顺序。
+    pub enqueue_seq: i64,
     pub updated_at: i64,
 }
 

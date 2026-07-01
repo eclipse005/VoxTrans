@@ -341,8 +341,9 @@ impl TaskStore {
              task_progress_stage_order, task_progress_detail, task_progress_current, \
              task_progress_total, transcribe_error, result_text, result_srt, llm_total_tokens, \
              intent, max_retries, subtitle_length_preset, \
-             enable_subtitle_beautify, terminology_groups_json, terminology_group_id, updated_at \
-             FROM tasks ORDER BY updated_at DESC",
+             enable_subtitle_beautify, terminology_groups_json, terminology_group_id, \
+             enqueue_seq, updated_at \
+             FROM tasks ORDER BY enqueue_seq ASC",
         )
         .fetch_all(&self.pool)
         .await
@@ -351,9 +352,10 @@ impl TaskStore {
         Ok(rows.into_iter().map(task_from_row).collect())
     }
 
-    /// Upsert a task row. `llm_total_tokens` is INSERT-only; on conflict the
-    /// existing token total is preserved so concurrent `update_task_tokens`
-    /// progress is not stomped. Use `update_task_tokens` to mutate it.
+    /// Upsert a task row. `llm_total_tokens` and `enqueue_seq` are INSERT-only;
+    /// on conflict the existing values are preserved. `llm_total_tokens` is
+    /// mutated via `update_task_tokens`; `enqueue_seq` is never updated after
+    /// initial enqueue (see `next_enqueue_seq`).
     pub async fn upsert_task(
         &self,
         item: &WorkspaceQueueItem,
@@ -367,8 +369,8 @@ impl TaskStore {
              task_progress_current, task_progress_total, transcribe_error, result_text, \
              result_srt, llm_total_tokens, intent, max_retries, subtitle_length_preset, \
              enable_subtitle_beautify, terminology_groups_json, terminology_group_id, \
-             updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
+             enqueue_seq, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
              media_path=excluded.media_path, name=excluded.name, media_kind=excluded.media_kind, \
              size_bytes=excluded.size_bytes, source_lang=excluded.source_lang, \
              target_lang=excluded.target_lang, transcribe_status=excluded.transcribe_status, \
@@ -411,11 +413,29 @@ impl TaskStore {
         .bind(row.enable_subtitle_beautify)
         .bind(&row.terminology_groups_json)
         .bind(&row.terminology_group_id)
+        .bind(row.enqueue_seq)
         .bind(row.updated_at)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("upsert task: {e}"))?;
         Ok(())
+    }
+
+    /// 原子取号：返回单调递增的 `enqueue_seq`。
+    /// 仅在入队新建任务时调用；后续 upsert 不会更新该列。
+    ///
+    /// 若调用方在取号后 upsert 失败，seq 仍会递增（跳号不影响排序单调性，
+    /// 仅是审美问题）。
+    pub async fn next_enqueue_seq(&self) -> Result<i64, String> {
+        let row: (i64,) = sqlx::query_as(
+            "INSERT INTO task_seq_counter (id, next_seq) VALUES (1, 1) \
+             ON CONFLICT(id) DO UPDATE SET next_seq = next_seq + 1 \
+             RETURNING next_seq - 1",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("next enqueue seq: {e}"))?;
+        Ok(row.0)
     }
 
     pub async fn update_task_tokens(&self, id: &str, total_tokens: u64) -> Result<(), String> {
@@ -967,6 +987,7 @@ mod tests {
             subtitle_length_preset: "long".to_string(),
             enable_subtitle_beautify: false,
             terminology_groups_json: r#"[{"id":"g","name":"x","terms":[]}]"#.to_string(),
+            enqueue_seq: 0,
         };
         s.upsert_task(&original, &extras).await.expect("upsert");
 
@@ -1001,6 +1022,112 @@ mod tests {
             assert_eq!(item.transcribe_status, "error");
             assert!(!item.transcribe_error.is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn next_enqueue_seq_is_monotonic() {
+        let s = store().await;
+        let a = s.next_enqueue_seq().await.unwrap();
+        let b = s.next_enqueue_seq().await.unwrap();
+        let c = s.next_enqueue_seq().await.unwrap();
+        assert_eq!(a, 0);
+        assert_eq!(b, 1);
+        assert_eq!(c, 2);
+    }
+
+    #[tokio::test]
+    async fn upsert_preserves_enqueue_seq_on_conflict() {
+        let s = store().await;
+        let mut item = sample_task("task-1");
+        let extras = TaskMetaExtras {
+            enqueue_seq: 5,
+            ..TaskMetaExtras::default()
+        };
+        s.upsert_task(&item, &extras).await.unwrap();
+        let first_updated_at: i64 = sqlx::query_scalar("SELECT updated_at FROM tasks WHERE id = ?")
+            .bind("task-1")
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+
+        // 等待 5ms 保证 updated_at 一定变化（now_ms 精度为 ms）
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        // 再次 upsert 同 id，状态变更，但 enqueue_seq 传不同值也应被忽略。
+        item.transcribe_status = "completed".into();
+        let extras2 = TaskMetaExtras {
+            enqueue_seq: 999, // 应被忽略
+            ..TaskMetaExtras::default()
+        };
+        s.upsert_task(&item, &extras2).await.unwrap();
+
+        let loaded = s.load_all_tasks().await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].1.enqueue_seq, 5);
+        // updated_at 应刷新（语义为"最后修改时间"，虽不参与排序但应正常更新）
+        let second_updated_at: i64 =
+            sqlx::query_scalar("SELECT updated_at FROM tasks WHERE id = ?")
+                .bind("task-1")
+                .fetch_one(s.pool())
+                .await
+                .unwrap();
+        assert!(second_updated_at > first_updated_at);
+    }
+
+    #[tokio::test]
+    async fn load_all_tasks_orders_by_enqueue_seq_asc() {
+        let s = store().await;
+        // 故意乱序插入 seq=10、5、8
+        for seq in [10, 5, 8] {
+            let item = sample_task(&format!("task-{seq}"));
+            let extras = TaskMetaExtras {
+                enqueue_seq: seq as i64,
+                ..TaskMetaExtras::default()
+            };
+            s.upsert_task(&item, &extras).await.unwrap();
+        }
+        let loaded = s.load_all_tasks().await.unwrap();
+        let ids: Vec<&str> = loaded.iter().map(|(i, _)| i.id.as_str()).collect();
+        assert_eq!(ids, vec!["task-5", "task-8", "task-10"]);
+    }
+
+    #[tokio::test]
+    async fn recover_orphan_does_not_change_order() {
+        let s = store().await;
+        // A(seq=1, processing) 在前；B(seq=2, completed) 在后。
+        let mut a = sample_task("a");
+        a.transcribe_status = "processing".into();
+        s.upsert_task(
+            &a,
+            &TaskMetaExtras {
+                enqueue_seq: 1,
+                ..TaskMetaExtras::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let mut b = sample_task("b");
+        b.transcribe_status = "completed".into();
+        s.upsert_task(
+            &b,
+            &TaskMetaExtras {
+                enqueue_seq: 2,
+                ..TaskMetaExtras::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        s.recover_orphan_processing().await.unwrap();
+
+        let loaded = s.load_all_tasks().await.unwrap();
+        assert_eq!(loaded.len(), 2);
+        // 顺序仍为 [a, b]，不会因 recover 刷新 updated_at 而翻转。
+        assert_eq!(loaded[0].0.id, "a");
+        assert_eq!(loaded[0].0.transcribe_status, "error");
+        assert_eq!(loaded[1].0.id, "b");
+        assert_eq!(loaded[1].0.transcribe_status, "completed");
     }
 
     #[tokio::test]
@@ -1076,6 +1203,7 @@ mod tests {
             enable_subtitle_beautify: true,
             terminology_groups_json:
                 r#"[{"id":"frozen-grp","name":"frozen-name","terms":[]}]"#.into(),
+            enqueue_seq: 0,
         };
         s.upsert_task(&sample_task("t-frozen"), &frozen_extras)
             .await

@@ -43,6 +43,7 @@ pub(super) async fn persist_task_meta(
         subtitle_length_preset: record.frozen.subtitle_length_preset.clone(),
         enable_subtitle_beautify: record.frozen.enable_subtitle_beautify,
         terminology_groups_json,
+        enqueue_seq: record.enqueue_seq,
     };
     store
         .upsert_task(&record.item, &extras)
@@ -88,6 +89,7 @@ async fn hydrate_workspace_from_db(store: &TaskStore) -> WorkspaceResult<()> {
             target_lang,
             max_retries: extras.max_retries,
             frozen,
+            enqueue_seq: extras.enqueue_seq,
         });
     }
 

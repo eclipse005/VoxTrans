@@ -110,6 +110,8 @@ pub struct TaskMetaExtras {
     pub enable_subtitle_beautify: bool,
     /// JSON-serialized `Vec<TerminologyGroup>` (frozen at enqueue time).
     pub terminology_groups_json: String,
+    /// 入队顺序号；INSERT 时由 `next_enqueue_seq` 取号写入，UPDATE 不变。
+    pub enqueue_seq: i64,
 }
 
 impl Default for TaskMetaExtras {
@@ -120,6 +122,7 @@ impl Default for TaskMetaExtras {
             subtitle_length_preset: String::new(),
             enable_subtitle_beautify: true,
             terminology_groups_json: "[]".to_string(),
+            enqueue_seq: 0,
         }
     }
 }
@@ -157,6 +160,7 @@ pub fn task_from_row(row: TaskRow) -> (WorkspaceQueueItem, TaskMetaExtras) {
         subtitle_length_preset: row.subtitle_length_preset,
         enable_subtitle_beautify: row.enable_subtitle_beautify,
         terminology_groups_json: row.terminology_groups_json,
+        enqueue_seq: row.enqueue_seq,
     };
     (item, extras)
 }
@@ -187,6 +191,7 @@ pub fn row_from_task(item: &WorkspaceQueueItem, extras: &TaskMetaExtras) -> Task
         enable_subtitle_beautify: extras.enable_subtitle_beautify,
         terminology_groups_json: extras.terminology_groups_json.clone(),
         terminology_group_id: item.terminology_group_id.clone(),
+        enqueue_seq: extras.enqueue_seq,
         updated_at: now_ms(),
     }
 }
@@ -297,6 +302,7 @@ mod tests {
             subtitle_length_preset: "long".into(),
             enable_subtitle_beautify: false,
             terminology_groups_json: r#"[{"id":"g","name":"x","terms":[]}]"#.into(),
+            enqueue_seq: 0,
         };
         let row = row_from_task(&original, &extras);
         let (restored_item, restored_extras) = task_from_row(row);

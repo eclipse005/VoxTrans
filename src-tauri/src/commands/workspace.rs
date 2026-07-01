@@ -37,6 +37,9 @@ struct WorkspaceTaskRecord {
     max_retries: u32,
     /// Captured at enqueue time; see `FrozenSettings` docs.
     frozen: FrozenSettings,
+    /// 入队顺序号；hydrate 时从 DB 读出，persist 时透传给 upsert。
+    /// ON CONFLICT 不更新该列，保证顺序稳定。
+    enqueue_seq: i64,
 }
 
 #[tauri::command]

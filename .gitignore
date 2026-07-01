@@ -27,6 +27,9 @@ dist-ssr
 .claude/
 .worktrees/
 
+# CodeBuddy Code local guidance
+CODEBUDDY.md
+
 # Internal planning / CI
 ROADMAP.md
 .github/

@@ -68,13 +68,21 @@ CREATE TABLE IF NOT EXISTS tasks (
     enable_subtitle_beautify INTEGER NOT NULL DEFAULT 1,
     terminology_groups_json TEXT NOT NULL DEFAULT '[]',
     terminology_group_id TEXT NOT NULL DEFAULT '',
+    -- 入队顺序，单调递增；一旦写入永不更新。ORDER BY 用它，updated_at 不再参与排序。
+    enqueue_seq INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(transcribe_status);
-CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_enqueue_seq ON tasks(enqueue_seq ASC);
 CREATE INDEX IF NOT EXISTS idx_tasks_langs ON tasks(source_lang, target_lang);
 CREATE INDEX IF NOT EXISTS idx_tasks_media_kind ON tasks(media_kind);
+
+-- task_seq_counter: 单行计数器，原子取号入队顺序
+CREATE TABLE IF NOT EXISTS task_seq_counter (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    next_seq INTEGER NOT NULL
+);
 
 -- task_artifacts: pipeline step checkpoint 缓存（tasks 的 1:N，CASCADE 删除）
 CREATE TABLE IF NOT EXISTS task_artifacts (

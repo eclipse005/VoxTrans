@@ -53,6 +53,7 @@ pub(super) async fn register_task_upload_internal(
         })
         .await?;
     } else {
+        let enqueue_seq = db_store.next_enqueue_seq().await?;
         let record = WorkspaceTaskRecord {
             item: new_workspace_queue_item(
                 id,
@@ -67,6 +68,7 @@ pub(super) async fn register_task_upload_internal(
             target_lang: default_task_target_lang(),
             max_retries: 0,
             frozen: FrozenSettings::default(),
+            enqueue_seq,
         };
         persist_task_meta(db_store, &record).await?;
         let mut store = lock_workspace_store()?;
@@ -172,6 +174,7 @@ pub(super) async fn enqueue_task_run_internal(
         item.source_lang = source_lang.clone();
         item.target_lang = target_lang.clone();
         item.terminology_group_id = terminology_group_id.clone();
+        let enqueue_seq = db_store.next_enqueue_seq().await?;
         let record = WorkspaceTaskRecord {
             item,
             intent: normalize_intent(&request.intent).to_string(),
@@ -179,6 +182,7 @@ pub(super) async fn enqueue_task_run_internal(
             target_lang,
             max_retries: request.max_retries.unwrap_or(0),
             frozen: freeze_current_settings(db_store, &terminology_group_id),
+            enqueue_seq,
         };
         let emitted = record.item.clone();
         persist_task_meta(db_store, &record).await?;
@@ -599,6 +603,7 @@ mod tests {
             target_lang: "zh-CN".to_string(),
             max_retries: 0,
             frozen: FrozenSettings::default(),
+            enqueue_seq: 0,
         }
     }
 }
