@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   saveAppSettings as saveAppSettingsApi,
   testTranslateLlmConnection,
@@ -16,6 +16,7 @@ import type {
 import type { AppAction } from "../state/appReducer";
 import type { ToastTone } from "../types";
 import { normalizeTerminologyGroups } from "../utils/terminology";
+import { normalizeSettings } from "../utils/normalizeSettings";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (
@@ -45,6 +46,7 @@ export type SettingsForm = {
   subtitleRenderStyle: SubtitleRenderStyle;
   flatSrtOutput: boolean;
   flatSrtItems: SubtitleBurnMode[];
+  enableVisionAssist: boolean;
 };
 
 function settingsToForm(settings: SavedSettings): SettingsForm {
@@ -67,11 +69,9 @@ function settingsToForm(settings: SavedSettings): SettingsForm {
     autoBurnHardSubtitle: settings.autoBurnHardSubtitle,
     subtitleBurnMode: settings.subtitleBurnMode,
     subtitleRenderStyle: settings.subtitleRenderStyle,
-    flatSrtOutput: settings.flatSrtOutput ?? false,
-    flatSrtItems: (settings.flatSrtItems ?? ["source", "target"]).filter(
-      (v): v is SubtitleBurnMode =>
-        v === "source" || v === "target" || v === "bilingualSourceFirst" || v === "bilingualTargetFirst"
-    ),
+    flatSrtOutput: settings.flatSrtOutput,
+    flatSrtItems: settings.flatSrtItems,
+    enableVisionAssist: settings.enableVisionAssist,
   };
 }
 
@@ -90,13 +90,11 @@ export function useSettingsController({
 }: UseSettingsControllerArgs) {
   const [form, setForm] = useState<SettingsForm>(() => settingsToForm(settings));
 
-  // The terminology modal is opened from a separate entry point and reads
-  // `form.terminologyGroups` directly, not via openSettings(). If the user
-  // opens it before useAppPersistence's async load has populated `settings`,
-  // the form still holds the initial empty default group and any saved
-  // terms are invisible. Sync terminologyGroups whenever the upstream
-  // settings change so the modal always reflects the latest DB state.
-  useEffect(() => {
+  // Keep terminology form fields in sync with the authoritative settings
+  // snapshot. Call this before opening the terminology modal so it always
+  // reflects the latest DB state, even when opened from outside the settings
+  // dialog.
+  const prepareTerminologyForm = useCallback(() => {
     setForm((prev) => ({
       ...prev,
       terminologyGroups: settings.terminologyGroups,
@@ -116,70 +114,40 @@ export function useSettingsController({
       pushToast("分段时长必须是数字", "error");
       return;
     }
-    const clamped = Math.max(30, Math.min(60, parsed));
-
     const parsedConcurrency = Number.parseInt(form.llmConcurrencyInput.trim(), 10);
     if (!Number.isFinite(parsedConcurrency)) {
       pushToast("并发数必须是数字", "error");
       return;
     }
-    const clampedConcurrency = Math.max(1, Math.min(16, parsedConcurrency));
 
-    const nextSettings: SavedSettings = {
+    const draft: SavedSettings = {
+      ...settings,
       provider: form.provider,
-      chunkTargetSeconds: clamped,
+      chunkTargetSeconds: parsed,
       subtitleLengthPreset: form.subtitleLengthPreset,
       asrModel: form.asrModel,
       alignModel: form.alignModel,
       demucsModel: form.demucsModel,
       enableVocalSeparation: form.enableVocalSeparation,
-      translateApiKey: form.translateApiKey.trim(),
-      translateBaseUrl: form.translateBaseUrl.trim() || "https://api.openai.com/v1",
-      translateModel: form.translateModel.trim() || "gpt-4.1-mini",
-      llmConcurrency: clampedConcurrency,
+      translateApiKey: form.translateApiKey,
+      translateBaseUrl: form.translateBaseUrl,
+      translateModel: form.translateModel,
+      llmConcurrency: parsedConcurrency,
       terminologyGroups: normalizeTerminologyGroups(form.terminologyGroups),
       activeTerminologyGroupId: form.activeTerminologyGroupId,
       enableSubtitleBeautify: form.enableSubtitleBeautify,
       enableClickSound: form.enableClickSound,
       autoBurnHardSubtitle: form.autoBurnHardSubtitle,
       subtitleBurnMode: form.subtitleBurnMode,
-      subtitleRenderStyle: {
-        source: normalizeSubtitleLineStyle(form.subtitleRenderStyle.source, {
-          fontFamily: "Arial",
-          fontSize: 44,
-          primaryColor: "#FFFFFF",
-          outlineColor: "#101010",
-          backColor: "#000000",
-          outline: 2.5,
-          shadow: 1,
-          borderStyle: "outline",
-          borderOpacity: 88,
-        }),
-        target: normalizeSubtitleLineStyle(form.subtitleRenderStyle.target, {
-          fontFamily: "Microsoft YaHei",
-          fontSize: 40,
-          primaryColor: "#EAF6FF",
-          outlineColor: "#101010",
-          backColor: "#000000",
-          outline: 2.5,
-          shadow: 1,
-          borderStyle: "outline",
-          borderOpacity: 88,
-        }),
-        layout: {
-          marginV: Math.max(0, Math.min(200, Math.round(form.subtitleRenderStyle.layout.marginV))),
-          alignment: form.subtitleRenderStyle.layout.alignment,
-          bilingualLineGap: Math.max(0, Math.min(140, Math.round(form.subtitleRenderStyle.layout.bilingualLineGap))),
-        },
-      },
+      subtitleRenderStyle: form.subtitleRenderStyle,
       flatSrtOutput: form.flatSrtOutput,
       flatSrtItems: form.flatSrtItems,
+      enableVisionAssist: form.enableVisionAssist,
     };
 
-    dispatch({
-      type: "set_settings",
-      settings: nextSettings,
-    });
+    const nextSettings = normalizeSettings(draft, settings);
+
+    dispatch({ type: "set_settings", settings: nextSettings });
     setForm(settingsToForm(nextSettings));
 
     try {
@@ -189,7 +157,7 @@ export function useSettingsController({
       const message = error instanceof Error ? error.message : "设置保存失败";
       pushToast(message, "error");
     }
-  }, [form, dispatch, pushToast]);
+  }, [form, settings, dispatch, pushToast]);
 
   const saveTerminologyGroups = useCallback(async (groups: SavedSettings["terminologyGroups"]) => {
     const normalizedGroups = normalizeTerminologyGroups(groups);
@@ -211,8 +179,8 @@ export function useSettingsController({
 
   const testTranslateConnection = useCallback(async () => {
     const apiKey = form.translateApiKey.trim();
-    const baseUrl = form.translateBaseUrl.trim() || "https://api.openai.com/v1";
-    const configuredModel = form.translateModel.trim() || "gpt-4.1-mini";
+    const baseUrl = form.translateBaseUrl.trim() || settings.translateBaseUrl;
+    const configuredModel = form.translateModel.trim() || settings.translateModel;
     if (!apiKey) {
       pushToast("请先填写接口密钥", "error");
       return;
@@ -223,6 +191,7 @@ export function useSettingsController({
         apiKey,
         baseUrl,
         model: configuredModel,
+        enableVisionAssist: form.enableVisionAssist,
       });
       if (response.ok) {
         const modelName = response.model?.trim() || configuredModel;
@@ -234,39 +203,15 @@ export function useSettingsController({
       const message = error instanceof Error ? error.message : "连通性测试失败";
       pushToast(message, "error", { id: toastId, durationMs: 3000 });
     }
-  }, [form.translateApiKey, form.translateBaseUrl, form.translateModel, pushToast]);
+  }, [form.translateApiKey, form.translateBaseUrl, form.translateModel, form.enableVisionAssist, settings.translateBaseUrl, settings.translateModel, pushToast]);
 
   return {
     openSettings,
     saveSettings,
     saveTerminologyGroups,
     testTranslateConnection,
+    prepareTerminologyForm,
     form,
     setForm,
-  };
-}
-
-function normalizeHexColor(raw: string, fallback: string): string {
-  const value = String(raw ?? "").trim();
-  if (/^#[0-9a-fA-F]{6}$/.test(value)) {
-    return value.toUpperCase();
-  }
-  return fallback;
-}
-
-function normalizeSubtitleLineStyle(
-  style: SavedSettings["subtitleRenderStyle"]["source"],
-  fallback: SavedSettings["subtitleRenderStyle"]["source"],
-): SavedSettings["subtitleRenderStyle"]["source"] {
-  return {
-    fontFamily: style.fontFamily.trim() || fallback.fontFamily,
-    fontSize: Math.max(16, Math.min(96, Math.round(style.fontSize))),
-    primaryColor: normalizeHexColor(style.primaryColor, fallback.primaryColor),
-    outlineColor: normalizeHexColor(style.outlineColor, fallback.outlineColor),
-    backColor: normalizeHexColor(style.backColor, fallback.backColor),
-    outline: Math.max(0, Math.min(8, style.outline)),
-    shadow: Math.max(0, Math.min(8, style.shadow)),
-    borderStyle: style.borderStyle === "box" ? "box" : "outline",
-    borderOpacity: Math.max(0, Math.min(100, Math.round(style.borderOpacity))),
   };
 }

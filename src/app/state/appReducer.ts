@@ -3,12 +3,10 @@ import type {
   SavedSettings,
   SubtitleCue,
 } from "../../features/media/types";
-import { normalizeProvider } from "../../features/media/provider";
 import type { ToastState, UploadTab } from "../types";
 import { reduceQueueState } from "./queueReducer";
 import { reduceSettingsState } from "./settingsReducer";
 import { reduceSubtitleState } from "./subtitleReducer";
-import { createTerminologyGroup } from "../utils/terminology";
 
 export type AppState = {
   queue: QueueItem[];
@@ -17,7 +15,9 @@ export type AppState = {
   activeTab: UploadTab;
   showSettings: boolean;
   showLogs: boolean;
-  settings: SavedSettings;
+  // null until useAppPersistence has loaded authoritative settings from the
+  // backend. App.tsx renders a loading gate while this is null.
+  settings: SavedSettings | null;
   youtubeUrl: string;
   youtubeQuality: string;
   toast: ToastState | null;
@@ -77,57 +77,6 @@ export type SettingsAction =
 
 export type AppAction = UiAction | QueueAction | SubtitleAction | SettingsAction;
 
-export const defaultSettings: SavedSettings = {
-  provider: normalizeProvider(undefined),
-  chunkTargetSeconds: 45,
-  subtitleLengthPreset: "standard",
-  asrModel: "Qwen3-ASR-0.6B",
-  alignModel: "Qwen3-ForcedAligner-0.6B",
-  demucsModel: "htdemucs_ft",
-  enableVocalSeparation: false,
-  translateApiKey: "",
-  translateBaseUrl: "https://api.openai.com/v1",
-  translateModel: "gpt-4.1-mini",
-  llmConcurrency: 4,
-  terminologyGroups: [createTerminologyGroup()],
-  activeTerminologyGroupId: "",
-  enableSubtitleBeautify: true,
-  enableClickSound: true,
-  autoBurnHardSubtitle: false,
-  subtitleBurnMode: "bilingualSourceFirst",
-  subtitleRenderStyle: {
-    source: {
-      fontFamily: "Arial",
-      fontSize: 44,
-      primaryColor: "#FFFFFF",
-      outlineColor: "#101010",
-      backColor: "#000000",
-      outline: 2.5,
-      shadow: 1,
-      borderStyle: "outline",
-      borderOpacity: 88,
-    },
-    target: {
-      fontFamily: "Microsoft YaHei",
-      fontSize: 40,
-      primaryColor: "#EAF6FF",
-      outlineColor: "#101010",
-      backColor: "#000000",
-      outline: 2.5,
-      shadow: 1,
-      borderStyle: "outline",
-      borderOpacity: 88,
-    },
-    layout: {
-      marginV: 40,
-      alignment: 2,
-      bilingualLineGap: 10,
-    },
-  },
-  flatSrtOutput: false,
-  flatSrtItems: ["source", "target"],
-};
-
 export const initialAppState: AppState = {
   queue: [],
   activeId: "",
@@ -135,7 +84,7 @@ export const initialAppState: AppState = {
   activeTab: "local",
   showSettings: false,
   showLogs: false,
-  settings: defaultSettings,
+  settings: null,
   youtubeUrl: "",
   youtubeQuality: "",
   toast: null,

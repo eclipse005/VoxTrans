@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useReducer, useState } from "react";
+import type { Dispatch } from "react";
 import type { ExportSrtItem } from "./api/transcribe";
 import { ModalLayer } from "./components/ModalLayer";
 import Navbar from "./components/Navbar";
@@ -14,8 +15,9 @@ import { useSubtitleWorkflow } from "./hooks/useSubtitleWorkflow";
 import { useTaskLogs } from "./hooks/useTaskLogs";
 import { useToast } from "./hooks/useToast";
 import { useWorkspacePersistence } from "./hooks/useWorkspacePersistence";
-import { appReducer, initialAppState } from "./state/appReducer";
+import { type AppAction, appReducer, initialAppState, type AppState } from "./state/appReducer";
 import { SettingsFormContext } from "./contexts/SettingsFormContext";
+import type { SavedSettings } from "../features/media/types";
 
 const SUBTITLE_EXPORT_ITEMS_KEY = "voxtrans.subtitleExportItems.v1";
 const ALL_EXPORT_ITEMS: ExportSrtItem[] = [
@@ -47,6 +49,30 @@ function saveExportItems(items: ExportSrtItem[]) {
 
 function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
+  useAppPersistence(dispatch);
+
+  if (state.settings === null) {
+    return <LoadingScreen />;
+  }
+
+  return <AppContent settings={state.settings} state={state} dispatch={dispatch} />;
+}
+
+function LoadingScreen() {
+  return (
+    <div className="apple-style app-root" style={{ justifyContent: "center", alignItems: "center" }}>
+      <div className="app-loading">加载中…</div>
+    </div>
+  );
+}
+
+type AppContentProps = {
+  settings: SavedSettings;
+  state: AppState;
+  dispatch: Dispatch<AppAction>;
+};
+
+function AppContent({ settings, state, dispatch }: AppContentProps) {
   const [showTerminologyModal, setShowTerminologyModal] = useState(false);
   const [showSubtitleExportModal, setShowSubtitleExportModal] = useState(false);
   const [savedExportItems, setSavedExportItems] = useState<ExportSrtItem[]>(() => loadSavedExportItems());
@@ -57,7 +83,6 @@ function App() {
     activeTab,
     showSettings,
     showLogs,
-    settings,
     youtubeUrl,
     toast,
     subtitleTaskId,
@@ -83,7 +108,6 @@ function App() {
     skipVersion,
   } = useAutoUpdateCheck();
 
-  useAppPersistence(dispatch);
   useClickSound(settings.enableClickSound);
   const { workspaceHydrated } = useWorkspacePersistence({
     dispatch,
@@ -160,6 +184,7 @@ function App() {
     saveSettings,
     saveTerminologyGroups,
     testTranslateConnection,
+    prepareTerminologyForm,
     form,
     setForm,
   } = useSettingsController({
@@ -226,7 +251,12 @@ function App() {
       const message = error instanceof Error ? error.message : "打开字幕目录失败";
       pushToast(message, "error");
     }
-  }, [pushToast, subtitleMediaPath, subtitleTaskId]);
+  }, [subtitleTaskId, subtitleMediaPath, pushToast]);
+
+  const handleOpenTerminology = useCallback(() => {
+    prepareTerminologyForm();
+    setShowTerminologyModal(true);
+  }, [prepareTerminologyForm]);
 
   const canExportTranslated = useMemo(
     () => subtitleCues.some((cue) => cue.translatedText.trim().length > 0),
@@ -237,7 +267,7 @@ function App() {
     <div className="apple-style app-root">
       <Navbar
         onOpenSettings={openSettings}
-        onOpenTerminology={() => setShowTerminologyModal(true)}
+        onOpenTerminology={handleOpenTerminology}
         hasAvailableUpdate={hasAvailableUpdate}
         onOpenUpdateDialog={openUpdateDialog}
       />

@@ -1,78 +1,24 @@
-export const PROVIDER_IDS = ["cpu", "cuda"] as const;
-export type Provider = (typeof PROVIDER_IDS)[number];
+// Settings-related types are re-exported from ts-rs generated bindings
+// (single source of truth). Other domain types remain hand-written here.
+export type { AlignModel } from "../../generated/bindings/AlignModel";
+export type { AsrModel } from "../../generated/bindings/AsrModel";
+export type { DefaultSettingsResponse } from "../../generated/bindings/DefaultSettingsResponse";
+export type { DemucsModel } from "../../generated/bindings/DemucsModel";
+export type { Provider } from "../../generated/bindings/Provider";
+export type { SaveAppSettingsRequest } from "../../generated/bindings/SaveAppSettingsRequest";
+export type { SavedSettings } from "../../generated/bindings/SavedSettings";
+export type { SubtitleBorderStyle } from "../../generated/bindings/SubtitleBorderStyle";
+export type { SubtitleBurnMode } from "../../generated/bindings/SubtitleBurnMode";
+export type { SubtitleLayoutStyle } from "../../generated/bindings/SubtitleLayoutStyle";
+export type { SubtitleLengthPreset } from "../../generated/bindings/SubtitleLengthPreset";
+export type { SubtitleLineStyle } from "../../generated/bindings/SubtitleLineStyle";
+export type { SubtitleRenderStyle } from "../../generated/bindings/SubtitleRenderStyle";
+export type { TerminologyGroup } from "../../generated/bindings/TerminologyGroup";
+export type { TerminologyTerm } from "../../generated/bindings/TerminologyTerm";
+export type { UserPreferencesResponse } from "../../generated/bindings/UserPreferencesResponse";
+
+// Runtime constants (not types) stay here.
 export type ModelTarget = "asr" | "align" | "demucs";
-export type AsrModel = "Qwen3-ASR-0.6B" | "Qwen3-ASR-1.7B" | "cohere-transcribe-03-2026";
-export type AlignModel = "Qwen3-ForcedAligner-0.6B";
-export type DemucsModel = "htdemucs_ft";
-
-export type TerminologyTerm = {
-  id: string;
-  origin: string;
-  target: string;
-  note: string;
-};
-
-export type TerminologyGroup = {
-  id: string;
-  name: string;
-  terms: TerminologyTerm[];
-};
-
-export type SubtitleBurnMode =
-  | "source"
-  | "target"
-  | "bilingualSourceFirst"
-  | "bilingualTargetFirst";
-
-export type SubtitleLineStyle = {
-  fontFamily: string;
-  fontSize: number;
-  primaryColor: string;
-  outlineColor: string;
-  backColor: string;
-  outline: number;
-  shadow: number;
-  borderStyle: "outline" | "box";
-  borderOpacity: number;
-};
-
-type SubtitleLayoutStyle = {
-  marginV: number;
-  alignment: 1 | 2 | 3;
-  bilingualLineGap: number;
-};
-
-export type SubtitleRenderStyle = {
-  source: SubtitleLineStyle;
-  target: SubtitleLineStyle;
-  layout: SubtitleLayoutStyle;
-};
-
-export type SubtitleLengthPreset = "short" | "standard" | "loose";
-
-export type SavedSettings = {
-  provider: Provider;
-  chunkTargetSeconds: number;
-  subtitleLengthPreset: SubtitleLengthPreset;
-  asrModel: AsrModel;
-  alignModel: AlignModel;
-  demucsModel: DemucsModel;
-  enableVocalSeparation: boolean;
-  translateApiKey: string;
-  translateBaseUrl: string;
-  translateModel: string;
-  llmConcurrency: number;
-  terminologyGroups: TerminologyGroup[];
-  activeTerminologyGroupId: string;
-  enableSubtitleBeautify: boolean;
-  enableClickSound: boolean;
-  autoBurnHardSubtitle: boolean;
-  subtitleBurnMode: SubtitleBurnMode;
-  subtitleRenderStyle: SubtitleRenderStyle;
-  flatSrtOutput: boolean;
-  flatSrtItems: SubtitleBurnMode[];
-};
-
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
 export type SourceLanguage = "en" | "zh" | "yue" | "ja" | "ko" | "fr" | "de" | "it" | "es" | "pt";

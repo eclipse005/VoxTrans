@@ -74,7 +74,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
       ctx.setForm((prev) => ({ ...prev, chunkInput: "" }));
       return;
     }
-    const nextValue = Math.min(60, Number.parseInt(digits, 10));
+    const nextValue = Math.max(30, Math.min(60, Number.parseInt(digits, 10)));
     ctx.setForm((prev) => ({ ...prev, chunkInput: String(nextValue) }));
   };
 
@@ -124,8 +124,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
           </button>
         </div>
         <div className="settings-body">
-          {activeTab === "transcribe" ? (
-            <div className="settings-tab-content">
+          <div className="settings-tab-content" hidden={activeTab !== "transcribe"}>
               <div className="settings-section">
                 <h3 className="apple-heading-small">转录参数</h3>
                 <div className="api-config-form">
@@ -232,8 +231,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                 </div>
               </div>
             </div>
-          ) : activeTab === "translate" ? (
-            <div className="settings-tab-content">
+          <div className="settings-tab-content" hidden={activeTab !== "translate"}>
               <div className="settings-section">
                 <div className="api-config-form">
                   <div className="form-row">
@@ -285,11 +283,25 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                   </div>
+                  <div className="subtitle-toggle-row">
+                    <label className="setting-toggle" htmlFor="enable-vision-assist">
+                      <input
+                        id="enable-vision-assist"
+                        type="checkbox"
+                        checked={ctx.form.enableVisionAssist}
+                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableVisionAssist: e.target.checked }))}
+                      />
+                      <div className="toggle-label">
+                        <span className="toggle-title">图片辅助翻译</span>
+                        <span className="toggle-desc">需模型支持图片输入</span>
+                      </div>
+                      <span className="toggle-switch" />
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>
-          ) : activeTab === "subtitle" ? (
-            <div className="settings-tab-content">
+          <div className="settings-tab-content" hidden={activeTab !== "subtitle"}>
               <div className="settings-section">
                 <div className="api-config-form">
                   <div className="form-row">
@@ -741,8 +753,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                 </div>
               </div>
             </div>
-          ) : (
-            <div className="settings-tab-content model-center-content">
+          <div className="settings-tab-content model-center-content" hidden={activeTab !== "models"}>
               <ModelDownloadCard
                 target="asr"
                 title="ASR 模型"
@@ -808,7 +819,6 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                 onCancelModelDownload={ctx.cancelModelDownload}
               />
             </div>
-          )}
         </div>
         <div className="settings-footer">
           <button className="nav-button" onClick={ctx.saveSettings} title="保存设置" aria-label="保存设置">

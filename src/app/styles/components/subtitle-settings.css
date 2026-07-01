@@ -3,6 +3,10 @@
   display: block;
 }
 
+.settings-tab-content[hidden] {
+  display: none;
+}
+
 .form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

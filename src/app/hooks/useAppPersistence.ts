@@ -1,146 +1,93 @@
 import { useEffect } from "react";
 import { loadUserPreferences } from "../api/preferences";
-import { normalizeProvider } from "../../features/media/provider";
-import type {
-  AlignModel,
-  AsrModel,
-  DemucsModel,
-  SubtitleLengthPreset,
-  SubtitleBurnMode,
-  SubtitleLineStyle,
-  SubtitleRenderStyle,
-} from "../../features/media/types";
-import type { UserPreferencesResponse } from "../../generated/bindings/UserPreferencesResponse";
+import { getDefaultSettings } from "../api/settings";
+import { normalizeSettings } from "../utils/normalizeSettings";
+import type { SavedSettings } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
-import { normalizeTerminologyGroups } from "../utils/terminology";
 
 type DispatchState = (action: AppAction) => void;
+
+/**
+ * Hardcoded last-resort defaults, mirroring the backend's `default_settings()`.
+ *
+ * Used only if the `get_default_settings` IPC itself rejects (e.g. command not
+ * registered in a partial build, or the app not ready during cold start).
+ * Without it, `state.settings` would stay `null` forever and the app would sit
+ * on an infinite loading screen. This guarantees the UI always reaches a usable
+ * state even when the backend IPC layer is unavailable.
+ */
+const LAST_RESORT_DEFAULTS: SavedSettings = {
+  provider: "cpu",
+  chunkTargetSeconds: 30,
+  subtitleLengthPreset: "standard",
+  asrModel: "Qwen3-ASR-0.6B",
+  alignModel: "Qwen3-ForcedAligner-0.6B",
+  demucsModel: "htdemucs_ft",
+  enableVocalSeparation: false,
+  translateApiKey: "",
+  translateBaseUrl: "https://api.deepseek.com/v1",
+  translateModel: "deepseek-chat",
+  llmConcurrency: 4,
+  terminologyGroups: [{ id: "group-default", name: "默认", terms: [] }],
+  activeTerminologyGroupId: "",
+  enableSubtitleBeautify: true,
+  enableClickSound: true,
+  autoBurnHardSubtitle: false,
+  subtitleBurnMode: "bilingualSourceFirst",
+  subtitleRenderStyle: {
+    source: {
+      fontFamily: "Arial",
+      fontSize: 44,
+      primaryColor: "#FFFFFF",
+      outlineColor: "#101010",
+      backColor: "#000000",
+      outline: 2.5,
+      shadow: 1,
+      borderStyle: "outline",
+      borderOpacity: 88,
+    },
+    target: {
+      fontFamily: "Microsoft YaHei",
+      fontSize: 40,
+      primaryColor: "#EAF6FF",
+      outlineColor: "#101010",
+      backColor: "#000000",
+      outline: 2.5,
+      shadow: 1,
+      borderStyle: "outline",
+      borderOpacity: 88,
+    },
+    layout: { marginV: 40, alignment: 2, bilingualLineGap: 10 },
+  },
+  flatSrtOutput: false,
+  flatSrtItems: ["source", "target"],
+  enableVisionAssist: false,
+};
 
 export function useAppPersistence(dispatch: DispatchState) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // Defaults are static and do not touch the DB; they must succeed for the
+      // app to have a usable settings snapshot. If the IPC itself is
+      // unavailable, fall back to the hardcoded snapshot so the UI still loads.
+      let defaults: SavedSettings;
       try {
-        const res: UserPreferencesResponse = await loadUserPreferences();
-        if (cancelled) return;
-        const provider = normalizeProvider(res.settings.provider);
-        const chunkTargetSeconds = Number.isFinite(res.settings.chunkTargetSeconds)
-          ? Math.max(30, Math.min(60, Math.round(res.settings.chunkTargetSeconds)))
-          : 45;
-        const subtitleLengthPreset = normalizeSubtitleLengthPreset(res.settings.subtitleLengthPreset);
-        const asrModel = normalizeAsrModel(res.settings.asrModel);
-        const alignModel = res.settings.alignModel === "Qwen3-ForcedAligner-0.6B"
-          ? res.settings.alignModel as AlignModel
-          : "Qwen3-ForcedAligner-0.6B";
-        const demucsModel = res.settings.demucsModel === "htdemucs_ft"
-          ? res.settings.demucsModel as DemucsModel
-          : "htdemucs_ft";
-        const enableVocalSeparation = Boolean(res.settings.enableVocalSeparation);
-        const translateApiKey = String(res.settings.translateApiKey ?? "");
-        const translateBaseUrl = String(res.settings.translateBaseUrl ?? "").trim()
-          || "https://api.openai.com/v1";
-        const translateModel = String(res.settings.translateModel ?? "").trim()
-          || "gpt-4.1-mini";
-        const llmConcurrencyRaw = Number.parseInt(String(res.settings.llmConcurrency ?? "4"), 10);
-        const llmConcurrency = Number.isFinite(llmConcurrencyRaw)
-          ? Math.max(1, Math.min(16, llmConcurrencyRaw))
-          : 4;
-        const terminologyGroupsRaw = Array.isArray(res.settings.terminologyGroups)
-          ? res.settings.terminologyGroups
-          : [];
-        const terminologyGroups = normalizeTerminologyGroups(terminologyGroupsRaw);
-        const activeTerminologyGroupId =
-          typeof res.settings.activeTerminologyGroupId === "string"
-            ? res.settings.activeTerminologyGroupId
-            : "";
-        const enableSubtitleBeautify = Boolean(res.settings.enableSubtitleBeautify ?? true);
-        const enableClickSound = Boolean(res.settings.enableClickSound ?? true);
-        const autoBurnHardSubtitle = Boolean(res.settings.autoBurnHardSubtitle ?? false);
-        const subtitleBurnModeRaw = String(res.settings.subtitleBurnMode ?? "bilingualSourceFirst");
-        const subtitleBurnMode: SubtitleBurnMode = subtitleBurnModeRaw === "source"
-          || subtitleBurnModeRaw === "target"
-          || subtitleBurnModeRaw === "bilingualSourceFirst"
-          || subtitleBurnModeRaw === "bilingualTargetFirst"
-          ? subtitleBurnModeRaw
-          : "bilingualSourceFirst";
-        const subtitleRenderStyleRaw = (res.settings.subtitleRenderStyle ?? {}) as Record<string, unknown>;
-        const sourceRaw = subtitleRenderStyleRaw.source as Record<string, unknown> | undefined;
-        const targetRaw = subtitleRenderStyleRaw.target as Record<string, unknown> | undefined;
-        const layoutRaw = subtitleRenderStyleRaw.layout as Record<string, unknown> | undefined;
-        const subtitleRenderStyle: SubtitleRenderStyle = {
-          source: normalizeSubtitleLineStyle(sourceRaw, {
-            fontFamily: "Arial",
-            fontSize: 44,
-            primaryColor: "#FFFFFF",
-            outlineColor: "#101010",
-            backColor: "#000000",
-            outline: 2.5,
-            shadow: 1,
-            borderStyle: "outline",
-            borderOpacity: 88,
-          }),
-          target: normalizeSubtitleLineStyle(targetRaw, {
-            fontFamily: "Microsoft YaHei",
-            fontSize: 40,
-            primaryColor: "#EAF6FF",
-            outlineColor: "#101010",
-            backColor: "#000000",
-            outline: 2.5,
-            shadow: 1,
-            borderStyle: "outline",
-            borderOpacity: 88,
-          }),
-          layout: {
-            marginV: Number.isFinite(layoutRaw?.marginV)
-              ? Math.max(0, Math.min(200, Math.round(Number(layoutRaw?.marginV))))
-              : 40,
-            alignment: layoutRaw?.alignment === 1
-              || layoutRaw?.alignment === 2
-              || layoutRaw?.alignment === 3
-              ? layoutRaw?.alignment
-              : 2,
-            bilingualLineGap: Number.isFinite(layoutRaw?.bilingualLineGap)
-              ? Math.max(0, Math.min(140, Math.round(Number(layoutRaw?.bilingualLineGap))))
-              : 10,
-          },
-        };
-
-        const flatSrtOutput = Boolean(res.settings.flatSrtOutput ?? false);
-        const flatSrtItemsRaw = Array.isArray(res.settings.flatSrtItems)
-          ? res.settings.flatSrtItems
-          : ["source", "target"];
-        const flatSrtItems: SubtitleBurnMode[] = flatSrtItemsRaw.filter(
-          (v: unknown): v is SubtitleBurnMode =>
-            v === "source" || v === "target" || v === "bilingualSourceFirst" || v === "bilingualTargetFirst"
-        );
-
-        dispatch({
-          type: "set_settings",
-          settings: {
-            provider,
-            chunkTargetSeconds,
-            subtitleLengthPreset,
-            asrModel,
-            alignModel,
-            demucsModel,
-            enableVocalSeparation,
-            translateApiKey,
-            translateBaseUrl,
-            translateModel,
-            llmConcurrency,
-            terminologyGroups,
-            activeTerminologyGroupId,
-            enableSubtitleBeautify,
-            enableClickSound,
-            autoBurnHardSubtitle,
-            subtitleBurnMode,
-            subtitleRenderStyle,
-            flatSrtOutput,
-            flatSrtItems,
-          },
-        });
+        defaults = await getDefaultSettings();
       } catch {
-        // Use default settings when DB read fails.
+        defaults = LAST_RESORT_DEFAULTS;
+      }
+
+      try {
+        const prefs = await loadUserPreferences();
+        if (cancelled) return;
+        const settings = normalizeSettings(prefs.settings, defaults);
+        dispatch({ type: "set_settings", settings });
+      } catch {
+        if (cancelled) return;
+        // DB read failed: fall back to authoritative defaults so the UI does
+        // not stay on the loading screen forever.
+        dispatch({ type: "set_settings", settings: defaults });
       }
     })();
 
@@ -148,49 +95,4 @@ export function useAppPersistence(dispatch: DispatchState) {
       cancelled = true;
     };
   }, [dispatch]);
-}
-
-function normalizeSubtitleLengthPreset(value: unknown): SubtitleLengthPreset {
-  return value === "short" || value === "standard" || value === "loose" ? value : "standard";
-}
-
-function normalizeAsrModel(value: unknown): AsrModel {
-  if (value === "Qwen3-ASR-0.6B" || value === "Qwen3-ASR-1.7B" || value === "cohere-transcribe-03-2026") {
-    return value;
-  }
-  return "Qwen3-ASR-0.6B";
-}
-
-function normalizeHexColor(raw: unknown, fallback: string): string {
-  const value = String(raw ?? "").trim();
-  if (/^#[0-9a-fA-F]{6}$/.test(value)) {
-    return value.toUpperCase();
-  }
-  return fallback;
-}
-
-function normalizeSubtitleLineStyle(
-  raw: Record<string, unknown> | undefined,
-  fallback: SubtitleLineStyle,
-): SubtitleLineStyle {
-  const value = raw ?? {};
-  return {
-    fontFamily: String(value.fontFamily ?? fallback.fontFamily).trim() || fallback.fontFamily,
-    fontSize: Number.isFinite(value.fontSize)
-      ? Math.max(16, Math.min(96, Math.round(Number(value.fontSize))))
-      : fallback.fontSize,
-    primaryColor: normalizeHexColor(value.primaryColor, fallback.primaryColor),
-    outlineColor: normalizeHexColor(value.outlineColor, fallback.outlineColor),
-    backColor: normalizeHexColor(value.backColor, fallback.backColor),
-    outline: Number.isFinite(value.outline)
-      ? Math.max(0, Math.min(8, Number(value.outline)))
-      : fallback.outline,
-    shadow: Number.isFinite(value.shadow)
-      ? Math.max(0, Math.min(8, Number(value.shadow)))
-      : fallback.shadow,
-    borderStyle: value.borderStyle === "box" ? "box" : "outline",
-    borderOpacity: Number.isFinite(value.borderOpacity)
-      ? Math.max(0, Math.min(100, Math.round(Number(value.borderOpacity))))
-      : fallback.borderOpacity,
-  };
 }
