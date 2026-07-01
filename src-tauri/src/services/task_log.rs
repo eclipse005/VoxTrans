@@ -1,11 +1,25 @@
 use serde_json::Value;
 
 pub mod event {
+    pub const TASK_STARTED: &str = "task.started";
     pub const TRANSCRIBE_STARTED: &str = "transcribe.started";
     pub const TRANSCRIBE_COMPLETED: &str = "transcribe.completed";
     pub const TRANSCRIBE_SAVED: &str = "transcribe.saved";
     pub const TRANSCRIBE_FAILED: &str = "transcribe.failed";
     pub const TASK_FAILED: &str = "task.failed";
+    /// Vision assist: a batch's frame extraction was skipped on resume because
+    /// the batch was already translated (precomputed).
+    pub const VISION_BATCH_SKIPPED: &str = "vision.batch_skipped";
+    /// Vision assist: a single frame could not be extracted (corrupt segment,
+    /// seek past end, ffmpeg error). Best-effort; the batch continues.
+    pub const VISION_FRAME_SKIPPED: &str = "vision.frame_skipped";
+    /// Vision assist: a cached frame file could not be read back.
+    pub const VISION_FRAME_READ_FAILED: &str = "vision.frame_read_failed";
+    /// Vision assist: a whole batch's extraction failed.
+    pub const VISION_BATCH_FAILED: &str = "vision.batch_failed";
+    /// Vision assist: the frame files used by a batch's translation, emitted
+    /// alongside the LLM call so a result can be tied back to its frames.
+    pub const VISION_BATCH_FRAMES: &str = "vision.batch_frames";
 }
 
 #[derive(Debug, Clone)]

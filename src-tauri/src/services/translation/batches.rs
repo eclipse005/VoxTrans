@@ -1,11 +1,33 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
+use crate::services::frame_extract::Frame;
 use crate::services::prompts::translation::{
     TranslationPromptLine, TranslationPromptTerm, build_batch_translate_prompt,
 };
 
 use super::types::{BatchWindow, NormalizedSegment, TranslationTerminologyEntry};
 use super::{CONTEXT_LINE_LIMIT, MAX_TERMS_PER_BATCH};
+
+/// Compute the (start, end) index ranges for each batch. Kept as a standalone
+/// helper so the frame extraction code can derive the exact same time ranges
+/// without duplicating the slicing logic.
+pub(super) fn batch_index_ranges(
+    segments: &[NormalizedSegment],
+    batch_size: usize,
+) -> Vec<(usize, usize)> {
+    if segments.is_empty() || batch_size == 0 {
+        return Vec::new();
+    }
+    let mut ranges = Vec::new();
+    let mut start = 0usize;
+    while start < segments.len() {
+        let end = (start + batch_size).min(segments.len());
+        ranges.push((start, end));
+        start = end;
+    }
+    ranges
+}
 
 pub(super) fn build_batch_windows(
     segments: &[NormalizedSegment],
@@ -14,15 +36,15 @@ pub(super) fn build_batch_windows(
     target_lang: &str,
     theme_summary: &str,
     terminology_entries: &[TranslationTerminologyEntry],
+    visual_context: Option<&str>,
+    frames_per_batch: &[Vec<Frame>],
 ) -> Vec<BatchWindow> {
     if segments.is_empty() {
         return Vec::new();
     }
 
     let mut out = Vec::<BatchWindow>::new();
-    let mut batch_start = 0usize;
-    while batch_start < segments.len() {
-        let batch_end = (batch_start + batch_size).min(segments.len());
+    for (batch_start, batch_end) in batch_index_ranges(segments, batch_size) {
         let current = &segments[batch_start..batch_end];
 
         let prev_start = batch_start.saturating_sub(CONTEXT_LINE_LIMIT);
@@ -64,16 +86,28 @@ pub(super) fn build_batch_windows(
             &current_lines,
             &next_lines,
             &prompt_terms,
+            visual_context,
         );
 
+        let batch_index = out.len();
+        let batch_frames = frames_per_batch.get(batch_index).cloned().unwrap_or_default();
+        let frames: Arc<[String]> = batch_frames
+            .iter()
+            .map(|f| f.data_url.clone())
+            .collect();
+        let frame_names: Arc<[String]> = batch_frames
+            .iter()
+            .map(|f| f.filename.clone())
+            .collect();
+
         out.push(BatchWindow {
-            batch_id: out.len(),
+            batch_id: batch_index,
             local_ids: (1..=current.len()).collect(),
             local_to_global: current.iter().map(|segment| segment.segment_id).collect(),
             prompt,
+            frames,
+            frame_names,
         });
-
-        batch_start = batch_end;
     }
 
     out

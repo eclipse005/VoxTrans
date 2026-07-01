@@ -57,8 +57,12 @@ impl OpenAiCompatLlmClient {
         Ok(Self { config, http })
     }
 
-    async fn call_once(&self, user_prompt: &str) -> Result<(String, LlmTokenUsage), LlmError> {
-        call_chat_completion(&self.http, &self.config, user_prompt).await
+    async fn call_once(
+        &self,
+        user_prompt: &str,
+        images: Option<&[String]>,
+    ) -> Result<(String, LlmTokenUsage), LlmError> {
+        call_chat_completion(&self.http, &self.config, user_prompt, images).await
     }
 
     pub async fn call_json_validated<T, F>(
@@ -66,6 +70,7 @@ impl OpenAiCompatLlmClient {
         context: &LlmCallContext,
         request_id: &str,
         user_prompt: &str,
+        images: Option<&[String]>,
         response_validator: Option<&JsonResponseValidator>,
         semantic_validate: F,
     ) -> Result<LlmValidatedJsonResult<T>, LlmError>
@@ -96,7 +101,7 @@ impl OpenAiCompatLlmClient {
                 &effective_user_prompt,
             );
 
-            match self.call_once(&effective_user_prompt).await {
+            match self.call_once(&effective_user_prompt, images).await {
                 Ok((raw_text, usage)) => {
                     let mut parsed = match extract_and_repair_json_with_outcome(&raw_text) {
                         Ok(v) => v,
@@ -294,7 +299,10 @@ impl OpenAiCompatLlmClient {
             repair_requested_payload(failure.kind.as_str(), context, request_id),
         );
 
-        let (repair_raw_text, _) = self.call_once(&repair_prompt).await?;
+        // Images are intentionally dropped on the repair retry: the repair
+        // prompt is about fixing JSON shape, not re-answering from visuals.
+        // Sending images again would only re-cost tokens for a syntactic fix.
+        let (repair_raw_text, _) = self.call_once(&repair_prompt, None).await?;
         let repaired = extract_and_repair_json_with_outcome(&repair_raw_text)?;
         if let Some(validator) = response_validator {
             validator.validate(&repaired.value)?;
@@ -309,6 +317,7 @@ impl LlmPort for OpenAiCompatLlmClient {
         context: &LlmCallContext,
         request_id: &str,
         user_prompt: &str,
+        images: Option<&[String]>,
         response_validator: Option<&JsonResponseValidator>,
     ) -> Result<LlmJsonResult, LlmError> {
         let result = self
@@ -316,6 +325,7 @@ impl LlmPort for OpenAiCompatLlmClient {
                 context,
                 request_id,
                 user_prompt,
+                images,
                 response_validator,
                 Ok::<Value, LlmSemanticValidationError>,
             )

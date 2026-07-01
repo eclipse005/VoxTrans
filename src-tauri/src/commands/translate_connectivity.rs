@@ -1,8 +1,12 @@
 use super::translate_types::{TestTranslateLlmRequest, TestTranslateLlmResponse};
+use base64::Engine;
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort, next_llm_request_id};
-use crate::services::prompts::connectivity::TRANSLATE_LLM_CONNECTIVITY_TEST;
+use crate::services::prompts::connectivity::{
+    TRANSLATE_LLM_CONNECTIVITY_TEST, TRANSLATE_LLM_CONNECTIVITY_TEST_VISION,
+    VISION_PROBE_IMAGE_BYTES,
+};
 
 #[tauri::command]
 pub async fn test_translate_llm(
@@ -34,14 +38,41 @@ pub async fn test_translate_llm(
         store: None,
     };
     let llm_id = next_llm_request_id();
+
+    // When vision assist is enabled in settings, probe with an attached image
+    // so we detect early whether the configured model actually supports image
+    // input. A text-only model will 4xx/5xx or return a non-JSON response,
+    // which surfaces as a clear error before the user commits to a full run.
+    let (prompt, images): (&str, Option<Vec<String>>) = if request.enable_vision_assist {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(VISION_PROBE_IMAGE_BYTES);
+        let data_url = format!("data:image/jpeg;base64,{b64}");
+        (
+            TRANSLATE_LLM_CONNECTIVITY_TEST_VISION,
+            Some(vec![data_url]),
+        )
+    } else {
+        (TRANSLATE_LLM_CONNECTIVITY_TEST, None)
+    };
+
     let result = client
         .call_json(
             &context,
             &llm_id,
-            TRANSLATE_LLM_CONNECTIVITY_TEST,
+            prompt,
+            images.as_deref(),
             Some(&validator),
         )
-        .await?;
+        .await
+        .map_err(|err| {
+            if request.enable_vision_assist {
+                format!(
+                    "LLM 连通性测试失败(已启用图片辅助翻译): {}。若模型不支持图片输入,请关闭该开关。",
+                    err.message
+                )
+            } else {
+                format!("LLM 连通性测试失败: {}", err.message)
+            }
+        })?;
     let ok = result
         .json
         .get("ok")

@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -47,6 +48,8 @@ pub struct LlmJsonTask {
     pub id: usize,
     pub request_id: String,
     pub user_prompt: String,
+    /// base64 data URLs for vision-assisted calls. Empty = text-only request.
+    pub images: Arc<[String]>,
     pub response_validator: Option<JsonResponseValidator>,
 }
 
@@ -71,6 +74,7 @@ pub trait LlmPort {
         context: &LlmCallContext,
         request_id: &str,
         user_prompt: &str,
+        images: Option<&[String]>,
         response_validator: Option<&JsonResponseValidator>,
     ) -> Result<LlmJsonResult, LlmError>;
 }

@@ -23,6 +23,7 @@ chrono = { version = "0.4", features = ["clock"] }
 hound = "3.5"
 pinyin = "0.10"
 jieba-rs = "0.10"
+base64 = "0.22"
 voxtrans-core = { path = "../voxtrans-core" }
 tokio = { version = "1", features = ["rt", "sync", "time", "macros", "rt-multi-thread"] }
 font-kit = "0.14"
@@ -32,7 +33,7 @@ thiserror = "2"
 ts-rs = "10"
 open = "5"
 qwen3-asr = { path = "D:/qwen3-asr", default-features = false }
-qwen-forced-aligner-rs = { path = "D:/qwen-aligner-rs", default-features = false }
+qwen-forced-aligner-rs = { path = "D:/qwen-aligner-rs", default-features = false, features = ["cpu"] }
 # Cohere ASR — second backend, selected at runtime by `asr_model` name.
-# Built with the `cuda` feature so CUDA is available; CPU inference also works.
-native-transcribe = { path = "D:/cohere-transcribe-rs/native" }
+# Default features include CUDA; CPU inference also works when selected at runtime.
+native-transcribe = { path = "D:/cohere-transcribe-native" }

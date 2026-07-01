@@ -208,6 +208,8 @@ pub struct TestTranslateLlmRequest {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
+    #[serde(default)]
+    pub enable_vision_assist: bool,
 }
 
 #[derive(Debug, Serialize)]

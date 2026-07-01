@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 #[derive(Debug, Clone)]
 pub struct TranslationToken {
     pub text: String,
@@ -35,6 +37,9 @@ pub struct BuildTranslationLayerRequest {
     pub llm_concurrency: u32,
     pub batch_size: usize,
     pub unit_store: Option<crate::services::pipeline::UnitStore>,
+    /// When true, sample video frames per batch and send as vision evidence.
+    /// Live setting resolved from saved settings (not frozen at enqueue).
+    pub enable_vision_assist: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -70,4 +75,11 @@ pub(super) struct BatchWindow {
     pub(super) local_ids: Vec<usize>,
     pub(super) local_to_global: Vec<usize>,
     pub(super) prompt: String,
+    /// base64 data URLs of sampled video frames for this batch's time range.
+    /// Empty when vision assist is disabled or no frames could be extracted.
+    pub(super) frames: Arc<[String]>,
+    /// Cache filenames of the frames in `frames` (same order), used for
+    /// logging which frames each batch's translation used. Empty iff `frames`
+    /// is empty.
+    pub(super) frame_names: Arc<[String]>,
 }

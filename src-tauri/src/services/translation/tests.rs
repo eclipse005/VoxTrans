@@ -23,6 +23,8 @@ fn split_batches_respects_requested_size() {
         "zh-CN",
         "theme",
         &Vec::<TranslationTerminologyEntry>::new(),
+        None,
+        &[],
     );
     assert_eq!(windows.len(), 3);
     assert_eq!(windows[0].local_ids, vec![1, 2]);

@@ -21,11 +21,6 @@ opt-level = 2
 [profile.dev.package.native-transcribe]
 opt-level = 2
 
-# Parent crate holds the pure-Rust feature extractor + SentencePiece tokenizer
-# used on every transcribe_samples call.
-[profile.dev.package.cohere-transcribe-rs]
-opt-level = 2
-
 # VAD model forward (gemm matrix multiplies + fbank FFT) is compute-bound.
 # Use opt-level 3 so gemm's runtime CPU-feature detection (AVX2/SSE) kicks in.
 [profile.dev.package.fireredvad]

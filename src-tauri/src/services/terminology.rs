@@ -187,7 +187,7 @@ async fn build_briefing_for_window(
     let llm_id = next_llm_request_id();
 
     llm_client
-        .call_json_validated(context, &llm_id, &prompt, None, parse_briefing_response)
+        .call_json_validated(context, &llm_id, &prompt, None, None, parse_briefing_response)
         .await
         .map(|result| result.value)
         .map_err(|err| {
