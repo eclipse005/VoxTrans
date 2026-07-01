@@ -8,17 +8,30 @@ $ErrorActionPreference = "Stop"
 
 # Best-effort yt-dlp update: pull the latest release, but never fail the build
 # when the network is unreachable — fall back to the existing binary if present.
+# Only refresh during `build`; skip for `dev`/`check` to keep local iteration fast.
+# Pinned yt-dlp release. Update version + SHA256 together when bumping.
+$YtDlpVersion = "2026.06.09"
+$YtDlpSha256 = "3a48cb955d55c8821b60ccbdbbc6f61bc958f2f3d3b7ad5eaf3d83a543293a27"
+$YtDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/download/$YtDlpVersion/yt-dlp.exe"
+
 $ytDlpDir = "src-tauri\bin"
 $ytDlpPath = Join-Path $ytDlpDir "yt-dlp.exe"
-try {
-  Write-Host "Updating yt-dlp..."
-  Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile $ytDlpPath -UseBasicParsing -ErrorAction Stop
-  Write-Host "yt-dlp updated."
-} catch {
-  if (Test-Path -LiteralPath $ytDlpPath) {
-    Write-Host "yt-dlp update skipped (network unreachable); using existing binary."
-  } else {
-    Write-Host "yt-dlp update failed and no existing binary found at $ytDlpPath — build will continue, download manually if needed."
+if ($Command -eq "build") {
+  try {
+    Write-Host "Downloading yt-dlp $YtDlpVersion..."
+    Invoke-WebRequest -Uri $YtDlpUrl -OutFile $ytDlpPath -UseBasicParsing -ErrorAction Stop
+    $hash = (Get-FileHash -Path $ytDlpPath -Algorithm SHA256).Hash.ToLower()
+    if ($hash -ne $YtDlpSha256) {
+      Remove-Item -Path $ytDlpPath -Force -ErrorAction SilentlyContinue
+      throw "yt-dlp SHA256 mismatch (expected $YtDlpSha256, got $hash)"
+    }
+    Write-Host "yt-dlp $YtDlpVersion downloaded and verified."
+  } catch {
+    if (Test-Path -LiteralPath $ytDlpPath) {
+      Write-Host "yt-dlp update failed ($_), using existing binary."
+    } else {
+      Write-Host "yt-dlp update failed and no existing binary found at $ytDlpPath — build will continue, download manually if needed."
+    }
   }
 }
 
