@@ -81,9 +81,18 @@ function buildSubtitlePreviewStyle(style: SubtitleRenderStyle): {
   };
 }
 
+// Clamp ranges mirror the backend ASS writer (subtitle_render.rs:215-217) so
+// the preview never shows values the burn-in would silently truncate.
+const FONT_SIZE_MIN = 16;
+const FONT_SIZE_MAX = 96;
+const OUTLINE_MAX = 8;
+const SHADOW_MAX = 8;
+
 function toPreviewLineStyle(style: SubtitleLineStyle): CSSProperties {
-  const outline = Math.max(0, style.outline);
-  const shadow = Math.max(0, style.shadow);
+  // ASS encodes Bold as 0 (off); the burn always renders non-bold, so the
+  // preview must too — otherwise users see bold text that bakes out thin.
+  const outline = Math.max(0, Math.min(OUTLINE_MAX, style.outline));
+  const shadow = Math.max(0, Math.min(SHADOW_MAX, style.shadow));
   const borderOpacity = Math.max(0, Math.min(100, style.borderOpacity)) / 100;
   const outlineColor = hexToRgba(style.outlineColor, borderOpacity);
   const backColor = hexToRgba(style.backColor, borderOpacity);
@@ -104,11 +113,11 @@ function toPreviewLineStyle(style: SubtitleLineStyle): CSSProperties {
     : undefined;
   return {
     fontFamily: style.fontFamily,
-    fontSize: `${style.fontSize}px`,
+    fontSize: `${Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, style.fontSize))}px`,
     color: style.primaryColor,
     textShadow: style.borderStyle === "box" ? `${shadow}px ${shadow}px 2px ${backColor}` : textShadows.join(", "),
     lineHeight: 1.2,
-    fontWeight: 700,
+    fontWeight: 400,
     display: "inline-block",
     ...boxStyle,
   };
