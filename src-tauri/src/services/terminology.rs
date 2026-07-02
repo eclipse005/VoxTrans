@@ -7,7 +7,7 @@ use crate::services::llm::port::{LlmCallContext, LlmConfig, next_llm_request_id}
 use crate::services::prompts::terminology::{IndexedUserTermPromptItem, build_briefing_prompt};
 use crate::services::terminology_responses::{BriefingResponse, parse_briefing_response};
 use crate::services::terminology_terms::{force_include_user_terms, normalize_entries};
-use crate::services::terminology_text::{build_context_text, chunk_text};
+use crate::services::terminology_text::{build_context_lines, chunk_lines};
 
 #[derive(Debug, Clone)]
 pub struct TerminologyToken {
@@ -84,11 +84,11 @@ pub async fn build_terminology_layer(
         request.translate_model.clone(),
     ))?;
 
-    let full_context = build_context_text(&request.segments);
-    if full_context.trim().is_empty() {
+    let context_lines = build_context_lines(&request.segments);
+    if context_lines.is_empty() {
         return Err("segments contain no text".to_string());
     }
-    let windows = chunk_text(&full_context);
+    let windows = chunk_lines(&context_lines);
     let user_terms = normalize_entries(request.terminology_entries.clone());
     let user_prompt_items = indexed_user_terms(&user_terms);
 
@@ -172,7 +172,7 @@ pub async fn build_terminology_layer(
 /// eval harness can report an accurate per-call count without a data-contract
 /// change.
 pub fn briefing_window_count(segments: &[TerminologySegment]) -> usize {
-    chunk_text(&build_context_text(segments)).len()
+    chunk_lines(&build_context_lines(segments)).len()
 }
 
 async fn build_briefing_for_window(
