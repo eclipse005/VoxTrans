@@ -121,7 +121,8 @@ fn normalize_subtitle_line_style(
         primary_color: normalize_hex_color(&style.primary_color, &fallback.primary_color),
         outline_color: normalize_hex_color(&style.outline_color, &fallback.outline_color),
         back_color: normalize_hex_color(&style.back_color, &fallback.back_color),
-        outline: style.outline.clamp(0.0, 8.0),
+        // libass renders nothing at outline=0.0, so clamp to 0.1 minimum.
+        outline: style.outline.clamp(0.1, 8.0),
         shadow: style.shadow.clamp(0.0, 8.0),
         border_style: style.border_style,
         border_opacity: style.border_opacity.clamp(0, 100),

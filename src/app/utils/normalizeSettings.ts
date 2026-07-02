@@ -128,7 +128,8 @@ function normalizeSubtitleLineStyle(
     primaryColor: normalizeHexColor(raw.primaryColor, fallback.primaryColor),
     outlineColor: normalizeHexColor(raw.outlineColor, fallback.outlineColor),
     backColor: normalizeHexColor(raw.backColor, fallback.backColor),
-    outline: clampNumber(raw.outline, 0, 8, fallback.outline),
+    // libass renders nothing at outline=0.0, so clamp to 0.1 minimum.
+    outline: clampNumber(raw.outline, 0.1, 8, fallback.outline),
     shadow: clampNumber(raw.shadow, 0, 8, fallback.shadow),
     borderStyle: pickEnum(raw.borderStyle, BORDER_STYLES, fallback.borderStyle),
     borderOpacity: clampInt(raw.borderOpacity, 0, 100, fallback.borderOpacity),

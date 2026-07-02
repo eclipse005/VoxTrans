@@ -215,7 +215,10 @@ fn build_ass_style_line(
     let font_name = style.font_family.trim();
     let font_name = if font_name.is_empty() { "Arial" } else { font_name };
     let font_size = style.font_size.clamp(16, 96);
-    let outline = style.outline.clamp(0.0, 8.0);
+    // libass renders nothing when Outline is exactly 0.0 (regardless of
+    // BorderStyle), so clamp to a small positive value to guarantee the
+    // text body is always drawn. Shadow=0 is fine on its own.
+    let outline = style.outline.clamp(0.1, 8.0);
     let shadow = style.shadow.clamp(0.0, 8.0);
     let border_style: u8 = match style.border_style {
         SubtitleBorderStyle::Box => 3,
@@ -548,6 +551,24 @@ mod tests {
         let line = build_ass_style_line("Source", &style.source, 2, 40);
         // border style field is the value right before outline (here 2.5)
         assert!(line.contains(",3,2.5,"), "box border should encode as 3: {line}");
+    }
+
+    #[test]
+    fn outline_zero_is_clamped_to_render_text() {
+        // libass renders nothing when Outline is exactly 0.0, so the builder
+        // must clamp it to a small positive value even if the user saved 0.
+        let mut style = default_style();
+        style.source.outline = 0.0;
+        style.source.border_style = SubtitleBorderStyle::Box;
+        let line = build_ass_style_line("Source", &style.source, 2, 40);
+        assert!(
+            !line.contains(",3,0.0,"),
+            "outline=0 must be clamped, got: {line}"
+        );
+        assert!(
+            line.contains(",3,0.1,"),
+            "outline=0 should be clamped to 0.1, got: {line}"
+        );
     }
 
     #[test]

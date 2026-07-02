@@ -5,6 +5,7 @@ import { listSystemFonts } from "../api/system";
 import { CheckIcon, CpuIcon, GpuIcon } from "./Icons";
 import { ModelDownloadCard } from "./settings/ModelDownloadCard";
 import { SubtitleStylePreview } from "./settings/SubtitleStylePreview";
+import { SUBTITLE_STYLE_PRESETS } from "./settings/subtitleStylePresets";
 import { useDialogA11y } from "./useDialogA11y";
 import { useSettingsFormContext } from "../contexts/SettingsFormContext";
 
@@ -371,6 +372,27 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                         <option value="target">译文</option>
                         <option value="bilingualSourceFirst">双语（原文上译文下）</option>
                         <option value="bilingualTargetFirst">双语（译文上原文下）</option>
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label>字幕样式</label>
+                      <select
+                        className="apple-input"
+                        value=""
+                        onChange={(e) => {
+                          const preset = SUBTITLE_STYLE_PRESETS.find((p) => p.id === e.target.value);
+                          if (preset) {
+                            ctx.setForm((prev) => ({
+                              ...prev,
+                              subtitleRenderStyle: structuredClone(preset.style),
+                            }));
+                          }
+                        }}
+                      >
+                        <option value="" disabled>选择预设…</option>
+                        {SUBTITLE_STYLE_PRESETS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>{preset.label}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
