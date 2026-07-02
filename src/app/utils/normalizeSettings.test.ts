@@ -339,7 +339,7 @@ describe("normalizeSettings", () => {
       ...defaults,
       enableSubtitleBeautify: undefined,
       enableClickSound: undefined,
-    } as SavedSettings;
+    } as unknown as SavedSettings;
     const result = normalizeSettings(partial, defaults);
     expect(result.enableSubtitleBeautify).toBe(true);
     expect(result.enableClickSound).toBe(true);
