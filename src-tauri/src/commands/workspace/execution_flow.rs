@@ -194,6 +194,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             app,
             task_id,
             &record.item.path,
+            &record.item.media_kind,
             &step2_segments,
             step2_srt,
             source_text,

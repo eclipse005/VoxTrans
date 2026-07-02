@@ -132,6 +132,7 @@ async fn finalize_translate_with_step5(
         app,
         task_id,
         &record.item.path,
+        &record.item.media_kind,
         segments,
         source_text,
         enable_subtitle_beautify,

@@ -9,12 +9,16 @@ use crate::domain::task::adapters::{
     workspace_subtitle_segments_from_step2_segments,
     workspace_subtitle_segments_from_translation_segments,
 };
+use crate::services::preferences::load_saved_settings_from_default_path;
+use crate::services::subtitle_render::{BurnHardSubtitleRequest, burn_hard_subtitle};
+use crate::services::task_log::TaskLogger;
 use crate::services::workspace_subtitle::{
     WorkspaceSubtitleSegment, serialize_segments,
 };
 
 use super::patch_task_item;
-use super::progress::done_task_progress_state;
+use super::progress::{done_task_progress_state, report_task_stage};
+use super::TaskStage;
 
 fn parse_segments(
     json: &str,
@@ -40,6 +44,7 @@ pub(super) async fn finish_transcribe_only(
     app: &AppHandle,
     task_id: &str,
     media_path: &str,
+    media_kind: &str,
     step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
     step2_srt: String,
     source_text: String,
@@ -68,6 +73,13 @@ pub(super) async fn finish_transcribe_only(
     // will recover it as orphan-processing -> error rather than seeing
     // a "done" task with an empty segments table.
     persist_segments_to_db(app, task_id, &subtitle_segments_json).await?;
+
+    // Auto burn-in is a live setting (user-toggleable), gated to video
+    // tasks. It runs after the segments are persisted but before marking
+    // done so the "burning" stage is visible. Failures never fail the task
+    // — subtitles/SRT are already complete; burning is an add-on.
+    maybe_burn_hard_subtitle(app, task_id, media_path, media_kind, &workspace_segments).await;
+
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
         task.item.task_progress = done_task_progress_state();
@@ -85,6 +97,7 @@ pub(super) async fn finish_translate_with_step5(
     app: &AppHandle,
     task_id: &str,
     media_path: &str,
+    media_kind: &str,
     segments: &[BuildTranslationSegmentCommand],
     source_text: String,
     enable_subtitle_beautify: bool,
@@ -106,6 +119,10 @@ pub(super) async fn finish_translate_with_step5(
 
     // See `finish_transcribe_only` for the ordering rationale.
     persist_segments_to_db(app, task_id, &subtitle_segments_json).await?;
+
+    // See finish_transcribe_only for the burn rationale and ordering.
+    maybe_burn_hard_subtitle(app, task_id, media_path, media_kind, &workspace_segments).await;
+
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
         task.item.task_progress = done_task_progress_state();
@@ -116,6 +133,68 @@ pub(super) async fn finish_translate_with_step5(
     })
     .await?;
     Ok(())
+}
+
+/// Auto burn-in hard subtitles into the source video when the user has enabled
+/// `auto_burn_hard_subtitle` and the task is a video. Audio tasks are skipped
+/// silently (the setting is documented as "video only"). This is best-effort:
+/// any error is logged but never propagated, so a failed burn cannot fail a
+/// task whose subtitles are already complete.
+async fn maybe_burn_hard_subtitle(
+    app: &AppHandle,
+    task_id: &str,
+    media_path: &str,
+    media_kind: &str,
+    segments: &[WorkspaceSubtitleSegment],
+) {
+    if media_kind.trim() != "video" {
+        return;
+    }
+
+    let store = app.state::<TaskStore>().inner();
+    let saved = match load_saved_settings_from_default_path(store) {
+        Ok(settings) => settings,
+        Err(_) => return,
+    };
+    if !saved.auto_burn_hard_subtitle {
+        return;
+    }
+
+    // Surface the burn as its own stage so the UI shows progress instead of
+    // an apparent hang while ffmpeg re-encodes the whole video.
+    let _ = report_task_stage(app, task_id, TaskStage::Burning, "", 0, 1).await;
+
+    let request = BurnHardSubtitleRequest {
+        task_id: task_id.to_string(),
+        media_path: media_path.to_string(),
+        subtitle_segments: segments.to_vec(),
+        burn_mode: saved.subtitle_burn_mode,
+        style: saved.subtitle_render_style,
+    };
+    let logger = TaskLogger::main_with_media(task_id.to_string(), media_path.to_string());
+    let task_id_owned = task_id.to_string();
+    let join = tauri::async_runtime::spawn_blocking(move || burn_hard_subtitle(request)).await;
+
+    match join {
+        Ok(Ok(response)) => {
+            logger.event(
+                "subtitle.burn.completed",
+                Some(&serde_json::json!({ "taskId": task_id_owned, "outputPath": response.output_path })),
+            );
+        }
+        Ok(Err(err)) => {
+            logger.event(
+                "subtitle.burn.failed",
+                Some(&serde_json::json!({ "taskId": task_id_owned, "error": err })),
+            );
+        }
+        Err(err) => {
+            logger.event(
+                "subtitle.burn.failed",
+                Some(&serde_json::json!({ "taskId": task_id_owned, "error": format!("burn task join error: {err}") })),
+            );
+        }
+    }
 }
 
 fn write_completion_srts(

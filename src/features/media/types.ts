@@ -52,6 +52,7 @@ export type TaskStageCode =
   | "terminology"
   | "translating"
   | "subtitleLayout"
+  | "burning"
   | "finalCheck";
 
 export type TaskStageProgress = {
@@ -120,6 +121,7 @@ const TASK_STAGE_SET = new Set<TaskStageCode>([
   "terminology",
   "translating",
   "subtitleLayout",
+  "burning",
   "finalCheck",
 ]);
 
@@ -134,6 +136,7 @@ const TASK_STAGE_ORDER: Record<TaskStageCode, number> = {
   terminology: 60,
   translating: 70,
   subtitleLayout: 80,
+  burning: 95,
   finalCheck: 90,
 };
 

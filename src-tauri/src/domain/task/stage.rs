@@ -8,6 +8,7 @@ pub enum TaskStage {
     Terminology,
     Translating,
     SubtitleLayout,
+    Burning,
 }
 
 impl TaskStage {
@@ -21,6 +22,7 @@ impl TaskStage {
             TaskStage::Terminology => "terminology",
             TaskStage::Translating => "translating",
             TaskStage::SubtitleLayout => "subtitleLayout",
+            TaskStage::Burning => "burning",
         }
     }
 
@@ -34,6 +36,7 @@ impl TaskStage {
             TaskStage::Terminology => "术语提取中",
             TaskStage::Translating => "翻译中",
             TaskStage::SubtitleLayout => "",
+            TaskStage::Burning => "压制中",
         }
     }
 
@@ -47,6 +50,7 @@ impl TaskStage {
             TaskStage::Terminology => 60,
             TaskStage::Translating => 70,
             TaskStage::SubtitleLayout => 80,
+            TaskStage::Burning => 95,
         }
     }
 }
