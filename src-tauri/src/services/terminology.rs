@@ -138,7 +138,7 @@ pub async fn build_terminology_layer(
             }
         },
         |msg| msg,
-        move |_done, _total| {
+        move |_done, _total, _result| {
             if let Some(callback) = on_progress.as_ref() {
                 callback(_done, _total);
             }

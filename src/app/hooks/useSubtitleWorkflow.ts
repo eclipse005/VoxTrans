@@ -105,6 +105,13 @@ export function useSubtitleWorkflow({
       );
 
       if (item.transcribeStatus !== "done") {
+        // Processing: show a read-only preview as soon as segments exist.
+        // Visibility is decoupled from editability — segments are parsed
+        // locally from subtitleSegmentsJson (zero IPC), so the editor fills
+        // in incrementally as transcription/translation streams them in.
+        // Editability stays gated on `done` (see canEditSubtitle below).
+        const { hydratedCues } = await loadSubtitleEditorData(item);
+        if (isStaleRequest()) return;
         dispatch({
           type: "set_subtitle",
           payload: {
@@ -112,8 +119,8 @@ export function useSubtitleWorkflow({
             subtitleTaskName: item.name,
             subtitleMediaPath: item.path,
             subtitleSrtPath: "",
-            subtitleCues: [],
-            subtitleCueWarnings: {},
+            subtitleCues: hydratedCues,
+            subtitleCueWarnings: buildCueWarningsById(hydratedCues, []),
             subtitleDirty: false,
           },
         });

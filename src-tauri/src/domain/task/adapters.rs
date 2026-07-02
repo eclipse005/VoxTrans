@@ -2,6 +2,7 @@ use crate::commands::translate_types::{
     BuildTranslationSegmentCommand, SegmentTokenForTerminologyCommand,
     SourceSegmentForTerminologyCommand, Step5AlignedParentCommand,
 };
+use crate::services::translation::TranslationSegmentOutput;
 use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, WorkspaceSubtitleWord};
 
 pub fn workspace_subtitle_segments_from_step2_segments(
@@ -29,6 +30,32 @@ pub fn workspace_subtitle_segments_from_step2_segments(
 
 pub fn workspace_subtitle_segments_from_translation_segments(
     segments: &[BuildTranslationSegmentCommand],
+) -> Vec<WorkspaceSubtitleSegment> {
+    segments
+        .iter()
+        .map(|segment| WorkspaceSubtitleSegment {
+            start_ms: seconds_to_millis(segment.start),
+            end_ms: seconds_to_millis(segment.end),
+            source_text: segment.source.clone(),
+            translated_text: segment.translation.clone(),
+            source_words: segment
+                .tokens
+                .iter()
+                .map(|token| WorkspaceSubtitleWord {
+                    start_ms: seconds_to_millis(token.start),
+                    end_ms: seconds_to_millis(token.end),
+                    word: token.text.clone(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// Like `workspace_subtitle_segments_from_translation_segments` but for the
+/// service-layer output type, used to build incremental previews during
+/// translation. Untranslated segments arrive with an empty `translation`.
+pub fn workspace_subtitle_segments_from_translation_outputs(
+    segments: &[TranslationSegmentOutput],
 ) -> Vec<WorkspaceSubtitleSegment> {
     segments
         .iter()

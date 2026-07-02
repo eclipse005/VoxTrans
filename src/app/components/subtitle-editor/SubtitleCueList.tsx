@@ -7,6 +7,9 @@ type SubtitleCueListProps = {
   canEdit: boolean;
   cues: SubtitleCue[];
   cueWarningsById: Record<string, string[]>;
+  /** Message shown when there are no cues. Caller decides the wording from
+   *  task state; the list only renders it (presentational component). */
+  emptyText: string;
   editingCueId: string;
   selectedCueIds: string[];
   timeErrorByCue: Record<string, string>;
@@ -26,6 +29,7 @@ export default function SubtitleCueList({
   canEdit,
   cues,
   cueWarningsById,
+  emptyText,
   editingCueId,
   selectedCueIds,
   timeErrorByCue,
@@ -51,9 +55,7 @@ export default function SubtitleCueList({
       }}
     >
       {cues.length === 0 ? (
-        <div className="subtitle-cue-empty">
-          {canEdit ? "暂无字幕段，点击上方“新增字幕段”开始编辑。" : "任务完成后才可编辑字幕。"}
-        </div>
+        <div className="subtitle-cue-empty">{emptyText}</div>
       ) : (
         cues.map((cue, idx) => (
           <article

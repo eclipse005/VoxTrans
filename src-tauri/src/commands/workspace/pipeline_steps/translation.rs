@@ -11,8 +11,11 @@ use crate::commands::translate_types::{
     BuildTranslationLayerCommandRequest, BuildTranslationLayerCommandResponse,
     SourceSegmentForTerminologyCommand, TranslateTerminologyEntryCommand,
 };
+use crate::domain::task::adapters::workspace_subtitle_segments_from_translation_outputs;
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
+use crate::services::translation::TranslationProgress;
 
+use super::super::preview::update_subtitle_preview;
 use super::super::progress::report_task_stage;
 use super::super::TaskStage;
 
@@ -70,6 +73,26 @@ impl PipelineStep for Step3TerminologyPipelineStep {
     }
 }
 
+/// Run a future from the progress callback, which fires on the LLM HTTP
+/// client thread. That thread may itself be a tokio multi-thread runtime
+/// worker, where a plain `block_on` would panic — `block_in_place` is the
+/// safe path there. Falls back to `async_runtime::block_on` otherwise.
+fn block_on_runtime_worker<F>(fut: F)
+where
+    F: std::future::Future,
+{
+    match Handle::try_current() {
+        Ok(handle)
+            if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
+        {
+            let _ = tokio::task::block_in_place(|| handle.block_on(fut));
+        }
+        _ => {
+            let _ = tauri::async_runtime::block_on(fut);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(in crate::commands::workspace) struct Step4TranslationPipelineStep {
     pub(in crate::commands::workspace) task_id: String,
@@ -109,8 +132,19 @@ impl PipelineStep for Step4TranslationPipelineStep {
     async fn run(&self, ctx: &StepContext<'_>) -> Result<Self::Output, String> {
         let task_id = self.task_id.clone();
         let app_for_progress = self.app.clone();
-        let on_progress: Arc<dyn Fn(usize, usize) + Send + Sync> =
-            Arc::new(move |current, total| {
+        // Precompute the source text once so each incremental preview emit
+        // can pass it to update_subtitle_preview without rebuilding it.
+        let source_text_for_progress = self
+            .segments
+            .iter()
+            .map(|segment| segment.segment.trim())
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let on_progress: Arc<dyn Fn(TranslationProgress) + Send + Sync> =
+            Arc::new(move |progress: TranslationProgress| {
+                let current = progress.done;
+                let total = progress.total;
                 let detail = if total > 0 {
                     format!("{current}/{total}")
                 } else {
@@ -124,21 +158,21 @@ impl PipelineStep for Step4TranslationPipelineStep {
                     current as u32,
                     total as u32,
                 );
-                // The progress callback is invoked from the LLM HTTP client
-                // thread, which may already be a tokio runtime worker; plain
-                // block_on would panic. Use block_in_place on multi-thread
-                // runtimes.
-                match Handle::try_current() {
-                    Ok(handle)
-                        if handle.runtime_flavor()
-                            == tokio::runtime::RuntimeFlavor::MultiThread =>
-                    {
-                        let _ = tokio::task::block_in_place(|| handle.block_on(report));
-                    }
-                    _ => {
-                        let _ = tauri::async_runtime::block_on(report);
-                    }
-                }
+                block_on_runtime_worker(report);
+
+                // Stream the incremental translation snapshot to the subtitle
+                // editor as a read-only preview. Untranslated rows keep an
+                // empty translation; the final full result overwrites this
+                // once translation completes.
+                let segments =
+                    workspace_subtitle_segments_from_translation_outputs(&progress.partial_outputs);
+                let preview = update_subtitle_preview(
+                    &app_for_progress,
+                    &task_id,
+                    &source_text_for_progress,
+                    segments,
+                );
+                block_on_runtime_worker(preview);
             });
 
         let unit_store = ctx.unit_store();

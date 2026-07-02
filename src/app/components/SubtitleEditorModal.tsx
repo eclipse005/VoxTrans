@@ -13,6 +13,9 @@ type SubtitleEditorModalProps = {
   embedded?: boolean;
   canEdit: boolean;
   readOnlyReason?: string;
+  /** Empty-state message for the cue list, resolved by the caller from task
+   *  state so this component stays presentational. */
+  emptyText?: string;
   taskName: string;
   cues: SubtitleCue[];
   cueWarningsById: Record<string, string[]>;
@@ -33,6 +36,7 @@ export default function SubtitleEditorModal({
   embedded = false,
   canEdit,
   readOnlyReason = "",
+  emptyText,
   taskName,
   cues,
   cueWarningsById,
@@ -152,6 +156,7 @@ export default function SubtitleEditorModal({
         canEdit={canEdit}
         cues={cues}
         cueWarningsById={cueWarningsById}
+        emptyText={emptyText ?? (canEdit ? "暂无字幕段，点击上方“新增字幕段”开始编辑。" : "任务完成后才可编辑字幕。")}
         editingCueId={editingCueId}
         selectedCueIds={validSelectedCueIds}
         timeErrorByCue={timeErrorByCue}

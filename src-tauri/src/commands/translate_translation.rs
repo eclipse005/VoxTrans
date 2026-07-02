@@ -28,7 +28,7 @@ pub async fn build_translation_layer(
 pub async fn build_translation_layer_with_progress(
     app: AppHandle,
     request: BuildTranslationLayerCommandRequest,
-    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+    on_progress: Option<Arc<dyn Fn(crate::services::translation::TranslationProgress) + Send + Sync>>,
     enable_vision_assist: bool,
 ) -> Result<BuildTranslationLayerCommandResponse, String> {
     build_translation_layer_with_progress_and_unit_store(
@@ -44,7 +44,7 @@ pub async fn build_translation_layer_with_progress(
 pub async fn build_translation_layer_with_progress_and_unit_store(
     app: AppHandle,
     mut request: BuildTranslationLayerCommandRequest,
-    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+    on_progress: Option<Arc<dyn Fn(crate::services::translation::TranslationProgress) + Send + Sync>>,
     unit_store: Option<crate::services::pipeline::UnitStore>,
     enable_vision_assist: bool,
 ) -> Result<BuildTranslationLayerCommandResponse, String> {

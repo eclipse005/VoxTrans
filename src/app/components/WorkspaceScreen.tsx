@@ -84,6 +84,21 @@ export function WorkspaceScreen({
   onOpenSubtitleExport,
   onOpenLogs,
 }: WorkspaceScreenProps) {
+  // Single source of truth for editor status strings, derived from task
+  // state. Keeps the editor components presentational (they just render
+  // these) instead of each guessing wording from a boolean.
+  const isProcessing = activeItem?.transcribeStatus === "processing";
+  const readOnlyReason = canEditSubtitle
+    ? ""
+    : isProcessing
+      ? "任务进行中，字幕为只读预览"
+      : "任务完成后才可编辑字幕";
+  const emptyText = canEditSubtitle
+    ? "暂无字幕段，点击上方“新增字幕段”开始编辑。"
+    : isProcessing
+      ? "任务进行中，字幕即将显示。"
+      : "任务完成后才可编辑字幕。";
+
   return (
     <main className="apple-container apple-section">
       <section className="workspace-left">
@@ -125,7 +140,8 @@ export function WorkspaceScreen({
             embedded
             visible
             canEdit={canEditSubtitle}
-            readOnlyReason={canEditSubtitle ? "" : "任务完成后才可编辑字幕"}
+            readOnlyReason={readOnlyReason}
+            emptyText={emptyText}
             taskName={subtitleTaskName}
             cues={subtitleCues}
             cueWarningsById={subtitleCueWarnings}

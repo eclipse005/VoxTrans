@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::services::llm::batch::run_indexed_concurrent_idempotent;
 use crate::services::llm::client::OpenAiCompatLlmClient;
@@ -18,8 +18,9 @@ use batches::{batch_index_ranges, build_batch_windows};
 use responses::validate_batch_translation_response;
 use segments::normalize_segments;
 pub use types::{
-    BuildTranslationLayerRequest, BuildTranslationLayerResponse, TranslationSegmentInput,
-    TranslationSegmentOutput, TranslationTerminologyEntry, TranslationToken,
+    BuildTranslationLayerRequest, BuildTranslationLayerResponse, TranslationProgress,
+    TranslationSegmentInput, TranslationSegmentOutput, TranslationTerminologyEntry,
+    TranslationToken,
 };
 
 const DEFAULT_BATCH_SIZE: usize = 20;
@@ -29,7 +30,7 @@ const MAX_TERMS_PER_BATCH: usize = 16;
 
 pub async fn build_translation_layer_with_progress(
     request: BuildTranslationLayerRequest,
-    on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
+    on_progress: Option<Arc<dyn Fn(TranslationProgress) + Send + Sync>>,
 ) -> Result<BuildTranslationLayerResponse, String> {
     validate_request(&request)?;
 
@@ -155,6 +156,15 @@ pub async fn build_translation_layer_with_progress(
     let windows_for_worker = windows.clone();
     let progress_callback = on_progress.clone();
 
+    // Cumulative segment_id -> translation map, seeded from precomputed
+    // (cached/resumed) batches so partial previews reflect prior work.
+    // Written only from the serial join-loop progress closure, so contention
+    // is nil; Mutex is required only to satisfy the `Fn + Send + Sync` bound
+    // on the shared closure.
+    let partial_map: Arc<Mutex<HashMap<usize, String>>> =
+        Arc::new(Mutex::new(precomputed_translations(&precomputed)));
+    let normalized_for_progress = normalized_segments.clone();
+
     let on_item_done = {
         let store = persist_store.clone();
         move |idx: usize, val: (usize, HashMap<usize, String>)| {
@@ -241,9 +251,26 @@ pub async fn build_translation_layer_with_progress(
             }
         },
         |msg| msg,
-        move |done, total| {
-            if let Some(callback) = progress_callback.as_ref() {
-                callback(done, total);
+        {
+            let partial_map = partial_map.clone();
+            let segments = normalized_for_progress.clone();
+            let progress_callback = progress_callback.clone();
+            move |done: usize, total: usize, result: Option<&(usize, HashMap<usize, String>)>| {
+                if let Some((_, translations)) = result
+                    && let Ok(mut map) = partial_map.lock()
+                {
+                    for (id, text) in translations {
+                        map.insert(*id, text.clone());
+                    }
+                }
+                if let Some(callback) = progress_callback.as_ref() {
+                    let partial_outputs = rebuild_partial_outputs(&segments, &partial_map);
+                    callback(TranslationProgress {
+                        done,
+                        total,
+                        partial_outputs,
+                    });
+                }
             }
         },
         precomputed,
@@ -292,6 +319,45 @@ pub async fn build_translation_layer_with_progress(
         segment_total: outputs.len(),
         segments: outputs,
     })
+}
+
+/// Flatten precomputed (cached/resumed) batch results into a single
+/// segment_id -> translation map so the partial preview starts from the
+/// already-translated segments instead of empty.
+fn precomputed_translations(
+    precomputed: &HashMap<usize, (usize, HashMap<usize, String>)>,
+) -> HashMap<usize, String> {
+    let mut out = HashMap::new();
+    for (_, translations) in precomputed.values() {
+        for (id, text) in translations {
+            out.insert(*id, text.clone());
+        }
+    }
+    out
+}
+
+/// Rebuild a full segment snapshot from the normalized inputs plus the
+/// cumulative translations collected so far. Translated segments carry
+/// their text; the rest carry only the source (translation empty).
+fn rebuild_partial_outputs(
+    segments: &[types::NormalizedSegment],
+    partial_map: &Arc<Mutex<HashMap<usize, String>>>,
+) -> Vec<TranslationSegmentOutput> {
+    let map = match partial_map.lock() {
+        Ok(map) => map,
+        Err(_) => return Vec::new(),
+    };
+    segments
+        .iter()
+        .map(|segment| TranslationSegmentOutput {
+            segment_id: segment.segment_id,
+            start: segment.start,
+            end: segment.end,
+            source: segment.source.clone(),
+            translation: map.get(&segment.segment_id).cloned().unwrap_or_default(),
+            tokens: segment.tokens.clone(),
+        })
+        .collect()
 }
 
 fn validate_request(request: &BuildTranslationLayerRequest) -> Result<(), String> {
