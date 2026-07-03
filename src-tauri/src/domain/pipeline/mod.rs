@@ -13,12 +13,12 @@
 //!    step. Only fires on success — does nothing for in-flight work.
 //!
 //! 2. **Fine-grained: `UnitStore::save_*`** — sub-steps (one ASR
-//!    segment, one translation batch, one step5 overlong work) MUST
-//!    call the matching `save_*` method on `UnitStore` **immediately
-//!    when that unit completes** — not after a batch or round
-//!    finishes, not in a "persist all at the end" loop. If the process
-//!    is killed mid-step, the next run will see only the units that
-//!    were persisted; `load_*` is the resume source of truth.
+//!    segment, one translation batch) MUST call the matching `save_*`
+//!    method on `UnitStore` **immediately when that unit completes** —
+//!    not after a batch or round finishes, not in a "persist all at the
+//!    end" loop. If the process is killed mid-step, the next run will
+//!    see only the units that were persisted; `load_*` is the resume
+//!    source of truth.
 //!
 //! ## The invariant (what the framework guarantees)
 //!
@@ -43,10 +43,9 @@
 //! (step4) or `commands/workspace/pipeline_steps/recognition.rs`
 //! (step1's `fresh_result` handler) for the canonical shape.
 //!
-//! The contract is exercised by `terminology_frozen_contract_no_cross_writes`
-//! and `step5_resume_skips_cached_works`; if you add a new sub-step
-//! resume table, add a matching test or this invariant will silently
-//! rot.
+//! The contract is exercised by `terminology_frozen_contract_no_cross_writes`;
+//! if you add a new sub-step resume table, add a matching test or this
+//! invariant will silently rot.
 
 use std::collections::HashMap;
 
@@ -89,13 +88,6 @@ pub struct TranslationBatchRow {
 pub struct AlignmentResultRow {
     pub segment_index: usize,
     pub items: Vec<qwen_forced_aligner_rs::ForcedAlignItem>,
-}
-
-/// Step 5 (combined): Split + align result for a single segment.
-#[derive(Debug, Clone)]
-pub struct Step5SplitAlignRow {
-    pub segment_index: usize,
-    pub parent_json: String,
 }
 
 // ── UnitStore: task-scoped accessor for domain tables ───────────
@@ -168,16 +160,6 @@ impl UnitStore {
     pub async fn save_translation_batch(&self, row: &TranslationBatchRow) -> Result<(), String> {
         self.store.save_translation_batch(&self.task_id, row).await
     }
-
-    // ── Step 5 combined: Split + align per segment ──
-
-    pub async fn load_step5_split_aligns(&self) -> Result<Vec<Step5SplitAlignRow>, String> {
-        self.store.load_step5_split_aligns(&self.task_id).await
-    }
-
-    pub async fn save_step5_split_align(&self, row: &Step5SplitAlignRow) -> Result<(), String> {
-        self.store.save_step5_split_align(&self.task_id, row).await
-    }
 }
 
 #[derive(Clone)]
@@ -234,11 +216,24 @@ where
     match step.policy() {
         CheckpointPolicy::SkipIfExists => {
             if let Some(json) = store.load_artifact(ctx.task_id, step.name()).await? {
-                if let Ok(cached) = serde_json::from_str::<S::Output>(&json) {
-                    return Ok(StepExecution {
-                        output: cached,
-                        source: StepSource::Cache,
-                    });
+                match serde_json::from_str::<S::Output>(&json) {
+                    Ok(cached) => {
+                        return Ok(StepExecution {
+                            output: cached,
+                            source: StepSource::Cache,
+                        });
+                    }
+                    Err(err) => {
+                        // Schema drift or corrupt artifact — log and fall
+                        // through to recompute. Silently dropping the cache
+                        // here would hide a real problem (e.g. a deploy
+                        // changed a struct without bumping the artifact key).
+                        eprintln!(
+                            "[warn] artifact {} for task {} failed to deserialize: {err}; recomputing",
+                            step.name(),
+                            ctx.task_id
+                        );
+                    }
                 }
             }
             run_and_persist(step, ctx, store).await

@@ -10,8 +10,15 @@ import {
   type TaskProgress,
   type TaskStageProgress,
 } from "./types";
+import { normalizeTranscribeStatus } from "./stateMachine";
 
 export type QueueRunMode = "transcribe" | "transcribe_translate";
+
+type MediaKind = "audio" | "video";
+
+function normalizeMediaKind(value: unknown): MediaKind {
+  return value === "video" ? "video" : "audio";
+}
 
 type TaskStateChangedEvent = {
   id: string;
@@ -73,11 +80,11 @@ export function mergeTaskStateChanged(current: QueueItem, payload: TaskStateChan
     id: payload.id,
     path: payload.path,
     name: payload.name,
-    mediaKind: payload.mediaKind as "audio" | "video",
+    mediaKind: normalizeMediaKind(payload.mediaKind),
     sizeBytes: payload.sizeBytes,
     sourceLang: normalizeSourceLanguage(payload.sourceLang ?? current.sourceLang),
     targetLang: normalizeTargetLanguage(payload.targetLang ?? current.targetLang),
-    transcribeStatus: payload.transcribeStatus as QueueItem["transcribeStatus"],
+    transcribeStatus: normalizeTranscribeStatus(payload.transcribeStatus),
     taskProgress: keepCurrentStage ? current.taskProgress : nextProgress,
     transcribeError: payload.transcribeError || "",
     resultText: payload.resultText || "",

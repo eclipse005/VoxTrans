@@ -1,6 +1,6 @@
 use crate::commands::translate_types::{
     BuildTranslationSegmentCommand, SegmentTokenForTerminologyCommand,
-    SourceSegmentForTerminologyCommand, Step5AlignedParentCommand,
+    SourceSegmentForTerminologyCommand,
 };
 use crate::services::translation::TranslationSegmentOutput;
 use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, WorkspaceSubtitleWord};
@@ -77,51 +77,6 @@ pub fn workspace_subtitle_segments_from_translation_outputs(
         .collect()
 }
 
-pub fn workspace_subtitle_segments_from_step52_parents(
-    parents: &[Step5AlignedParentCommand],
-) -> Vec<WorkspaceSubtitleSegment> {
-    let mut segments = Vec::new();
-    for parent in parents {
-        for part in &parent.parts {
-            segments.push(WorkspaceSubtitleSegment {
-                start_ms: seconds_to_millis(part.start),
-                end_ms: seconds_to_millis(part.end),
-                source_text: part.source.clone(),
-                translated_text: part.translation.clone(),
-                source_words: part
-                    .tokens
-                    .iter()
-                    .map(|token| WorkspaceSubtitleWord {
-                        start_ms: seconds_to_millis(token.start),
-                        end_ms: seconds_to_millis(token.end),
-                        word: token.text.clone(),
-                    })
-                    .collect(),
-            });
-        }
-    }
-    segments
-}
-
-pub fn translation_segments_from_step52_parents(
-    parents: &[Step5AlignedParentCommand],
-) -> Vec<BuildTranslationSegmentCommand> {
-    let mut segments = Vec::new();
-    for parent in parents {
-        for part in &parent.parts {
-            segments.push(BuildTranslationSegmentCommand {
-                segment_id: segments.len() + 1,
-                start: part.start,
-                end: part.end,
-                source: part.source.clone(),
-                translation: part.translation.clone(),
-                tokens: part.tokens.clone(),
-            });
-        }
-    }
-    segments
-}
-
 pub fn source_text_from_step2_segments(
     segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
 ) -> String {
@@ -183,38 +138,14 @@ fn format_srt_ms(total_ms: u64) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02},{millis:03}")
 }
 
-fn seconds_to_millis(value: f64) -> u64 {
-    if !value.is_finite() || value <= 0.0 {
-        return 0;
-    }
-    (value * 1000.0).round() as u64
-}
+// Re-export the shared implementation so all three historical call sites
+// (adapters, subtitle_step5, transcription::sentence_boundary) agree on
+// NaN/overflow handling. See services::time_utils for the single source.
+use crate::services::time_utils::seconds_to_millis;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn seconds_to_millis_zero() {
-        assert_eq!(seconds_to_millis(0.0), 0);
-    }
-
-    #[test]
-    fn seconds_to_millis_negative() {
-        assert_eq!(seconds_to_millis(-1.5), 0);
-    }
-
-    #[test]
-    fn seconds_to_millis_nan() {
-        assert_eq!(seconds_to_millis(f64::NAN), 0);
-    }
-
-    #[test]
-    fn seconds_to_millis_rounding() {
-        assert_eq!(seconds_to_millis(1.0), 1000);
-        assert_eq!(seconds_to_millis(1.2345), 1235);
-        assert_eq!(seconds_to_millis(0.5), 500);
-    }
 
     #[test]
     fn format_srt_ms_basic() {

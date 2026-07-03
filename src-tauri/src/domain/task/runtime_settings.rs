@@ -59,9 +59,7 @@ pub struct PipelineRuntimeSettings {
     pub translate_base_url: String,
     pub translate_model: String,
     pub llm_concurrency: u32,
-    pub subtitle_length_preset: SubtitleLengthPreset,
     pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
-    pub enable_subtitle_beautify: bool,
     /// Whether vision-assisted translation samples video frames. Read live
     /// (like the other LLM connection settings) so the user can toggle it
     /// mid-run; captured here once so the value logged at task start and the
@@ -76,9 +74,11 @@ pub fn resolve_runtime_settings(
 ) -> Result<PipelineRuntimeSettings, String> {
     // Live settings: read fresh on every call so the user can swap
     // LLM endpoint/model, concurrency, ASR/align model, or chunk length
-    // and have the next call/chunk pick it up.
-    let saved = crate::services::preferences::load_saved_settings_from_default_path(store)
-        .unwrap_or_else(|_| crate::services::preferences_normalize::default_settings());
+    // and have the next call/chunk pick it up. Propagates DB errors
+    // instead of silently degrading to defaults — a corrupted settings
+    // row or locked DB should surface here, not 3 steps later as
+    // "translateApiKey is required" with no root-cause context.
+    let saved = crate::services::preferences::load_saved_settings_from_default_path(store)?;
 
     let provider = saved.provider;
     let chunk_target_seconds = saved.chunk_target_seconds.clamp(30, 60);
@@ -101,11 +101,13 @@ pub fn resolve_runtime_settings(
         return Err("translateModel is required for step_03~step_05".to_string());
     }
 
-    // Frozen settings: captured at enqueue time, do not change mid-task.
-    let subtitle_length_preset = frozen.subtitle_length_preset;
-    let enable_subtitle_beautify = frozen.enable_subtitle_beautify;
-    // Vision assist is a live setting (user-toggleable mid-run); read it once
-    // here so the logged value and the applied value are guaranteed identical.
+    // Frozen settings (subtitle_length_preset, enable_subtitle_beautify,
+    // terminology_groups) are NOT copied into PipelineRuntimeSettings —
+    // callers read them from the `frozen: &FrozenSettings` argument
+    // directly, keeping a single source of truth and preventing the
+    // "live vs frozen" drift bug where the two could disagree.
+    // Vision assist is a live setting (user-toggleable mid-run); read it
+    // once here so the logged value and the applied value are identical.
     let enable_vision_assist = saved.enable_vision_assist;
 
     // Terminology is driven by the per-task frozen selection: terminology_groups
@@ -142,9 +144,7 @@ pub fn resolve_runtime_settings(
         translate_base_url,
         translate_model,
         llm_concurrency,
-        subtitle_length_preset,
         terminology_entries,
-        enable_subtitle_beautify,
         enable_vision_assist,
     })
 }
@@ -155,7 +155,7 @@ mod tests {
     use crate::services::preferences_types::{SubtitleLengthPreset, TerminologyTerm};
 
     fn dummy_store() -> TaskStore {
-        let pool = tauri::async_runtime::block_on(crate::db::store::test_pool());
+        let pool = tauri::async_runtime::block_on(crate::db::store::test_pool_with_migrations());
         TaskStore::new(pool)
     }
 
@@ -168,8 +168,11 @@ mod tests {
         };
         let settings = resolve_runtime_settings(&dummy_store(), &frozen, false)
             .expect("resolve");
-        assert_eq!(settings.subtitle_length_preset, SubtitleLengthPreset::Loose);
-        assert!(!settings.enable_subtitle_beautify);
+        // Frozen fields are NOT on PipelineRuntimeSettings anymore — verify
+        // they round-trip through the frozen argument untouched, and that
+        // runtime settings no longer carry a duplicate.
+        assert_eq!(frozen.subtitle_length_preset, SubtitleLengthPreset::Loose);
+        assert!(!frozen.enable_subtitle_beautify);
         assert!(settings.terminology_entries.is_empty());
     }
 

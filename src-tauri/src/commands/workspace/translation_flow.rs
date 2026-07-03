@@ -100,10 +100,13 @@ pub(super) async fn execute_translate_steps(
     )
     .await?;
 
-    // Step 5 (LLM split/align) removed: sentence_boundary already segments to
-    // subtitle length and step4 translates each 1:1, so rows are already the
-    // right length and zero-leak. Eval confirmed step5 had no measurable
-    // quality effect (identical row count and length/CPS distribution on/off).
+    // Step 5 (LLM split/align) was removed: sentence_boundary already
+    // segments to subtitle length and step4 translates each 1:1, so rows
+    // are already the right length and zero-leak. Eval confirmed step5
+    // had no measurable quality effect (identical row count and
+    // length/CPS distribution on/off). The dead code, DB table, and
+    // UnitStore methods were removed; `finalize_translate_with_step5`
+    // kept its name for minimal diff churn but only does beautify + SRT.
     finalize_translate_with_step5(
         app,
         task_id,
@@ -111,8 +114,8 @@ pub(super) async fn execute_translate_steps(
         &target_lang,
         &step4_exec.output.segments,
         source_text,
-        runtime.enable_subtitle_beautify,
-        runtime.subtitle_length_preset.as_str(),
+        record.frozen.enable_subtitle_beautify,
+        record.frozen.subtitle_length_preset.as_str(),
     )
     .await
 }

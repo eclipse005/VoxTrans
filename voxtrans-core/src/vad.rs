@@ -69,18 +69,29 @@ pub(crate) fn build_segments_from_vad(
     let mut segments = Vec::new();
     let mut start = 0.0_f64;
     for (idx, end) in split_points.iter().enumerate() {
-        segments.push(AudioSegment {
-            index: idx,
-            start_sec: start,
-            end_sec: *end,
-        });
-        start = *end;
+        // Skip zero-length segments that arise when a split point equals
+        // the previous one (can happen if silence_midpoints produces a
+        // boundary exactly at `last`). Empty segments break downstream
+        // `windows(2)` logic and produce negative durations.
+        if *end > start {
+            segments.push(AudioSegment {
+                index: idx,
+                start_sec: start,
+                end_sec: *end,
+            });
+            start = *end;
+        }
     }
-    segments.push(AudioSegment {
-        index: segments.len(),
-        start_sec: start,
-        end_sec: effective_total_duration,
-    });
+    // Final tail segment — only add if it has positive duration. When the
+    // last split point equals `effective_total_duration`, the tail would
+    // be zero-length; skip it instead of emitting a degenerate segment.
+    if effective_total_duration > start {
+        segments.push(AudioSegment {
+            index: segments.len(),
+            start_sec: start,
+            end_sec: effective_total_duration,
+        });
+    }
     Ok((segments, vad_elapsed_sec, speech_ranges))
 }
 

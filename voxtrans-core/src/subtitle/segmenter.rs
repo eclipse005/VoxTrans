@@ -27,7 +27,13 @@ pub fn normalize_word_tokens(raw_words: Vec<WordToken>) -> Vec<WordToken> {
         });
     }
     let out = merge_compound_abbreviation_tokens(out);
+    // Pass 1: merge numeric compounds (e.g. "3" + "D" -> "3D") that ASR
+    // sometimes splits between digit and letter runs.
     let out = merge_compound_numeric_tokens(out);
+    // merge_prefixed_numeric_tokens may surface new prefix+digit
+    // adjacencies that were previously blocked by an intervening token
+    // (now merged). Pass 2 catches those — without it, "U" + "3" left
+    // over after a prefix merge would survive as separate tokens.
     let out = merge_prefixed_numeric_tokens(out);
     let out = merge_compound_numeric_tokens(out);
     merge_numeric_unit_suffix_tokens(out)

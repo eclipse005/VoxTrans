@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
-use tokio::runtime::Handle;
 
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 
 use super::super::progress::report_task_stage;
 use super::super::TaskStage;
+use super::block_on_runtime_worker;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,43 +126,49 @@ impl PipelineStep for Step1AsrPipelineStep {
                         current as u32,
                         total as u32,
                     );
-                    match Handle::try_current() {
-                        Ok(handle)
-                            if handle.runtime_flavor()
-                                == tokio::runtime::RuntimeFlavor::MultiThread =>
-                        {
-                            let _ = tokio::task::block_in_place(|| {
-                                handle.block_on(async {
-                                    let _ = report.await;
-                                    match fresh_result {
-                                        Some(crate::services::transcribe::FreshSegmentResult::Asr {
-                                            segment_index,
-                                            text,
-                                        }) => {
-                                            let row =
-                                                crate::services::pipeline::AsrTranscriptRow {
-                                                    segment_index,
-                                                    text,
-                                                };
-                                            let _ = us.save_asr_transcript(&row).await;
-                                        }
-                                        Some(crate::services::transcribe::FreshSegmentResult::Align {
-                                            segment_index,
-                                            items,
-                                        }) => {
-                                            let row =
-                                                crate::services::pipeline::AlignmentResultRow {
-                                                    segment_index,
-                                                    items,
-                                                };
-                                            let _ = us.save_alignment_result(&row).await;
-                                        }
-                                        None => {}
-                                    }
-                                })
+                    block_on_runtime_worker(report);
+
+                    // Persist each freshly computed unit immediately so the
+                    // resume invariant holds (see domain::pipeline mod doc).
+                    // Errors are logged rather than swallowed: a failed save
+                    // means the next run will recompute this unit, which is
+                    // correct but wasteful — surface it so the user knows
+                    // resume degraded. Using eprintln! because we're on a
+                    // sync worker thread without a TaskLogger handle.
+                    match fresh_result {
+                        Some(crate::services::transcribe::FreshSegmentResult::Asr {
+                            segment_index,
+                            text,
+                        }) => {
+                            let row = crate::services::pipeline::AsrTranscriptRow {
+                                segment_index,
+                                text,
+                            };
+                            block_on_runtime_worker(async {
+                                if let Err(err) = us.save_asr_transcript(&row).await {
+                                    eprintln!(
+                                        "[warn] step1 asr save failed for segment {segment_index}: {err}"
+                                    );
+                                }
                             });
                         }
-                        _ => {}
+                        Some(crate::services::transcribe::FreshSegmentResult::Align {
+                            segment_index,
+                            items,
+                        }) => {
+                            let row = crate::services::pipeline::AlignmentResultRow {
+                                segment_index,
+                                items,
+                            };
+                            block_on_runtime_worker(async {
+                                if let Err(err) = us.save_alignment_result(&row).await {
+                                    eprintln!(
+                                        "[warn] step1 alignment save failed for segment {segment_index}: {err}"
+                                    );
+                                }
+                            });
+                        }
+                        None => {}
                     }
                 },
             )

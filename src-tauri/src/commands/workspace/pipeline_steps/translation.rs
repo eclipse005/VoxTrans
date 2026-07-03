@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tauri::AppHandle;
-use tokio::runtime::Handle;
 
 use crate::commands::translate_terminology::build_terminology_layer;
 use crate::commands::translate_translation::build_translation_layer_with_progress_and_unit_store;
@@ -18,6 +17,7 @@ use crate::services::translation::TranslationProgress;
 use super::super::preview::update_subtitle_preview;
 use super::super::progress::report_task_stage;
 use super::super::TaskStage;
+use super::block_on_runtime_worker;
 
 #[derive(Debug, Clone)]
 pub(in crate::commands::workspace) struct Step3TerminologyPipelineStep {
@@ -70,26 +70,6 @@ impl PipelineStep for Step3TerminologyPipelineStep {
             },
         )
         .await
-    }
-}
-
-/// Run a future from the progress callback, which fires on the LLM HTTP
-/// client thread. That thread may itself be a tokio multi-thread runtime
-/// worker, where a plain `block_on` would panic — `block_in_place` is the
-/// safe path there. Falls back to `async_runtime::block_on` otherwise.
-fn block_on_runtime_worker<F>(fut: F)
-where
-    F: std::future::Future,
-{
-    match Handle::try_current() {
-        Ok(handle)
-            if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
-        {
-            let _ = tokio::task::block_in_place(|| handle.block_on(fut));
-        }
-        _ => {
-            let _ = tauri::async_runtime::block_on(fut);
-        }
     }
 }
 

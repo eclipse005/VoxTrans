@@ -106,7 +106,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     installUpdate,
     cancelInstall,
     skipVersion,
-  } = useAutoUpdateCheck();
+  } = useAutoUpdateCheck(pushToast);
 
   useClickSound(settings.enableClickSound);
   const { workspaceHydrated } = useWorkspacePersistence({

@@ -685,55 +685,11 @@ impl TaskStore {
         .map_err(|e| format!("save translation batch: {e}"))?;
         Ok(())
     }
-
-    // Step 5 combined: Split + align per segment
-
-    pub async fn load_step5_split_aligns(
-        &self,
-        task_id: &str,
-    ) -> Result<Vec<crate::services::pipeline::Step5SplitAlignRow>, String> {
-        let rows: Vec<Step5SplitAlignInternalRow> = sqlx::query_as(
-            "SELECT segment_index, parent_json FROM step5_split_align_results \
-             WHERE task_id = ? ORDER BY segment_index",
-        )
-        .bind(task_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| format!("load step5 split aligns: {e}"))?;
-
-        Ok(rows
-            .into_iter()
-            .map(|r| crate::services::pipeline::Step5SplitAlignRow {
-                segment_index: r.segment_index as usize,
-                parent_json: r.parent_json,
-            })
-            .collect())
-    }
-
-    pub async fn save_step5_split_align(
-        &self,
-        task_id: &str,
-        row: &crate::services::pipeline::Step5SplitAlignRow,
-    ) -> Result<(), String> {
-        sqlx::query(
-            "INSERT INTO step5_split_align_results \
-             (task_id, segment_index, parent_json) \
-             VALUES (?, ?, ?) ON CONFLICT(task_id, segment_index) DO UPDATE SET \
-             parent_json=excluded.parent_json",
-        )
-        .bind(task_id)
-        .bind(row.segment_index as i64)
-        .bind(&row.parent_json)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| format!("save step5 split align: {e}"))?;
-        Ok(())
-    }
 }
 
 // ── Internal step-checkpoint rows (private to this module) ────────────
 //
-// These mirror raw column shapes for the four domain checkpoint tables.
+// These mirror raw column shapes for the domain checkpoint tables.
 // They're separate from `db::models` because the public `pipeline::*`
 // row types live in `domain/pipeline` and would create a circular dep
 // if `db::models` had to know about them.
@@ -754,12 +710,6 @@ struct AlignmentInternalRow {
 struct TranslationBatchInternalRow {
     batch_index: i64,
     segment_translations: String,
-}
-
-#[derive(sqlx::FromRow)]
-struct Step5SplitAlignInternalRow {
-    segment_index: i64,
-    parent_json: String,
 }
 
 #[cfg(test)]

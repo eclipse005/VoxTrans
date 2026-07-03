@@ -8,7 +8,12 @@ pub fn beautify_subtitle_srt_segments(
     subtitle_length_preset: &str,
     target_lang: &str,
 ) {
-    if target_lang != "zh-CN" {
+    // Text beautify (comma/period trimming, CJK-ASCII spacing) only
+    // makes sense for CJK targets — it would mangle Latin punctuation
+    // in English/Spanish/etc. The watchability merge below is also CJK-
+    // oriented (length units, dangling-fragment detection), so skip the
+    // whole pass for non-CJK targets rather than beautify-only.
+    if !is_cjk_target(target_lang) {
         return;
     }
     for segment in &mut *segments {
@@ -19,6 +24,21 @@ pub fn beautify_subtitle_srt_segments(
         subtitle_length_preset,
         target_lang,
     );
+}
+
+/// Whether the target language is a CJK variant that should receive the
+/// full beautify + watchability merge pass. Covers zh-CN, zh-TW, yue,
+/// and any other `zh*` / `yue*` code. Kept here rather than in
+/// `subtitle_step5` so the gate decision and the text-level helpers
+/// (which check `is_cjk_char`) stay in the same module.
+fn is_cjk_target(target_lang: &str) -> bool {
+    let lower = target_lang.to_ascii_lowercase();
+    lower == "zh-cn"
+        || lower == "zh-tw"
+        || lower == "zh"
+        || lower.starts_with("zh-")
+        || lower == "yue"
+        || lower.starts_with("yue-")
 }
 
 /// Beautify `WorkspaceSubtitleSegment`s in place so the SRT writer, DB,

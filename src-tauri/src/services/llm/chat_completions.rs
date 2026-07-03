@@ -4,6 +4,12 @@ use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
 use super::port::{LlmConfig, LlmTokenUsage};
 
+/// Sampling temperature for translation/terminology requests. 0.2 is low
+/// enough to keep translations deterministic-ish while still allowing the
+/// model a small amount of flexibility for natural phrasing. Extracted
+/// from a magic literal so it can be tuned in one place.
+const TRANSLATION_TEMPERATURE: f64 = 0.2;
+
 #[derive(Debug, Serialize)]
 pub(super) struct ChatCompletionsRequest {
     pub(super) model: String,
@@ -108,7 +114,7 @@ pub(super) async fn call_chat_completion(
             role: "user".to_string(),
             content,
         }],
-        temperature: 0.2,
+        temperature: TRANSLATION_TEMPERATURE,
         stream: false,
     };
     let endpoint = chat_completions_endpoint(&config.base_url);

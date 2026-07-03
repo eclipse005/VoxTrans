@@ -1,6 +1,5 @@
 use tauri::{AppHandle, Manager};
 use tauri::async_runtime::spawn_blocking;
-use tokio::runtime::Handle;
 
 use crate::db::store::TaskStore;
 use crate::services::pipeline::StepContext;
@@ -12,6 +11,8 @@ use crate::domain::task::adapters::{
     workspace_subtitle_segments_from_step2_segments,
 };
 use crate::domain::task::runtime_settings::resolve_runtime_settings;
+
+use super::pipeline_steps::block_on_runtime_worker;
 
 use super::output_completion::finish_transcribe_only;
 use super::pipeline_runner::execute_workspace_step;
@@ -85,8 +86,8 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
                 "translateModel": runtime.translate_model,
                 "translateApiKey": api_key_masked,
                 "llmConcurrency": runtime.llm_concurrency,
-                "subtitleLengthPreset": runtime.subtitle_length_preset,
-                "enableSubtitleBeautify": runtime.enable_subtitle_beautify,
+                "subtitleLengthPreset": record.frozen.subtitle_length_preset,
+                "enableSubtitleBeautify": record.frozen.enable_subtitle_beautify,
                 "enableVisionAssist": runtime.enable_vision_assist,
                 "terminologyEntriesCount": runtime.terminology_entries.len(),
             },
@@ -157,7 +158,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             task_id: task_id.to_string(),
             media_path: record.item.path.clone(),
             source_lang: source_lang.clone(),
-            subtitle_length_preset: runtime.subtitle_length_preset.as_str().to_string(),
+            subtitle_length_preset: record.frozen.subtitle_length_preset.as_str().to_string(),
             words: step2_words,
             vad_speech_segments: step1_exec.output.vad_speech_segments.clone(),
         },
@@ -198,8 +199,8 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
             &step2_segments,
             step2_srt,
             source_text,
-            runtime.enable_subtitle_beautify,
-            runtime.subtitle_length_preset.as_str(),
+            record.frozen.enable_subtitle_beautify,
+            record.frozen.subtitle_length_preset.as_str(),
             &target_lang,
         )
         .await
@@ -251,15 +252,7 @@ async fn separate_vocals_for_task(
                 percent,
                 100,
             );
-            if let Ok(handle) = Handle::try_current() {
-                if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
-                    let _ = tokio::task::block_in_place(|| {
-                        handle.block_on(async {
-                            let _ = report.await;
-                        });
-                    });
-                }
-            }
+            block_on_runtime_worker(report);
         })
     })
     .await

@@ -8,9 +8,18 @@ use super::json_guard::JsonResponseValidator;
 const RETRY_HINT_MAX_CHARS: usize = 320;
 const REPAIR_RAW_TEXT_MAX_CHARS: usize = 8_000;
 
+/// Base delay (ms) for exponential backoff between retry attempts.
+/// Actual delay = `BASE * 2^exp`, where exp is capped at 2, so the
+/// sequence is 2s, 4s, 8s, 8s, 8s, ... Extracted from a magic literal
+/// so the tuning knob is in one place.
+const RETRY_BACKOFF_BASE_MS: u64 = 2_000;
+/// Max exponent for backoff — caps the doubling so the delay doesn't
+/// grow unbounded after many attempts.
+const RETRY_BACKOFF_MAX_EXP: u32 = 2;
+
 #[derive(Debug, Clone)]
 pub(super) struct RetryFeedback {
-    pub(super) error_kind: String,
+    pub(super) error_kind: LlmErrorKind,
     pub(super) retryable: bool,
     pub(super) retry_hint: Option<String>,
     pub(super) detail: String,
@@ -20,15 +29,14 @@ pub(super) fn retry_backoff_ms(attempt: u32, max_attempts: u32) -> Option<u64> {
     if attempt >= max_attempts {
         return None;
     }
-    let exp = attempt.saturating_sub(1).min(2);
-    let base_ms = 2_000u64;
-    Some(base_ms.saturating_mul(1u64 << exp))
+    let exp = attempt.saturating_sub(1).min(RETRY_BACKOFF_MAX_EXP);
+    Some(RETRY_BACKOFF_BASE_MS.saturating_mul(1u64 << exp))
 }
 
 pub(super) fn feedback_for_semantic(message: String) -> RetryFeedback {
     let hint = compact_hint(&message, RETRY_HINT_MAX_CHARS);
     RetryFeedback {
-        error_kind: LlmErrorKind::InvalidSemantic.as_str().to_string(),
+        error_kind: LlmErrorKind::InvalidSemantic,
         retryable: true,
         retry_hint: Some(hint),
         detail: message,
@@ -42,7 +50,7 @@ pub(super) fn feedback_from_llm_error(err: &LlmError) -> RetryFeedback {
         .clone()
         .unwrap_or_else(|| compact_hint(&err.message, RETRY_HINT_MAX_CHARS));
     RetryFeedback {
-        error_kind: err.kind.as_str().to_string(),
+        error_kind: err.kind,
         retryable,
         retry_hint,
         detail,

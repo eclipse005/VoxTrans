@@ -180,15 +180,18 @@ pub async fn enqueue_and_execute_task_batch(
 }
 
 pub fn task_subtitle_beautify_context(
-    store: &TaskStore,
+    _store: &TaskStore,
     task_id: &str,
 ) -> Result<(bool, String, String), String> {
     let record = get_task_record(task_id)?;
-    let saved = crate::services::preferences::load_saved_settings_from_default_path(store)
-        .unwrap_or_else(|_| crate::services::preferences_normalize::default_settings());
+    // Read from the frozen settings captured at enqueue time, not the
+    // current live settings — subtitle_length_preset and
+    // enable_subtitle_beautify are Frozen by design (see CODEBUDDY.md /
+    // FrozenSettings docs). Reading live here would make exports use a
+    // different beautify/preset than the one that produced the segments.
     Ok((
-        saved.enable_subtitle_beautify,
-        saved.subtitle_length_preset.as_str().to_string(),
+        record.frozen.enable_subtitle_beautify,
+        record.frozen.subtitle_length_preset.as_str().to_string(),
         record.target_lang,
     ))
 }

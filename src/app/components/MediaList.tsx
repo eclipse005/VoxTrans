@@ -18,6 +18,7 @@ import type {
 } from "../../features/media/types";
 import { canDeleteQueueItem } from "../../features/media/queuePolicy";
 import { formatBytes, statusLabel } from "../../features/media/utils";
+import { useClickOutside } from "../hooks/useClickOutside";
 import { AudioFileIcon, BookIcon, ChevronDownIcon, MicIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
 
 type QueueBatchMode = "transcribe" | "transcribe_translate";
@@ -185,47 +186,9 @@ export default function MediaList({
     saveBatchMode(batchMode);
   }, [batchMode]);
 
-  useEffect(() => {
-    if (!batchMenuOpen) return;
-    const onMouseDown = (event: MouseEvent) => {
-      if (!batchMenuRef.current) return;
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (!batchMenuRef.current.contains(target)) {
-        setBatchMenuOpen(false);
-      }
-    };
-    window.addEventListener("mousedown", onMouseDown);
-    return () => window.removeEventListener("mousedown", onMouseDown);
-  }, [batchMenuOpen]);
-
-  useEffect(() => {
-    if (!languageMenuTaskId) return;
-    const onMouseDown = (event: MouseEvent) => {
-      if (!languageMenuRef.current) return;
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (!languageMenuRef.current.contains(target)) {
-        setLanguageMenuTaskId("");
-      }
-    };
-    window.addEventListener("mousedown", onMouseDown);
-    return () => window.removeEventListener("mousedown", onMouseDown);
-  }, [languageMenuTaskId]);
-
-  useEffect(() => {
-    if (!terminologyMenuTaskId) return;
-    const onMouseDown = (event: MouseEvent) => {
-      if (!terminologyMenuRef.current) return;
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (!terminologyMenuRef.current.contains(target)) {
-        setTerminologyMenuTaskId("");
-      }
-    };
-    window.addEventListener("mousedown", onMouseDown);
-    return () => window.removeEventListener("mousedown", onMouseDown);
-  }, [terminologyMenuTaskId]);
+  useClickOutside(batchMenuRef, batchMenuOpen, () => setBatchMenuOpen(false));
+  useClickOutside(languageMenuRef, Boolean(languageMenuTaskId), () => setLanguageMenuTaskId(""));
+  useClickOutside(terminologyMenuRef, Boolean(terminologyMenuTaskId), () => setTerminologyMenuTaskId(""));
 
   const modeLabel = batchMode === "transcribe" ? "转录" : "转译";
   const batchSourceLang = commonSourceLanguage(queue);

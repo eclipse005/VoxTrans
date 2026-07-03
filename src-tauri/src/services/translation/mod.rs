@@ -256,11 +256,23 @@ pub async fn build_translation_layer_with_progress(
             let segments = normalized_for_progress.clone();
             let progress_callback = progress_callback.clone();
             move |done: usize, total: usize, result: Option<&(usize, HashMap<usize, String>)>| {
-                if let Some((_, translations)) = result
-                    && let Ok(mut map) = partial_map.lock()
-                {
-                    for (id, text) in translations {
-                        map.insert(*id, text.clone());
+                if let Some((_, translations)) = result {
+                    match partial_map.lock() {
+                        Ok(mut map) => {
+                            for (id, text) in translations {
+                                map.insert(*id, text.clone());
+                            }
+                        }
+                        Err(err) => {
+                            // Lock poisoned = another worker panicked mid-update.
+                            // Surfacing this as a warning rather than silently
+                            // dropping progress updates. The poisoned lock will
+                            // also fail the main-thread read below, which will
+                            // propagate the error properly.
+                            eprintln!(
+                                "[warn] translation partial_map lock poisoned: {err}"
+                            );
+                        }
                     }
                 }
                 if let Some(callback) = progress_callback.as_ref() {

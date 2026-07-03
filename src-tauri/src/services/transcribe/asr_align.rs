@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use native_transcribe::transcribe::{Device as CohereDevice, Transcriber as CohereTranscriber};
@@ -547,13 +548,16 @@ fn should_insert_debug_space(current: &str, next: &str) -> bool {
     let Some(first) = next.chars().next() else {
         return false;
     };
-    previous.is_alphanumeric()
+    // Two independent conditions where a space should be inserted between
+    // adjacent segments; explicit parens make the OR grouping readable and
+    // prevents future edits from misreading the && precedence.
+    (previous.is_alphanumeric()
         && first.is_alphanumeric()
         && !is_compact_script_char(previous)
-        && !is_compact_script_char(first)
-        || previous.is_ascii_punctuation()
+        && !is_compact_script_char(first))
+        || (previous.is_ascii_punctuation()
             && first.is_alphanumeric()
-            && !is_compact_script_char(first)
+            && !is_compact_script_char(first))
 }
 
 fn is_compact_script_char(ch: char) -> bool {
@@ -598,12 +602,13 @@ fn write_wav_mono_16k(path: &Path, samples: &[f32]) -> Result<(), hound::Error> 
 }
 
 fn temp_wav_path() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let pid = std::process::id();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    std::env::temp_dir().join(format!("voxtrans_asr_align_{pid}_{nanos}.wav"))
+    // Monotonic counter guarantees uniqueness even when two segments are
+    // written in the same nanosecond (Windows SystemTime resolution is
+    // coarse). The counter also survives across calls within the process.
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("voxtrans_asr_align_{pid}_{seq}.wav"))
 }
 
 #[cfg(test)]

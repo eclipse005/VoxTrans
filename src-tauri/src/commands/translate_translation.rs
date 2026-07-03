@@ -19,9 +19,8 @@ pub async fn build_translation_layer(
     let store = app.state::<TaskStore>().inner();
     let enable_vision_assist = crate::services::preferences::load_saved_settings_from_default_path(
         store,
-    )
-    .map(|s| s.enable_vision_assist)
-    .unwrap_or(false);
+    )?
+    .enable_vision_assist;
     build_translation_layer_with_progress(app, request, None, enable_vision_assist).await
 }
 

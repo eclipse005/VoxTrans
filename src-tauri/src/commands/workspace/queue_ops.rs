@@ -134,8 +134,16 @@ pub(super) async fn enqueue_task_run_internal(
             .any(|entry| entry.item.id == id)
     };
     let queued_item = if existing {
+        let terminology_group_id = request
+            .terminology_group_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_default();
+        let frozen = freeze_current_settings(db_store, &terminology_group_id)?;
         patch_task_item(app, id, |record| {
-            apply_enqueue_request(record, request.clone(), db_store);
+            apply_enqueue_request(record, request.clone(), frozen);
         })
         .await?;
         let store = lock_workspace_store()?;
@@ -181,7 +189,7 @@ pub(super) async fn enqueue_task_run_internal(
             source_lang,
             target_lang,
             max_retries: request.max_retries.unwrap_or(0),
-            frozen: freeze_current_settings(db_store, &terminology_group_id),
+            frozen: freeze_current_settings(db_store, &terminology_group_id)?,
             enqueue_seq,
         };
         let emitted = record.item.clone();
@@ -270,7 +278,7 @@ pub(super) async fn update_task_terminology_internal(
 
     let terminology_group_id = request.terminology_group_id.trim().to_string();
     let db_store = app.state::<TaskStore>().inner().clone();
-    let frozen = freeze_current_settings(&db_store, &terminology_group_id);
+    let frozen = freeze_current_settings(&db_store, &terminology_group_id)?;
     // patch_task_item persists the full record (including frozen settings) to DB.
     patch_task_item(app, task_id, |task| {
         task.item.terminology_group_id = terminology_group_id.clone();
@@ -462,7 +470,7 @@ fn apply_upload_fields(
 fn apply_enqueue_request(
     record: &mut WorkspaceTaskRecord,
     request: EnqueueTaskRunCommandRequest,
-    db_store: &TaskStore,
+    frozen: FrozenSettings,
 ) {
     apply_upload_fields(
         &mut record.item,
@@ -501,17 +509,19 @@ fn apply_enqueue_request(
     record.item.target_lang = record.target_lang.clone();
     record.item.terminology_group_id = terminology_group_id.clone();
     record.max_retries = request.max_retries.unwrap_or(0);
-    record.frozen = freeze_current_settings(db_store, &terminology_group_id);
+    record.frozen = frozen;
 }
 
 /// Snapshot the user-frozen subset of the current saved settings. Tasks
 /// keep their own copy so subtitle-shape and terminology decisions stay
 /// consistent across the whole run even if the user edits settings
 /// mid-pipeline.
-fn freeze_current_settings(db_store: &TaskStore, selected_group_id: &str) -> FrozenSettings {
-    crate::services::preferences::load_saved_settings_from_default_path(db_store)
-        .map(|saved| FrozenSettings::from_saved(&saved, selected_group_id))
-        .unwrap_or_default()
+fn freeze_current_settings(
+    db_store: &TaskStore,
+    selected_group_id: &str,
+) -> Result<FrozenSettings, String> {
+    let saved = crate::services::preferences::load_saved_settings_from_default_path(db_store)?;
+    Ok(FrozenSettings::from_saved(&saved, selected_group_id))
 }
 
 #[cfg(test)]

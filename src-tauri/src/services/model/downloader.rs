@@ -201,6 +201,13 @@ fn download_model_files(
             &mut last_speed_bytes,
         )?;
         if cancel_flag.load(Ordering::Relaxed) {
+            // Clean up the partial file so the next retry starts fresh.
+            // Otherwise a server that returns 200 (full content) on retry
+            // would append to a stale .part, inflating total_bytes past
+            // 100% and corrupting progress. A 206 server would resume
+            // correctly, but we can't tell in advance which one we'll
+            // hit — deleting is the safe, predictable choice.
+            let _ = std::fs::remove_file(&part_path);
             return Ok(());
         }
         std::fs::rename(&part_path, &target).map_err(|err| err.to_string())?;

@@ -94,6 +94,7 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
   }, [alignModel, asrModel, demucsModel, refreshModelStatus]);
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: undefined | (() => void);
     listen<ModelDownloadProgressEvent>("model-download-progress", (event) => {
       const payload = event.payload;
@@ -157,11 +158,16 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
       }
     })
       .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
         unlisten = fn;
       })
       .catch(() => {});
 
     return () => {
+      disposed = true;
       if (unlisten) unlisten();
     };
   }, [refreshModelStatus]);

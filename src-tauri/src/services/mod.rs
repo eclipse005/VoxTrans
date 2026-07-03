@@ -30,6 +30,7 @@ pub mod terminology;
 mod terminology_responses;
 mod terminology_terms;
 mod terminology_text;
+pub mod time_utils;
 pub mod transcribe;
 pub mod transcription;
 pub mod translation;

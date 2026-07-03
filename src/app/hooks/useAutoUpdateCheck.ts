@@ -10,7 +10,9 @@ import {
 } from "../api/updater";
 import type { UpdateCheckResult } from "../api/updater";
 
-export function useAutoUpdateCheck() {
+type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
+
+export function useAutoUpdateCheck(pushToast: PushToast) {
   const [availableUpdate, setAvailableUpdate] = useState<UpdateCheckResult | null>(null);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -18,14 +20,28 @@ export function useAutoUpdateCheck() {
   const hasAvailableUpdate = useMemo(() => availableUpdate?.hasUpdate ?? false, [availableUpdate]);
   const taskIdRef = useRef<string>("");
 
-  // 监听下载进度
+  // 监听下载进度 — 使用 disposed 标志位防止 effect 重跑时旧监听器泄漏
   useEffect(() => {
     if (!isTauri()) return;
-    let cleanup: (() => void) | undefined;
+    let disposed = false;
+    let unlisten: undefined | (() => void);
+
     onUpdateProgress(([, progress]) => {
       setInstallProgress(Math.round(progress.percent));
-    }).then((unlisten) => { cleanup = unlisten; });
-    return () => { cleanup?.(); };
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
   }, []);
 
   // 启动时检测更新，并对比已忽略版本
@@ -79,7 +95,7 @@ export function useAutoUpdateCheck() {
       try {
         await downloadUpdate(availableUpdate.downloadUrl, taskIdRef.current);
       } catch (e) {
-        console.error(`[updater] download failed: ${e}`);
+        pushToast(`更新下载失败：${e instanceof Error ? e.message : String(e)}`, "error");
       } finally {
         setInstalling(false);
         setInstallProgress(null);
@@ -87,7 +103,11 @@ export function useAutoUpdateCheck() {
       }
     },
     cancelInstall: async () => {
-      if (taskIdRef.current) await cancelUpdate(taskIdRef.current);
+      try {
+        if (taskIdRef.current) await cancelUpdate(taskIdRef.current);
+      } catch (e) {
+        console.error(`[updater] cancel failed: ${e}`);
+      }
       setInstalling(false);
       setInstallProgress(null);
       setShowUpdateDialog(false);

@@ -254,23 +254,30 @@ export function useQueueWorkflow({
       }
 
       let failedCount = 0;
-      for (const update of updates) {
-        try {
-          await updateTaskLanguages({
+      // Run updates concurrently to avoid N sequential round-trips.
+      // allSettled so a single failure doesn't cancel the others; each
+      // failed update rolls back its own queue item optimistically.
+      const results = await Promise.allSettled(
+        updates.map((update) =>
+          updateTaskLanguages({
             taskId: update.item.id,
             sourceLang: update.nextSourceLang,
             targetLang: update.nextTargetLang,
-          });
-        } catch (error) {
+          }),
+        ),
+      );
+      results.forEach((result, index) => {
+        if (result.status === "rejected") {
           failedCount += 1;
-          reportError(error, "updateTaskLanguagesBatch");
+          const update = updates[index];
+          reportError(result.reason, "updateTaskLanguagesBatch");
           patchQueueItem(dispatch, update.item.id, (current) => ({
             ...current,
             sourceLang: update.previousSourceLang,
             targetLang: update.previousTargetLang,
           }));
         }
-      }
+      });
 
       if (failedCount > 0) {
         pushToast(`有 ${failedCount} 个任务语言保存失败`, "error");

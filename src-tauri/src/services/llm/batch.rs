@@ -107,8 +107,14 @@ where
             Err(err) => {
                 done += 1;
                 on_progress(done, total, None);
+                // JoinError means the worker task panicked or was
+                // cancelled — the original batch_idx is lost. Use
+                // `total` (which is always >= any real index) as the
+                // sort key so failed entries sort to the end rather
+                // than polluting the real-index range with usize::MAX,
+                // which would confuse callers that de-dup by index.
                 out.push((
-                    usize::MAX,
+                    total,
                     Err(join_error(format!("task join error: {err}"))),
                 ));
             }

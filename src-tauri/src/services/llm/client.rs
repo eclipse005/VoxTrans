@@ -129,7 +129,7 @@ impl OpenAiCompatLlmClient {
                                             &base_payload,
                                             "invalid_json",
                                             &last_error,
-                                            &feedback.error_kind,
+                                            feedback.error_kind.as_str(),
                                             feedback.retry_hint.as_deref(),
                                             &raw_text,
                                         ),
@@ -165,7 +165,7 @@ impl OpenAiCompatLlmClient {
                                             &base_payload,
                                             "invalid_schema",
                                             &last_error,
-                                            &feedback.error_kind,
+                                            feedback.error_kind.as_str(),
                                             feedback.retry_hint.as_deref(),
                                             &raw_text,
                                         ),
@@ -212,7 +212,7 @@ impl OpenAiCompatLlmClient {
                                 invalid_semantic_attempt_payload(
                                     &base_payload,
                                     &last_error,
-                                    &feedback.error_kind,
+                                    feedback.error_kind.as_str(),
                                     feedback.retryable,
                                     feedback.retry_hint.as_deref(),
                                     &raw_text,
@@ -240,7 +240,7 @@ impl OpenAiCompatLlmClient {
                         http_error_attempt_payload(
                             &base_payload,
                             &last_error,
-                            &feedback.error_kind,
+                            feedback.error_kind.as_str(),
                             feedback.retryable,
                             feedback.retry_hint.as_deref(),
                             backoff_ms,
@@ -257,7 +257,7 @@ impl OpenAiCompatLlmClient {
         }
 
         let exhausted_feedback = last_feedback.unwrap_or_else(|| RetryFeedback {
-            error_kind: LlmErrorKind::InvalidSemantic.as_str().to_string(),
+            error_kind: LlmErrorKind::InvalidSemantic,
             retryable: true,
             retry_hint: None,
             detail: last_error.clone(),
@@ -271,10 +271,12 @@ impl OpenAiCompatLlmClient {
             .unwrap_or_default();
 
         Err(LlmError::new(
-            LlmErrorKind::InvalidSemantic,
+            exhausted_feedback.error_kind,
             format!(
                 "llm call failed after {} attempts: kind={}{}",
-                max_attempts, exhausted_feedback.error_kind, retry_hint_suffix
+                max_attempts,
+                exhausted_feedback.error_kind.as_str(),
+                retry_hint_suffix
             ),
         ))
     }
