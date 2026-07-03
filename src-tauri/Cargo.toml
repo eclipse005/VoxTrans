@@ -33,8 +33,8 @@ dashmap = "6"
 thiserror = "2"
 ts-rs = "10"
 open = "5"
-qwen3-asr = { path = "D:/qwen3-asr", default-features = false }
-qwen-forced-aligner-rs = { path = "D:/qwen-aligner-rs", default-features = false, features = ["cpu"] }
+qwen3-asr = { git = "https://github.com/eclipse005/qwen3-asr-rs.git", default-features = false }
+qwen-forced-aligner-rs = { git = "https://github.com/eclipse005/qwen-aligner-rs.git", default-features = false, features = ["cpu"] }
 # Cohere ASR — second backend, selected at runtime by `asr_model` name.
 # Default features include CUDA; CPU inference also works when selected at runtime.
-native-transcribe = { path = "D:/cohere-transcribe-native" }
+native-transcribe = { git = "https://github.com/eclipse005/cohere-transcribe-rs.git" }
