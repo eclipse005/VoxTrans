@@ -1,0 +1,39 @@
+# 统一所有文本文件使用 LF 行尾，跨平台一致。
+# Windows 用户配置 core.autocrlf=true 时，Git 也尊重此文件的规则。
+
+* text=auto eol=lf
+
+# 二进制文件不做行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.mp4 binary
+*.mp3 binary
+*.wav binary
+*.flac binary
+*.aac binary
+*.ogg binary
+*.webm binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.7z binary
+*.rar binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.bin binary
+*.dat binary
+*.safetensors binary
+*.onnx binary
+*.pt binary
+*.bin binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
