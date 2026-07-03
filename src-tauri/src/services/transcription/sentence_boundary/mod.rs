@@ -6,6 +6,7 @@ use voxtrans_core::subtitle::beautify::beautify_words_for_subtitle;
 
 mod assembly;
 mod language;
+mod punkt_map;
 mod semantic;
 mod subtitle_layout;
 #[cfg(test)]

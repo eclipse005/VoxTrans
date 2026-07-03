@@ -133,6 +133,14 @@ pub(super) trait LanguageProfile {
     /// Per-preset source-side subtitle length limit (words or chars).
     fn source_limit(&self, preset: SubtitleLengthPreset) -> u32;
 
+    /// Whether this language uses Punkt sentence boundary detection
+    /// (statistical abbreviation detection) instead of the hardcoded
+    /// abbreviation table. Currently only English; adding a language
+    /// here requires its TrainingData to be available.
+    fn uses_punkt_sentence_boundary(&self) -> bool {
+        false
+    }
+
     /// Whether this language counts characters (not words) as length units.
     fn is_char_based(&self) -> bool;
 }
@@ -208,15 +216,9 @@ pub(super) fn is_cjk_char(ch: char) -> bool {
 
 struct EnglishProfile;
 
-const ENGLISH_ABBREVIATIONS: &[&str] = &[
-    "mr.", "mrs.", "ms.", "mx.", "dr.", "prof.", "rev.", "hon.", "fr.", "pres.", "gov.", "sen.",
-    "rep.", "amb.", "sr.", "jr.", "esq.", "capt.", "cmdr.", "col.", "gen.", "lt.", "maj.", "sgt.",
-    "adm.", "st.", "mt.", "ave.", "blvd.", "rd.", "ln.", "ct.", "pl.", "no.", "vs.", "etc.",
-    "al.", "cf.", "fig.", "figs.", "ed.", "eds.", "vol.", "vols.", "ch.", "pp.", "dept.", "univ.",
-    "assn.", "assoc.", "e.g.", "i.e.", "a.m.", "p.m.", "u.s.", "u.k.", "u.n.", "e.u.", "d.c.",
-    "n.y.", "n.y.c.", "l.a.", "inc.", "ltd.", "co.", "corp.", "bros.", "llc.", "plc.", "jan.",
-    "feb.", "mar.", "apr.", "jun.", "jul.", "aug.", "sep.", "sept.", "oct.", "nov.", "dec.",
-];
+/// 英文缩写表已清空：Punkt 统计学习负责识别缩写（Mr./Dr./p.m./U.S. 等）。
+/// 保留空数组只是为了让 `abbreviations()` 的返回类型与其他 profile 一致。
+const ENGLISH_ABBREVIATIONS: &[&str] = &[];
 
 const ENGLISH_CONNECTORS: &[&str] = &[
     "and", "but", "or", "so", "because", "when", "while", "which", "that", "if", "then", "though",
@@ -245,6 +247,9 @@ impl LanguageProfile for EnglishProfile {
             SubtitleLengthPreset::Standard => 16,
             SubtitleLengthPreset::Loose => 20,
         }
+    }
+    fn uses_punkt_sentence_boundary(&self) -> bool {
+        true
     }
     fn is_char_based(&self) -> bool {
         false
@@ -665,8 +670,9 @@ mod tests {
     fn english_profile_has_abbreviations_and_connectors() {
         let p = EnglishProfile;
         assert_eq!(p.key(), "en");
-        assert!(p.abbreviations().contains(&"mr."));
-        assert!(p.abbreviations().contains(&"p.m."));
+        // 英文缩写表已清空，由 Punkt 统计学习负责识别
+        assert!(p.abbreviations().is_empty());
+        assert!(p.uses_punkt_sentence_boundary());
         assert!(p.connectors().contains(&"and"));
         assert!(!p.is_char_based());
     }
