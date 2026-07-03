@@ -145,7 +145,7 @@ impl PipelineStep for Step4TranslationPipelineStep {
             Arc::new(move |progress: TranslationProgress| {
                 let current = progress.done;
                 let total = progress.total;
-                let detail = if total > 0 && current > 0 {
+                let detail = if total > 0 {
                     format!("{current}/{total}")
                 } else {
                     String::new()
