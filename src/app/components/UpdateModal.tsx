@@ -1,3 +1,6 @@
+import { useMemo } from "react";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { useDialogA11y } from "./useDialogA11y";
 import { invoke } from "@tauri-apps/api/core";
 import type { UpdateCheckResult } from "../api/updater";
@@ -24,13 +27,33 @@ export default function UpdateModal({
   onSkipVersion,
 }: UpdateModalProps) {
   const dialogRef = useDialogA11y(visible, onClose);
+  const publishedAt = update ? formatDateRelative(update.publishedAt) : "";
+  const notes = update?.notes.trim() ?? "";
+  const releaseUrl = update?.htmlUrl ?? "";
+
+  // ponytail: GitHub release body is untrusted markdown → sanitize before inject.
+  // 同步分支：未启用 async 扩展时 marked.parse 返回 string,这里用断言收口类型。
+  const notesHtml = useMemo(
+    () => (notes.length > 0
+      ? DOMPurify.sanitize(marked.parse(notes, { async: false }) as string)
+      : ""),
+    [notes],
+  );
+
+  const handleNotesClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const anchor = (e.target as HTMLElement).closest("a");
+    if (!anchor) return;
+    const href = anchor.getAttribute("href");
+    if (!href) return;
+    e.preventDefault();
+    void invoke("open_external_url", { url: href }).catch((err) => {
+      console.error("无法打开链接:", href, err);
+    });
+  };
+
   if (!visible || !update) {
     return null;
   }
-
-  const publishedAt = formatDateRelative(update.publishedAt);
-  const notes = update.notes.trim();
-  const releaseUrl = update.htmlUrl;
 
   return (
     <div className="modal-overlay">
@@ -55,9 +78,15 @@ export default function UpdateModal({
         </div>
 
         <div className="update-notes">
-          <div className="update-notes-body">
-            {notes.length > 0 ? notes : "本版本未提供详细更新说明。"}
-          </div>
+          <div
+            className="update-notes-body update-notes-markdown"
+            onClick={handleNotesClick}
+            dangerouslySetInnerHTML={
+              notesHtml
+                ? { __html: notesHtml }
+                : { __html: "<p>本版本未提供详细更新说明。</p>" }
+            }
+          />
         </div>
 
         {releaseUrl ? (
