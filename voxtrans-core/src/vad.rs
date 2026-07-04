@@ -24,7 +24,17 @@ pub(crate) fn build_segments_from_vad(
     let vad_started_at = Instant::now();
     let chunk_target_seconds = chunk_target_seconds.max(30.0);
     let engine = Vad::new()?;
-    let vad = engine.detect_wav(audio_path, &VadConfig::default())?;
+    let cfg = VadConfig {
+        speech_threshold: 0.4,
+        min_speech_frame: 20,
+        min_silence_frame: 15,
+        max_speech_frame: 60000,
+        smooth_window_size: 5,
+        merge_silence_frame: 0,
+        extend_speech_frame: 0,
+        silence_schedule: Vec::new(),
+    };
+    let vad = engine.detect_wav(audio_path, &cfg)?;
     let vad_elapsed_sec = vad_started_at.elapsed().as_secs_f64();
     let effective_total_duration = if total_duration_sec > 0.0 {
         total_duration_sec
