@@ -28,7 +28,6 @@
     "active": true,
     "targets": "all",
     "resources": [
-      "bin/fireredvad.exe",
       "bin/demucs.exe",
       "bin/yt-dlp.exe",
       "bin/ffmpeg.exe"

@@ -15,7 +15,6 @@ if (-not (Test-Path -LiteralPath $binDir)) {
 $binaries = @(
   "ffmpeg.exe",
   "yt-dlp.exe",
-  "fireredvad.exe",
   "demucs.exe"
 )
 
