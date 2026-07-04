@@ -37,14 +37,6 @@ pub struct SettingsRow {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-#[allow(dead_code)]
-pub struct FlatSrtItemRow {
-    pub id: i64,
-    pub value: String,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TaskRow {
     pub id: String,
     pub media_path: String,

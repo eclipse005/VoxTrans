@@ -1,8 +1,6 @@
 //! Watchability merge utilities for subtitle beautify.
 //!
-//! These are internal helper functions used by watchability_merge. Some are
-//! not currently called but retained as part of the toolkit.
-#![allow(dead_code)]
+//! These are internal helper functions used by watchability_merge.
 
 mod constants;
 mod language_units;

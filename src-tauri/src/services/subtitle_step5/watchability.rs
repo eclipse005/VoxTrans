@@ -45,32 +45,6 @@ pub(super) fn is_watchability_fragment_issue(
     fragment_penalty >= 8 && line_units <= 14.0
 }
 
-pub(super) fn repair_watchability_lines(
-    source_lines: &[String],
-    translation_lines: &mut [String],
-    target_lang: &str,
-) {
-    if source_lines.len() != translation_lines.len() {
-        return;
-    }
-
-    for index in 0..translation_lines.len() {
-        translation_lines[index] = repair_single_watchability_line(
-            &source_lines[index],
-            &translation_lines[index],
-            target_lang,
-        );
-    }
-
-    for index in 0..translation_lines.len() {
-        translation_lines[index] = repair_single_watchability_line(
-            &source_lines[index],
-            &translation_lines[index],
-            target_lang,
-        );
-    }
-}
-
 pub(super) fn repair_single_watchability_line(
     source: &str,
     translation: &str,

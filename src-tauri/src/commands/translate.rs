@@ -1,8 +1,4 @@
 #[cfg(test)]
-use super::translate_artifacts::{
-    default_task_id_from_path, parse_step2_segments_artifact_for_input,
-};
-#[cfg(test)]
 use super::translate_terms::{count_source_tokens, normalize_command_terminology_entries};
 
 pub use super::translate_types::*;
@@ -10,9 +6,47 @@ pub use super::translate_types::*;
 #[cfg(test)]
 mod tests {
     use super::{
-        TranslateTerminologyEntryCommand, count_source_tokens, default_task_id_from_path,
-        normalize_command_terminology_entries, parse_step2_segments_artifact_for_input,
+        TranslateTerminologyEntryCommand, count_source_tokens,
+        normalize_command_terminology_entries,
     };
+
+    use serde::Deserialize;
+    use super::SourceSegmentForTerminologyCommand;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(untagged)]
+    enum Step2SegmentsArtifactForInput {
+        Flat(Vec<SourceSegmentForTerminologyCommand>),
+        Wrapped(Step2SegmentsWrappedForInput),
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Step2SegmentsWrappedForInput {
+        #[serde(default)]
+        segments: Vec<SourceSegmentForTerminologyCommand>,
+    }
+
+    fn parse_step2_segments_artifact_for_input(
+        raw: &str,
+    ) -> Result<Vec<SourceSegmentForTerminologyCommand>, String> {
+        let parsed: Step2SegmentsArtifactForInput = serde_json::from_str(raw)
+            .map_err(|err| format!("failed to parse step2 segments json: {err}"))?;
+        let segments = match parsed {
+            Step2SegmentsArtifactForInput::Flat(items) => items,
+            Step2SegmentsArtifactForInput::Wrapped(wrapper) => wrapper.segments,
+        };
+        Ok(segments)
+    }
+
+    fn default_task_id_from_path(path: &str) -> String {
+        std::path::Path::new(path)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("task")
+            .to_string()
+    }
 
     #[test]
     fn parse_step2_segments_accepts_flat_array_shape() {

@@ -14,7 +14,6 @@ pub mod transcribe_types;
 pub mod transcription;
 mod transcription_types;
 pub mod translate;
-pub mod translate_artifacts;
 pub mod translate_connectivity;
 pub mod translate_llm_settings;
 pub mod translate_terminology;

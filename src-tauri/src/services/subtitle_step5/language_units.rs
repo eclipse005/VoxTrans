@@ -87,14 +87,3 @@ pub(super) fn is_cjk_char(ch: char) -> bool {
             | 0xAC00..=0xD7AF
     )
 }
-
-pub(super) fn is_hangul_char(ch: char) -> bool {
-    matches!(
-        ch as u32,
-        0x1100..=0x11FF
-            | 0x3130..=0x318F
-            | 0xA960..=0xA97F
-            | 0xAC00..=0xD7AF
-            | 0xD7B0..=0xD7FF
-    )
-}

@@ -66,25 +66,6 @@ pub(super) fn extract_numbers(text: &str) -> HashSet<String> {
     out
 }
 
-pub(super) fn numeric_alignment_penalty(
-    source_numbers: &HashSet<String>,
-    candidate: &str,
-) -> usize {
-    if source_numbers.is_empty() {
-        return 0;
-    }
-    let candidate_numbers = extract_numbers(candidate);
-    let missing = source_numbers
-        .iter()
-        .filter(|value| !candidate_numbers.contains(*value))
-        .count();
-    let extra = candidate_numbers
-        .iter()
-        .filter(|value| !source_numbers.contains(*value))
-        .count();
-    missing.saturating_mul(2).saturating_add(extra)
-}
-
 pub(super) fn parse_ascii_number(raw: &str) -> f64 {
     let cleaned = raw
         .trim_matches(|value: char| value == '.' || value == ',')

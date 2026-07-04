@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "generate:types": "cargo test -p voxtrans ts_export_tests && mkdir -p src/generated/bindings && cp src-tauri/bindings/*.ts src/generated/bindings/",
+    "generate:types": "cargo test -p voxtrans ts_export_tests",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev:cuda": "powershell -ExecutionPolicy Bypass -File .\\scripts\\tauri-cuda.ps1 dev",
