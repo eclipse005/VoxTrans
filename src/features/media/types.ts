@@ -21,7 +21,7 @@ export type { UserPreferencesResponse } from "../../generated/bindings/UserPrefe
 export type ModelTarget = "asr" | "align" | "demucs";
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
-export type SourceLanguage = "en" | "zh" | "yue" | "ja" | "ko" | "fr" | "de" | "it" | "es" | "pt";
+export type SourceLanguage = "en" | "zh" | "yue" | "ja" | "ko" | "fr" | "de" | "it" | "es" | "pt" | "ru";
 export type TargetLanguage =
   | "zh-CN"
   | "zh-TW"

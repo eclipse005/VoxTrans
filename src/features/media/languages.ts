@@ -21,6 +21,7 @@ export const SOURCE_LANGUAGE_OPTIONS: LanguageOption<SourceLanguage>[] = [
   { id: "it", short: "IT", label: "Italiano", promptLabel: "Italian" },
   { id: "es", short: "ES", label: "Español", promptLabel: "Spanish" },
   { id: "pt", short: "PT", label: "Português", promptLabel: "Portuguese" },
+  { id: "ru", short: "RU", label: "Русский", promptLabel: "Russian" },
 ];
 
 export const TARGET_LANGUAGE_OPTIONS: LanguageOption<TargetLanguage>[] = [

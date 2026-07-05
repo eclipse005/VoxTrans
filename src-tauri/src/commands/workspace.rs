@@ -310,6 +310,7 @@ fn normalize_task_source_lang(raw: &str) -> String {
         "it" | "it-it" | "italian" => "it".to_string(),
         "es" | "es-es" | "spanish" => "es".to_string(),
         "pt" | "pt-pt" | "pt-br" | "portuguese" => "pt".to_string(),
+        "ru" | "ru-ru" | "russian" | "русский" => "ru".to_string(),
         _ => default_task_source_lang(),
     }
 }

@@ -399,6 +399,7 @@ fn asr_language(source_lang: &str) -> Result<String, String> {
         "it" | "it-it" | "italian" => "italian",
         "es" | "es-es" | "spanish" => "spanish",
         "pt" | "pt-pt" | "pt-br" | "portuguese" => "portuguese",
+        "ru" | "ru-ru" | "russian" | "русский" => "russian",
         "yue" | "yue-hk" | "zh-yue" | "cantonese" | "粤语" | "廣東話" | "广东话" => {
             "cantonese"
         }
@@ -406,6 +407,7 @@ fn asr_language(source_lang: &str) -> Result<String, String> {
     };
     Ok(language.to_string())
 }
+
 
 /// Map a source language to the short code Cohere's prompt expects. Cohere's
 /// `build_prompt` substitutes the code into a `<|{lang}|>` tag, so a short
@@ -440,6 +442,7 @@ fn qwen_language(source_lang: &str) -> Result<String, String> {
         "es" | "spanish" => "Spanish",
         "it" | "italian" => "Italian",
         "pt" | "portuguese" => "Portuguese",
+        "ru" | "ru-ru" | "russian" | "русский" => "Russian",
         "yue" | "yue-hk" | "zh-yue" | "cantonese" | "粤语" | "廣東話" | "广东话" => {
             "Cantonese"
         }
@@ -447,6 +450,7 @@ fn qwen_language(source_lang: &str) -> Result<String, String> {
     };
     Ok(language.to_string())
 }
+
 
 fn clean_asr_text(raw: &str) -> String {
     let mut text = raw.trim();
@@ -732,6 +736,7 @@ mod tests {
             ("it", "italian", "Italian"),
             ("es", "spanish", "Spanish"),
             ("pt", "portuguese", "Portuguese"),
+            ("ru", "russian", "Russian"),
             ("yue", "cantonese", "Cantonese"),
             ("Cantonese", "cantonese", "Cantonese"),
             ("广东话", "cantonese", "Cantonese"),
@@ -745,7 +750,7 @@ mod tests {
 
     #[test]
     fn unsupported_source_languages_are_rejected() {
-        for source in ["", "auto", "ru", "ar", "vi", "nl", "pl", "el"] {
+        for source in ["", "auto", "ar", "vi", "nl", "pl", "el"] {
             assert!(asr_language(source).is_err());
             assert!(qwen_language(source).is_err());
         }
@@ -753,8 +758,6 @@ mod tests {
 
     #[test]
     fn cohere_language_maps_to_short_codes() {
-        // Cohere wants ISO-639-1 short codes for the <|lang|> prompt tag,
-        // not the full names Qwen uses.
         let cases = [
             ("en", "en"),
             ("en-us", "en"),
@@ -775,17 +778,13 @@ mod tests {
             ("广东话", "yue"),
         ];
         for (source, expected) in cases {
-            assert_eq!(
-                cohere_language(source).as_deref(),
-                Ok(expected),
-                "source={source}"
-            );
+            assert_eq!(cohere_language(source).as_deref(), Ok(expected), "source={source}");
         }
     }
 
     #[test]
     fn cohere_language_rejects_unsupported() {
-        for source in ["", "auto", "ru", "vi", "nl", "pl", "el"] {
+        for source in ["", "auto", "ru", "russian", "vi", "nl", "pl", "el"] {
             assert!(cohere_language(source).is_err(), "source={source}");
         }
     }
