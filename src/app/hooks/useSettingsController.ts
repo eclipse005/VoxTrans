@@ -165,7 +165,7 @@ export function useSettingsController({
       const message = error instanceof Error ? error.message : "设置保存失败";
       pushToast(message, "error");
     }
-  }, [form, settings, dispatch, pushToast]);
+  }, [form, settings, dispatch, pushToast, invalidateSourceLanguages]);
 
   const saveTerminologyGroups = useCallback(async (groups: SavedSettings["terminologyGroups"]) => {
     const normalizedGroups = normalizeTerminologyGroups(groups);

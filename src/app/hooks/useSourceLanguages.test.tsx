@@ -7,7 +7,9 @@ import {
   useSourceLanguages,
   useInvalidateSourceLanguages,
 } from "./useSourceLanguages";
-import type { AsrModel, AlignModel, SourceLanguageOption } from "../../generated/bindings";
+import type { AsrModel } from "../../generated/bindings/AsrModel";
+import type { AlignModel } from "../../generated/bindings/AlignModel";
+import type { SourceLanguageOption } from "../../generated/bindings/SourceLanguageOption";
 
 const mockInvoke = vi.hoisted(() => vi.fn());
 

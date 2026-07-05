@@ -1,9 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import type {
-  AsrModel,
-  AlignModel,
-  SourceLanguageOption,
-} from "@/generated/bindings";
+import type { AsrModel } from "../../generated/bindings/AsrModel";
+import type { AlignModel } from "../../generated/bindings/AlignModel";
+import type { SourceLanguageOption } from "../../generated/bindings/SourceLanguageOption";
 
 export async function listSourceLanguages(
   asrModel: AsrModel,
