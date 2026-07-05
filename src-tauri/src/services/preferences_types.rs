@@ -1,4 +1,5 @@
 use serde::{Deserialize, Deserializer, Serialize};
+use std::fmt;
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, TS)]
@@ -74,6 +75,12 @@ pub enum AsrModel {
     CohereTranscribe032026,
 }
 
+impl fmt::Display for AsrModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 impl AsrModel {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -97,6 +104,12 @@ pub enum AlignModel {
     #[default]
     #[serde(rename = "Qwen3-ForcedAligner-0.6B")]
     Qwen3ForcedAligner06B,
+}
+
+impl fmt::Display for AlignModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
 }
 
 impl AlignModel {

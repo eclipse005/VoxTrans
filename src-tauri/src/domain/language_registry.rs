@@ -1,0 +1,209 @@
+use crate::services::preferences_types::{AlignModel, AsrModel};
+
+use super::language::{LanguageMetadata, LanguageTag, ALL_SOURCE_LANGUAGES};
+
+#[derive(Debug, thiserror::Error)]
+pub enum LanguageError {
+    #[error("language {lang} is not supported by ASR model {model}")]
+    UnsupportedForAsr { lang: LanguageTag, model: AsrModel },
+    #[error("language {lang} is not supported by align model {model}")]
+    UnsupportedForAlign { lang: LanguageTag, model: AlignModel },
+}
+
+struct AsrLanguageMapping {
+    model: AsrModel,
+    supported: &'static [LanguageTag],
+    code_for: fn(LanguageTag) -> Option<&'static str>,
+}
+
+struct AlignLanguageMapping {
+    model: AlignModel,
+    supported: &'static [LanguageTag],
+    code_for: fn(LanguageTag) -> Option<&'static str>,
+}
+
+fn qwen3_asr_code(lang: LanguageTag) -> Option<&'static str> {
+    Some(match lang {
+        LanguageTag::En => "english",
+        LanguageTag::Zh => "chinese",
+        LanguageTag::Yue => "cantonese",
+        LanguageTag::Ja => "japanese",
+        LanguageTag::Ko => "korean",
+        LanguageTag::Fr => "french",
+        LanguageTag::De => "german",
+        LanguageTag::It => "italian",
+        LanguageTag::Es => "spanish",
+        LanguageTag::Pt => "portuguese",
+        LanguageTag::Ru => "russian",
+    })
+}
+
+fn cohere_asr_code(lang: LanguageTag) -> Option<&'static str> {
+    Some(match lang {
+        LanguageTag::En => "en",
+        LanguageTag::Zh => "zh",
+        LanguageTag::Yue => "yue",
+        LanguageTag::Ja => "ja",
+        LanguageTag::Ko => "ko",
+        LanguageTag::Fr => "fr",
+        LanguageTag::De => "de",
+        LanguageTag::It => "it",
+        LanguageTag::Es => "es",
+        LanguageTag::Pt => "pt",
+        LanguageTag::Ru => return None,
+    })
+}
+
+fn qwen3_align_code(lang: LanguageTag) -> Option<&'static str> {
+    Some(match lang {
+        LanguageTag::En => "English",
+        LanguageTag::Zh => "Chinese",
+        LanguageTag::Yue => "Cantonese",
+        LanguageTag::Ja => "Japanese",
+        LanguageTag::Ko => "Korean",
+        LanguageTag::Fr => "French",
+        LanguageTag::De => "German",
+        LanguageTag::It => "Italian",
+        LanguageTag::Es => "Spanish",
+        LanguageTag::Pt => "Portuguese",
+        LanguageTag::Ru => "Russian",
+    })
+}
+
+static ASR_MAPPINGS: &[AsrLanguageMapping] = &[
+    AsrLanguageMapping {
+        model: AsrModel::Qwen3Asr06B,
+        supported: LanguageTag::ALL,
+        code_for: qwen3_asr_code,
+    },
+    AsrLanguageMapping {
+        model: AsrModel::Qwen3Asr17B,
+        supported: LanguageTag::ALL,
+        code_for: qwen3_asr_code,
+    },
+    AsrLanguageMapping {
+        model: AsrModel::CohereTranscribe032026,
+        supported: &[
+            LanguageTag::En,
+            LanguageTag::Zh,
+            LanguageTag::Yue,
+            LanguageTag::Ja,
+            LanguageTag::Ko,
+            LanguageTag::Fr,
+            LanguageTag::De,
+            LanguageTag::It,
+            LanguageTag::Es,
+            LanguageTag::Pt,
+        ],
+        code_for: cohere_asr_code,
+    },
+];
+
+static ALIGN_MAPPINGS: &[AlignLanguageMapping] = &[
+    AlignLanguageMapping {
+        model: AlignModel::Qwen3ForcedAligner06B,
+        supported: LanguageTag::ALL,
+        code_for: qwen3_align_code,
+    },
+];
+
+pub struct LanguageRegistry;
+
+impl LanguageRegistry {
+    pub fn all_source_languages() -> &'static [LanguageMetadata] {
+        ALL_SOURCE_LANGUAGES
+    }
+
+    pub fn supported_for(
+        asr: AsrModel,
+        align: AlignModel,
+    ) -> Vec<&'static LanguageMetadata> {
+        let asr_supported = Self::asr_supported_set(asr);
+        let align_supported = Self::align_supported_set(align);
+        ALL_SOURCE_LANGUAGES
+            .iter()
+            .filter(|m| asr_supported.contains(&m.tag) && align_supported.contains(&m.tag))
+            .collect()
+    }
+
+    pub fn asr_code(asr: AsrModel, lang: LanguageTag) -> Result<&'static str, LanguageError> {
+        let mapping = ASR_MAPPINGS
+            .iter()
+            .find(|m| m.model == asr)
+            .ok_or_else(|| LanguageError::UnsupportedForAsr {
+                lang,
+                model: asr,
+            })?;
+        (mapping.code_for)(lang).ok_or_else(|| LanguageError::UnsupportedForAsr {
+            lang,
+            model: asr,
+        })
+    }
+
+    pub fn align_code(
+        align: AlignModel,
+        lang: LanguageTag,
+    ) -> Result<&'static str, LanguageError> {
+        let mapping = ALIGN_MAPPINGS
+            .iter()
+            .find(|m| m.model == align)
+            .ok_or_else(|| LanguageError::UnsupportedForAlign {
+                lang,
+                model: align,
+            })?;
+        (mapping.code_for)(lang).ok_or_else(|| LanguageError::UnsupportedForAlign {
+            lang,
+            model: align,
+        })
+    }
+
+    fn asr_supported_set(asr: AsrModel) -> std::collections::HashSet<LanguageTag> {
+        ASR_MAPPINGS
+            .iter()
+            .find(|m| m.model == asr)
+            .map(|m| m.supported.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    fn align_supported_set(align: AlignModel) -> std::collections::HashSet<LanguageTag> {
+        ALIGN_MAPPINGS
+            .iter()
+            .find(|m| m.model == align)
+            .map(|m| m.supported.iter().copied().collect())
+            .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cohere_does_not_support_russian() {
+        assert!(LanguageRegistry::asr_code(AsrModel::CohereTranscribe032026, LanguageTag::Ru).is_err());
+    }
+
+    #[test]
+    fn qwen_supports_all_languages() {
+        for tag in LanguageTag::ALL {
+            assert!(LanguageRegistry::asr_code(AsrModel::Qwen3Asr06B, *tag).is_ok());
+        }
+    }
+
+    #[test]
+    fn intersection_excludes_russian_for_cohere() {
+        let supported = LanguageRegistry::supported_for(
+            AsrModel::CohereTranscribe032026,
+            AlignModel::Qwen3ForcedAligner06B,
+        );
+        assert!(!supported.iter().any(|m| m.tag == LanguageTag::Ru));
+        assert!(supported.iter().any(|m| m.tag == LanguageTag::Zh));
+    }
+
+    #[test]
+    fn code_outputs_match_existing_mappings() {
+        assert_eq!(LanguageRegistry::asr_code(AsrModel::Qwen3Asr06B, LanguageTag::Zh).unwrap(), "chinese");
+        assert_eq!(LanguageRegistry::asr_code(AsrModel::CohereTranscribe032026, LanguageTag::Zh).unwrap(), "zh");
+        assert_eq!(LanguageRegistry::align_code(AlignModel::Qwen3ForcedAligner06B, LanguageTag::Zh).unwrap(), "Chinese");
+    }
+}
