@@ -4,7 +4,7 @@ import {
   DEFAULT_TARGET_LANGUAGE,
   normalizeSourceLanguage,
   normalizeTargetLanguage,
-  sourceLanguageOption,
+  SOURCE_LANGUAGE_OPTIONS,
   TARGET_LANGUAGE_OPTIONS,
   targetLanguageOption,
 } from "../../features/media/languages";
@@ -21,7 +21,21 @@ import { useClickOutside } from "../hooks/useClickOutside";
 import { useSourceLanguages } from "../hooks/useSourceLanguages";
 import type { AsrModel } from "../../generated/bindings/AsrModel";
 import type { AlignModel } from "../../generated/bindings/AlignModel";
+import type { SourceLanguageOption } from "../../generated/bindings/SourceLanguageOption";
 import { AudioFileIcon, BookIcon, ChevronDownIcon, MicIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
+
+function findSourceLanguageOption(
+  tag: string,
+  dynamicOptions: SourceLanguageOption[],
+): SourceLanguageOption {
+  const dynamic = dynamicOptions.find((option) => option.tag === tag);
+  if (dynamic) return dynamic;
+  const staticOption = SOURCE_LANGUAGE_OPTIONS.find((option) => option.id === tag);
+  if (staticOption) {
+    return { tag: staticOption.id, label: staticOption.label, short: staticOption.short };
+  }
+  return { tag: tag as LanguageTag, label: tag, short: tag };
+}
 
 type QueueBatchMode = "transcribe" | "transcribe_translate";
 const QUEUE_BATCH_MODE_KEY = "voxtrans.queueBatchMode.v1";
@@ -198,10 +212,26 @@ export default function MediaList({
   useClickOutside(languageMenuRef, Boolean(languageMenuTaskId), () => setLanguageMenuTaskId(""));
   useClickOutside(terminologyMenuRef, Boolean(terminologyMenuTaskId), () => setTerminologyMenuTaskId(""));
 
-  const { data: sourceLanguageOptions = [], isLoading: sourceLanguagesLoading } = useSourceLanguages(
-    asrModel,
-    alignModel,
-  );
+  const {
+    data: rawSourceLanguageOptions = [],
+    isLoading: sourceLanguagesLoading,
+    error: sourceLanguagesError,
+  } = useSourceLanguages(asrModel, alignModel);
+
+  const sourceLanguageOptions: SourceLanguageOption[] = sourceLanguagesError
+    ? SOURCE_LANGUAGE_OPTIONS.map(({ id, short, label }) => ({ tag: id, short, label }))
+    : rawSourceLanguageOptions;
+
+  const sourceLanguagesErrorShown = useRef(false);
+  useEffect(() => {
+    if (sourceLanguagesError && !sourceLanguagesErrorShown.current) {
+      sourceLanguagesErrorShown.current = true;
+      pushToast("获取源语言列表失败，已使用默认列表", "error");
+    }
+    if (!sourceLanguagesError) {
+      sourceLanguagesErrorShown.current = false;
+    }
+  }, [sourceLanguagesError, pushToast]);
 
   // When the model combination changes, some previously-selected source
   // languages may no longer be supported. Auto-correct editable items to the
@@ -211,25 +241,28 @@ export default function MediaList({
     queueRef.current = queue;
   });
   useEffect(() => {
-    if (!sourceLanguageOptions.length) return;
+    if (!rawSourceLanguageOptions.length) return;
     const editableItems = queueRef.current.filter(
       (item) =>
         item.transcribeStatus !== "processing" && item.transcribeStatus !== "queued",
     );
     for (const item of editableItems) {
-      const stillSupported = sourceLanguageOptions.some((o) => o.tag === item.sourceLang);
+      const stillSupported = rawSourceLanguageOptions.some((o) => o.tag === item.sourceLang);
       if (!stillSupported) {
-        const fallback = sourceLanguageOptions[0];
+        const fallback = rawSourceLanguageOptions[0];
         void onUpdateTaskLanguages(item, fallback.tag, item.targetLang);
         pushToast(`当前源语言不再被新模型组合支持，已切换为 ${fallback.label}`, "info");
       }
     }
-  }, [sourceLanguageOptions, onUpdateTaskLanguages, pushToast]);
+  }, [rawSourceLanguageOptions, onUpdateTaskLanguages, pushToast]);
 
   const modeLabel = batchMode === "transcribe" ? "转录" : "转译";
   const batchSourceLang = commonSourceLanguage(queue);
   const batchTargetLang = commonTargetLanguage(queue);
-  const batchSourceOption = sourceLanguageOption(batchSourceLang ?? DEFAULT_SOURCE_LANGUAGE);
+  const batchSourceOption = findSourceLanguageOption(
+    batchSourceLang ?? DEFAULT_SOURCE_LANGUAGE,
+    rawSourceLanguageOptions,
+  );
   const batchTargetOption = targetLanguageOption(batchTargetLang ?? DEFAULT_TARGET_LANGUAGE);
   const batchLanguageMenuOpen = languageMenuTaskId === BATCH_LANGUAGE_MENU_ID;
   const batchLanguageDisabled = !workspaceHydrated || queue.length === 0;
@@ -384,7 +417,7 @@ export default function MediaList({
                 || item.taskProgress.stage.total > 0
               );
             const transcribeProgressText = transcribeProcessing ? getTranscribeProcessingText(item) : "";
-            const sourceOption = sourceLanguageOption(item.sourceLang);
+            const sourceOption = findSourceLanguageOption(item.sourceLang, rawSourceLanguageOptions);
             const targetOption = targetLanguageOption(item.targetLang);
             const languageBusy = item.transcribeStatus === "processing" || item.transcribeStatus === "queued";
             const languageMenuOpen = languageMenuTaskId === item.id;

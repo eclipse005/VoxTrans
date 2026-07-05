@@ -15,8 +15,8 @@ use voxtrans_core::subtitle::{alignment::align_text_to_timestamps, segmenter::Wo
 
 /// The two ASR backends, abstracted behind a uniform `transcribe` call so the
 /// segment loop below never branches on engine identity. Selection is by the
-/// `asr_model` name string ("cohere-transcribe-03-2026" → Cohere, anything else →
-/// Qwen3-ASR). The aligner (qwen-forced-aligner) is the same for both.
+/// parsed `AsrModel` enum. The aligner (qwen-forced-aligner) is the same for
+/// both.
 enum AsrEngine {
     Qwen(AsrInference),
     Cohere(CohereTranscriber),
@@ -42,11 +42,6 @@ impl AsrEngine {
                 .map(|text| clean_asr_text(&text)),
         }
     }
-}
-
-/// Is this ASR model name the Cohere backend?
-fn is_cohere_asr(model: &str) -> bool {
-    model == crate::services::model::COHERE_ASR_MODEL
 }
 
 pub(super) struct AsrAlignRequest {
@@ -113,17 +108,18 @@ where
         ..AsrAlignTiming::default()
     };
 
+    let asr_model = AsrModel::parse(&request.asr_model);
+    let align_model = AlignModel::parse(&request.align_model);
+    let cohere = matches!(asr_model, AsrModel::CohereTranscribe032026);
+
     let asr_model_dir = request
         .model_dir
         .unwrap_or_else(|| crate::services::model::resolve_asr_model_dir(&request.asr_model));
     let aligner_model_dir = crate::services::model::resolve_aligner_model_dir(&request.align_model);
     let device = provider_to_device(&request.provider)?;
-    let cohere = is_cohere_asr(&request.asr_model);
 
     let lang_tag: LanguageTag = request.source_lang.parse()
         .map_err(|e| format!("invalid source language: {e}"))?;
-    let asr_model = AsrModel::parse(&request.asr_model);
-    let align_model = AlignModel::parse(&request.align_model);
     let language = LanguageRegistry::asr_code(asr_model, lang_tag)
         .map_err(|e| e.to_string())?;
     let aligner_language = LanguageRegistry::align_code(align_model, lang_tag)

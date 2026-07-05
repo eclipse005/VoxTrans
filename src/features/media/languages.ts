@@ -56,33 +56,15 @@ const TARGET_LANGUAGE_SET = new Set<string>(TARGET_LANGUAGE_OPTIONS.map((option)
 export function normalizeSourceLanguage(value: unknown): LanguageTag {
   if (typeof value !== "string") return DEFAULT_SOURCE_LANGUAGE;
   const normalized = value.trim();
+  if (normalized === "") {
+    return DEFAULT_SOURCE_LANGUAGE;
+  }
   if (SOURCE_LANGUAGE_SET.has(normalized)) {
     return normalized as LanguageTag;
   }
-  const lower = normalized.toLowerCase();
-  if (lower === "zh-cn" || lower === "zh-hans" || lower === "chinese" || lower === "mandarin") {
-    return "zh";
-  }
-  if (
-    lower === "yue"
-    || lower === "yue-hk"
-    || lower === "zh-yue"
-    || lower === "cantonese"
-    || lower === "粤语"
-    || lower === "廣東話"
-    || lower === "广东话"
-  ) {
-    return "yue";
-  }
-  if (lower === "english") return "en";
-  if (lower === "japanese") return "ja";
-  if (lower === "korean") return "ko";
-  if (lower === "french") return "fr";
-  if (lower === "german") return "de";
-  if (lower === "italian") return "it";
-  if (lower === "spanish") return "es";
-  if (lower === "portuguese") return "pt";
-  return DEFAULT_SOURCE_LANGUAGE;
+  // Preserve unrecognised values so that persisted invalid languages surface
+  // as execution errors instead of being silently migrated to a fallback.
+  return normalized as LanguageTag;
 }
 
 export function normalizeTargetLanguage(value: unknown): TargetLanguage {

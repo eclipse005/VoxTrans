@@ -48,11 +48,11 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
     let asr_model = AsrModel::parse(&runtime.asr_model);
     let align_model = AlignModel::parse(&runtime.align_model);
     let lang_tag: LanguageTag = record.source_lang.parse()
-        .map_err(|e| format!("task {} has invalid source language '{}': {e}", record.item.id, record.source_lang))?;
+        .map_err(|e| WorkspaceError::InvalidRequest(format!("task {} has invalid source language '{}': {e}", record.item.id, record.source_lang)))?;
     LanguageRegistry::asr_code(asr_model, lang_tag)
-        .map_err(|e| format!("task {} language incompatible with ASR model: {e}", record.item.id))?;
+        .map_err(|e| WorkspaceError::InvalidRequest(format!("task {} language incompatible with ASR model: {e}", record.item.id)))?;
     LanguageRegistry::align_code(align_model, lang_tag)
-        .map_err(|e| format!("task {} language incompatible with align model: {e}", record.item.id))?;
+        .map_err(|e| WorkspaceError::InvalidRequest(format!("task {} language incompatible with align model: {e}", record.item.id)))?;
 
     let mut source_lang = record.source_lang.clone();
     let target_lang = normalize_task_target_lang(&record.target_lang);
