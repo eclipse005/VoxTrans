@@ -3,7 +3,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow, type DragDropEvent } from "@tauri-apps/api/window";
 import { getFileSize } from "../../api/transcribe";
 import { registerTaskUpload } from "../../api/workspace";
-import { createEmptyTaskProgress, type QueueItem } from "../../../features/media/types";
+import {
+  createEmptyTaskProgress,
+  type LanguageTag,
+  type QueueItem,
+} from "../../../features/media/types";
 import {
   DEFAULT_SOURCE_LANGUAGE,
   DEFAULT_TARGET_LANGUAGE,
@@ -41,7 +45,7 @@ export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }:
           name: fileName(path),
           mediaKind: detectMediaKind(path),
           sizeBytes,
-          sourceLang: DEFAULT_SOURCE_LANGUAGE,
+          sourceLang: DEFAULT_SOURCE_LANGUAGE satisfies LanguageTag,
           targetLang: DEFAULT_TARGET_LANGUAGE,
           transcribeStatus: "pending",
           taskProgress: createEmptyTaskProgress(),

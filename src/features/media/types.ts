@@ -16,12 +16,13 @@ export type { SubtitleRenderStyle } from "../../generated/bindings/SubtitleRende
 export type { TerminologyGroup } from "../../generated/bindings/TerminologyGroup";
 export type { TerminologyTerm } from "../../generated/bindings/TerminologyTerm";
 export type { UserPreferencesResponse } from "../../generated/bindings/UserPreferencesResponse";
+import type { LanguageTag } from "../../generated/bindings/LanguageTag";
+export type { LanguageTag };
 
 // Runtime constants (not types) stay here.
 export type ModelTarget = "asr" | "align" | "demucs";
 export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
 export type TranscribeStatus = QueueStatus;
-export type SourceLanguage = "en" | "zh" | "yue" | "ja" | "ko" | "fr" | "de" | "it" | "es" | "pt" | "ru";
 export type TargetLanguage =
   | "zh-CN"
   | "zh-TW"
@@ -96,7 +97,7 @@ export type QueueItem = {
   name: string;
   mediaKind: "audio" | "video";
   sizeBytes: number;
-  sourceLang: SourceLanguage;
+  sourceLang: LanguageTag;
   targetLang: TargetLanguage;
   transcribeStatus: TranscribeStatus;
   taskProgress: TaskProgress;

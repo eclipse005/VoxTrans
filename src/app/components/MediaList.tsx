@@ -4,21 +4,23 @@ import {
   DEFAULT_TARGET_LANGUAGE,
   normalizeSourceLanguage,
   normalizeTargetLanguage,
-  SOURCE_LANGUAGE_OPTIONS,
   sourceLanguageOption,
   TARGET_LANGUAGE_OPTIONS,
   targetLanguageOption,
 } from "../../features/media/languages";
 import type {
+  LanguageTag,
   QueueItem,
   QueueStatus,
-  SourceLanguage,
   TargetLanguage,
   TerminologyGroup,
 } from "../../features/media/types";
 import { canDeleteQueueItem } from "../../features/media/queuePolicy";
 import { formatBytes, statusLabel } from "../../features/media/utils";
 import { useClickOutside } from "../hooks/useClickOutside";
+import { useSourceLanguages } from "../hooks/useSourceLanguages";
+import type { AsrModel } from "../../generated/bindings/AsrModel";
+import type { AlignModel } from "../../generated/bindings/AlignModel";
 import { AudioFileIcon, BookIcon, ChevronDownIcon, MicIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
 
 type QueueBatchMode = "transcribe" | "transcribe_translate";
@@ -50,6 +52,9 @@ type MediaListProps = {
   workspaceHydrated: boolean;
   activeId: string;
   isProcessing: boolean;
+  asrModel: AsrModel;
+  alignModel: AlignModel;
+  pushToast: (message: string, tone?: "info" | "success" | "error") => void;
   onSetActiveId: (id: string) => void;
   onProcessQueue: (mode: QueueBatchMode) => void | Promise<void>;
   onClearQueue: () => void;
@@ -57,11 +62,11 @@ type MediaListProps = {
   onProcessSingleTranscribeTranslate: (item: QueueItem) => void | Promise<void>;
   onUpdateTaskLanguages: (
     item: QueueItem,
-    sourceLang: SourceLanguage,
+    sourceLang: LanguageTag,
     targetLang: TargetLanguage,
   ) => void | Promise<void>;
   onUpdateAllTaskLanguages: (
-    sourceLang?: SourceLanguage,
+    sourceLang?: LanguageTag,
     targetLang?: TargetLanguage,
   ) => void | Promise<void>;
   onUpdateTaskTerminology: (
@@ -83,7 +88,7 @@ function resolvePrimaryStatus(item: QueueItem): QueueStatus {
   return item.transcribeStatus;
 }
 
-function commonSourceLanguage(queue: QueueItem[]): SourceLanguage | null {
+function commonSourceLanguage(queue: QueueItem[]): LanguageTag | null {
   if (queue.length === 0) return DEFAULT_SOURCE_LANGUAGE;
   const [first, ...rest] = queue.map((item) => normalizeSourceLanguage(item.sourceLang));
   return rest.every((value) => value === first) ? first : null;
@@ -161,6 +166,9 @@ export default function MediaList({
   workspaceHydrated,
   activeId,
   isProcessing,
+  asrModel,
+  alignModel,
+  pushToast,
   onSetActiveId,
   onProcessQueue,
   onClearQueue,
@@ -189,6 +197,34 @@ export default function MediaList({
   useClickOutside(batchMenuRef, batchMenuOpen, () => setBatchMenuOpen(false));
   useClickOutside(languageMenuRef, Boolean(languageMenuTaskId), () => setLanguageMenuTaskId(""));
   useClickOutside(terminologyMenuRef, Boolean(terminologyMenuTaskId), () => setTerminologyMenuTaskId(""));
+
+  const { data: sourceLanguageOptions = [], isLoading: sourceLanguagesLoading } = useSourceLanguages(
+    asrModel,
+    alignModel,
+  );
+
+  // When the model combination changes, some previously-selected source
+  // languages may no longer be supported. Auto-correct editable items to the
+  // first supported option and notify the user.
+  const queueRef = useRef(queue);
+  useEffect(() => {
+    queueRef.current = queue;
+  });
+  useEffect(() => {
+    if (!sourceLanguageOptions.length) return;
+    const editableItems = queueRef.current.filter(
+      (item) =>
+        item.transcribeStatus !== "processing" && item.transcribeStatus !== "queued",
+    );
+    for (const item of editableItems) {
+      const stillSupported = sourceLanguageOptions.some((o) => o.tag === item.sourceLang);
+      if (!stillSupported) {
+        const fallback = sourceLanguageOptions[0];
+        void onUpdateTaskLanguages(item, fallback.tag, item.targetLang);
+        pushToast(`当前源语言不再被新模型组合支持，已切换为 ${fallback.label}`, "info");
+      }
+    }
+  }, [sourceLanguageOptions, onUpdateTaskLanguages, pushToast]);
 
   const modeLabel = batchMode === "transcribe" ? "转录" : "转译";
   const batchSourceLang = commonSourceLanguage(queue);
@@ -230,6 +266,7 @@ export default function MediaList({
                   <select
                     className="task-language-select"
                     value={batchSourceLang ?? MIXED_LANGUAGE_VALUE}
+                    disabled={sourceLanguagesLoading}
                     onChange={(event) => {
                       const value = event.currentTarget.value;
                       if (value === MIXED_LANGUAGE_VALUE) return;
@@ -242,8 +279,8 @@ export default function MediaList({
                     {batchSourceLang ? null : (
                       <option value={MIXED_LANGUAGE_VALUE} disabled>多种语言</option>
                     )}
-                    {SOURCE_LANGUAGE_OPTIONS.map((option) => (
-                      <option key={option.id} value={option.id}>
+                    {sourceLanguageOptions.map((option) => (
+                      <option key={option.tag} value={option.tag}>
                         {option.label}
                       </option>
                     ))}
@@ -410,6 +447,7 @@ export default function MediaList({
                             <select
                               className="task-language-select"
                               value={normalizeSourceLanguage(item.sourceLang)}
+                              disabled={sourceLanguagesLoading}
                               onChange={(event) => {
                                 void onUpdateTaskLanguages(
                                   item,
@@ -418,8 +456,8 @@ export default function MediaList({
                                 );
                               }}
                             >
-                              {SOURCE_LANGUAGE_OPTIONS.map((option) => (
-                                <option key={option.id} value={option.id}>
+                              {sourceLanguageOptions.map((option) => (
+                                <option key={option.tag} value={option.tag}>
                                   {option.label}
                                 </option>
                               ))}

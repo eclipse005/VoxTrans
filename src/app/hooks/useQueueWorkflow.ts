@@ -9,8 +9,8 @@ import {
   normalizeTargetLanguage,
 } from "../../features/media/languages";
 import type {
+  LanguageTag,
   QueueItem,
-  SourceLanguage,
   TargetLanguage,
 } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
@@ -135,7 +135,7 @@ export function useQueueWorkflow({
   const updateTaskLanguagesForItem = useCallback(
     async (
       item: QueueItem,
-      sourceLang: SourceLanguage,
+      sourceLang: LanguageTag,
       targetLang: TargetLanguage,
     ) => {
       if (
@@ -210,7 +210,7 @@ export function useQueueWorkflow({
   );
 
   const updateAllTaskLanguages = useCallback(
-    async (sourceLang?: SourceLanguage, targetLang?: TargetLanguage) => {
+    async (sourceLang?: LanguageTag, targetLang?: TargetLanguage) => {
       const editableItems = queueRef.current.filter(
         (item) =>
           item.transcribeStatus !== "processing" &&

@@ -4,8 +4,8 @@ import {
 } from "./languages";
 import {
   normalizeTaskProgress,
+  type LanguageTag,
   type QueueItem,
-  type SourceLanguage,
   type TargetLanguage,
   type TaskProgress,
   type TaskStageProgress,
@@ -104,7 +104,7 @@ export function toEnqueuePayload(
   mediaKind: "audio" | "video";
   sizeBytes: number;
   intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE";
-  sourceLang: SourceLanguage;
+  sourceLang: LanguageTag;
   targetLang: TargetLanguage;
   maxRetries: number;
   terminologyGroupId: string;

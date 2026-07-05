@@ -1,4 +1,4 @@
-import type { SourceLanguage, TargetLanguage } from "./types";
+import type { LanguageTag, TargetLanguage } from "./types";
 
 type LanguageOption<T extends string> = {
   id: T;
@@ -7,10 +7,15 @@ type LanguageOption<T extends string> = {
   promptLabel: string;
 };
 
-export const DEFAULT_SOURCE_LANGUAGE: SourceLanguage = "en";
+export const DEFAULT_SOURCE_LANGUAGE: LanguageTag = "en";
 export const DEFAULT_TARGET_LANGUAGE: TargetLanguage = "zh-CN";
 
-export const SOURCE_LANGUAGE_OPTIONS: LanguageOption<SourceLanguage>[] = [
+/**
+ * @deprecated Use `useSourceLanguages(asrModel, alignModel)` for model-aware
+ * source language options. This static list remains only as a development
+ * fallback and for non-model-aware contexts.
+ */
+export const SOURCE_LANGUAGE_OPTIONS: LanguageOption<LanguageTag>[] = [
   { id: "en", short: "EN", label: "English", promptLabel: "English" },
   { id: "zh", short: "ZH", label: "中文普通话", promptLabel: "Mandarin Chinese" },
   { id: "yue", short: "粤", label: "粤语", promptLabel: "Cantonese" },
@@ -48,11 +53,11 @@ export const TARGET_LANGUAGE_OPTIONS: LanguageOption<TargetLanguage>[] = [
 const SOURCE_LANGUAGE_SET = new Set<string>(SOURCE_LANGUAGE_OPTIONS.map((option) => option.id));
 const TARGET_LANGUAGE_SET = new Set<string>(TARGET_LANGUAGE_OPTIONS.map((option) => option.id));
 
-export function normalizeSourceLanguage(value: unknown): SourceLanguage {
+export function normalizeSourceLanguage(value: unknown): LanguageTag {
   if (typeof value !== "string") return DEFAULT_SOURCE_LANGUAGE;
   const normalized = value.trim();
   if (SOURCE_LANGUAGE_SET.has(normalized)) {
-    return normalized as SourceLanguage;
+    return normalized as LanguageTag;
   }
   const lower = normalized.toLowerCase();
   if (lower === "zh-cn" || lower === "zh-hans" || lower === "chinese" || lower === "mandarin") {
@@ -96,7 +101,7 @@ export function normalizeTargetLanguage(value: unknown): TargetLanguage {
   return DEFAULT_TARGET_LANGUAGE;
 }
 
-export function sourceLanguageOption(value: unknown): LanguageOption<SourceLanguage> {
+export function sourceLanguageOption(value: unknown): LanguageOption<LanguageTag> {
   const normalized = normalizeSourceLanguage(value);
   return SOURCE_LANGUAGE_OPTIONS.find((option) => option.id === normalized) ?? SOURCE_LANGUAGE_OPTIONS[0];
 }

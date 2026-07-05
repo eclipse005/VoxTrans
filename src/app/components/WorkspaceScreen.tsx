@@ -21,6 +21,9 @@ type WorkspaceScreenProps = {
   subtitleTaskName: string;
   subtitleCues: SubtitleCue[];
   subtitleCueWarnings: Record<string, string[]>;
+  asrModel: Parameters<typeof MediaList>[0]["asrModel"];
+  alignModel: Parameters<typeof MediaList>[0]["alignModel"];
+  pushToast: Parameters<typeof MediaList>[0]["pushToast"];
   dispatch: (action: AppAction) => void;
   onPickFiles: () => void | Promise<void>;
   onYoutubeDownload: () => void;
@@ -61,6 +64,9 @@ export function WorkspaceScreen({
   subtitleTaskName,
   subtitleCues,
   subtitleCueWarnings,
+  asrModel,
+  alignModel,
+  pushToast,
   dispatch,
   onPickFiles,
   onYoutubeDownload,
@@ -121,6 +127,9 @@ export function WorkspaceScreen({
           workspaceHydrated={workspaceHydrated}
           activeId={activeId}
           isProcessing={queueBusy}
+          asrModel={asrModel}
+          alignModel={alignModel}
+          pushToast={pushToast}
           onSetActiveId={(id) => dispatch({ type: "set_ui", payload: { activeId: activeId === id ? "" : id } })}
           onProcessQueue={onProcessQueue}
           onClearQueue={onClearQueue}

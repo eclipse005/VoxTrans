@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  LanguageTag,
   QueueItem,
-  SourceLanguage,
   TargetLanguage,
   WorkspaceStateResponse,
 } from "../../features/media/types";
@@ -39,7 +39,7 @@ type EnqueueTaskRunRequest = {
   mediaKind: "audio" | "video";
   sizeBytes: number;
   intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE";
-  sourceLang?: SourceLanguage;
+  sourceLang?: LanguageTag;
   targetLang?: TargetLanguage;
   maxRetries?: number;
   terminologyGroupId?: string;
@@ -47,7 +47,7 @@ type EnqueueTaskRunRequest = {
 
 type UpdateTaskLanguagesRequest = {
   taskId: string;
-  sourceLang: SourceLanguage;
+  sourceLang: LanguageTag;
   targetLang: TargetLanguage;
 };
 

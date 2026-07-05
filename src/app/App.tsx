@@ -288,6 +288,9 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
         subtitleTaskName={subtitleTaskName}
         subtitleCues={subtitleCues}
         subtitleCueWarnings={subtitleCueWarnings}
+        asrModel={settings.asrModel}
+        alignModel={settings.alignModel}
+        pushToast={pushToast}
         dispatch={dispatch}
         onPickFiles={pickFiles}
         onYoutubeDownload={() => {
