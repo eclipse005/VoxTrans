@@ -35,6 +35,25 @@ fn qwen3_asr_code(lang: LanguageTag) -> Option<&'static str> {
         LanguageTag::Es => "spanish",
         LanguageTag::Pt => "portuguese",
         LanguageTag::Ru => "russian",
+        LanguageTag::Ar => "arabic",
+        LanguageTag::Id => "indonesian",
+        LanguageTag::Th => "thai",
+        LanguageTag::Vi => "vietnamese",
+        LanguageTag::Tr => "turkish",
+        LanguageTag::Hi => "hindi",
+        LanguageTag::Ms => "malay",
+        LanguageTag::Nl => "dutch",
+        LanguageTag::Sv => "swedish",
+        LanguageTag::Da => "danish",
+        LanguageTag::Fi => "finnish",
+        LanguageTag::Pl => "polish",
+        LanguageTag::Cs => "czech",
+        LanguageTag::Fil => "filipino",
+        LanguageTag::Fa => "persian",
+        LanguageTag::El => "greek",
+        LanguageTag::Hu => "hungarian",
+        LanguageTag::Mk => "macedonian",
+        LanguageTag::Ro => "romanian",
     })
 }
 
@@ -50,7 +69,7 @@ fn cohere_asr_code(lang: LanguageTag) -> Option<&'static str> {
         LanguageTag::It => "it",
         LanguageTag::Es => "es",
         LanguageTag::Pt => "pt",
-        LanguageTag::Ru => return None,
+        _ => return None,
     })
 }
 
@@ -67,6 +86,7 @@ fn qwen3_align_code(lang: LanguageTag) -> Option<&'static str> {
         LanguageTag::Es => "Spanish",
         LanguageTag::Pt => "Portuguese",
         LanguageTag::Ru => "Russian",
+        _ => return None,
     })
 }
 
@@ -102,7 +122,19 @@ static ASR_MAPPINGS: &[AsrLanguageMapping] = &[
 static ALIGN_MAPPINGS: &[AlignLanguageMapping] = &[
     AlignLanguageMapping {
         model: AlignModel::Qwen3ForcedAligner06B,
-        supported: LanguageTag::ALL,
+        supported: &[
+            LanguageTag::En,
+            LanguageTag::Zh,
+            LanguageTag::Yue,
+            LanguageTag::Ja,
+            LanguageTag::Ko,
+            LanguageTag::Fr,
+            LanguageTag::De,
+            LanguageTag::It,
+            LanguageTag::Es,
+            LanguageTag::Pt,
+            LanguageTag::Ru,
+        ],
         code_for: qwen3_align_code,
     },
 ];
@@ -188,6 +220,18 @@ mod tests {
         for tag in LanguageTag::ALL {
             assert!(LanguageRegistry::asr_code(AsrModel::Qwen3Asr06B, *tag).is_ok());
         }
+    }
+
+    #[test]
+    fn qwen_aligner_supports_eleven() {
+        let supported = LanguageRegistry::supported_for(
+            AsrModel::Qwen3Asr06B,
+            AlignModel::Qwen3ForcedAligner06B,
+        );
+        assert_eq!(supported.len(), 11);
+        assert!(supported.iter().any(|m| m.tag == LanguageTag::Zh));
+        assert!(supported.iter().any(|m| m.tag == LanguageTag::Ru));
+        assert!(!supported.iter().any(|m| m.tag == LanguageTag::Ar));
     }
 
     #[test]
