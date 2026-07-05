@@ -296,25 +296,6 @@ fn default_task_target_lang() -> String {
     "zh-CN".to_string()
 }
 
-fn normalize_task_source_lang(raw: &str) -> String {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "en" | "en-us" | "english" => "en".to_string(),
-        "zh" | "zh-cn" | "zh-hans" | "chinese" | "mandarin" => "zh".to_string(),
-        "yue" | "yue-hk" | "zh-yue" | "cantonese" | "粤语" | "廣東話" | "广东话" => {
-            "yue".to_string()
-        }
-        "ja" | "ja-jp" | "japanese" => "ja".to_string(),
-        "ko" | "ko-kr" | "korean" => "ko".to_string(),
-        "fr" | "fr-fr" | "french" => "fr".to_string(),
-        "de" | "de-de" | "german" => "de".to_string(),
-        "it" | "it-it" | "italian" => "it".to_string(),
-        "es" | "es-es" | "spanish" => "es".to_string(),
-        "pt" | "pt-pt" | "pt-br" | "portuguese" => "pt".to_string(),
-        "ru" | "ru-ru" | "russian" | "русский" => "ru".to_string(),
-        _ => default_task_source_lang(),
-    }
-}
-
 fn normalize_task_target_lang(raw: &str) -> String {
     let value = raw.trim();
     if value.is_empty() {
@@ -331,21 +312,6 @@ fn emit_task_state_changed(app: &AppHandle, item: &WorkspaceQueueItem) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn normalizes_cantonese_source_language_aliases() {
-        for alias in [
-            "yue",
-            "yue-HK",
-            "zh-yue",
-            "Cantonese",
-            "粤语",
-            "廣東話",
-            "广东话",
-        ] {
-            assert_eq!(normalize_task_source_lang(alias), "yue");
-        }
-    }
 
     #[test]
     fn require_task_id_rejects_empty_input_with_invalid_request() {

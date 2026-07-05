@@ -2,6 +2,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+use crate::domain::language::LanguageTag;
+use crate::domain::language_registry::LanguageRegistry;
+use crate::services::preferences_types::{AlignModel, AsrModel};
 use native_transcribe::transcribe::{Device as CohereDevice, Transcriber as CohereTranscriber};
 use qwen3_asr::{AsrInference, Backend as AsrBackend, TranscribeOptions as AsrTranscribeOptions};
 use qwen_forced_aligner_rs::{
@@ -116,14 +119,15 @@ where
     let aligner_model_dir = crate::services::model::resolve_aligner_model_dir(&request.align_model);
     let device = provider_to_device(&request.provider)?;
     let cohere = is_cohere_asr(&request.asr_model);
-    // Language code is backend-specific: Qwen wants the full name ("english"),
-    // Cohere wants the short code ("en") that becomes the `<|en|>` prompt tag.
-    let language = if cohere {
-        cohere_language(&request.source_lang)?
-    } else {
-        asr_language(&request.source_lang)?
-    };
-    let aligner_language = qwen_language(&request.source_lang)?;
+
+    let lang_tag: LanguageTag = request.source_lang.parse()
+        .map_err(|e| format!("invalid source language: {e}"))?;
+    let asr_model = AsrModel::parse(&request.asr_model);
+    let align_model = AlignModel::parse(&request.align_model);
+    let language = LanguageRegistry::asr_code(asr_model, lang_tag)
+        .map_err(|e| e.to_string())?;
+    let aligner_language = LanguageRegistry::align_code(align_model, lang_tag)
+        .map_err(|e| e.to_string())?;
     let total_segments = prepared.segment_summaries.len();
     let sample_len = prepared.mono_samples.len();
 
@@ -386,71 +390,6 @@ fn provider_to_device(provider: &str) -> Result<RuntimeDevice, String> {
         Err("CUDA provider requested but this build was not compiled with CUDA support".to_string())
     }
 }
-
-fn asr_language(source_lang: &str) -> Result<String, String> {
-    let normalized = source_lang.trim().to_ascii_lowercase();
-    let language = match normalized.as_str() {
-        "en" | "en-us" | "english" => "english",
-        "zh" | "zh-cn" | "zh-hans" | "chinese" | "mandarin" => "chinese",
-        "ja" | "ja-jp" | "japanese" => "japanese",
-        "ko" | "ko-kr" | "korean" => "korean",
-        "fr" | "fr-fr" | "french" => "french",
-        "de" | "de-de" | "german" => "german",
-        "it" | "it-it" | "italian" => "italian",
-        "es" | "es-es" | "spanish" => "spanish",
-        "pt" | "pt-pt" | "pt-br" | "portuguese" => "portuguese",
-        "ru" | "ru-ru" | "russian" | "русский" => "russian",
-        "yue" | "yue-hk" | "zh-yue" | "cantonese" | "粤语" | "廣東話" | "广东话" => {
-            "cantonese"
-        }
-        _ => return Err(format!("unsupported source language: {source_lang}")),
-    };
-    Ok(language.to_string())
-}
-
-
-/// Map a source language to the short code Cohere's prompt expects. Cohere's
-/// `build_prompt` substitutes the code into a `<|{lang}|>` tag, so a short
-/// ISO-639-1 code ("en"/"zh"/...) is what the model was trained on.
-fn cohere_language(source_lang: &str) -> Result<String, String> {
-    let normalized = source_lang.trim().to_ascii_lowercase();
-    let language = match normalized.as_str() {
-        "en" | "en-us" | "english" => "en",
-        "zh" | "zh-cn" | "zh-hans" | "chinese" | "mandarin" => "zh",
-        "ja" | "ja-jp" | "japanese" => "ja",
-        "ko" | "ko-kr" | "korean" => "ko",
-        "fr" | "fr-fr" | "french" => "fr",
-        "de" | "de-de" | "german" => "de",
-        "it" | "it-it" | "italian" => "it",
-        "es" | "es-es" | "spanish" => "es",
-        "pt" | "pt-pt" | "pt-br" | "portuguese" => "pt",
-        "yue" | "yue-hk" | "zh-yue" | "cantonese" | "粤语" | "廣東話" | "广东话" => "yue",
-        _ => return Err(format!("unsupported source language: {source_lang}")),
-    };
-    Ok(language.to_string())
-}
-
-fn qwen_language(source_lang: &str) -> Result<String, String> {
-    let normalized = source_lang.trim().to_ascii_lowercase();
-    let language = match normalized.as_str() {
-        "en" | "en-us" | "english" => "English",
-        "zh" | "zh-cn" | "zh-hans" | "chinese" | "mandarin" => "Chinese",
-        "ja" | "ja-jp" | "japanese" => "Japanese",
-        "ko" | "ko-kr" | "korean" => "Korean",
-        "fr" | "french" => "French",
-        "de" | "german" => "German",
-        "es" | "spanish" => "Spanish",
-        "it" | "italian" => "Italian",
-        "pt" | "portuguese" => "Portuguese",
-        "ru" | "ru-ru" | "russian" | "русский" => "Russian",
-        "yue" | "yue-hk" | "zh-yue" | "cantonese" | "粤语" | "廣東話" | "广东话" => {
-            "Cantonese"
-        }
-        _ => return Err(format!("unsupported source language: {source_lang}")),
-    };
-    Ok(language.to_string())
-}
-
 
 fn clean_asr_text(raw: &str) -> String {
     let mut text = raw.trim();
@@ -722,71 +661,6 @@ mod tests {
         assert_eq!(output.aligned_text, "你好世界");
         assert_eq!(output.words[1].word, "好,");
         assert_eq!(output.words[3].word, "界。");
-    }
-
-    #[test]
-    fn supported_source_languages_map_to_asr_and_qwen() {
-        let cases = [
-            ("en", "english", "English"),
-            ("zh", "chinese", "Chinese"),
-            ("ja", "japanese", "Japanese"),
-            ("ko", "korean", "Korean"),
-            ("fr", "french", "French"),
-            ("de", "german", "German"),
-            ("it", "italian", "Italian"),
-            ("es", "spanish", "Spanish"),
-            ("pt", "portuguese", "Portuguese"),
-            ("ru", "russian", "Russian"),
-            ("yue", "cantonese", "Cantonese"),
-            ("Cantonese", "cantonese", "Cantonese"),
-            ("广东话", "cantonese", "Cantonese"),
-        ];
-
-        for (source, asr, qwen) in cases {
-            assert_eq!(asr_language(source).as_deref(), Ok(asr));
-            assert_eq!(qwen_language(source).as_deref(), Ok(qwen));
-        }
-    }
-
-    #[test]
-    fn unsupported_source_languages_are_rejected() {
-        for source in ["", "auto", "ar", "vi", "nl", "pl", "el"] {
-            assert!(asr_language(source).is_err());
-            assert!(qwen_language(source).is_err());
-        }
-    }
-
-    #[test]
-    fn cohere_language_maps_to_short_codes() {
-        let cases = [
-            ("en", "en"),
-            ("en-us", "en"),
-            ("english", "en"),
-            ("zh", "zh"),
-            ("zh-cn", "zh"),
-            ("mandarin", "zh"),
-            ("ja", "ja"),
-            ("ko", "ko"),
-            ("fr", "fr"),
-            ("de", "de"),
-            ("it", "it"),
-            ("es", "es"),
-            ("pt", "pt"),
-            ("pt-br", "pt"),
-            ("yue", "yue"),
-            ("cantonese", "yue"),
-            ("广东话", "yue"),
-        ];
-        for (source, expected) in cases {
-            assert_eq!(cohere_language(source).as_deref(), Ok(expected), "source={source}");
-        }
-    }
-
-    #[test]
-    fn cohere_language_rejects_unsupported() {
-        for source in ["", "auto", "ru", "russian", "vi", "nl", "pl", "el"] {
-            assert!(cohere_language(source).is_err(), "source={source}");
-        }
     }
 
     #[test]

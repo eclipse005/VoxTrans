@@ -14,7 +14,7 @@ use super::{
     UpdateTaskLanguagesCommandRequest, UpdateTaskTerminologyCommandRequest, WorkspaceQueueItem,
     WorkspaceTaskProgressState, WorkspaceTaskRecord, default_task_source_lang,
     default_task_target_lang, emit_task_state_changed, normalize_intent, normalize_media_kind,
-    normalize_task_source_lang, normalize_task_target_lang, patch_task_item,
+    normalize_task_target_lang, patch_task_item,
 };
 
 pub(super) async fn register_task_upload_internal(
@@ -157,7 +157,7 @@ pub(super) async fn enqueue_task_run_internal(
         let source_lang = request
             .source_lang
             .as_deref()
-            .map(normalize_task_source_lang)
+            .map(str::to_string)
             .unwrap_or_else(default_task_source_lang);
         let target_lang = request
             .target_lang
@@ -228,7 +228,7 @@ pub(super) async fn update_task_languages_internal(
         }
     }
 
-    let source_lang = normalize_task_source_lang(&request.source_lang);
+    let source_lang = request.source_lang;
     let target_lang = normalize_task_target_lang(&request.target_lang);
     patch_task_item(app, task_id, |task| {
         task.source_lang = source_lang.clone();
@@ -491,7 +491,7 @@ fn apply_enqueue_request(
     record.source_lang = request
         .source_lang
         .as_deref()
-        .map(normalize_task_source_lang)
+        .map(str::to_string)
         .unwrap_or_else(default_task_source_lang);
     record.target_lang = request
         .target_lang

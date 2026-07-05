@@ -2,10 +2,13 @@ use tauri::{AppHandle, Manager};
 use tauri::async_runtime::spawn_blocking;
 
 use crate::db::store::TaskStore;
+use crate::domain::error::{WorkspaceError, WorkspaceResult};
+use crate::domain::language::LanguageTag;
+use crate::domain::language_registry::LanguageRegistry;
 use crate::services::pipeline::StepContext;
+use crate::services::preferences_types::{AlignModel, AsrModel};
 use crate::services::task_log::{TaskLogger, event};
 
-use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::domain::task::adapters::{
     source_text_from_step2_segments, step2_segments_to_srt,
     workspace_subtitle_segments_from_step2_segments,
@@ -21,8 +24,7 @@ use super::preview::update_subtitle_preview;
 use super::progress::{mark_task_failed, report_task_stage};
 use super::translation_flow::execute_translate_steps;
 use super::{
-    TaskStage, get_task_record, normalize_intent, normalize_task_source_lang,
-    normalize_task_target_lang, patch_task_item,
+    TaskStage, get_task_record, normalize_intent, normalize_task_target_lang, patch_task_item,
 };
 
 pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
@@ -42,7 +44,17 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
     let store = app.state::<TaskStore>().inner();
     let runtime =
         resolve_runtime_settings(store, &record.frozen, intent == "TRANSCRIBE_TRANSLATE")?;
-    let mut source_lang = normalize_task_source_lang(&record.source_lang);
+
+    let asr_model = AsrModel::parse(&runtime.asr_model);
+    let align_model = AlignModel::parse(&runtime.align_model);
+    let lang_tag: LanguageTag = record.source_lang.parse()
+        .map_err(|e| format!("task {} has invalid source language '{}': {e}", record.item.id, record.source_lang))?;
+    LanguageRegistry::asr_code(asr_model, lang_tag)
+        .map_err(|e| format!("task {} language incompatible with ASR model: {e}", record.item.id))?;
+    LanguageRegistry::align_code(align_model, lang_tag)
+        .map_err(|e| format!("task {} language incompatible with align model: {e}", record.item.id))?;
+
+    let mut source_lang = record.source_lang.clone();
     let target_lang = normalize_task_target_lang(&record.target_lang);
     let step_context = StepContext { task_id, store };
 
