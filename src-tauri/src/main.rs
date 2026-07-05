@@ -60,6 +60,7 @@ fn main() {
             commands::model::get_model_status,
             commands::model::start_model_download,
             commands::model::cancel_model_download,
+            commands::language::list_source_languages,
             commands::preferences::load_user_preferences,
             commands::preferences::save_app_settings,
             commands::preferences::get_default_settings,
