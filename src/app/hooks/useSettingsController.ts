@@ -17,6 +17,7 @@ import type { AppAction } from "../state/appReducer";
 import type { ToastTone } from "../types";
 import { normalizeTerminologyGroups } from "../utils/terminology";
 import { normalizeSettings } from "../utils/normalizeSettings";
+import { useInvalidateSourceLanguages } from "./useSourceLanguages";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (
@@ -89,6 +90,7 @@ export function useSettingsController({
   refreshModelStatus,
 }: UseSettingsControllerArgs) {
   const [form, setForm] = useState<SettingsForm>(() => settingsToForm(settings));
+  const invalidateSourceLanguages = useInvalidateSourceLanguages();
 
   // Keep terminology form fields in sync with the authoritative settings
   // snapshot. Call this before opening the terminology modal so it always
@@ -153,6 +155,12 @@ export function useSettingsController({
     try {
       await saveAppSettingsApi(nextSettings);
       pushToast("设置已保存（后续任务生效）", "success");
+      if (
+        settings.asrModel !== nextSettings.asrModel ||
+        settings.alignModel !== nextSettings.alignModel
+      ) {
+        invalidateSourceLanguages();
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "设置保存失败";
       pushToast(message, "error");
