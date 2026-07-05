@@ -34,11 +34,13 @@
 
 **获取二进制工具：**
 
+从 [Releases（tools）](https://github.com/eclipse005/VoxTrans/releases/tag/tools) 下载 ffmpeg.exe、yt-dlp.exe、demucs.exe，放入 `src-tauri/bin/`。
+
+或运行脚本自动下载：
+
 ```powershell
 .\scripts\download-binaries.ps1
 ```
-
-或手动下载放入 `src-tauri/bin/`：ffmpeg ([gyan.dev](https://www.gyan.dev/ffmpeg/builds/))、yt-dlp ([GitHub](https://github.com/yt-dlp/yt-dlp/releases))、fireredvad / demucs（[本仓库 Releases](https://github.com/eclipse005/VoxTrans/releases)）。
 
 **构建命令：**
 
