@@ -59,16 +59,23 @@ fn qwen3_asr_code(lang: LanguageTag) -> Option<&'static str> {
 
 fn cohere_asr_code(lang: LanguageTag) -> Option<&'static str> {
     Some(match lang {
+        // European
         LanguageTag::En => "en",
-        LanguageTag::Zh => "zh",
-        LanguageTag::Yue => "yue",
-        LanguageTag::Ja => "ja",
-        LanguageTag::Ko => "ko",
         LanguageTag::Fr => "fr",
         LanguageTag::De => "de",
         LanguageTag::It => "it",
         LanguageTag::Es => "es",
         LanguageTag::Pt => "pt",
+        LanguageTag::El => "el",
+        LanguageTag::Nl => "nl",
+        LanguageTag::Pl => "pl",
+        // APAC
+        LanguageTag::Zh => "zh",
+        LanguageTag::Ja => "ja",
+        LanguageTag::Ko => "ko",
+        LanguageTag::Vi => "vi",
+        // MENA
+        LanguageTag::Ar => "ar",
         _ => return None,
     })
 }
@@ -104,16 +111,23 @@ static ASR_MAPPINGS: &[AsrLanguageMapping] = &[
     AsrLanguageMapping {
         model: AsrModel::CohereTranscribe032026,
         supported: &[
+            // European
             LanguageTag::En,
-            LanguageTag::Zh,
-            LanguageTag::Yue,
-            LanguageTag::Ja,
-            LanguageTag::Ko,
             LanguageTag::Fr,
             LanguageTag::De,
             LanguageTag::It,
             LanguageTag::Es,
             LanguageTag::Pt,
+            LanguageTag::El,
+            LanguageTag::Nl,
+            LanguageTag::Pl,
+            // APAC
+            LanguageTag::Zh,
+            LanguageTag::Ja,
+            LanguageTag::Ko,
+            LanguageTag::Vi,
+            // MENA
+            LanguageTag::Ar,
         ],
         code_for: cohere_asr_code,
     },
@@ -235,12 +249,29 @@ mod tests {
     }
 
     #[test]
-    fn intersection_excludes_russian_for_cohere() {
+    fn cohere_supports_fourteen_languages() {
+        let mut count = 0;
+        for tag in LanguageTag::ALL {
+            if LanguageRegistry::asr_code(AsrModel::CohereTranscribe032026, *tag).is_ok() {
+                count += 1;
+            }
+        }
+        assert_eq!(count, 14);
+        assert!(LanguageRegistry::asr_code(AsrModel::CohereTranscribe032026, LanguageTag::Ar).is_ok());
+        assert!(LanguageRegistry::asr_code(AsrModel::CohereTranscribe032026, LanguageTag::Vi).is_ok());
+        assert!(LanguageRegistry::asr_code(AsrModel::CohereTranscribe032026, LanguageTag::El).is_ok());
+        assert!(LanguageRegistry::asr_code(AsrModel::CohereTranscribe032026, LanguageTag::Yue).is_err());
+    }
+
+    #[test]
+    fn cohere_aligner_intersection_is_nine() {
         let supported = LanguageRegistry::supported_for(
             AsrModel::CohereTranscribe032026,
             AlignModel::Qwen3ForcedAligner06B,
         );
+        assert_eq!(supported.len(), 9);
         assert!(!supported.iter().any(|m| m.tag == LanguageTag::Ru));
+        assert!(!supported.iter().any(|m| m.tag == LanguageTag::Ar));
         assert!(supported.iter().any(|m| m.tag == LanguageTag::Zh));
     }
 
