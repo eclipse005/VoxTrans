@@ -95,7 +95,7 @@ fn boundary_base_cost(
     // the advisor may report this gap is inside a word (jieba), in which case
     // we penalize heavily to discourage splitting words mid-character.
     match advisor.is_word_boundary(byte_offset) {
-        Some(false) => 9.0, // inside a word — strongly avoid
+        Some(false) => FORBIDDEN_COST, // inside a word — never cut mid-word
         _ => 6.0,           // word boundary or no info — default
     }
 }

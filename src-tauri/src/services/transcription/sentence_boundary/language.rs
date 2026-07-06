@@ -59,7 +59,9 @@ impl JiebaAdvisor {
         static JIEBA: OnceLock<Jieba> = OnceLock::new();
         let jieba = JIEBA.get_or_init(Jieba::new);
         let tokens = jieba.tokenize(span_text, TokenizeMode::Default, true);
-        let boundaries: HashSet<usize> = tokens.iter().map(|t| t.end).collect();
+        // Record BYTE offsets of word boundaries — the DP queries this set with
+        // byte offsets (see subtitle_layout.rs `byte_offset[k]`).
+        let boundaries: HashSet<usize> = tokens.iter().map(|t| t.byte_end).collect();
         Self { boundaries }
     }
 
