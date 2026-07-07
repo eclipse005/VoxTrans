@@ -93,7 +93,7 @@ pub fn write_variants_to_directory(
         return Err("items is required".to_string());
     }
     if !target_dir.is_dir() {
-        return Err(format!("导出目录不存在: {}", target_dir.display()));
+        return Err(format!("Export directory does not exist: {}", target_dir.display()));
     }
     validate_translation_requirement(segments, items)?;
 
@@ -124,7 +124,7 @@ pub fn write_flat_variants_to_directory(
         return Err("items is required".to_string());
     }
     if !target_dir.is_dir() {
-        return Err(format!("导出目录不存在: {}", target_dir.display()));
+        return Err(format!("Export directory does not exist: {}", target_dir.display()));
     }
     let has_translation = has_translated_content(segments);
     let effective_items: Vec<ExportSrtItem> = items
@@ -245,7 +245,7 @@ fn validate_translation_requirement(
     if has_translated_content(segments) {
         return Ok(());
     }
-    Err("当前任务暂无译文，无法导出译文相关字幕".to_string())
+    Err("Current task has no translation; cannot export translation-related subtitles".to_string())
 }
 
 fn join_bilingual(top: &str, bottom: &str) -> String {

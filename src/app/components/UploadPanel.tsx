@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
 import type { UploadTab } from "../types";
 import { DownloadIcon, UpdateIcon, UploadIcon, YoutubeIcon } from "./Icons";
 
@@ -27,20 +28,21 @@ export default function UploadPanel({
   onYoutubeDownload,
   onUpdateYtDlp,
 }: UploadPanelProps) {
+  const { t } = useTranslation(["tasks"]);
   const tabIndex = activeTab === "local" ? 0 : 1;
   const tabIndicatorStyle = { ["--upload-tab-index" as string]: tabIndex } as CSSProperties;
 
   return (
     <div className="apple-animate-on-scroll apple-delay-100 upload-section animated">
       <div className="sidebar-title-group">
-        <h3 className="sidebar-title">媒体导入</h3>
+        <h3 className="sidebar-title">{t("tasks:upload.title")}</h3>
       </div>
 
       <div className="upload-tabs" style={tabIndicatorStyle}>
         <div className="upload-tab-indicator" />
         <button className={`tab-button ${activeTab === "local" ? "active" : ""}`} onClick={() => onTabChange("local")}>
           <UploadIcon />
-          本地文件
+          {t("tasks:upload.localTab")}
         </button>
         <button className={`tab-button ${activeTab === "youtube" ? "active" : ""}`} onClick={() => onTabChange("youtube")}>
           <YoutubeIcon />
@@ -64,11 +66,11 @@ export default function UploadPanel({
           >
             <div className="upload-content">
               <div className="upload-text">
-                <h3 className="upload-title">拖拽或点击上传</h3>
-                <p className="upload-hint">支持多选音视频文件</p>
+                <h3 className="upload-title">{t("tasks:upload.dropTitle")}</h3>
+                <p className="upload-hint">{t("tasks:upload.dropHint")}</p>
               </div>
               <button className="apple-button upload-select-btn" type="button">
-                上传文件
+                {t("tasks:upload.selectBtn")}
               </button>
             </div>
           </div>
@@ -79,13 +81,13 @@ export default function UploadPanel({
             <div className="youtube-center-wrap">
               <div className="youtube-headline">
                 <YoutubeIcon />
-                <span>YouTube 下载</span>
+                <span>{t("tasks:youtube.title")}</span>
               </div>
               <div className="youtube-input-group">
                 <input
                   type="text"
                   className="youtube-url-input"
-                  placeholder="粘贴 YouTube 链接"
+                  placeholder={t("tasks:youtube.urlPlaceholder")}
                   value={youtubeUrl}
                   onChange={(e) => onYoutubeUrlChange(e.target.value)}
                   autoComplete="off"
@@ -95,8 +97,8 @@ export default function UploadPanel({
                   type="button"
                   onClick={onYoutubeDownload}
                   disabled={!youtubeUrl.trim()}
-                  aria-label="下载视频"
-                  title="下载视频"
+                  aria-label={t("tasks:youtube.download")}
+                  title={t("tasks:youtube.download")}
                 >
                   <DownloadIcon />
                 </button>
@@ -104,15 +106,15 @@ export default function UploadPanel({
               <div className="youtube-tools-row">
                 <div className="youtube-tools-version-wrap">
                   <span className="youtube-tools-version">
-                    yt-dlp: {ytDlpVersion || "未检测到"}
+                    yt-dlp: {ytDlpVersion || t("tasks:youtube.notDetected")}
                   </span>
                   <button
                     type="button"
                     className="youtube-update-icon-btn"
                     onClick={onUpdateYtDlp}
                     disabled={ytDlpUpdating}
-                    aria-label={ytDlpUpdating ? "正在更新 yt-dlp" : "更新 yt-dlp"}
-                    title={ytDlpUpdating ? "更新中..." : "更新 yt-dlp"}
+                    aria-label={ytDlpUpdating ? t("tasks:youtube.updating") : t("tasks:youtube.update")}
+                    title={ytDlpUpdating ? t("tasks:youtube.updatingShort") : t("tasks:youtube.update")}
                   >
                     <UpdateIcon />
                   </button>

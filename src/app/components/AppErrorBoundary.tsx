@@ -1,15 +1,16 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { withTranslation, type WithTranslation } from "react-i18next";
 import { reportError } from "../utils/errors";
 
 type AppErrorBoundaryProps = {
   children: ReactNode;
-};
+} & WithTranslation;
 
 type AppErrorBoundaryState = {
   hasError: boolean;
 };
 
-export default class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
+export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
   state: AppErrorBoundaryState = {
     hasError: false,
   };
@@ -32,18 +33,23 @@ export default class AppErrorBoundary extends Component<AppErrorBoundaryProps, A
       return this.props.children;
     }
 
+    const { t } = this.props;
+
     return (
       <div className="app-error-boundary">
         <div className="app-error-boundary-card">
-          <h1 className="apple-heading-small">应用发生异常</h1>
+          <h1 className="apple-heading-small">{t("common.appError.title")}</h1>
           <p className="apple-body">
-            当前页面渲染失败。你可以点击重试刷新应用，若问题持续出现，请把控制台日志发给我排查。
+            {t("common.appError.description")}
           </p>
           <button className="apple-button" onClick={this.handleReload}>
-            重新加载
+            {t("common.appError.reload")}
           </button>
         </div>
       </div>
     );
   }
 }
+
+const AppErrorBoundaryWithTranslation = withTranslation("common")(AppErrorBoundary);
+export default AppErrorBoundaryWithTranslation;

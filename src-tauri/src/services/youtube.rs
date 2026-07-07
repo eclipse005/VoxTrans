@@ -85,10 +85,10 @@ pub fn download_youtube_to_task(
 ) -> Result<DownloadYoutubeTaskResponse, String> {
     let url = url.trim().to_string();
     if url.is_empty() {
-        return Err("YouTube 链接不能为空".to_string());
+        return Err("YouTube link is empty".to_string());
     }
     if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err("请输入有效的 YouTube 链接".to_string());
+        return Err("Please enter a valid YouTube link".to_string());
     }
 
     let task_id = task_id
@@ -103,7 +103,7 @@ pub fn download_youtube_to_task(
     let cancel = Arc::new(AtomicBool::new(false));
     cancel_flags().insert(task_id.clone(), cancel.clone());
 
-    let mut snapshot = new_progress(&task_id, "starting", "解析视频信息");
+    let mut snapshot = new_progress(&task_id, "starting", "parsing_video_info");
     set_progress(app, snapshot.clone());
 
     let metadata = match fetch_youtube_metadata(&url) {
@@ -118,10 +118,10 @@ pub fn download_youtube_to_task(
     };
     if cancel.load(Ordering::SeqCst) {
         snapshot.phase = "cancelled".to_string();
-        snapshot.message = "YouTube 下载已取消".to_string();
+        snapshot.message = "cancelled".to_string();
         set_progress(app, snapshot);
         remove_cancel_flag(&task_id);
-        return Err("YouTube 下载已取消".to_string());
+        return Err("YouTube download cancelled".to_string());
     }
     let output_dir =
         match youtube_output_dir_for_title(&resolve_output_dir(), &metadata.title, &task_id) {
@@ -135,7 +135,7 @@ pub fn download_youtube_to_task(
             }
         };
     if let Err(err) = std::fs::create_dir_all(&output_dir) {
-        let message = format!("创建下载目录失败: {err}");
+        let message = format!("Failed to create download directory: {err}");
         snapshot.phase = "failed".to_string();
         snapshot.message = message.clone();
         set_progress(app, snapshot);
@@ -147,7 +147,7 @@ pub fn download_youtube_to_task(
     if let Some(size_bytes) = metadata_size_bytes(&metadata) {
         snapshot.total_size = format_size_bytes(size_bytes);
     }
-    snapshot.message = "准备下载".to_string();
+    snapshot.message = "preparing_download".to_string();
     set_progress(app, snapshot.clone());
 
     let result = run_ytdlp_download(app, &task_id, &url, &output_dir, &cancel, &mut snapshot);
@@ -187,9 +187,9 @@ pub fn get_yt_dlp_version() -> Result<String, String> {
     let output = build_yt_dlp_command()
         .arg("--version")
         .output()
-        .map_err(|err| format!("运行 yt-dlp 失败: {err}"))?;
+        .map_err(|err| format!("Failed to run yt-dlp: {err}"))?;
     if !output.status.success() {
-        return Err(command_output_message("yt-dlp 版本检测失败", &output));
+        return Err(command_output_message("Failed to detect yt-dlp version", &output));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
@@ -199,10 +199,10 @@ pub fn update_yt_dlp() -> Result<UpdateYtDlpResponse, String> {
     let output = build_yt_dlp_command()
         .arg("-U")
         .output()
-        .map_err(|err| format!("运行 yt-dlp 更新失败: {err}"))?;
+        .map_err(|err| format!("Failed to run yt-dlp update: {err}"))?;
     let text = command_output_text(&output);
     if !output.status.success() {
-        return Err(format!("yt-dlp 更新失败: {text}"));
+        return Err(format!("yt-dlp update failed: {text}"));
     }
     let to_version = get_yt_dlp_version().unwrap_or_else(|_| from_version.clone());
     Ok(UpdateYtDlpResponse {
@@ -243,15 +243,15 @@ fn run_ytdlp_download(
 
     let mut child = command
         .spawn()
-        .map_err(|err| format!("启动 yt-dlp 失败: {err}"))?;
+        .map_err(|err| format!("Failed to start yt-dlp: {err}"))?;
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| "无法读取 yt-dlp 输出".to_string())?;
+        .ok_or_else(|| "Failed to read yt-dlp output".to_string())?;
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| "无法读取 yt-dlp 错误输出".to_string())?;
+        .ok_or_else(|| "Failed to read yt-dlp error output".to_string())?;
 
     let (tx, rx) = mpsc::channel::<String>();
     let stdout_reader = spawn_line_reader(stdout, tx.clone());
@@ -276,9 +276,9 @@ fn run_ytdlp_download(
             let _ = child.kill();
             let _ = child.wait();
             snapshot.phase = "cancelled".to_string();
-            snapshot.message = "YouTube 下载已取消".to_string();
+            snapshot.message = "cancelled".to_string();
             set_progress(app, snapshot.clone());
-            return Err("YouTube 下载已取消".to_string());
+            return Err("YouTube download cancelled".to_string());
         }
 
         if let Some(status) = child.try_wait().map_err(|err| err.to_string())? {
@@ -297,7 +297,7 @@ fn run_ytdlp_download(
             }
 
             if !status.success() {
-                let message = recent_output_message(&recent_lines, "YouTube 下载失败");
+                let message = recent_output_message(&recent_lines, "YouTube download failed");
                 snapshot.phase = "failed".to_string();
                 snapshot.message = message.clone();
                 set_progress(app, snapshot.clone());
@@ -312,14 +312,14 @@ fn run_ytdlp_download(
     let downloaded_path = final_path
         .filter(|path| path.is_file())
         .or_else(|| find_downloaded_media(output_dir))
-        .ok_or_else(|| "YouTube 下载完成但未找到媒体文件".to_string())?;
+        .ok_or_else(|| "YouTube download finished but no media file was found".to_string())?;
     let metadata =
-        std::fs::metadata(&downloaded_path).map_err(|err| format!("读取下载文件失败: {err}"))?;
+        std::fs::metadata(&downloaded_path).map_err(|err| format!("Failed to read downloaded file: {err}"))?;
     let name = media_name(&downloaded_path);
     snapshot.phase = "completed".to_string();
     snapshot.progress_percent = 100.0;
     snapshot.title = name.clone();
-    snapshot.message = "YouTube 下载完成".to_string();
+    snapshot.message = "done".to_string();
     set_progress(app, snapshot.clone());
 
     Ok(DownloadYoutubeTaskResponse {
@@ -348,15 +348,15 @@ fn fetch_youtube_metadata(url: &str) -> Result<YoutubeVideoMetadata, String> {
         .arg("--dump-single-json")
         .arg(url)
         .output()
-        .map_err(|err| format!("解析 YouTube 信息失败: {err}"))?;
+        .map_err(|err| format!("Failed to parse YouTube info: {err}"))?;
     if !output.status.success() {
-        return Err(command_output_message("解析 YouTube 信息失败", &output));
+        return Err(command_output_message("Failed to parse YouTube info", &output));
     }
     let mut metadata = serde_json::from_slice::<YoutubeVideoMetadata>(&output.stdout)
-        .map_err(|err| format!("解析 YouTube 信息失败: {err}"))?;
+        .map_err(|err| format!("Failed to parse YouTube info: {err}"))?;
     metadata.title = metadata.title.trim().to_string();
     if metadata.title.is_empty() {
-        return Err("解析 YouTube 信息失败: 未获取到视频标题".to_string());
+        return Err("Failed to parse YouTube info: video title not found".to_string());
     }
     Ok(metadata)
 }
@@ -368,7 +368,7 @@ fn youtube_output_dir_for_title(
 ) -> Result<PathBuf, String> {
     let safe_title = sanitize_filename_component(title);
     if safe_title.is_empty() {
-        return Err("解析 YouTube 信息失败: 未获取到视频标题".to_string());
+        return Err("Failed to parse YouTube info: video title not found".to_string());
     }
     let safe_task_id = sanitize_filename_component(task_id);
     if safe_task_id.is_empty() {
@@ -463,7 +463,7 @@ fn handle_ytdlp_line(
 
     if line.contains("[Merger]") {
         snapshot.phase = "merging".to_string();
-        snapshot.message = "正在合并音视频".to_string();
+        snapshot.message = "merging".to_string();
         set_progress(app, snapshot.clone());
         return;
     }
@@ -478,19 +478,19 @@ fn handle_ytdlp_line(
             parse_after_marker(line, " at ", &[" ETA "]).unwrap_or_else(|| snapshot.speed.clone());
         snapshot.eta =
             parse_after_marker(line, " ETA ", &[]).unwrap_or_else(|| snapshot.eta.clone());
-        snapshot.message = "YouTube 下载中".to_string();
+        snapshot.message = "downloading".to_string();
         set_progress(app, snapshot.clone());
         return;
     }
 
     if line.contains("[download] Destination:") {
         snapshot.phase = "downloading".to_string();
-        snapshot.message = "YouTube 下载中".to_string();
+        snapshot.message = "downloading".to_string();
         set_progress(app, snapshot.clone());
     } else if line.contains("has already been downloaded") {
         snapshot.phase = "downloading".to_string();
         snapshot.progress_percent = 100.0;
-        snapshot.message = "文件已下载，正在整理".to_string();
+        snapshot.message = "finalizing".to_string();
         set_progress(app, snapshot.clone());
     }
 }
@@ -618,7 +618,7 @@ fn media_name(path: &Path) -> String {
         .and_then(|value| value.to_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("YouTube 下载")
+        .unwrap_or("YouTube download")
         .to_string()
 }
 

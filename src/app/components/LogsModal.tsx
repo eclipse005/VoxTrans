@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { MutableRefObject, ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronLeftIcon, ChevronRightIcon, FolderIcon, RefreshIcon, TrashIcon } from "./Icons";
 import { useDialogA11y } from "./useDialogA11y";
 
@@ -30,6 +31,7 @@ export default function LogsModal({
   onClear,
   onOpenDir,
 }: LogsModalProps) {
+  const { t } = useTranslation(["tasks", "common"]);
   const dialogRef = useDialogA11y(visible, onClose);
   const entries = parseLogEntries(content);
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
@@ -85,17 +87,17 @@ export default function LogsModal({
               return next;
             });
           }}
-          aria-label={isMaximized ? "还原窗口大小" : "最大化窗口"}
-          title={isMaximized ? "还原" : "最大化"}
+          aria-label={isMaximized ? t("tasks.logs.restoreAria") : t("tasks.logs.maximizeAria")}
+          title={isMaximized ? t("tasks.logs.restore") : t("tasks.logs.maximize")}
         >
           {isMaximized ? "❐" : "□"}
         </button>
-        <button className="modal-close" onClick={onClose} aria-label="关闭日志">×</button>
+        <button className="modal-close" onClick={onClose} aria-label={t("tasks.logs.close")}>×</button>
         <div className="logs-header">
           <div className="logs-title-block">
             <div className="logs-title-row">
-              <h3 id="logs-modal-title" className="apple-heading-small">运行日志</h3>
-              <div className="logs-channel-toggle" role="tablist" aria-label="日志频道">
+              <h3 id="logs-modal-title" className="apple-heading-small">{t("tasks.logs.title")}</h3>
+              <div className="logs-channel-toggle" role="tablist" aria-label={t("tasks.logs.channelToggle")}>
                 <button
                   type="button"
                   className={`logs-channel-btn ${channel === "main" ? "active" : ""}`}
@@ -116,8 +118,8 @@ export default function LogsModal({
                   className="file-list-icon-btn"
                   onClick={() => { void onOpenDir(); }}
                   disabled={loading}
-                  title="打开日志目录"
-                  aria-label="打开日志目录"
+                  title={t("tasks.logs.openDir")}
+                  aria-label={t("tasks.logs.openDir")}
                 >
                   <FolderIcon />
                 </button>
@@ -125,8 +127,8 @@ export default function LogsModal({
                   className="file-list-icon-btn"
                   onClick={() => { void onRefresh(); }}
                   disabled={loading}
-                  title="刷新"
-                  aria-label="刷新日志"
+                  title={t("tasks.logs.refresh")}
+                  aria-label={t("tasks.logs.refreshAria")}
                 >
                   <RefreshIcon />
                 </button>
@@ -134,16 +136,16 @@ export default function LogsModal({
                   className="file-list-icon-btn file-list-icon-btn-danger"
                   onClick={() => { void onClear(); }}
                   disabled={loading || content.trim().length === 0}
-                  title="清空"
-                  aria-label="清空日志"
+                  title={t("tasks.logs.clear")}
+                  aria-label={t("tasks.logs.clearAria")}
                 >
                   <TrashIcon />
                 </button>
               </div>
               <div className="logs-usage-stage">
-                Tokens: {formatNumber(totalTokens)}
+                {t("tasks.logs.tokens", { count: formatNumber(totalTokens) })}
               </div>
-              <div className="logs-search" role="search" aria-label="日志查找">
+              <div className="logs-search" role="search" aria-label={t("tasks.logs.searchAria")}>
                 <input
                   className="apple-input logs-search-input"
                   value={searchText}
@@ -151,8 +153,8 @@ export default function LogsModal({
                     setSearchText(event.target.value);
                     setActiveMatchIndex(0);
                   }}
-                  placeholder="查找日志"
-                  aria-label="查找日志"
+                  placeholder={t("tasks.logs.searchPlaceholder")}
+                  aria-label={t("tasks.logs.searchPlaceholder")}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter") return;
                     event.preventDefault();
@@ -163,7 +165,7 @@ export default function LogsModal({
                     });
                   }}
                 />
-                <div className="logs-search-nav" role="group" aria-label="日志查找导航">
+                <div className="logs-search-nav" role="group" aria-label={t("tasks.logs.searchNavAria")}>
                   <button
                     type="button"
                     className="logs-search-btn"
@@ -172,8 +174,8 @@ export default function LogsModal({
                       setActiveMatchIndex((prev) => (prev <= 0 ? matchCount - 1 : prev - 1));
                     }}
                     disabled={matchCount === 0}
-                    aria-label="上一条匹配"
-                    title="上一条匹配"
+                    aria-label={t("tasks.logs.prevMatch")}
+                    title={t("tasks.logs.prevMatch")}
                   >
                     <ChevronLeftIcon />
                   </button>
@@ -188,8 +190,8 @@ export default function LogsModal({
                       setActiveMatchIndex((prev) => (prev >= matchCount - 1 ? 0 : prev + 1));
                     }}
                     disabled={matchCount === 0}
-                    aria-label="下一条匹配"
-                    title="下一条匹配"
+                    aria-label={t("tasks.logs.nextMatch")}
+                    title={t("tasks.logs.nextMatch")}
                   >
                     <ChevronRightIcon />
                   </button>
@@ -204,8 +206,8 @@ export default function LogsModal({
           ref={bodyRef}
           className="logs-body"
         >
-          {loading ? <div className="logs-empty">加载中...</div> : null}
-          {!loading && content.trim().length === 0 ? <div className="logs-empty">暂无日志</div> : null}
+          {loading ? <div className="logs-empty">{t("common:loading")}</div> : null}
+          {!loading && content.trim().length === 0 ? <div className="logs-empty">{t("tasks.logs.empty")}</div> : null}
           {!loading && content.trim().length > 0 ? (
             <div className="logs-entries">
               {viewEntries.map((entry, index) => {
@@ -237,7 +239,7 @@ export default function LogsModal({
                     <button
                       type="button"
                       className="logs-entry-toggle"
-                      aria-label={collapsed ? "展开日志详情" : "收起日志详情"}
+                      aria-label={collapsed ? t("tasks.logs.expandEntry") : t("tasks.logs.collapseEntry")}
                       onClick={() => {
                         setCollapsedMap((prev) => ({ ...prev, [entryKey]: !collapsed }));
                       }}
@@ -273,8 +275,8 @@ export default function LogsModal({
             <button
               type="button"
               className="logs-jump-bottom"
-              title="跳转到底部"
-              aria-label="跳转到底部"
+              title={t("tasks.logs.jumpToBottom")}
+              aria-label={t("tasks.logs.jumpToBottom")}
               onClick={() => {
                 const node = bodyRef.current;
                 if (!node) return;

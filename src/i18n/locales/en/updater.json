@@ -1,0 +1,21 @@
+{
+  "modal": {
+    "closeAriaLabel": "Close update modal",
+    "noNotes": "This version does not provide detailed release notes.",
+    "viewReleaseNotes": "View full release notes"
+  },
+  "button": {
+    "cancelDownload": "Cancel download",
+    "skipVersion": "Skip this version",
+    "downloadInstall": "Download &amp; install"
+  },
+  "status": {
+    "downloading": "Downloading..."
+  },
+  "relative": {
+    "justNow": "Just published",
+    "minutesAgo": "{{n}} minutes ago",
+    "hoursAgo": "{{n}} hours ago",
+    "daysAgo": "{{n}} days ago"
+  }
+}

@@ -1,12 +1,16 @@
 import { BookIcon, SettingsIcon } from "./Icons";
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { useTranslation } from "react-i18next";
+import type { AppLocale } from "../../i18n";
 
 type NavbarProps = {
   onOpenSettings: () => void;
   onOpenTerminology: () => void;
   hasAvailableUpdate: boolean;
   onOpenUpdateDialog: () => void;
+  currentLocale: AppLocale;
+  onToggleLocale: () => void;
 };
 
 export default function Navbar({
@@ -14,7 +18,10 @@ export default function Navbar({
   onOpenTerminology,
   hasAvailableUpdate,
   onOpenUpdateDialog,
+  currentLocale,
+  onToggleLocale,
 }: NavbarProps) {
+  const { t } = useTranslation(["common"]);
   const [version, setVersion] = useState(import.meta.env.VITE_APP_VERSION ?? "0.0.0");
 
   useEffect(() => {
@@ -42,13 +49,13 @@ export default function Navbar({
     <nav className="apple-navbar">
       <div className="apple-navbar-content">
         <h1 className="apple-heading-small">
-          VoxTrans
+          {t("common:appName")}
           {hasAvailableUpdate ? (
             <button
               type="button"
               className="app-version-btn"
               onClick={onOpenUpdateDialog}
-              title="发现新版本，点击查看详情"
+              title={t("common:nav.newVersionAvailable")}
             >
               <span className="app-version has-update">
                 v{version}
@@ -62,16 +69,23 @@ export default function Navbar({
         <div className="nav-buttons">
           <button className="nav-button" onClick={onOpenTerminology}>
             <BookIcon />
-            <span>术语</span>
+            <span>{t("common:nav.terminology")}</span>
           </button>
           <button className="nav-button" onClick={onOpenSettings}>
             <SettingsIcon />
-            <span>设置</span>
+            <span>{t("common:nav.settings")}</span>
+          </button>
+          <button
+            type="button"
+            className="nav-lang-button"
+            onClick={onToggleLocale}
+            aria-label={t("common:nav.toggleLanguage")}
+            title={t("common:nav.toggleLanguage")}
+          >
+            {currentLocale === "zh-CN" ? "中" : "EN"}
           </button>
         </div>
       </div>
     </nav>
   );
 }
-
-

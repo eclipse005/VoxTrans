@@ -56,6 +56,7 @@ function baseDefaults(): SavedSettings {
     flatSrtOutput: false,
     flatSrtItems: ["source", "target"],
     enableVisionAssist: false,
+    locale: "zh-CN",
   };
 }
 
@@ -261,7 +262,7 @@ describe("normalizeSettings", () => {
       defaults,
     );
     expect(result.terminologyGroups).toHaveLength(1);
-    expect(result.terminologyGroups[0].name).toBe("默认");
+    expect(result.terminologyGroups[0].name).toBe("Default");
   });
 
   // --- Edge cases / defensive normalization ---

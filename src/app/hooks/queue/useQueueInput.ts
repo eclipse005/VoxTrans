@@ -1,4 +1,5 @@
 import { useCallback, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow, type DragDropEvent } from "@tauri-apps/api/window";
 import { getFileSize } from "../../api/transcribe";
@@ -27,6 +28,7 @@ type UseQueueInputArgs = {
 };
 
 export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }: UseQueueInputArgs) {
+  const { t } = useTranslation(["toasts", "tasks"]);
   const appendPaths = useCallback(async (paths: string[]) => {
     if (!paths.length) return;
 
@@ -78,10 +80,10 @@ export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }:
 
     if (persisted.length > 0) {
       addQueueItems(dispatch, persisted);
-      pushToast(`已加入队列 ${persisted.length} 个文件`, "success");
+      pushToast(t("toasts.queue.addedCount", { count: persisted.length }), "success");
     }
     if (failedCount > 0) {
-      pushToast(`有 ${failedCount} 个文件入队失败，请重试`, "error");
+      pushToast(t("toasts.queue.addFailedCount", { count: failedCount }), "error");
     }
   }, [dispatch, pushToast, activeTerminologyGroupId]);
 
@@ -163,7 +165,7 @@ export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }:
       await appendPaths(paths);
     } catch (error) {
       reportError(error, "pickFiles");
-      pushToast(toUserErrorMessage(error, "打开文件选择器失败"), "error");
+      pushToast(toUserErrorMessage(error, "toasts.queue.pickFilesFailed"), "error");
     }
   }, [appendPaths, pushToast]);
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { clearTaskLogs, getTaskTotalTokens, readTaskLog } from "../api/logs";
 import { openTaskLogDir } from "../api/system";
 import type { QueueItem } from "../../features/media/types";
@@ -27,6 +28,7 @@ export function useTaskLogs({
   dispatch,
   pushToast,
 }: UseTaskLogsArgs) {
+  const { t } = useTranslation(["toasts", "tasks", "models"]);
   const [logTaskContext, setLogTaskContext] = useState<TaskLogContext | null>(null);
   const [logContent, setLogContent] = useState("");
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -44,7 +46,7 @@ export function useTaskLogs({
       });
       setLogContent(content || "");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "加载日志失败";
+      const message = error instanceof Error ? error.message : t("tasks.logs.loadFailed");
       pushToast(message, "error");
       setLoadingLogs(false);
       return;
@@ -58,11 +60,11 @@ export function useTaskLogs({
     } finally {
       setLoadingLogs(false);
     }
-  }, [logTaskContext, logChannel, pushToast]);
+  }, [logTaskContext, logChannel, pushToast, t]);
 
   const openLogs = useCallback(() => {
     if (!activeQueueItem) {
-      pushToast("请先在左侧选中一个任务", "error");
+      pushToast(t("tasks.logs.selectTaskFirst"), "error");
       return;
     }
     setLogTaskContext({
@@ -74,12 +76,12 @@ export function useTaskLogs({
     setLogContent("");
     setTotalTokens(0);
     dispatch({ type: "set_ui", payload: { showLogs: true } });
-  }, [activeQueueItem, dispatch, pushToast]);
+  }, [activeQueueItem, dispatch, pushToast, t]);
 
   const clearLogs = useCallback(async () => {
     if (!logTaskContext) return;
     const confirmed = window.confirm(
-      `确认清空当前 ${logChannel.toUpperCase()} 日志吗？该操作不可恢复。`,
+      t("tasks.logs.clearConfirm", { channel: logChannel.toUpperCase() }),
     );
     if (!confirmed) return;
     try {
@@ -95,12 +97,12 @@ export function useTaskLogs({
       } catch {
         // Ignore token refresh failure; keep previous visible value.
       }
-      pushToast(`${logChannel.toUpperCase()} 日志已清空`, "success");
+      pushToast(t("tasks.logs.cleared", { channel: logChannel.toUpperCase() }), "success");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "清空日志失败";
+      const message = error instanceof Error ? error.message : t("tasks.logs.clearFailed");
       pushToast(message, "error");
     }
-  }, [logChannel, logTaskContext, pushToast]);
+  }, [logChannel, logTaskContext, pushToast, t]);
 
   const openLogDir = useCallback(async () => {
     try {
@@ -109,10 +111,10 @@ export function useTaskLogs({
         mediaPath: logTaskContext?.mediaPath ?? "",
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "打开日志目录失败";
+      const message = error instanceof Error ? error.message : t("tasks.logs.openDirFailed");
       pushToast(message, "error");
     }
-  }, [logTaskContext, pushToast]);
+  }, [logTaskContext, pushToast, t]);
 
   useEffect(() => {
     if (!showLogs || !logTaskContext) return;

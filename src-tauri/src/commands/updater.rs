@@ -57,7 +57,7 @@ pub async fn download_update(
         updater::download_and_install(url, task_id, app_for_thread)
     })
     .await
-    .map_err(|e| format!("下载任务异常: {}", e))??;
+    .map_err(|e| format!("download task failed: {}", e))??;
 
     Ok(())
 }
@@ -79,6 +79,6 @@ pub fn get_skipped_version(app: tauri::AppHandle) -> Result<Option<String>, Stri
 
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
-    open::that(&url).map_err(|e| format!("打开链接失败: {}", e))?;
+    open::that(&url).map_err(|e| format!("Failed to open link: {}", e))?;
     Ok(())
 }

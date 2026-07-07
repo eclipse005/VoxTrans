@@ -1,4 +1,5 @@
 import type { MouseEvent, ReactNode, RefObject } from "react";
+import { useTranslation } from "react-i18next";
 import type { SubtitleCue } from "../../../features/media/types";
 import { formatSrtTime } from "../../../features/media/srt";
 import { AlertIcon, EditIcon, TrashIcon } from "../Icons";
@@ -44,6 +45,7 @@ export default function SubtitleCueList({
   onApplyEnd,
   onUpdateCue,
 }: SubtitleCueListProps) {
+  const { t } = useTranslation(["subtitles", "common"]);
   return (
     <div
       ref={listContainerRef}
@@ -78,14 +80,14 @@ export default function SubtitleCueList({
                   <span
                     className="subtitle-warning-badge"
                     title={cueWarningsById[cue.id].join("\n")}
-                    aria-label={`该字幕存在 ${cueWarningsById[cue.id].length} 条格式问题`}
+                    aria-label={t("subtitles:cue.warningCount", { count: cueWarningsById[cue.id].length })}
                   >
                     <AlertIcon />
                   </span>
                 ) : null}
                 <button
                   className="subtitle-icon-btn"
-                  title={editingCueId === cue.id ? "收起编辑" : "编辑字幕"}
+                  title={editingCueId === cue.id ? t("subtitles:cue.collapseEdit") : t("subtitles:cue.edit")}
                   onClick={(e) => {
                     e.stopPropagation();
                     onToggleEdit(cue.id);
@@ -96,7 +98,7 @@ export default function SubtitleCueList({
                 </button>
                 <button
                   className="subtitle-icon-btn subtitle-icon-btn-danger"
-                  title="删除字幕段"
+                  title={t("subtitles:cue.delete")}
                   onClick={(e) => {
                     e.stopPropagation();
                     onDeleteCue(cue.id);
@@ -109,11 +111,11 @@ export default function SubtitleCueList({
             </div>
 
             <div className="subtitle-row-summary">
-              <span className="subtitle-row-text-preview" title={cue.text || "(空文本)"}>
-                <span className="subtitle-row-text-value">{renderHighlightedText(cue.text, "(空文本)", cue.id)}</span>
+              <span className="subtitle-row-text-preview" title={cue.text || t("subtitles:cue.emptyText")}>
+                <span className="subtitle-row-text-value">{renderHighlightedText(cue.text, t("subtitles:cue.emptyText"), cue.id)}</span>
               </span>
-              <span className="subtitle-row-text-preview subtitle-row-text-preview-translation" title={cue.translatedText || "(暂无译文)"}>
-                <span className="subtitle-row-text-value">{renderHighlightedText(cue.translatedText, "(暂无译文)", cue.id)}</span>
+              <span className="subtitle-row-text-preview subtitle-row-text-preview-translation" title={cue.translatedText || t("subtitles:cue.noTranslation")}>
+                <span className="subtitle-row-text-value">{renderHighlightedText(cue.translatedText, t("subtitles:cue.noTranslation"), cue.id)}</span>
               </span>
             </div>
 
@@ -121,7 +123,7 @@ export default function SubtitleCueList({
               <>
                 <div className="subtitle-time-grid">
                   <label className="subtitle-time-field">
-                    <span>开始</span>
+                    <span>{t("subtitles:cue.startTime")}</span>
                     <input
                       key={`start-${cue.id}-${cue.startMs}`}
                       className="apple-input"
@@ -131,7 +133,7 @@ export default function SubtitleCueList({
                     />
                   </label>
                   <label className="subtitle-time-field">
-                    <span>结束</span>
+                    <span>{t("subtitles:cue.endTime")}</span>
                     <input
                       key={`end-${cue.id}-${cue.endMs}`}
                       className="apple-input"
@@ -148,14 +150,14 @@ export default function SubtitleCueList({
                   className="subtitle-editor-textarea subtitle-row-textarea"
                   value={cue.text}
                   onChange={(e) => onUpdateCue(cue.id, { text: e.target.value })}
-                  placeholder="输入该字幕段文本"
+                  placeholder={t("subtitles:cue.textPlaceholder")}
                   disabled={!canEdit}
                 />
                 <textarea
                   className="subtitle-editor-textarea subtitle-row-textarea subtitle-row-textarea-translation"
                   value={cue.translatedText}
                   onChange={(e) => onUpdateCue(cue.id, { translatedText: e.target.value })}
-                  placeholder="输入该字幕段译文（可选）"
+                  placeholder={t("subtitles:cue.translationPlaceholder")}
                   disabled={!canEdit}
                 />
               </>

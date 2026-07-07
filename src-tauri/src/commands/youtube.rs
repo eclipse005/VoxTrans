@@ -27,7 +27,7 @@ pub async fn download_youtube_to_task_run(
         crate::services::youtube::download_youtube_to_task(&app, request.url, request.task_id)
     })
     .await
-    .map_err(|err| format!("YouTube 下载任务异常: {err}"))?
+    .map_err(|err| format!("YouTube download task failed: {err}"))?
 }
 
 #[tauri::command]
@@ -57,5 +57,5 @@ pub fn get_yt_dlp_version() -> Result<String, String> {
 pub async fn update_yt_dlp() -> Result<UpdateYtDlpResponse, String> {
     tauri::async_runtime::spawn_blocking(crate::services::youtube::update_yt_dlp)
         .await
-        .map_err(|err| format!("yt-dlp 更新任务异常: {err}"))?
+        .map_err(|err| format!("yt-dlp update task error: {err}"))?
 }

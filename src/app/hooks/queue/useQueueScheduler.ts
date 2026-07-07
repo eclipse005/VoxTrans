@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { deleteTasks, enqueueTaskRun } from "../../api/workspace";
 import {
   createEmptyTaskProgress,
@@ -36,6 +37,7 @@ export function useQueueScheduler({
   pushToast,
   runQueuedByTaskIds,
 }: UseQueueSchedulerArgs) {
+  const { t } = useTranslation(["toasts", "tasks"]);
   const isYoutubePlaceholder = useCallback(
     (item: QueueItem) => item.path.startsWith("youtube://"),
     [],
@@ -81,14 +83,17 @@ export function useQueueScheduler({
         return true;
       } catch (error) {
         reportError(error, "enqueueTaskRun");
-        const message = toUserErrorMessage(error, "任务入队失败");
+        const message = toUserErrorMessage(error, "toasts.queue.enqueueFailed");
         patchQueueItem(dispatch, item.id, (prev) => ({
           ...prev,
           transcribeStatus: "error",
           taskProgress: createEmptyTaskProgress(),
           transcribeError: message,
         }));
-        pushToast(`失败：${item.name}，${message}`, "error");
+        pushToast(
+          t("toasts.queue.enqueueFailure", { name: item.name, error: message }),
+          "error",
+        );
         return false;
       }
     },
@@ -106,7 +111,7 @@ export function useQueueScheduler({
     runBatchInFlightRef.current = true;
     void runQueuedByTaskIds(queuedItems.map((item) => item.id))
       .catch(() => {
-        pushToast("批处理执行失败，请重试", "error");
+        pushToast(t("toasts.queue.batchExecuteFailed"), "error");
       })
       .finally(() => {
         runBatchInFlightRef.current = false;
@@ -130,7 +135,7 @@ export function useQueueScheduler({
           !isYoutubePlaceholder(item),
       );
       if (!retryableItems.length) {
-        pushToast("没有待处理文件", "error");
+        pushToast(t("toasts.queue.nothingPending"), "error");
         return;
       }
 
@@ -144,12 +149,18 @@ export function useQueueScheduler({
       }
 
       if (queuedCount === 0) {
-        pushToast("没有可处理文件，入队均失败", "error");
+        pushToast(t("toasts.queue.enqueueAllFailed"), "error");
         return;
       }
 
-      const modeLabel = mode === "transcribe" ? "转录" : "转译";
-      pushToast(`开始批量${modeLabel}，共 ${queuedCount} 个文件`, "info");
+      const modeLabel =
+        mode === "transcribe"
+          ? t("tasks.queue.modeTranscribe")
+          : t("tasks.queue.modeTranscribeTranslate");
+      pushToast(
+        t("toasts.queue.batchStarted", { mode: modeLabel, count: queuedCount }),
+        "info",
+      );
     },
     [enqueueForMode, isYoutubePlaceholder, pushToast, queue],
   );
@@ -166,11 +177,13 @@ export function useQueueScheduler({
       const ok = await enqueueForMode(item, mode);
       if (!ok) return;
       pushToast(
-        queueBusy ? `已加入排队：${item.name}` : `开始处理：${item.name}`,
+        queueBusy
+          ? t("toasts.queue.addedToQueue", { name: item.name })
+          : t("toasts.queue.started", { name: item.name }),
         "info",
       );
     },
-    [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy],
+    [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy, t],
   );
 
   const processSingleTranscribeTranslate = useCallback(
@@ -185,16 +198,18 @@ export function useQueueScheduler({
       const ok = await enqueueForMode(item, mode);
       if (!ok) return;
       pushToast(
-        queueBusy ? `已加入排队：${item.name}` : `开始处理：${item.name}`,
+        queueBusy
+          ? t("toasts.queue.addedToQueue", { name: item.name })
+          : t("toasts.queue.started", { name: item.name }),
         "info",
       );
     },
-    [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy],
+    [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy, t],
   );
 
   const clearQueue = useCallback(async (): Promise<boolean> => {
     if (queueBusy) {
-      pushToast("正在处理时不能清空队列", "error");
+      pushToast(t("toasts.queue.clearWhileBusy"), "error");
       return false;
     }
     try {
@@ -202,14 +217,14 @@ export function useQueueScheduler({
         () => deleteTasks({ taskId: null, mediaPath: null }),
         () => clearQueueItems(dispatch),
       );
-      pushToast("队列已清空", "info");
+      pushToast(t("toasts.queue.cleared"), "info");
       return true;
     } catch (error) {
       reportError(error, "clearQueue");
-      pushToast(toUserErrorMessage(error, "清空队列失败"), "error");
+      pushToast(toUserErrorMessage(error, "toasts.queue.clearFailed"), "error");
       return false;
     }
-  }, [dispatch, pushToast, queueBusy]);
+  }, [dispatch, pushToast, queueBusy, t]);
 
   const removeItem = useCallback(
     async (id: string) => {
@@ -218,7 +233,7 @@ export function useQueueScheduler({
         return;
       }
       if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") {
-        pushToast("任务正在处理或排队，不能删除", "error");
+        pushToast(t("toasts.queue.deleteWhileBusy"), "error");
         return;
       }
       try {
@@ -228,10 +243,10 @@ export function useQueueScheduler({
         );
       } catch (error) {
         reportError(error, "removeItem");
-        pushToast(toUserErrorMessage(error, "删除任务失败"), "error");
+        pushToast(toUserErrorMessage(error, "toasts.queue.deleteFailed"), "error");
       }
     },
-    [dispatch, pushToast, queue],
+    [dispatch, pushToast, queue, t],
   );
 
   return {

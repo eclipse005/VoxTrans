@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { useQueueInput } from "./queue/useQueueInput";
 import { useQueueRunner } from "./queue/useQueueRunner";
 import { useQueueScheduler } from "./queue/useQueueScheduler";
@@ -35,6 +36,7 @@ export function useQueueWorkflow({
   pushToast,
   activeTerminologyGroupId,
 }: UseQueueWorkflowArgs) {
+  const { t } = useTranslation(["tasks", "toasts"]);
   const queueRef = useRef(queue);
 
   useEffect(() => {
@@ -142,7 +144,7 @@ export function useQueueWorkflow({
         item.transcribeStatus === "processing" ||
         item.transcribeStatus === "queued"
       ) {
-        pushToast("任务正在处理或排队，不能修改语言", "error");
+        pushToast(t("toasts.queue.languageBusyError"), "error");
         return;
       }
 
@@ -169,7 +171,7 @@ export function useQueueWorkflow({
           sourceLang: previousSourceLang,
           targetLang: previousTargetLang,
         }));
-        pushToast(toUserErrorMessage(error, "语言设置保存失败"), "error");
+        pushToast(toUserErrorMessage(error, t("toasts.queue.languageSaveFailed")), "error");
       }
     },
     [dispatch, pushToast],
@@ -181,7 +183,7 @@ export function useQueueWorkflow({
         item.transcribeStatus === "processing" ||
         item.transcribeStatus === "queued"
       ) {
-        pushToast("任务正在处理或排队，不能修改术语组", "error");
+        pushToast(t("toasts.queue.terminologyBusyError"), "error");
         return;
       }
 
@@ -203,7 +205,7 @@ export function useQueueWorkflow({
           ...current,
           terminologyGroupId: previousGroupId,
         }));
-        pushToast(toUserErrorMessage(error, "术语组保存失败"), "error");
+        pushToast(toUserErrorMessage(error, t("toasts.queue.terminologySaveFailed")), "error");
       }
     },
     [dispatch, pushToast],
@@ -217,7 +219,7 @@ export function useQueueWorkflow({
           item.transcribeStatus !== "queued",
       );
       if (editableItems.length === 0) {
-        pushToast("没有可修改语言的任务", "info");
+        pushToast(t("toasts.queue.noEditableLanguageTasks"), "info");
         return;
       }
 
@@ -280,7 +282,7 @@ export function useQueueWorkflow({
       });
 
       if (failedCount > 0) {
-        pushToast(`有 ${failedCount} 个任务语言保存失败`, "error");
+        pushToast(t("toasts.queue.languageSaveFailedCount", { count: failedCount }), "error");
       }
     },
     [dispatch, pushToast],

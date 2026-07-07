@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   saveAppSettings as saveAppSettingsApi,
   testTranslateLlmConnection,
@@ -18,6 +19,7 @@ import type { ToastTone } from "../types";
 import { normalizeTerminologyGroups } from "../utils/terminology";
 import { normalizeSettings } from "../utils/normalizeSettings";
 import { useInvalidateSourceLanguages } from "./useSourceLanguages";
+import { changeAppLanguage } from "../../i18n";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (
@@ -48,6 +50,7 @@ export type SettingsForm = {
   flatSrtOutput: boolean;
   flatSrtItems: SubtitleBurnMode[];
   enableVisionAssist: boolean;
+  locale: SavedSettings["locale"];
 };
 
 function settingsToForm(settings: SavedSettings): SettingsForm {
@@ -73,6 +76,7 @@ function settingsToForm(settings: SavedSettings): SettingsForm {
     flatSrtOutput: settings.flatSrtOutput,
     flatSrtItems: settings.flatSrtItems,
     enableVisionAssist: settings.enableVisionAssist,
+    locale: settings.locale,
   };
 }
 
@@ -90,6 +94,7 @@ export function useSettingsController({
   refreshModelStatus,
 }: UseSettingsControllerArgs) {
   const [form, setForm] = useState<SettingsForm>(() => settingsToForm(settings));
+  const { t } = useTranslation(["toasts", "tasks", "settings"]);
   const invalidateSourceLanguages = useInvalidateSourceLanguages();
 
   // Keep terminology form fields in sync with the authoritative settings
@@ -113,12 +118,12 @@ export function useSettingsController({
   const saveSettings = useCallback(async () => {
     const parsed = Number.parseInt(form.chunkInput.trim(), 10);
     if (!Number.isFinite(parsed)) {
-      pushToast("分段时长必须是数字", "error");
+      pushToast(t("toasts.settings.chunkMustBeNumber"), "error");
       return;
     }
     const parsedConcurrency = Number.parseInt(form.llmConcurrencyInput.trim(), 10);
     if (!Number.isFinite(parsedConcurrency)) {
-      pushToast("并发数必须是数字", "error");
+      pushToast(t("toasts.settings.concurrencyMustBeNumber"), "error");
       return;
     }
 
@@ -145,6 +150,7 @@ export function useSettingsController({
       flatSrtOutput: form.flatSrtOutput,
       flatSrtItems: form.flatSrtItems,
       enableVisionAssist: form.enableVisionAssist,
+      locale: form.locale,
     };
 
     const nextSettings = normalizeSettings(draft, settings);
@@ -154,7 +160,12 @@ export function useSettingsController({
 
     try {
       await saveAppSettingsApi(nextSettings);
-      pushToast("设置已保存（后续任务生效）", "success");
+      pushToast(t("toasts.settings.saved"), "success");
+      // The saved locale may differ from the active one — apply it so the UI
+      // switches language immediately on save (no restart needed).
+      if (nextSettings.locale !== settings.locale) {
+        void changeAppLanguage(nextSettings.locale);
+      }
       if (
         settings.asrModel !== nextSettings.asrModel ||
         settings.alignModel !== nextSettings.alignModel
@@ -162,10 +173,10 @@ export function useSettingsController({
         invalidateSourceLanguages();
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "设置保存失败";
+      const message = error instanceof Error ? error.message : t("toasts.settings.saveFailed");
       pushToast(message, "error");
     }
-  }, [form, settings, dispatch, pushToast, invalidateSourceLanguages]);
+  }, [form, settings, dispatch, pushToast, invalidateSourceLanguages, t]);
 
   const saveTerminologyGroups = useCallback(async (groups: SavedSettings["terminologyGroups"]) => {
     const normalizedGroups = normalizeTerminologyGroups(groups);
@@ -178,22 +189,22 @@ export function useSettingsController({
     setForm((prev) => ({ ...prev, terminologyGroups: normalizedGroups }));
     try {
       await saveAppSettingsApi(nextSettings);
-      pushToast("术语已保存", "success");
+      pushToast(t("toasts.settings.terminologySaved"), "success");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "术语保存失败";
+      const message = error instanceof Error ? error.message : t("toasts.settings.terminologySaveFailed");
       pushToast(message, "error");
     }
-  }, [settings, form.activeTerminologyGroupId, dispatch, pushToast]);
+  }, [settings, form.activeTerminologyGroupId, dispatch, pushToast, t]);
 
   const testTranslateConnection = useCallback(async () => {
     const apiKey = form.translateApiKey.trim();
     const baseUrl = form.translateBaseUrl.trim() || settings.translateBaseUrl;
     const configuredModel = form.translateModel.trim() || settings.translateModel;
     if (!apiKey) {
-      pushToast("请先填写接口密钥", "error");
+      pushToast(t("toasts.settings.apiKeyRequiredFirst"), "error");
       return;
     }
-    const toastId = pushToast("正在测试 LLM 连通性...", "info", { sticky: true });
+    const toastId = pushToast(t("toasts.settings.testingLlm"), "info", { sticky: true });
     try {
       const response = await testTranslateLlmConnection({
         apiKey,
@@ -203,15 +214,15 @@ export function useSettingsController({
       });
       if (response.ok) {
         const modelName = response.model?.trim() || configuredModel;
-        pushToast(`测试成功：模型 ${modelName} 可用`, "success", { id: toastId, durationMs: 2600 });
+        pushToast(t("toasts.settings.testSuccess", { model: modelName }), "success", { id: toastId, durationMs: 2600 });
         return;
       }
-      pushToast(`测试失败：${response.message || "未知错误"}`, "error", { id: toastId, durationMs: 3000 });
+      pushToast(t("toasts.settings.testFailed", { message: response.message || t("errors:fallback") }), "error", { id: toastId, durationMs: 3000 });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "连通性测试失败";
+      const message = error instanceof Error ? error.message : t("toasts.settings.testConnectFailed");
       pushToast(message, "error", { id: toastId, durationMs: 3000 });
     }
-  }, [form.translateApiKey, form.translateBaseUrl, form.translateModel, form.enableVisionAssist, settings.translateBaseUrl, settings.translateModel, pushToast]);
+  }, [form.translateApiKey, form.translateBaseUrl, form.translateModel, form.enableVisionAssist, settings.translateBaseUrl, settings.translateModel, pushToast, t]);
 
   return {
     openSettings,

@@ -59,7 +59,7 @@ pub(super) async fn execute_translate_steps(
         task_id,
         TaskStage::Terminology,
         if step3_exec.source == StepSource::Cache {
-            "缓存命中"
+            "step_cache_hit"
         } else {
             ""
         },
@@ -90,7 +90,7 @@ pub(super) async fn execute_translate_steps(
     .await?;
 
     if step4_exec.source == StepSource::Cache {
-        report_task_stage(app, task_id, TaskStage::Translating, "缓存命中", 1, 1).await?;
+        report_task_stage(app, task_id, TaskStage::Translating, "step_cache_hit", 1, 1).await?;
     }
     update_subtitle_preview(
         app,

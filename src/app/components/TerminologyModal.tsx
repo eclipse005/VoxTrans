@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { TerminologyGroup } from "../../features/media/types";
 import { CheckIcon, CloseIcon, EditIcon, PlusIcon, TrashIcon } from "./Icons";
 import { useDialogA11y } from "./useDialogA11y";
@@ -27,6 +28,7 @@ export default function TerminologyModal({
   onChangeActiveGroupId,
   onSave,
 }: TerminologyModalProps) {
+  const { t } = useTranslation(["tasks", "common"]);
   const dialogRef = useDialogA11y(visible, onClose);
   const [editingGroupId, setEditingGroupId] = useState<string>("");
   const [editingGroupName, setEditingGroupName] = useState<string>("");
@@ -118,9 +120,9 @@ export default function TerminologyModal({
         aria-labelledby="terms-modal-title"
         tabIndex={-1}
       >
-        <button className="modal-close" onClick={onClose} aria-label="关闭术语管理">×</button>
+        <button className="modal-close" onClick={onClose} aria-label={t("tasks.terminology.close")}>×</button>
         <div className="terms-header">
-          <h3 id="terms-modal-title" className="apple-heading-medium">术语管理</h3>
+          <h3 id="terms-modal-title" className="apple-heading-medium">{t("tasks.terminology.title")}</h3>
           <span className="terms-count">{groups.reduce((acc, g) => acc + g.terms.length, 0)}</span>
         </div>
         <div className="terms-body">
@@ -175,7 +177,7 @@ export default function TerminologyModal({
                               e.stopPropagation();
                               applyEditGroup();
                             }}
-                            aria-label="保存组名"
+                            aria-label={t("tasks.terminology.saveGroup")}
                           >
                             <CheckIcon />
                           </button>
@@ -187,7 +189,7 @@ export default function TerminologyModal({
                               setEditingGroupId("");
                               setEditingGroupName("");
                             }}
-                            aria-label="取消编辑"
+                            aria-label={t("tasks.terminology.cancelEdit")}
                           >
                             <CloseIcon />
                           </button>
@@ -201,7 +203,7 @@ export default function TerminologyModal({
                               e.stopPropagation();
                               startEditGroup(group.id, group.name);
                             }}
-                            aria-label="编辑组名"
+                            aria-label={t("tasks.terminology.editGroup")}
                           >
                             <EditIcon />
                           </button>
@@ -213,7 +215,7 @@ export default function TerminologyModal({
                               removeGroup(group.id);
                             }}
                             disabled={groups.length <= 1}
-                            aria-label="删除分组"
+                            aria-label={t("tasks.terminology.deleteGroup")}
                           >
                             <TrashIcon />
                           </button>
@@ -227,24 +229,24 @@ export default function TerminologyModal({
                 type="button"
                 className="nav-button terminology-group-add-btn"
                 onClick={addGroup}
-                title="新建分组"
-                aria-label="新建分组"
+                title={t("tasks.terminology.addGroup")}
+                aria-label={t("tasks.terminology.addGroup")}
               >
                 <PlusIcon />
-                <span>添加</span>
+                <span>{t("tasks.terminology.add")}</span>
               </button>
             </div>
           </div>
 
           <div className="settings-section terms-editor-section">
             <div className="terms-list-header">
-              <h4 className="apple-heading-small">术语编辑</h4>
+              <h4 className="apple-heading-small">{t("tasks.terminology.editTitle")}</h4>
             </div>
             {!selectedGroup ? (
               <div className="terms-empty">
                 {groups.length === 0
-                  ? "请先新建一个分组。"
-                  : "点击上方分组选中并编辑(选中即为新任务的默认术语组)。"}
+                  ? t("tasks.terminology.emptyCreate")
+                  : t("tasks.terminology.emptyHint")}
               </div>
             ) : (
               <>
@@ -253,14 +255,14 @@ export default function TerminologyModal({
                     className="terms-input"
                     value={singleInput}
                     onChange={(e) => setSingleInput(e.target.value)}
-                    placeholder="原文:译文:说明，多条用逗号分隔，如 LLM:大模型, hypertension:高血压:医疗术语"
+                    placeholder={t("tasks.terminology.addPlaceholder")}
                   />
-                  <button type="button" className="nav-button" onClick={addSingleTerm}>添加</button>
+                  <button type="button" className="nav-button" onClick={addSingleTerm}>{t("tasks.terminology.add")}</button>
                 </div>
 
                 <div className="terms-table-wrap terms-chip-wrap">
                   {selectedGroup.terms.length === 0 ? (
-                    <div className="terms-empty-row">当前分组暂无术语</div>
+                    <div className="terms-empty-row">{t("tasks.terminology.emptyTerms")}</div>
                   ) : (
                     <div className="terms-chip-list">
                       {selectedGroup.terms.map((term) => (
@@ -275,8 +277,8 @@ export default function TerminologyModal({
                             type="button"
                             className="terms-chip-delete"
                             onClick={() => removeTerm(term.id)}
-                            title="删除术语"
-                            aria-label="删除术语"
+                            title={t("tasks.terminology.deleteTerm")}
+                            aria-label={t("tasks.terminology.deleteTerm")}
                           >
                             ×
                           </button>
@@ -299,11 +301,11 @@ export default function TerminologyModal({
               }
               onClose();
             }}
-            title="保存术语"
-            aria-label="保存术语"
+            title={t("tasks.terminology.save")}
+            aria-label={t("tasks.terminology.save")}
           >
             <CheckIcon />
-            <span>保存</span>
+            <span>{t("common:button.save")}</span>
           </button>
         </div>
       </div>

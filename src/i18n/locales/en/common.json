@@ -1,0 +1,27 @@
+{
+  "appName": "VoxTrans",
+  "nav": {
+    "terminology": "Glossary",
+    "settings": "Settings",
+    "toggleLanguage": "Switch language",
+    "newVersionAvailable": "New version available, click for details"
+  },
+  "button": {
+    "cancel": "Cancel",
+    "close": "Close",
+    "save": "Save"
+  },
+  "status": {
+    "pending": "Pending",
+    "queued": "Queued",
+    "processing": "Processing",
+    "done": "Done",
+    "failed": "Failed"
+  },
+  "loading": "Loading…",
+  "appError": {
+    "title": "The app encountered an error",
+    "description": "The current page failed to render. You can click Reload to refresh the app. If the problem persists, please send me the console logs to investigate.",
+    "reload": "Reload"
+  }
+}

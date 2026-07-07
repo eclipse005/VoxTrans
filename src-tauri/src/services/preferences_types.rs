@@ -337,6 +337,51 @@ pub struct SavedSettings {
     pub flat_srt_items: Vec<SubtitleBurnMode>,
     #[serde(default)]
     pub enable_vision_assist: bool,
+    #[serde(default = "default_locale")]
+    pub locale: Locale,
+}
+
+/// UI locale. Defaults to Simplified Chinese (the app's original language).
+///
+/// The TS/serde representation uses canonical BCP-47 tags (`"zh-CN"` / `"en"`)
+/// so the value round-trips unchanged across the DB (`as_str`/`parse`), Tauri
+/// IPC (serde), and the frontend i18next resources (`AppLocale`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default, TS)]
+#[ts(export)]
+pub enum Locale {
+    #[default]
+    #[serde(rename = "zh-CN")]
+    #[ts(rename = "zh-CN")]
+    ZhCn,
+    #[serde(rename = "en")]
+    #[ts(rename = "en")]
+    En,
+}
+
+impl fmt::Display for Locale {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl Locale {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ZhCn => "zh-CN",
+            Self::En => "en",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value.trim() {
+            "en" => Self::En,
+            _ => Self::ZhCn,
+        }
+    }
+}
+
+fn default_locale() -> Locale {
+    Locale::default()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
@@ -394,6 +439,7 @@ mod ts_export_tests {
         SubtitleLineStyle::export_all().expect("export SubtitleLineStyle");
         SubtitleLayoutStyle::export_all().expect("export SubtitleLayoutStyle");
         SubtitleRenderStyle::export_all().expect("export SubtitleRenderStyle");
+        Locale::export_all().expect("export Locale");
         SavedSettings::export_all().expect("export SavedSettings");
         UserPreferencesResponse::export_all().expect("export UserPreferencesResponse");
         SaveAppSettingsRequest::export_all().expect("export SaveAppSettingsRequest");

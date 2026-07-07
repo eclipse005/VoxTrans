@@ -1,0 +1,106 @@
+{
+  "modal": {
+    "close": "Close settings",
+    "title": "Settings",
+    "save": "Save settings"
+  },
+  "tab": {
+    "transcribe": "Transcribe",
+    "translate": "Translate",
+    "subtitle": "Subtitle",
+    "models": "Models"
+  },
+  "transcribe": {
+    "params": "Transcription parameters",
+    "device": "Execution device",
+    "chunkDuration": "Chunk duration (seconds)",
+    "vocalSeparation": "Vocal separation",
+    "vocalSeparationDesc": "Use in noisy backgrounds to improve transcription accuracy",
+    "clickSound": "Click sound",
+    "clickSoundDesc": "Play a light sound effect when buttons and switches are clicked",
+    "flatSrtOutput": "Flat SRT output",
+    "flatSrtOutputDesc": "Additionally write subtitles directly to the output directory for batch lookup",
+    "flatSrtItemsLabel": "Output subtitle type"
+  },
+  "translate": {
+    "apiKey": "API key",
+    "baseUrl": "API URL",
+    "modelName": "Model name",
+    "test": "Test",
+    "concurrency": "Concurrency",
+    "visionAssist": "Vision-assisted translation",
+    "visionAssistDesc": "Requires a model that supports image input"
+  },
+  "subtitle": {
+    "length": "Subtitle length",
+    "lengthShort": "Short",
+    "lengthStandard": "Standard",
+    "lengthLoose": "Loose",
+    "flatSrtSource": "Source",
+    "flatSrtTarget": "Target",
+    "flatSrtBilingualSourceFirst": "Bilingual (source on top)",
+    "flatSrtBilingualTargetFirst": "Bilingual (target on top)",
+    "autoBurn": "Auto burn-in",
+    "autoBurnDesc": "Applies to video tasks only",
+    "beautify": "Beautify subtitles",
+    "beautifyDesc": "Trim leading/trailing punctuation and visual polish",
+    "burnMode": "Subtitle type",
+    "burnModeSource": "Source",
+    "burnModeTarget": "Target",
+    "burnModeBilingualSourceFirst": "Bilingual (source above, target below)",
+    "burnModeBilingualTargetFirst": "Bilingual (target above, source below)",
+    "stylePreset": "Subtitle style",
+    "stylePresetPlaceholder": "Select preset…",
+    "stylePresetClassicCinema": "Classic Cinema",
+    "stylePresetModernStreaming": "Modern Streaming",
+    "stylePresetDocumentaryGold": "Documentary Gold",
+    "stylePresetVibrantVariety": "Vibrant Variety",
+    "stylePresetMidnightSoft": "Midnight Soft",
+    "stylePresetExecutiveNews": "Executive News",
+    "style": "Subtitle style",
+    "borderStyleOutline": "Outline",
+    "borderStyleBox": "Box",
+    "preview": "Live preview",
+    "previewBgAlt": "Subtitle style preview background",
+    "source": {
+      "fontFamily": "Source font",
+      "fontSize": "Source font size",
+      "primaryColor": "Source color",
+      "shadow": "Source shadow strength",
+      "shadowColor": "Source shadow color",
+      "borderStyle": "Source border style",
+      "outline": "Source outline weight",
+      "outlineColor": "Source outline color",
+      "borderOpacity": "Source border opacity"
+    },
+    "target": {
+      "fontFamily": "Target font",
+      "fontSize": "Target font size",
+      "primaryColor": "Target color",
+      "shadow": "Target shadow strength",
+      "shadowColor": "Target shadow color",
+      "borderStyle": "Target border style",
+      "outline": "Target outline weight",
+      "outlineColor": "Target outline color",
+      "borderOpacity": "Target border opacity"
+    },
+    "layout": {
+      "marginV": "Bottom margin",
+      "bilingualLineGap": "Bilingual line gap",
+      "alignment": "Alignment"
+    },
+    "alignmentLeft": "Bottom left",
+    "alignmentCenter": "Bottom center",
+    "alignmentRight": "Bottom right"
+  },
+  "models": {
+    "asrTitle": "ASR model",
+    "asr06bDesc": "Qwen3-ASR-0.6B generates plain text from audio; timestamps are handled by a separate alignment model.",
+    "asr17bDesc": "Qwen3-ASR-1.7B generates plain text from audio; timestamps are handled by a separate alignment model.",
+    "asrCohereDesc": "Cohere Transcribe is an open-source 2B-parameter speech recognition model supporting 14 languages; it generates plain text from audio, with timestamps likewise handled by a separate alignment model.",
+    "alignTitle": "Alignment model",
+    "alignDesc": "Qwen3 Forced Aligner aligns transcribed text back to the audio to produce word-level timestamps.",
+    "demucsTitle": "Vocal separation model",
+    "demucsDesc": "htdemucs_ft is a high-fidelity vocal separation model that extracts cleaner vocals with less accompaniment residue."
+  }
+}

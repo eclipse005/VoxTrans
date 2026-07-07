@@ -26,18 +26,12 @@ impl TaskStage {
         }
     }
 
+    /// Human-readable label. Returns empty for all stages: the frontend owns
+    /// the localized labels and derives them from `code()` via its i18n layer
+    /// (`stage.label || resolveStageLabel(stage.code)`). Keeping the backend
+    /// label empty avoids shipping localized text from the backend.
     pub fn label(self) -> &'static str {
-        match self {
-            TaskStage::Preparing => "准备中",
-            TaskStage::Separating => "人声分离中",
-            TaskStage::Recognizing => "语音识别中",
-            TaskStage::Aligning => "智能打轴中",
-            TaskStage::Segmenting => "断句中",
-            TaskStage::Terminology => "术语提取中",
-            TaskStage::Translating => "翻译中",
-            TaskStage::SubtitleLayout => "",
-            TaskStage::Burning => "压制中",
-        }
+        ""
     }
 
     pub fn order(self) -> u32 {

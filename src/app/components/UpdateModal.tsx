@@ -1,8 +1,10 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { useDialogA11y } from "./useDialogA11y";
 import { invoke } from "@tauri-apps/api/core";
+import i18n from "../../i18n";
 import type { UpdateCheckResult } from "../api/updater";
 
 type UpdateModalProps = {
@@ -26,6 +28,7 @@ export default function UpdateModal({
   onCancelInstall,
   onSkipVersion,
 }: UpdateModalProps) {
+  const { t } = useTranslation(["updater", "common"]);
   const dialogRef = useDialogA11y(visible, onClose);
   const publishedAt = update ? formatDateRelative(update.publishedAt) : "";
   const notes = update?.notes.trim() ?? "";
@@ -65,7 +68,7 @@ export default function UpdateModal({
         aria-labelledby="update-modal-title"
         tabIndex={-1}
       >
-        <button className="modal-close" onClick={onClose} aria-label="关闭更新弹窗">×</button>
+        <button className="modal-close" onClick={onClose} aria-label={t("updater.modal.closeAriaLabel")}>×</button>
 
         <div className="update-header">
           <h3 id="update-modal-title" className="apple-heading-medium">
@@ -84,7 +87,7 @@ export default function UpdateModal({
             dangerouslySetInnerHTML={
               notesHtml
                 ? { __html: notesHtml }
-                : { __html: "<p>本版本未提供详细更新说明。</p>" }
+                : { __html: `<p>${t("updater.modal.noNotes")}</p>` }
             }
           />
         </div>
@@ -102,7 +105,7 @@ export default function UpdateModal({
                 }
               }}
             >
-              查看完整发布说明 ↗
+              {t("updater.modal.viewReleaseNotes")} ↗
             </a>
           </div>
         ) : null}
@@ -110,18 +113,18 @@ export default function UpdateModal({
         <div className="settings-footer">
           {installing ? (
             <>
-              <button className="nav-button" onClick={onCancelInstall ?? onClose}>取消下载</button>
+              <button className="nav-button" onClick={onCancelInstall ?? onClose}>{t("updater.button.cancelDownload")}</button>
               <button className="nav-button" disabled>
-                下载中... {installProgress != null ? `${installProgress}%` : ""}
+                {t("updater.status.downloading")} {installProgress != null ? `${installProgress}%` : ""}
               </button>
             </>
           ) : (
             <>
-              <button className="nav-button" onClick={onClose}>取消</button>
+              <button className="nav-button" onClick={onClose}>{t("common:button.cancel")}</button>
               {onSkipVersion ? (
-                <button className="nav-button" onClick={() => { void onSkipVersion(); }}>忽略此版本</button>
+                <button className="nav-button" onClick={() => { void onSkipVersion(); }}>{t("updater.button.skipVersion")}</button>
               ) : null}
-              <button className="nav-button" onClick={() => { void onInstall(); }}>下载安装</button>
+              <button className="nav-button" onClick={() => { void onInstall(); }}>{t("updater.button.downloadInstall")}</button>
             </>
           )}
         </div>
@@ -135,20 +138,21 @@ function formatDateRelative(value: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
 
-  const now = new Date();
-  const beijingNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
-  const diffMs = beijingNow.getTime() - date.getTime();
+  // publishedAt is an ISO 8601 UTC timestamp from GitHub. Both Date.now() and
+  // date.getTime() are UTC-based, so the elapsed difference is correct in any
+  // timezone — no Asia/Shanghai hardcoding needed.
+  const diffMs = Date.now() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffMins < 1) return "刚刚发布";
-  if (diffMins < 60) return `${diffMins} 分钟前`;
-  if (diffHours < 24) return `${diffHours} 小时前`;
-  if (diffDays < 30) return `${diffDays} 天前`;
+  if (diffMins < 1) return i18n.t("updater.relative.justNow");
+  if (diffMins < 60) return i18n.t("updater.relative.minutesAgo", { n: diffMins });
+  if (diffHours < 24) return i18n.t("updater.relative.hoursAgo", { n: diffHours });
+  if (diffDays < 30) return i18n.t("updater.relative.daysAgo", { n: diffDays });
 
-  const beijingDate = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
-  return beijingDate.toLocaleDateString("zh-CN", {
+  // Fall back to an absolute date, localized to the active UI language.
+  return date.toLocaleDateString(i18n.language, {
     year: "numeric",
     month: "long",
     day: "numeric",

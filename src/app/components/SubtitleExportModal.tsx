@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ExportSrtItem } from "../api/transcribe";
 
 type SubtitleExportModalProps = {
@@ -10,29 +11,29 @@ type SubtitleExportModalProps = {
 
 type ExportOption = {
   item: ExportSrtItem;
-  label: string;
+  labelKey: string;
   needsTranslation: boolean;
 };
 
 const EXPORT_OPTIONS: ExportOption[] = [
   {
     item: "source",
-    label: "原文单语",
+    labelKey: "subtitles.export.sourceMono",
     needsTranslation: false,
   },
   {
     item: "target",
-    label: "译文单语",
+    labelKey: "subtitles.export.targetMono",
     needsTranslation: true,
   },
   {
     item: "bilingualSourceFirst",
-    label: "双语（原文在上）",
+    labelKey: "subtitles.export.bilingualSourceFirst",
     needsTranslation: true,
   },
   {
     item: "bilingualTargetFirst",
-    label: "双语（译文在上）",
+    labelKey: "subtitles.export.bilingualTargetFirst",
     needsTranslation: true,
   },
 ];
@@ -80,6 +81,7 @@ export default function SubtitleExportModal({
   onClose,
   onConfirm,
 }: SubtitleExportModalProps) {
+  const { t } = useTranslation(["subtitles", "common"]);
   const [selection, setSelection] = useState<Record<ExportSrtItem, boolean>>(
     buildInitialSelection(canExportTranslated, initialSelectedItems),
   );
@@ -96,13 +98,13 @@ export default function SubtitleExportModal({
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true">
       <div className="modal-content modal-content-export">
-        <button className="modal-close" onClick={onClose} aria-label="关闭">
+        <button className="modal-close" onClick={onClose} aria-label={t("common:button.close")}>
           ×
         </button>
 
-        <h3 className="apple-heading-small">导出字幕</h3>
+        <h3 className="apple-heading-small">{t("subtitles.export.title")}</h3>
         <p className="apple-body-small export-modal-desc">
-          请选择要导出的字幕类型。文件名固定为 src.srt / trans.srt / src_trans.srt / trans_src.srt。
+          {t("subtitles.export.description")}
         </p>
 
         <div className="export-option-list">
@@ -126,7 +128,7 @@ export default function SubtitleExportModal({
                   }}
                 />
                 <span className="export-option-main">
-                  <span className="export-option-label">{option.label}</span>
+                  <span className="export-option-label">{t(option.labelKey)}</span>
                 </span>
               </label>
             );
@@ -134,12 +136,12 @@ export default function SubtitleExportModal({
         </div>
 
         {!canExportTranslated ? (
-          <p className="apple-body-small export-modal-tip">当前任务暂无译文，译文相关选项已禁用。</p>
+          <p className="apple-body-small export-modal-tip">{t("subtitles.export.noTranslationTip")}</p>
         ) : null}
 
         <div className="export-modal-actions">
           <button type="button" className="apple-button apple-button-secondary" onClick={onClose}>
-            取消
+            {t("common:button.cancel")}
           </button>
           <button
             type="button"
@@ -149,7 +151,7 @@ export default function SubtitleExportModal({
               void onConfirm(selectedItems);
             }}
           >
-            导出 {selectedCount > 0 ? `${selectedCount} 项` : ""}
+            {t("subtitles.export.button")} {selectedCount > 0 ? t("subtitles.export.itemCount", { count: selectedCount }) : ""}
           </button>
         </div>
       </div>

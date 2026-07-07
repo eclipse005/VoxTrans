@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
 import type {
   SubtitleBurnMode,
   SubtitleLineStyle,
@@ -18,6 +19,7 @@ type PreviewRow = {
 };
 
 export function SubtitleStylePreview({ mode, style }: SubtitleStylePreviewProps) {
+  const { t } = useTranslation(["settings"]);
   const previewRows = buildPreviewRows(mode);
   const previewStyle = buildSubtitlePreviewStyle(style);
   const previewClass = style.layout.alignment === 1
@@ -28,9 +30,9 @@ export function SubtitleStylePreview({ mode, style }: SubtitleStylePreviewProps)
 
   return (
     <div className="subtitle-style-preview-card">
-      <div className="subtitle-style-preview-head">实时预览</div>
+      <div className="subtitle-style-preview-head">{t("settings:subtitle.preview")}</div>
       <div className="subtitle-style-preview-stage">
-        <img className="subtitle-preview-bg" src={SUBTITLE_PREVIEW_BG} alt="字幕样式预览背景" />
+        <img className="subtitle-preview-bg" src={SUBTITLE_PREVIEW_BG} alt={t("settings:subtitle.previewBgAlt")} />
         <div className={previewClass} style={previewStyle.wrapper}>
           {previewRows.map((row, idx) => (
             <div key={`${row.text}-${idx}`} style={row.kind === "source" ? previewStyle.source : previewStyle.target}>

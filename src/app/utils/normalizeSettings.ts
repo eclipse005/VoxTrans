@@ -27,6 +27,7 @@ const SUBTITLE_BURN_MODES: readonly SavedSettings["subtitleBurnMode"][] = [
 ];
 const BORDER_STYLES: readonly SubtitleBorderStyle[] = ["outline", "box"];
 const VALID_ALIGNMENTS = [1, 2, 3];
+const LOCALES: readonly SavedSettings["locale"][] = ["zh-CN", "en"];
 
 function pickEnum<T>(value: unknown, allowed: readonly T[], fallback: T): T {
   if (allowed.includes(value as T)) return value as T;
@@ -65,6 +66,7 @@ export function normalizeSettings(raw: SavedSettings, defaults: SavedSettings): 
     flatSrtOutput: Boolean(raw.flatSrtOutput),
     flatSrtItems: dedupeFlatSrtItems(raw.flatSrtItems, defaults.flatSrtItems),
     enableVisionAssist: Boolean(raw.enableVisionAssist),
+    locale: pickEnum(raw.locale, LOCALES, defaults.locale),
   };
 }
 

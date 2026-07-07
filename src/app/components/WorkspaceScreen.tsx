@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { AppAction } from "../state/appReducer";
 import type { QueueItem, SubtitleCue } from "../../features/media/types";
 import type { QueueBatchMode } from "../hooks/queue/useQueueScheduler";
@@ -90,6 +91,7 @@ export function WorkspaceScreen({
   onOpenSubtitleExport,
   onOpenLogs,
 }: WorkspaceScreenProps) {
+  const { t } = useTranslation(["tasks"]);
   // Single source of truth for editor status strings, derived from task
   // state. Keeps the editor components presentational (they just render
   // these) instead of each guessing wording from a boolean.
@@ -97,13 +99,13 @@ export function WorkspaceScreen({
   const readOnlyReason = canEditSubtitle
     ? ""
     : isProcessing
-      ? "任务进行中，字幕为只读预览"
-      : "任务完成后才可编辑字幕";
+      ? t("tasks:editor.readOnlyProcessing")
+      : t("tasks:editor.readOnlyDone");
   const emptyText = canEditSubtitle
-    ? "暂无字幕段，点击上方“新增字幕段”开始编辑。"
+    ? t("tasks:editor.emptyEditable")
     : isProcessing
-      ? "任务进行中，字幕即将显示。"
-      : "任务完成后才可编辑字幕。";
+      ? t("tasks:editor.emptyProcessing")
+      : t("tasks:editor.emptyDone");
 
   return (
     <main className="apple-container apple-section">
@@ -168,8 +170,8 @@ export function WorkspaceScreen({
         </div>
         <div className={`subtitle-panel-layer subtitle-panel-layer-empty ${activeItem ? "is-hidden" : "is-visible"}`}>
           <div className="subtitle-panel-empty">
-            <h3 className="apple-heading-medium">字幕编辑器</h3>
-            <p className="apple-body">请在左侧任务列表中选择一个媒体任务开始编辑字幕。</p>
+            <h3 className="apple-heading-medium">{t("tasks:editor.title")}</h3>
+            <p className="apple-body">{t("tasks:editor.emptyPrompt")}</p>
           </div>
         </div>
       </section>

@@ -1,0 +1,130 @@
+{
+  "batch": {
+    "transcribe": "转录",
+    "translate": "转译",
+    "transcribeAll": "全部转录",
+    "translateAll": "全部转译",
+    "startAll": "全部开始（{{mode}}）",
+    "chooseMode": "选择批量模式"
+  },
+  "mediaCount": "共 {{count}} 个媒体",
+  "language": {
+    "mixed": "多语言",
+    "batchTitle": "批量任务语言",
+    "batchSet": "批量设置任务语言",
+    "audio": "音频语言",
+    "translate": "翻译语言",
+    "mixedChip": "多种语言",
+    "itemAria": "{{source}} 到 {{target}}"
+  },
+  "action": {
+    "clear": "清空",
+    "translate": "转译",
+    "transcribe": "转录",
+    "delete": "删除"
+  },
+  "confirm": {
+    "clearTitle": "确认清空任务列表？",
+    "clearText": "该操作不可恢复。",
+    "clearConfirm": "确认清空"
+  },
+  "terminology": {
+    "unused": "不使用术语",
+    "groupLabel": "术语组：{{name}}",
+    "notSet": "术语:未使用",
+    "group": "术语组",
+    "none": "不使用",
+    "notConfigured": "暂未配置术语组,请前往术语管理",
+    "title": "术语管理",
+    "close": "关闭术语管理",
+    "addGroup": "新建分组",
+    "add": "添加",
+    "editTitle": "术语编辑",
+    "editGroup": "编辑组名",
+    "saveGroup": "保存组名",
+    "cancelEdit": "取消编辑",
+    "deleteGroup": "删除分组",
+    "deleteTerm": "删除术语",
+    "save": "保存术语",
+    "addPlaceholder": "原文:译文:说明，多条用逗号分隔，如 LLM:大模型, hypertension:高血压:医疗术语",
+    "emptyCreate": "请先新建一个分组。",
+    "emptyHint": "点击上方分组选中并编辑(选中即为新任务的默认术语组)。",
+    "emptyTerms": "当前分组暂无术语"
+  },
+  "stage": {
+    "processing": "处理中",
+    "preparing": "准备中"
+  },
+  "editor": {
+    "readOnlyProcessing": "任务进行中，字幕为只读预览",
+    "readOnlyDone": "任务完成后才可编辑字幕",
+    "emptyEditable": "暂无字幕段，点击上方\"新增字幕段\"开始编辑。",
+    "emptyProcessing": "任务进行中，字幕即将显示。",
+    "emptyDone": "任务完成后才可编辑字幕。",
+    "title": "字幕编辑器",
+    "emptyPrompt": "请在左侧任务列表中选择一个媒体任务开始编辑字幕。"
+  },
+  "upload": {
+    "title": "媒体导入",
+    "localTab": "本地文件",
+    "dropTitle": "拖拽或点击上传",
+    "dropHint": "支持多选音视频文件",
+    "selectBtn": "上传文件"
+  },
+  "youtube": {
+    "title": "YouTube 下载",
+    "urlPlaceholder": "粘贴 YouTube 链接",
+    "download": "下载视频",
+    "notDetected": "未检测到",
+    "updating": "正在更新 yt-dlp",
+    "update": "更新 yt-dlp",
+    "updatingShort": "更新中..."
+  },
+  "queue": {
+    "modeTranscribe": "转录",
+    "modeTranscribeTranslate": "转译"
+  },
+  "progress": {
+    "downloading": "下载中"
+  },
+  "logs": {
+    "title": "运行日志",
+    "close": "关闭日志",
+    "maximize": "最大化",
+    "maximizeAria": "最大化窗口",
+    "restore": "还原",
+    "restoreAria": "还原窗口大小",
+    "channelToggle": "日志频道",
+    "openDir": "打开日志目录",
+    "refresh": "刷新",
+    "refreshAria": "刷新日志",
+    "clear": "清空",
+    "clearAria": "清空日志",
+    "tokens": "Tokens: {{count}}",
+    "searchAria": "日志查找",
+    "searchPlaceholder": "查找日志",
+    "searchNavAria": "日志查找导航",
+    "prevMatch": "上一条匹配",
+    "nextMatch": "下一条匹配",
+    "empty": "暂无日志",
+    "expandEntry": "展开日志详情",
+    "collapseEntry": "收起日志详情",
+    "jumpToBottom": "跳转到底部",
+    "loadFailed": "加载日志失败",
+    "selectTaskFirst": "请先在左侧选中一个任务",
+    "clearConfirm": "确认清空当前 {{channel}} 日志吗？该操作不可恢复。",
+    "cleared": "{{channel}} 日志已清空",
+    "clearFailed": "清空日志失败",
+    "openDirFailed": "打开日志目录失败"
+  },
+  "workspace": {
+    "downloadInterrupted": "下载任务中断，请点击转录或转译继续下载",
+    "taskInterrupted": "任务在运行中被中断，请重新开始",
+    "openSubtitleDirFailed": "打开字幕目录失败"
+  },
+  "ytdlp": {
+    "updated": "yt-dlp 已更新: {{from}} -> {{to}}",
+    "alreadyLatest": "yt-dlp 已是最新版本 ({{version}})",
+    "updateFailed": "yt-dlp 更新失败"
+  }
+}

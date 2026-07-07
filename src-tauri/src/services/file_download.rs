@@ -41,7 +41,7 @@ pub fn download_file<F: DownloadCallback>(
         .timeout(std::time::Duration::from_secs(opts.timeout_secs))
         .user_agent(&opts.user_agent)
         .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
     let part_path = opts.target.with_extension(format!(
         "{}.part",
@@ -62,7 +62,7 @@ pub fn download_file<F: DownloadCallback>(
     };
 
     if opts.target.exists() {
-        callback.on_message("文件已存在，跳过下载");
+        callback.on_message("File already exists, skipping download");
         return Ok(DownloadResult {
             path: opts.target.clone(),
         });
@@ -82,7 +82,7 @@ pub fn download_file<F: DownloadCallback>(
         downloaded_bytes = existing_len;
     }
 
-    let response = request.send().map_err(|e| format!("请求失败: {}", e))?;
+    let response = request.send().map_err(|e| format!("Request failed: {}", e))?;
 
     // 如果服务器不支持 Range 请求，删除部分文件重新下载
     let (mut response, mut downloaded_bytes) =
@@ -93,7 +93,7 @@ pub fn download_file<F: DownloadCallback>(
                 .get(&opts.url)
                 .header(header::ACCEPT, "*/*")
                 .send()
-                .map_err(|e| format!("请求失败: {}", e))?;
+                .map_err(|e| format!("Request failed: {}", e))?;
             (new_resp, 0)
         } else {
             (response, downloaded_bytes)
@@ -102,7 +102,7 @@ pub fn download_file<F: DownloadCallback>(
     if !(response.status().is_success()
         || response.status() == reqwest::StatusCode::PARTIAL_CONTENT)
     {
-        return Err(format!("下载失败: HTTP {}", response.status()));
+        return Err(format!("Download failed: HTTP {}", response.status()));
     }
 
     // 获取总大小
@@ -119,17 +119,17 @@ pub fn download_file<F: DownloadCallback>(
         .write(!append_mode)
         .truncate(!append_mode)
         .open(&part_path)
-        .map_err(|e| format!("打开临时文件失败: {}", e))?;
+        .map_err(|e| format!("Failed to open temp file: {}", e))?;
 
     let mut buf = [0_u8; 64 * 1024];
     let mut last_speed_mark = Instant::now();
     let mut last_speed_bytes = downloaded_bytes;
 
-    callback.on_message("下载中");
+    callback.on_message("downloading");
 
     loop {
         if cancel_flag.load(Ordering::Relaxed) {
-            callback.on_message("下载已取消");
+            callback.on_message("download_cancelled");
             return Ok(DownloadResult { path: part_path });
         }
 
@@ -139,7 +139,7 @@ pub fn download_file<F: DownloadCallback>(
         }
 
         file.write_all(&buf[..read])
-            .map_err(|e| format!("写入文件失败: {}", e))?;
+            .map_err(|e| format!("failed to write file: {}", e))?;
         downloaded_bytes += read as u64;
 
         let elapsed = last_speed_mark.elapsed().as_secs_f64();
@@ -166,15 +166,15 @@ pub fn download_file<F: DownloadCallback>(
     if total_bytes > 0 && downloaded_bytes < total_bytes {
         let _ = std::fs::remove_file(&part_path);
         return Err(format!(
-            "下载不完整: 预期 {} 字节，实际 {} 字节",
+            "Download incomplete: expected {} bytes, got {}",
             total_bytes, downloaded_bytes
         ));
     }
 
     // 重命名完成
-    std::fs::rename(&part_path, &opts.target).map_err(|e| format!("重命名文件失败: {}", e))?;
+    std::fs::rename(&part_path, &opts.target).map_err(|e| format!("Failed to rename file: {}", e))?;
 
-    callback.on_message("下载完成");
+    callback.on_message("download_complete");
 
     Ok(DownloadResult {
         path: opts.target.clone(),

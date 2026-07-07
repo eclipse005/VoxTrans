@@ -1,0 +1,106 @@
+{
+  "modal": {
+    "close": "关闭设置",
+    "title": "设置",
+    "save": "保存设置"
+  },
+  "tab": {
+    "transcribe": "转录",
+    "translate": "翻译",
+    "subtitle": "字幕",
+    "models": "模型"
+  },
+  "transcribe": {
+    "params": "转录参数",
+    "device": "执行设备",
+    "chunkDuration": "分段时长（秒）",
+    "vocalSeparation": "人声分离",
+    "vocalSeparationDesc": "背景吵杂时请使用，提高转录准确率",
+    "clickSound": "点击音效",
+    "clickSoundDesc": "点击按钮和开关时播放轻提示音",
+    "flatSrtOutput": "字幕平铺输出",
+    "flatSrtOutputDesc": "额外将字幕直接输出到 output 目录，方便批量查找",
+    "flatSrtItemsLabel": "输出字幕类型"
+  },
+  "translate": {
+    "apiKey": "接口密钥",
+    "baseUrl": "接口地址",
+    "modelName": "模型名称",
+    "test": "测试",
+    "concurrency": "并发数",
+    "visionAssist": "图片辅助翻译",
+    "visionAssistDesc": "需模型支持图片输入"
+  },
+  "subtitle": {
+    "length": "字幕长度",
+    "lengthShort": "短",
+    "lengthStandard": "标准",
+    "lengthLoose": "宽松",
+    "flatSrtSource": "原文",
+    "flatSrtTarget": "译文",
+    "flatSrtBilingualSourceFirst": "双语（原文上）",
+    "flatSrtBilingualTargetFirst": "双语（译文上）",
+    "autoBurn": "自动压制",
+    "autoBurnDesc": "仅视频任务生效",
+    "beautify": "美化字幕",
+    "beautifyDesc": "去首尾标点与观感优化",
+    "burnMode": "字幕类型",
+    "burnModeSource": "原文",
+    "burnModeTarget": "译文",
+    "burnModeBilingualSourceFirst": "双语（原文上译文下）",
+    "burnModeBilingualTargetFirst": "双语（译文上原文下）",
+    "stylePreset": "字幕样式",
+    "stylePresetPlaceholder": "选择预设…",
+    "stylePresetClassicCinema": "经典院线",
+    "stylePresetModernStreaming": "流媒体极简",
+    "stylePresetDocumentaryGold": "人文纪录片",
+    "stylePresetVibrantVariety": "活力综艺",
+    "stylePresetMidnightSoft": "深夜柔和",
+    "stylePresetExecutiveNews": "新闻政企",
+    "style": "字幕样式",
+    "borderStyleOutline": "描边",
+    "borderStyleBox": "方框",
+    "preview": "实时预览",
+    "previewBgAlt": "字幕样式预览背景",
+    "source": {
+      "fontFamily": "原文字体",
+      "fontSize": "原文字号",
+      "primaryColor": "原文颜色",
+      "shadow": "原文阴影强度",
+      "shadowColor": "原文阴影色",
+      "borderStyle": "原文边框样式",
+      "outline": "原文描边粗细",
+      "outlineColor": "原文边框色",
+      "borderOpacity": "原文边框透明度"
+    },
+    "target": {
+      "fontFamily": "译文字体",
+      "fontSize": "译文字号",
+      "primaryColor": "译文颜色",
+      "shadow": "译文阴影强度",
+      "shadowColor": "译文阴影色",
+      "borderStyle": "译文边框样式",
+      "outline": "译文描边粗细",
+      "outlineColor": "译文边框色",
+      "borderOpacity": "译文边框透明度"
+    },
+    "layout": {
+      "marginV": "底部边距",
+      "bilingualLineGap": "双语行距",
+      "alignment": "对齐"
+    },
+    "alignmentLeft": "底部左对齐",
+    "alignmentCenter": "底部居中",
+    "alignmentRight": "底部右对齐"
+  },
+  "models": {
+    "asrTitle": "ASR 模型",
+    "asr06bDesc": "Qwen3-ASR-0.6B 负责从音频生成纯文本，时间戳由独立对齐模型处理。",
+    "asr17bDesc": "Qwen3-ASR-1.7B 负责从音频生成纯文本，时间戳由独立对齐模型处理。",
+    "asrCohereDesc": "Cohere Transcribe 开源 2B 参数语音识别模型，支持 14 种语言，负责从音频生成纯文本，时间戳同样由独立对齐模型处理。",
+    "alignTitle": "对齐模型",
+    "alignDesc": "Qwen3 Forced Aligner 负责把转录文本对齐回音频，生成词级时间戳。",
+    "demucsTitle": "人声分离模型",
+    "demucsDesc": "htdemucs_ft 是高保真人声分离模型，能更稳定地提取清晰 vocals、减少伴奏残留。"
+  }
+}

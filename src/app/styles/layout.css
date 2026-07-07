@@ -57,6 +57,29 @@
   color: var(--apple-blue);
 }
 
+.nav-lang-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #e8eaf0;
+  border-radius: 10px;
+  background: #fdfdff;
+  color: var(--apple-text-primary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all var(--apple-transition-fast);
+}
+
+.nav-lang-button:hover:not(:disabled) {
+  border-color: rgba(0, 113, 227, 0.45);
+  background: rgba(0, 113, 227, 0.08);
+  color: var(--apple-blue);
+}
+
 .badge {
   display: inline-flex;
   min-width: 18px;

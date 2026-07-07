@@ -31,9 +31,9 @@ pub enum WorkspaceError {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CommandErrorPayload {
-    code: &'static str,
-    message: String,
+pub(crate) struct CommandErrorPayload {
+    pub code: &'static str,
+    pub message: String,
 }
 
 impl WorkspaceError {

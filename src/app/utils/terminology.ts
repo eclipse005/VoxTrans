@@ -1,6 +1,6 @@
 import type { TerminologyGroup, TerminologyTerm } from "../../features/media/types";
 
-export const DEFAULT_TERMINOLOGY_GROUP_NAME = "默认";
+export const DEFAULT_TERMINOLOGY_GROUP_NAME = "Default";
 
 export function createTerminologyGroup(name?: string): TerminologyGroup {
   return {

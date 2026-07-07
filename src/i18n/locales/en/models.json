@@ -1,0 +1,26 @@
+{
+  "card": {
+    "ready": "Ready",
+    "notReady": "Not ready",
+    "versionLabel": "version",
+    "openDir": "Open folder",
+    "openDirAria": "Open {{target}} model folder",
+    "cancelDownload": "Cancel download",
+    "download": "Download model",
+    "cancelDownloadAria": "Cancel {{target}} download",
+    "readyAria": "{{target}} ready",
+    "downloadAria": "Download {{target}} model"
+  },
+  "status": {
+    "readFailed": "Failed to read model status"
+  },
+  "download": {
+    "start": "Starting background model download",
+    "startFailed": "Failed to start model download",
+    "cancelRequest": "Download cancellation requested",
+    "cancelFailed": "Failed to cancel download"
+  },
+  "dir": {
+    "openFailed": "Failed to open model folder"
+  }
+}

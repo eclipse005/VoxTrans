@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import type { QueueItem, SubtitleCue } from "../../features/media/types";
@@ -45,6 +46,7 @@ export function useSubtitleWorkflow({
   dispatch,
   pushToast,
 }: UseSubtitleWorkflowArgs) {
+  const { t } = useTranslation(["toasts", "subtitles"]);
   const loadedSubtitleVersionRef = useRef<string>("");
   const persistSeqRef = useRef(0);
   const loadSeqRef = useRef(0);
@@ -80,7 +82,7 @@ export function useSubtitleWorkflow({
       if (!existingTaskIdsRef.current.has(taskId)) return;
     } catch (err) {
       reportError(err, "saveSubtitleEditor");
-      const message = toUserErrorMessage(err, "字幕保存失败");
+      const message = toUserErrorMessage(err, t("toasts:workflow.saveFailed"));
       if (currentSubtitleTaskIdRef.current !== taskId) {
         return;
       }
@@ -161,7 +163,7 @@ export function useSubtitleWorkflow({
       } catch (error) {
         if (isStaleRequest()) return;
         reportError(error, "loadSubtitleEditor");
-        pushToast("字幕格式有误，无法加载编辑器", "error");
+        pushToast(t("toasts:workflow.loadInvalid"), "error");
         dispatch({
           type: "set_subtitle",
           payload: {
@@ -277,11 +279,11 @@ export function useSubtitleWorkflow({
 
   const exportSubtitleSrt = useCallback(async (items: ExportSrtItem[]) => {
     if (!subtitleTaskId) {
-      pushToast("当前没有可导出的任务", "error");
+      pushToast(t("toasts:workflow.noExportTask"), "error");
       return;
     }
     if (items.length === 0) {
-      pushToast("请至少选择一项导出内容", "error");
+      pushToast(t("toasts:workflow.selectAtLeastOne"), "error");
       return;
     }
 
@@ -289,7 +291,7 @@ export function useSubtitleWorkflow({
       const picked = await open({
         directory: true,
         multiple: false,
-        title: "选择导出目录",
+        title: t("subtitles.export.dirPickerTitle"),
       });
       if (!picked || Array.isArray(picked)) return;
 
@@ -300,13 +302,13 @@ export function useSubtitleWorkflow({
         items,
       );
       if (paths.length === 1) {
-        pushToast(`已导出：${paths[0]}`, "success");
+        pushToast(t("toasts:workflow.exportedOne", { path: paths[0] }), "success");
       } else {
-        pushToast(`已导出 ${paths.length} 个文件`, "success");
+        pushToast(t("toasts:workflow.exportedMany", { count: paths.length }), "success");
       }
     } catch (error) {
       reportError(error, "exportSubtitleSrt");
-      pushToast(toUserErrorMessage(error, "导出字幕失败"), "error");
+      pushToast(toUserErrorMessage(error, t("toasts:workflow.exportFailed")), "error");
     }
   }, [pushToast, subtitleTaskId, subtitleTaskName]);
 

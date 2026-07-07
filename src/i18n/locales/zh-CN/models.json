@@ -1,0 +1,26 @@
+{
+  "card": {
+    "ready": "已就绪",
+    "notReady": "未就绪",
+    "versionLabel": "版本",
+    "openDir": "打开目录",
+    "openDirAria": "打开 {{target}} 模型目录",
+    "cancelDownload": "取消下载",
+    "download": "下载模型",
+    "cancelDownloadAria": "取消 {{target}} 下载",
+    "readyAria": "{{target}} 已就绪",
+    "downloadAria": "下载 {{target}} 模型"
+  },
+  "status": {
+    "readFailed": "读取模型状态失败"
+  },
+  "download": {
+    "start": "开始后台下载模型",
+    "startFailed": "启动模型下载失败",
+    "cancelRequest": "已请求取消下载",
+    "cancelFailed": "取消下载失败"
+  },
+  "dir": {
+    "openFailed": "打开模型目录失败"
+  }
+}

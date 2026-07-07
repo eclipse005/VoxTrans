@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::preferences_types::{
-    AlignModel, AsrModel, DemucsModel, Provider, SavedSettings, SubtitleBurnMode,
+    AlignModel, AsrModel, DemucsModel, Locale, Provider, SavedSettings, SubtitleBurnMode,
     SubtitleLayoutStyle, SubtitleLineStyle, SubtitleLengthPreset, SubtitleRenderStyle,
     TerminologyGroup, TerminologyTerm,
 };
@@ -30,6 +30,7 @@ pub fn default_settings() -> SavedSettings {
         flat_srt_output: false,
         flat_srt_items: vec![SubtitleBurnMode::Source, SubtitleBurnMode::Target],
         enable_vision_assist: false,
+        locale: Locale::default(),
     }
 }
 
@@ -70,6 +71,7 @@ pub(super) fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings
         flat_srt_output: settings.flat_srt_output,
         flat_srt_items: normalize_flat_srt_items(settings.flat_srt_items),
         enable_vision_assist: settings.enable_vision_assist,
+        locale: settings.locale,
     }
 }
 
@@ -155,7 +157,7 @@ fn normalize_terminology_groups(groups: Vec<TerminologyGroup>) -> Vec<Terminolog
         let name = {
             let trimmed = group.name.trim();
             if trimmed.is_empty() {
-                "默认".to_string()
+                "Default".to_string()
             } else {
                 trimmed.to_string()
             }
@@ -212,7 +214,7 @@ fn normalize_terminology_terms(
 fn default_terminology_group() -> TerminologyGroup {
     TerminologyGroup {
         id: make_entity_id("group", 0),
-        name: "默认".to_string(),
+        name: "Default".to_string(),
         terms: Vec::new(),
     }
 }

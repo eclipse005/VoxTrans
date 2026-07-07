@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import i18n from "../../i18n";
 import { loadWorkspaceState } from "../api/workspace";
 import { normalizeTranscribeStatus } from "../../features/media/stateMachine";
 import { normalizeSubtitleSegmentsJson } from "../../features/media/subtitleSegments";
@@ -85,7 +86,7 @@ function recoverTransientStates(item: QueueItem): QueueItem {
       ...item,
       transcribeStatus: "error",
       taskProgress: createEmptyTaskProgress(),
-      transcribeError: "下载任务中断，请点击转录或转译继续下载",
+      transcribeError: i18n.t("tasks.workspace.downloadInterrupted"),
     };
   }
 
@@ -103,7 +104,7 @@ function recoverTransientStates(item: QueueItem): QueueItem {
       ...item,
       transcribeStatus: "error",
       taskProgress: createEmptyTaskProgress(),
-      transcribeError: item.transcribeError || "任务在运行中被中断，请重新开始",
+      transcribeError: item.transcribeError || i18n.t("tasks.workspace.taskInterrupted"),
     };
   }
 

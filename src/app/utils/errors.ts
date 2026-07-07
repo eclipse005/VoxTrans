@@ -1,34 +1,50 @@
-const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string }> = [
-  { pattern: /task not found/i, message: "任务不存在，请刷新任务列表" },
-  { pattern: /task is processing or queued/i, message: "任务正在处理中，请稍后再试" },
-  { pattern: /workspace store lock poisoned/i, message: "内部状态错误，请重启应用" },
-  { pattern: /invalid request/i, message: "请求参数无效" },
-  { pattern: /serialization error/i, message: "数据解析失败" },
-  { pattern: /io error/i, message: "文件读写失败，请检查磁盘空间" },
-  { pattern: /failed to create http client/i, message: "网络配置错误，请检查 API 设置" },
-  { pattern: /llm call failed/i, message: "AI 调用失败，请检查网络连接和 API 配置" },
-  { pattern: /timeout|timed out/i, message: "请求超时，请检查网络连接" },
-  { pattern: /cancelled|取消|已取消/i, message: "操作已取消" },
-  { pattern: /api key is required|translateApiKey/i, message: "翻译 API Key 未设置，请在设置中配置" },
-  { pattern: /base url is required|translateBaseUrl/i, message: "翻译 API 地址未设置，请在设置中配置" },
-  { pattern: /model is required|translateModel/i, message: "翻译模型未设置，请在设置中配置" },
+import i18n from "../../i18n";
+
+/**
+ * Map a raw backend error to a localized user-facing message.
+ *
+ * The backend returns either a plain English string or a structured
+ * `{ code, message }` JSON payload (see `domain::error` / `app_error`).
+ * We resolve in priority order:
+ *   1. stable error code  → `errors:code.<CODE>`
+ *   2. message pattern    → `errors:<area>.<key>`
+ *   3. raw message        → shown as-is (already English)
+ *
+ * The fallback covers null/empty inputs. All outputs go through i18n so
+ * the active locale (zh-CN / en) is honored.
+ */
+
+const ERROR_PATTERNS: Array<{ pattern: RegExp; key: string }> = [
+  { pattern: /task not found/i, key: "errors:code.taskNotFound" },
+  { pattern: /task is processing or queued/i, key: "errors:code.taskBusy" },
+  { pattern: /workspace store lock poisoned/i, key: "errors:code.lockPoisoned" },
+  { pattern: /invalid request/i, key: "errors:code.invalidRequest" },
+  { pattern: /serialization error/i, key: "errors:code.serializationError" },
+  { pattern: /io error/i, key: "errors:code.ioError" },
+  { pattern: /failed to create http client/i, key: "errors:config.httpClient" },
+  { pattern: /llm call failed/i, key: "errors:config.llmFailed" },
+  { pattern: /timeout|timed out/i, key: "errors:config.timeout" },
+  { pattern: /cancelled|取消|已取消/i, key: "errors:cancelled" },
+  { pattern: /api key is required|translateApiKey/i, key: "errors:config.apiKeyRequired" },
+  { pattern: /base url is required|translateBaseUrl/i, key: "errors:config.baseUrlRequired" },
+  { pattern: /model is required|translateModel/i, key: "errors:config.modelRequired" },
 ];
 
 const ERROR_CODE_MESSAGES: Record<string, string> = {
-  TASK_NOT_FOUND: "任务不存在，请刷新任务列表",
-  TASK_BUSY: "任务正在处理中，请稍后再试",
-  WORKSPACE_LOCK_POISONED: "内部状态错误，请重启应用",
-  INVALID_REQUEST: "请求参数无效",
-  TASK_FAILED: "任务执行失败，请查看日志",
-  IO_ERROR: "文件读写失败，请检查磁盘空间",
-  SERIALIZATION_ERROR: "数据解析失败",
+  TASK_NOT_FOUND: "errors:code.taskNotFound",
+  TASK_BUSY: "errors:code.taskBusy",
+  WORKSPACE_LOCK_POISONED: "errors:code.lockPoisoned",
+  INVALID_REQUEST: "errors:code.invalidRequest",
+  TASK_FAILED: "errors:code.taskFailed",
+  IO_ERROR: "errors:code.ioError",
+  SERIALIZATION_ERROR: "errors:code.serializationError",
 };
 
 function classifyError(raw: string): string | null {
   const lower = raw.toLowerCase();
-  for (const { pattern, message } of ERROR_PATTERNS) {
+  for (const { pattern, key } of ERROR_PATTERNS) {
     if (pattern.test(lower)) {
-      return message;
+      return key;
     }
   }
   return null;
@@ -51,7 +67,7 @@ function parseStructuredError(raw: string): { code?: string; message?: string } 
 
 export function toUserErrorMessage(
   error: unknown,
-  fallback = "操作失败，请稍后重试",
+  fallback = "errors:fallback",
 ): string {
   let raw = "";
   let structured: { code?: string; message?: string } | null = null;
@@ -78,22 +94,22 @@ export function toUserErrorMessage(
   structured ??= parseStructuredError(raw);
   if (structured?.code === "TASK_FAILED" && structured.message) {
     const classified = classifyError(structured.message);
-    if (classified) return classified;
+    if (classified) return i18n.t(classified);
   }
   if (structured?.code) {
-    const coded = ERROR_CODE_MESSAGES[structured.code];
-    if (coded) return coded;
+    const key = ERROR_CODE_MESSAGES[structured.code];
+    if (key) return i18n.t(key);
   }
   if (structured?.message) {
     raw = structured.message;
   }
 
   if (!raw) {
-    return fallback;
+    return i18n.t(fallback);
   }
 
   const classified = classifyError(raw);
-  return classified ?? raw;
+  return classified ? i18n.t(classified) : raw;
 }
 
 export function reportError(error: unknown, context: string): void {

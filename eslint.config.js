@@ -19,5 +19,11 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // This project uses @vitejs/plugin-react (babel fast-refresh), NOT React
+      // Compiler. preserve-manual-memoization assumes the compiler is in the
+      // build and fires false positives on legitimate manual memoization.
+      'react-hooks/preserve-manual-memoization': 'off',
+    },
   },
 ])

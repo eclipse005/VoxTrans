@@ -46,7 +46,7 @@ impl TaskStore {
              translate_base_url, translate_model, llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
-             enable_vision_assist, updated_at \
+             enable_vision_assist, locale, updated_at \
              FROM settings WHERE id = 1",
         )
         .fetch_optional(&self.pool)
@@ -87,8 +87,8 @@ impl TaskStore {
              translate_base_url, translate_model, llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
-             enable_vision_assist, updated_at) \
-             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             enable_vision_assist, locale, updated_at) \
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(id) DO UPDATE SET \
              provider=excluded.provider, chunk_target_seconds=excluded.chunk_target_seconds, \
              subtitle_length_preset=excluded.subtitle_length_preset, asr_model=excluded.asr_model, \
@@ -105,6 +105,7 @@ impl TaskStore {
              subtitle_render_style_json=excluded.subtitle_render_style_json, \
              flat_srt_output=excluded.flat_srt_output, \
              enable_vision_assist=excluded.enable_vision_assist, \
+             locale=excluded.locale, \
              updated_at=excluded.updated_at",
         )
         .bind(&row.provider)
@@ -126,6 +127,7 @@ impl TaskStore {
         .bind(&render_style_json)
         .bind(row.flat_srt_output)
         .bind(row.enable_vision_assist)
+        .bind(&row.locale)
         .bind(row.updated_at)
         .execute(&mut *tx)
         .await
@@ -490,7 +492,7 @@ impl TaskStore {
     pub async fn recover_orphan_processing(&self) -> Result<u64, String> {
         let n = sqlx::query(
             "UPDATE tasks SET transcribe_status = 'error', \
-             transcribe_error = '任务在运行中被中断，请重新开始', \
+             transcribe_error = 'TASK_INTERRUPTED', \
              updated_at = ? WHERE transcribe_status = 'processing'",
         )
         .bind(now_ms())
@@ -799,6 +801,7 @@ mod tests {
             flat_srt_output: false,
             flat_srt_items: Vec::new(),
             enable_vision_assist: false,
+            locale: crate::services::preferences_types::Locale::ZhCn,
         };
         s.flat_srt_items = vec![crate::services::preferences_types::SubtitleBurnMode::Source, crate::services::preferences_types::SubtitleBurnMode::Target];
         s.terminology_groups = vec![TerminologyGroup {

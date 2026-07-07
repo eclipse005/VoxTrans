@@ -13,8 +13,8 @@ import type { SubtitleRenderStyle } from "../../../features/media/types";
 export type SubtitleStylePreset = {
   /** Stable id used as the <option value>. */
   id: string;
-  /** Display name in the preset dropdown. */
-  label: string;
+  /** i18n key for the display name in the preset dropdown. */
+  labelKey: string;
   /** Full style snapshot applied on selection. */
   style: SubtitleRenderStyle;
 };
@@ -22,7 +22,7 @@ export type SubtitleStylePreset = {
 export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   {
     id: "classic-cinema",
-    label: "经典院线",
+    labelKey: "settings:subtitle.stylePresetclassicCinema",
     style: {
       source: {
         fontFamily: "Arial",
@@ -55,7 +55,7 @@ export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   },
   {
     id: "modern-streaming",
-    label: "流媒体极简",
+    labelKey: "settings:subtitle.stylePresetmodernStreaming",
     style: {
       source: {
         fontFamily: "Helvetica",
@@ -88,7 +88,7 @@ export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   },
   {
     id: "documentary-gold",
-    label: "人文纪录片",
+    labelKey: "settings:subtitle.stylePresetdocumentaryGold",
     style: {
       source: {
         fontFamily: "Arial",
@@ -121,7 +121,7 @@ export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   },
   {
     id: "vibrant-variety",
-    label: "活力综艺",
+    labelKey: "settings:subtitle.stylePresetvibrantVariety",
     style: {
       source: {
         fontFamily: "Arial",
@@ -154,7 +154,7 @@ export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   },
   {
     id: "midnight-soft",
-    label: "深夜柔和",
+    labelKey: "settings:subtitle.stylePresetmidnightSoft",
     style: {
       source: {
         fontFamily: "Helvetica",
@@ -187,7 +187,7 @@ export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   },
   {
     id: "executive-news",
-    label: "新闻政企",
+    labelKey: "settings:subtitle.stylePresetexecutiveNews",
     style: {
       source: {
         fontFamily: "Arial",

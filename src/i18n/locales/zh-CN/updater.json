@@ -1,0 +1,21 @@
+{
+  "modal": {
+    "closeAriaLabel": "关闭更新弹窗",
+    "noNotes": "本版本未提供详细更新说明。",
+    "viewReleaseNotes": "查看完整发布说明"
+  },
+  "button": {
+    "cancelDownload": "取消下载",
+    "skipVersion": "忽略此版本",
+    "downloadInstall": "下载安装"
+  },
+  "status": {
+    "downloading": "下载中..."
+  },
+  "relative": {
+    "justNow": "刚刚发布",
+    "minutesAgo": "{{n}} 分钟前",
+    "hoursAgo": "{{n}} 小时前",
+    "daysAgo": "{{n}} 天前"
+  }
+}

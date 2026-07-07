@@ -29,13 +29,13 @@ where
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|err| format!("启动 demucs 失败: {}", err))?;
+        .map_err(|err| format!("Failed to start demucs: {}", err))?;
 
     on_progress(0);
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| "读取 demucs 标准输出失败".to_string())?;
+        .ok_or_else(|| "Failed to read demucs stdout".to_string())?;
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
 
@@ -53,10 +53,10 @@ where
 
     let output = child
         .wait_with_output()
-        .map_err(|err| format!("等待 demucs 结束失败: {}", err))?;
+        .map_err(|err| format!("Failed to wait for demucs: {}", err))?;
     if !output.status.success() {
         return Err(format!(
-            "demucs 分离失败: {}",
+            "demucs separation failed: {}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }

@@ -42,7 +42,7 @@ where
     let demucs_model_file = demucs_model_dir.join(format!("{}.safetensors", request.model));
     if !demucs_model_file.is_file() {
         let err = format!(
-            "人声分离模型未就绪: {}。请先到模型中心下载后再试。",
+            "Vocals separation model not ready: {}. Please download it from the model center first.",
             demucs_model_file.display()
         );
         logger.event(
@@ -117,7 +117,7 @@ where
     }
 
     let vocals_path = find_vocals_path(&output_root, &demucs_input)
-        .ok_or_else(|| format!("未找到 vocals.wav 输出: {}", output_root.display()))?;
+        .ok_or_else(|| format!("vocals.wav output not found: {}", output_root.display()))?;
     logger.event(
         "demucs.completed",
         Some(&json!({

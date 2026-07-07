@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { ModelStatusResponse } from "../../../features/media/types";
 import { CheckIcon, DownloadIcon, FolderIcon } from "../Icons";
 
@@ -63,6 +64,7 @@ export function ModelDownloadCard({
   onStartModelDownload,
   onCancelModelDownload,
 }: ModelDownloadCardProps) {
+  const { t } = useTranslation(["models"]);
   const ready = isReady(status);
   const downloading = status?.download.phase === "downloading";
   const percent = progressPercent(status);
@@ -74,12 +76,12 @@ export function ModelDownloadCard({
       <div className="model-task-card-head">
         <h4 className="apple-heading-small">{title}</h4>
         <span className={`model-ready-pill ${ready ? "ready" : "not-ready"}`}>
-          {ready ? "已就绪" : "未就绪"}
+          {ready ? t("models:card.ready") : t("models:card.notReady")}
         </span>
       </div>
       <p className="apple-body-small">{description}</p>
       <div className="model-inline-row">
-        <div className="device-toggle-group model-inline-model" role="group" aria-label={`${targetLabel} 版本`}>
+        <div className="device-toggle-group model-inline-model" role="group" aria-label={`${targetLabel} ${t("models:card.versionLabel")}`}>
           <button
             type="button"
             className={`device-toggle-btn ${selected ? "active" : ""}`}
@@ -95,8 +97,8 @@ export function ModelDownloadCard({
           <button
             className="file-list-icon-btn"
             type="button"
-            title="打开目录"
-            aria-label={`打开 ${targetLabel} 模型目录`}
+            title={t("models:card.openDir")}
+            aria-label={t("models:card.openDirAria", { target: targetLabel })}
             onClick={() => { void onOpenModelDir(target, modelName); }}
           >
             <FolderIcon />
@@ -104,8 +106,12 @@ export function ModelDownloadCard({
           <button
             className={`file-list-icon-btn model-download-state-btn ${ready ? "is-ready" : downloading ? "is-downloading" : "is-idle"}`}
             type="button"
-            title={downloading ? "取消下载" : ready ? "已就绪" : "下载模型"}
-            aria-label={downloading ? `取消 ${targetLabel} 下载` : ready ? `${targetLabel} 已就绪` : `下载 ${targetLabel} 模型`}
+            title={downloading ? t("models:card.cancelDownload") : ready ? t("models:card.ready") : t("models:card.download")}
+            aria-label={downloading
+              ? t("models:card.cancelDownloadAria", { target: targetLabel })
+              : ready
+                ? t("models:card.readyAria", { target: targetLabel })
+                : t("models:card.downloadAria", { target: targetLabel })}
             onClick={() => {
               if (downloading) {
                 void onCancelModelDownload(target, modelName);

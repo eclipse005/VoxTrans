@@ -30,7 +30,7 @@ pub fn start_model_download(
                 .as_deref()
                 .unwrap_or("unknown model")
                 .to_string();
-            return Err(format!("已有模型正在下载: {active_model}"));
+            return Err(format!("Model already downloading: {active_model}"));
         }
         guard.cancel_flag = Some(Arc::new(AtomicBool::new(false)));
         guard.active_model = Some(definition.model.clone());
@@ -39,7 +39,7 @@ pub fn start_model_download(
             downloaded_bytes,
             total_bytes,
             speed_bytes_per_sec: 0,
-            message: "开始下载模型".to_string(),
+            message: "starting_download".to_string(),
         };
     }
 
@@ -79,7 +79,7 @@ pub fn start_model_download(
                     0,
                     0,
                     0,
-                    &format!("下载任务异常: {}", err),
+                    &format!("Download task error: {}", err),
                     true,
                 );
             }
@@ -153,7 +153,7 @@ fn download_model_files(
         downloaded_bytes,
         total_bytes,
         speed_bytes_per_sec,
-        "模型下载中",
+        "downloading",
         false,
     )?;
 
@@ -224,7 +224,7 @@ fn download_model_files(
         .cloned()
         .collect::<Vec<_>>();
     if !missing_files.is_empty() {
-        return Err(format!("下载完成但缺少文件: {}", missing_files.join(", ")));
+        return Err(format!("Download finished but files missing: {}", missing_files.join(", ")));
     }
 
     set_model_download_snapshot(
@@ -236,7 +236,7 @@ fn download_model_files(
         downloaded_bytes,
         total_bytes.max(downloaded_bytes),
         0,
-        "模型下载完成",
+        "download_complete",
         true,
     )?;
     Ok(())
@@ -268,7 +268,7 @@ fn read_response_to_part_file(
                 *downloaded_bytes,
                 *total_bytes,
                 0,
-                "下载已取消",
+                "download_cancelled",
                 true,
             )?;
             return Ok(());
@@ -297,7 +297,7 @@ fn read_response_to_part_file(
                 *downloaded_bytes,
                 *total_bytes,
                 *speed_bytes_per_sec,
-                "模型下载中",
+                "downloading",
                 false,
             )?;
         }

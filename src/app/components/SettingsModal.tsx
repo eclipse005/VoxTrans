@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { SubtitleBurnMode } from "../../features/media/types";
 import { PROVIDER_OPTIONS } from "../../features/media/provider";
 import { listSystemFonts } from "../api/system";
@@ -10,16 +11,16 @@ import { useDialogA11y } from "./useDialogA11y";
 import { useSettingsFormContext } from "../contexts/SettingsFormContext";
 
 const SUBTITLE_LENGTH_PRESETS = [
-  { id: "short", label: "短" },
-  { id: "standard", label: "标准" },
-  { id: "loose", label: "宽松" },
+  { id: "short", labelKey: "settings:subtitle.lengthShort" },
+  { id: "standard", labelKey: "settings:subtitle.lengthStandard" },
+  { id: "loose", labelKey: "settings:subtitle.lengthLoose" },
 ] as const;
 
-const FLAT_SRT_OPTIONS: { item: SubtitleBurnMode; label: string }[] = [
-  { item: "source", label: "原文" },
-  { item: "target", label: "译文" },
-  { item: "bilingualSourceFirst", label: "双语（原文上）" },
-  { item: "bilingualTargetFirst", label: "双语（译文上）" },
+const FLAT_SRT_OPTIONS: { item: SubtitleBurnMode; labelKey: string }[] = [
+  { item: "source", labelKey: "settings:subtitle.flatSrtSource" },
+  { item: "target", labelKey: "settings:subtitle.flatSrtTarget" },
+  { item: "bilingualSourceFirst", labelKey: "settings:subtitle.flatSrtBilingualSourceFirst" },
+  { item: "bilingualTargetFirst", labelKey: "settings:subtitle.flatSrtBilingualTargetFirst" },
 ];
 
 type SettingsModalProps = {
@@ -29,6 +30,7 @@ type SettingsModalProps = {
 
 export default function SettingsModal({ visible, onClose }: SettingsModalProps) {
   const ctx = useSettingsFormContext();
+  const { t } = useTranslation(["settings", "common"]);
 
   const [activeTab, setActiveTab] = useState<"transcribe" | "translate" | "subtitle" | "models">("transcribe");
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
@@ -89,9 +91,9 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
         aria-labelledby="settings-modal-title"
         tabIndex={-1}
       >
-        <button className="modal-close" onClick={onClose} aria-label="关闭设置">×</button>
+        <button className="modal-close" onClick={onClose} aria-label={t("settings:modal.close")}>×</button>
         <div className="settings-header">
-          <h3 id="settings-modal-title" className="apple-heading-medium">设置</h3>
+          <h3 id="settings-modal-title" className="apple-heading-medium">{t("settings:modal.title")}</h3>
         </div>
         <div className="settings-tabs-nav" style={{ ["--tab-index" as string]: tabIndex, ["--tab-count" as string]: 4 }}>
           <div className="settings-tab-indicator" />
@@ -100,39 +102,39 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
             className={`settings-tab-btn ${activeTab === "transcribe" ? "active" : ""}`}
             onClick={() => setActiveTab("transcribe")}
           >
-            转录
+            {t("settings:tab.transcribe")}
           </button>
           <button
             type="button"
             className={`settings-tab-btn ${activeTab === "translate" ? "active" : ""}`}
             onClick={() => setActiveTab("translate")}
           >
-            翻译
+            {t("settings:tab.translate")}
           </button>
           <button
             type="button"
             className={`settings-tab-btn ${activeTab === "subtitle" ? "active" : ""}`}
             onClick={() => setActiveTab("subtitle")}
           >
-            字幕
+            {t("settings:tab.subtitle")}
           </button>
           <button
             type="button"
             className={`settings-tab-btn ${activeTab === "models" ? "active" : ""}`}
             onClick={() => setActiveTab("models")}
           >
-            模型
+            {t("settings:tab.models")}
           </button>
         </div>
         <div className="settings-body">
           <div className="settings-tab-content" hidden={activeTab !== "transcribe"}>
               <div className="settings-section">
-                <h3 className="apple-heading-small">转录参数</h3>
+                <h3 className="apple-heading-small">{t("settings:transcribe.params")}</h3>
                 <div className="api-config-form">
                   <div className="form-row">
                     <div className="form-group">
-                      <label>执行设备</label>
-                      <div className="device-toggle-group" role="group" aria-label="执行设备">
+                      <label>{t("settings:transcribe.device")}</label>
+                      <div className="device-toggle-group" role="group" aria-label={t("settings:transcribe.device")}>
                         {PROVIDER_OPTIONS.map((option) => (
                           <button
                             key={option.id}
@@ -149,7 +151,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       </div>
                     </div>
                     <div className="form-group">
-                      <label>分段时长（秒）</label>
+                      <label>{t("settings:transcribe.chunkDuration")}</label>
                       <div className="bounded-number-field">
                         <input
                           className="apple-input"
@@ -173,8 +175,8 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableVocalSeparation: e.target.checked }))}
                     />
                     <div className="toggle-label">
-                      <span className="toggle-title">人声分离</span>
-                      <span className="toggle-desc">背景吵杂时请使用，提高转录准确率</span>
+                      <span className="toggle-title">{t("settings:transcribe.vocalSeparation")}</span>
+                      <span className="toggle-desc">{t("settings:transcribe.vocalSeparationDesc")}</span>
                     </div>
                     <span className="toggle-switch" />
                   </label>
@@ -186,8 +188,8 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableClickSound: e.target.checked }))}
                     />
                     <div className="toggle-label">
-                      <span className="toggle-title">点击音效</span>
-                      <span className="toggle-desc">点击按钮和开关时播放轻提示音</span>
+                      <span className="toggle-title">{t("settings:transcribe.clickSound")}</span>
+                      <span className="toggle-desc">{t("settings:transcribe.clickSoundDesc")}</span>
                     </div>
                     <span className="toggle-switch" />
                   </label>
@@ -199,14 +201,14 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       onChange={(e) => ctx.setForm((prev) => ({ ...prev, flatSrtOutput: e.target.checked }))}
                     />
                     <div className="toggle-label">
-                      <span className="toggle-title">字幕平铺输出</span>
-                      <span className="toggle-desc">额外将字幕直接输出到 output 目录，方便批量查找</span>
+                      <span className="toggle-title">{t("settings:transcribe.flatSrtOutput")}</span>
+                      <span className="toggle-desc">{t("settings:transcribe.flatSrtOutputDesc")}</span>
                     </div>
                     <span className="toggle-switch" />
                   </label>
                   {ctx.form.flatSrtOutput ? (
                     <div className="flat-srt-items-group">
-                      <label className="flat-srt-items-label">输出字幕类型</label>
+                      <label className="flat-srt-items-label">{t("settings:transcribe.flatSrtItemsLabel")}</label>
                       <div className="flat-srt-items-options">
                         {FLAT_SRT_OPTIONS.map((option) => (
                           <label key={option.item} className="flat-srt-item-checkbox">
@@ -223,7 +225,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                                 }));
                               }}
                             />
-                            <span>{option.label}</span>
+                            <span>{t(option.labelKey)}</span>
                           </label>
                         ))}
                       </div>
@@ -237,7 +239,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                 <div className="api-config-form">
                   <div className="form-row">
                     <div className="form-group">
-                      <label>接口密钥</label>
+                      <label>{t("settings:translate.apiKey")}</label>
                       <input
                         className="apple-input"
                         type="password"
@@ -247,7 +249,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>接口地址</label>
+                      <label>{t("settings:translate.baseUrl")}</label>
                       <input
                         className="apple-input"
                         value={ctx.form.translateBaseUrl}
@@ -256,7 +258,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group llm-model-field">
-                      <label>模型名称</label>
+                      <label>{t("settings:translate.modelName")}</label>
                       <div className="llm-model-test-row">
                         <input
                           className="apple-input llm-model-input"
@@ -269,12 +271,12 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                           className="nav-button llm-test-btn"
                           onClick={() => { void ctx.testTranslateConnection(); }}
                         >
-                          测试
+                          {t("settings:translate.test")}
                         </button>
                       </div>
                     </div>
                     <div className="form-group">
-                      <label>并发数</label>
+                      <label>{t("settings:translate.concurrency")}</label>
                       <input
                         className="apple-input"
                         inputMode="numeric"
@@ -293,8 +295,8 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                         onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableVisionAssist: e.target.checked }))}
                       />
                       <div className="toggle-label">
-                        <span className="toggle-title">图片辅助翻译</span>
-                        <span className="toggle-desc">需模型支持图片输入</span>
+                        <span className="toggle-title">{t("settings:translate.visionAssist")}</span>
+                        <span className="toggle-desc">{t("settings:translate.visionAssistDesc")}</span>
                       </div>
                       <span className="toggle-switch" />
                     </label>
@@ -308,11 +310,11 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                   <div className="form-row">
                     <div className="form-group subtitle-length-group">
                       <div className="subtitle-length-card">
-                        <span className="toggle-title">字幕长度</span>
+                        <span className="toggle-title">{t("settings:subtitle.length")}</span>
                         <div
                           className="subtitle-length-slider"
                           role="radiogroup"
-                          aria-label="字幕长度"
+                          aria-label={t("settings:subtitle.length")}
                           style={{ ["--subtitle-length-index" as string]: subtitleLengthPresetIndex }}
                         >
                           <span className="subtitle-length-slider-thumb" aria-hidden="true" />
@@ -325,7 +327,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                               role="radio"
                               aria-checked={ctx.form.subtitleLengthPreset === preset.id}
                             >
-                              {preset.label}
+                              {t(preset.labelKey)}
                             </button>
                           ))}
                         </div>
@@ -341,8 +343,8 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                         onChange={(e) => ctx.setForm((prev) => ({ ...prev, autoBurnHardSubtitle: e.target.checked }))}
                       />
                       <div className="toggle-label">
-                        <span className="toggle-title">自动压制</span>
-                        <span className="toggle-desc">仅视频任务生效</span>
+                        <span className="toggle-title">{t("settings:subtitle.autoBurn")}</span>
+                        <span className="toggle-desc">{t("settings:subtitle.autoBurnDesc")}</span>
                       </div>
                       <span className="toggle-switch" />
                     </label>
@@ -354,28 +356,28 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                         onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableSubtitleBeautify: e.target.checked }))}
                       />
                       <div className="toggle-label">
-                        <span className="toggle-title">美化字幕</span>
-                        <span className="toggle-desc">去首尾标点与观感优化</span>
+                        <span className="toggle-title">{t("settings:subtitle.beautify")}</span>
+                        <span className="toggle-desc">{t("settings:subtitle.beautifyDesc")}</span>
                       </div>
                       <span className="toggle-switch" />
                     </label>
                   </div>
                   <div className="form-row">
                     <div className="form-group">
-                      <label>字幕类型</label>
+                      <label>{t("settings:subtitle.burnMode")}</label>
                       <select
                         className="apple-input"
                         value={ctx.form.subtitleBurnMode}
                         onChange={(e) => ctx.setForm((prev) => ({ ...prev, subtitleBurnMode: e.target.value as SubtitleBurnMode }))}
                       >
-                        <option value="source">原文</option>
-                        <option value="target">译文</option>
-                        <option value="bilingualSourceFirst">双语（原文上译文下）</option>
-                        <option value="bilingualTargetFirst">双语（译文上原文下）</option>
+                        <option value="source">{t("settings:subtitle.burnModeSource")}</option>
+                        <option value="target">{t("settings:subtitle.burnModeTarget")}</option>
+                        <option value="bilingualSourceFirst">{t("settings:subtitle.burnModeBilingualSourceFirst")}</option>
+                        <option value="bilingualTargetFirst">{t("settings:subtitle.burnModeBilingualTargetFirst")}</option>
                       </select>
                     </div>
                     <div className="form-group">
-                      <label>字幕样式</label>
+                      <label>{t("settings:subtitle.stylePreset")}</label>
                       <select
                         className="apple-input"
                         value=""
@@ -389,9 +391,9 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                           }
                         }}
                       >
-                        <option value="" disabled>选择预设…</option>
+                        <option value="" disabled>{t("settings:subtitle.stylePresetPlaceholder")}</option>
                         {SUBTITLE_STYLE_PRESETS.map((preset) => (
-                          <option key={preset.id} value={preset.id}>{preset.label}</option>
+                          <option key={preset.id} value={preset.id}>{t(preset.labelKey)}</option>
                         ))}
                       </select>
                     </div>
@@ -399,11 +401,11 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                 </div>
               </div>
               <div className="settings-section">
-                <h3 className="apple-heading-small">字幕样式</h3>
+                <h3 className="apple-heading-small">{t("settings:subtitle.style")}</h3>
                 <div className="api-config-form">
                   <div className="form-row subtitle-style-grid">
                     <div className="form-group">
-                      <label>原文字体</label>
+                      <label>{t("settings:subtitle.source.fontFamily")}</label>
                       <select
                         className="apple-input"
                         value={ctx.form.subtitleRenderStyle.source.fontFamily}
@@ -426,7 +428,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       </select>
                     </div>
                     <div className="form-group">
-                      <label>原文字号</label>
+                      <label>{t("settings:subtitle.source.fontSize")}</label>
                       <input
                         className="apple-input"
                         type="number"
@@ -443,7 +445,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>原文颜色</label>
+                      <label>{t("settings:subtitle.source.primaryColor")}</label>
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
@@ -458,7 +460,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>原文阴影强度</label>
+                      <label>{t("settings:subtitle.source.shadow")}</label>
                       <input
                         className="apple-input"
                         type="number"
@@ -476,7 +478,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>原文阴影色</label>
+                      <label>{t("settings:subtitle.source.shadowColor")}</label>
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
@@ -491,7 +493,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>原文边框样式</label>
+                      <label>{t("settings:subtitle.source.borderStyle")}</label>
                       <select
                         className="apple-input"
                         value={ctx.form.subtitleRenderStyle.source.borderStyle}
@@ -503,12 +505,12 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                           },
                         }))}
                       >
-                        <option value="outline">描边</option>
-                        <option value="box">方框</option>
+                        <option value="outline">{t("settings:subtitle.borderStyleOutline")}</option>
+                        <option value="box">{t("settings:subtitle.borderStyleBox")}</option>
                       </select>
                     </div>
                     <div className="form-group">
-                      <label>原文描边粗细</label>
+                      <label>{t("settings:subtitle.source.outline")}</label>
                       <input
                         className="apple-input"
                         type="number"
@@ -526,7 +528,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>原文边框色</label>
+                      <label>{t("settings:subtitle.source.outlineColor")}</label>
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
@@ -541,7 +543,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>原文边框透明度</label>
+                      <label>{t("settings:subtitle.source.borderOpacity")}</label>
                       <input
                         className="apple-input"
                         type="number"
@@ -560,7 +562,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                     <div className="subtitle-style-divider" aria-hidden="true" />
                     <div className="subtitle-style-grid-break" aria-hidden="true" />
                     <div className="form-group">
-                      <label>译文字体</label>
+                      <label>{t("settings:subtitle.target.fontFamily")}</label>
                       <select
                         className="apple-input"
                         value={ctx.form.subtitleRenderStyle.target.fontFamily}
@@ -583,7 +585,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       </select>
                     </div>
                     <div className="form-group">
-                      <label>译文字号</label>
+                      <label>{t("settings:subtitle.target.fontSize")}</label>
                       <input
                         className="apple-input"
                         type="number"
@@ -600,7 +602,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>译文颜色</label>
+                      <label>{t("settings:subtitle.target.primaryColor")}</label>
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
@@ -615,7 +617,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>译文阴影强度</label>
+                      <label>{t("settings:subtitle.target.shadow")}</label>
                       <input
                         className="apple-input"
                         type="number"
@@ -633,7 +635,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>译文阴影色</label>
+                      <label>{t("settings:subtitle.target.shadowColor")}</label>
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
@@ -648,7 +650,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>译文边框样式</label>
+                      <label>{t("settings:subtitle.target.borderStyle")}</label>
                       <select
                         className="apple-input"
                         value={ctx.form.subtitleRenderStyle.target.borderStyle}
@@ -660,12 +662,12 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                           },
                         }))}
                       >
-                        <option value="outline">描边</option>
-                        <option value="box">方框</option>
+                        <option value="outline">{t("settings:subtitle.borderStyleOutline")}</option>
+                        <option value="box">{t("settings:subtitle.borderStyleBox")}</option>
                       </select>
                     </div>
                     <div className="form-group">
-                      <label>译文描边粗细</label>
+                      <label>{t("settings:subtitle.target.outline")}</label>
                       <input
                         className="apple-input"
                         type="number"
@@ -683,7 +685,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>译文边框色</label>
+                      <label>{t("settings:subtitle.target.outlineColor")}</label>
                       <input
                         className="apple-input subtitle-color-input"
                         type="color"
@@ -698,7 +700,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>译文边框透明度</label>
+                      <label>{t("settings:subtitle.target.borderOpacity")}</label>
                       <input
                         className="apple-input"
                         type="number"
@@ -716,7 +718,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                     </div>
                     <div className="subtitle-style-grid-break" aria-hidden="true" />
                     <div className="form-group">
-                      <label>底部边距</label>
+                      <label>{t("settings:subtitle.layout.marginV")}</label>
                       <input
                         className="apple-input"
                         type="number"
@@ -733,7 +735,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>双语行距</label>
+                      <label>{t("settings:subtitle.layout.bilingualLineGap")}</label>
                       <input
                         className="apple-input"
                         type="number"
@@ -753,7 +755,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                     <div className="form-group">
-                      <label>对齐</label>
+                      <label>{t("settings:subtitle.layout.alignment")}</label>
                       <select
                         className="apple-input"
                         value={ctx.form.subtitleRenderStyle.layout.alignment}
@@ -765,9 +767,9 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                           },
                         }))}
                       >
-                        <option value={1}>底部左对齐</option>
-                        <option value={2}>底部居中</option>
-                        <option value={3}>底部右对齐</option>
+                        <option value={1}>{t("settings:subtitle.alignmentLeft")}</option>
+                        <option value={2}>{t("settings:subtitle.alignmentCenter")}</option>
+                        <option value={3}>{t("settings:subtitle.alignmentRight")}</option>
                       </select>
                     </div>
                   </div>
@@ -778,8 +780,8 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
           <div className="settings-tab-content model-center-content" hidden={activeTab !== "models"}>
               <ModelDownloadCard
                 target="asr"
-                title="ASR 模型"
-                description="Qwen3-ASR-0.6B 负责从音频生成纯文本，时间戳由独立对齐模型处理。"
+                title={t("settings:models.asrTitle")}
+                description={t("settings:models.asr06bDesc")}
                 modelName="Qwen3-ASR-0.6B"
                 selected={ctx.form.asrModel === "Qwen3-ASR-0.6B"}
                 status={ctx.asrStatusByModel["Qwen3-ASR-0.6B"] ?? (ctx.form.asrModel === "Qwen3-ASR-0.6B" ? ctx.asrStatus : null)}
@@ -791,8 +793,8 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
 
               <ModelDownloadCard
                 target="asr"
-                title="ASR 模型"
-                description="Qwen3-ASR-1.7B 负责从音频生成纯文本，时间戳由独立对齐模型处理。"
+                title={t("settings:models.asrTitle")}
+                description={t("settings:models.asr17bDesc")}
                 modelName="Qwen3-ASR-1.7B"
                 selected={ctx.form.asrModel === "Qwen3-ASR-1.7B"}
                 status={ctx.asrStatusByModel["Qwen3-ASR-1.7B"] ?? (ctx.form.asrModel === "Qwen3-ASR-1.7B" ? ctx.asrStatus : null)}
@@ -804,8 +806,8 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
 
               <ModelDownloadCard
                 target="asr"
-                title="ASR 模型"
-                description="Cohere Transcribe 开源 2B 参数语音识别模型，支持 14 种语言，负责从音频生成纯文本，时间戳同样由独立对齐模型处理。"
+                title={t("settings:models.asrTitle")}
+                description={t("settings:models.asrCohereDesc")}
                 modelName="cohere-transcribe-03-2026"
                 selected={ctx.form.asrModel === "cohere-transcribe-03-2026"}
                 status={ctx.asrStatusByModel["cohere-transcribe-03-2026"] ?? (ctx.form.asrModel === "cohere-transcribe-03-2026" ? ctx.asrStatus : null)}
@@ -817,8 +819,8 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
 
               <ModelDownloadCard
                 target="align"
-                title="对齐模型"
-                description="Qwen3 Forced Aligner 负责把转录文本对齐回音频，生成词级时间戳。"
+                title={t("settings:models.alignTitle")}
+                description={t("settings:models.alignDesc")}
                 modelName="Qwen3-ForcedAligner-0.6B"
                 selected={ctx.form.alignModel === "Qwen3-ForcedAligner-0.6B"}
                 status={ctx.alignStatus}
@@ -830,8 +832,8 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
 
               <ModelDownloadCard
                 target="demucs"
-                title="人声分离模型"
-                description="htdemucs_ft 是高保真人声分离模型，能更稳定地提取清晰 vocals、减少伴奏残留。"
+                title={t("settings:models.demucsTitle")}
+                description={t("settings:models.demucsDesc")}
                 modelName="htdemucs_ft"
                 selected={ctx.form.demucsModel === "htdemucs_ft"}
                 status={ctx.demucsStatus}
@@ -843,9 +845,9 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
             </div>
         </div>
         <div className="settings-footer">
-          <button className="nav-button" onClick={ctx.saveSettings} title="保存设置" aria-label="保存设置">
+          <button className="nav-button" onClick={ctx.saveSettings} title={t("settings:modal.save")} aria-label={t("settings:modal.save")}>
             <CheckIcon />
-            <span>保存</span>
+            <span>{t("common:button.save")}</span>
           </button>
         </div>
       </div>

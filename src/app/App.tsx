@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useReducer, useState } from "react";
 import type { Dispatch } from "react";
+import { useTranslation } from "react-i18next";
 import type { ExportSrtItem } from "./api/transcribe";
 import { ModalLayer } from "./components/ModalLayer";
 import Navbar from "./components/Navbar";
@@ -15,6 +16,8 @@ import { useSubtitleWorkflow } from "./hooks/useSubtitleWorkflow";
 import { useTaskLogs } from "./hooks/useTaskLogs";
 import { useToast } from "./hooks/useToast";
 import { useWorkspacePersistence } from "./hooks/useWorkspacePersistence";
+import { changeAppLanguage, type AppLocale } from "../i18n";
+import { saveAppSettings } from "./api/settings";
 import { type AppAction, appReducer, initialAppState, type AppState } from "./state/appReducer";
 import { SettingsFormContext } from "./contexts/SettingsFormContext";
 import type { SavedSettings } from "../features/media/types";
@@ -59,9 +62,10 @@ function App() {
 }
 
 function LoadingScreen() {
+  const { t } = useTranslation(["common"]);
   return (
     <div className="apple-style app-root" style={{ justifyContent: "center", alignItems: "center" }}>
-      <div className="app-loading">加载中…</div>
+      <div className="app-loading">{t("common:loading")}</div>
     </div>
   );
 }
@@ -73,6 +77,7 @@ type AppContentProps = {
 };
 
 function AppContent({ settings, state, dispatch }: AppContentProps) {
+  const { t } = useTranslation(["tasks", "common", "toasts"]);
   const [showTerminologyModal, setShowTerminologyModal] = useState(false);
   const [showSubtitleExportModal, setShowSubtitleExportModal] = useState(false);
   const [savedExportItems, setSavedExportItems] = useState<ExportSrtItem[]>(() => loadSavedExportItems());
@@ -248,7 +253,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
         mediaPath: subtitleMediaPath,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "打开字幕目录失败";
+      const message = error instanceof Error ? error.message : t("tasks:workspace.openSubtitleDirFailed");
       pushToast(message, "error");
     }
   }, [subtitleTaskId, subtitleMediaPath, pushToast]);
@@ -257,6 +262,17 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     prepareTerminologyForm();
     setShowTerminologyModal(true);
   }, [prepareTerminologyForm]);
+
+  const handleToggleLocale = useCallback(() => {
+    const nextLocale: AppLocale = settings.locale === "zh-CN" ? "en" : "zh-CN";
+    const nextSettings: SavedSettings = { ...settings, locale: nextLocale };
+    dispatch({ type: "set_settings", settings: nextSettings });
+    setForm((prev) => ({ ...prev, locale: nextLocale }));
+    void changeAppLanguage(nextLocale);
+    void saveAppSettings(nextSettings).catch(() => {
+      pushToast(t("toasts.settings.saveFailed"), "error");
+    });
+  }, [settings, dispatch, setForm, pushToast, t]);
 
   const canExportTranslated = useMemo(
     () => subtitleCues.some((cue) => cue.translatedText.trim().length > 0),
@@ -270,6 +286,8 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
         onOpenTerminology={handleOpenTerminology}
         hasAvailableUpdate={hasAvailableUpdate}
         onOpenUpdateDialog={openUpdateDialog}
+        currentLocale={settings.locale}
+        onToggleLocale={handleToggleLocale}
       />
 
       <WorkspaceScreen

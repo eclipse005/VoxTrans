@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { DownloadIcon, LogsIcon } from "../Icons";
 
 type SubtitleEditorHeaderProps = {
@@ -19,16 +20,17 @@ export default function SubtitleEditorHeader({
   onExportSrt,
   onOpenLogs,
 }: SubtitleEditorHeaderProps) {
+  const { t } = useTranslation(["subtitles", "common"]);
   return (
     <div className="subtitle-editor-header">
       <div className="subtitle-header-main">
         <div className="subtitle-title-row">
-          <h3 className="apple-heading-small">字幕编辑器</h3>
-          <span className="subtitle-count-badge">{cueCount} 条</span>
+          <h3 className="apple-heading-small">{t("subtitles:header.title")}</h3>
+          <span className="subtitle-count-badge">{t("subtitles:header.cueCount", { count: cueCount })}</span>
         </div>
         <div className="apple-body-small subtitle-editor-meta">
           <div className="subtitle-meta-row">
-            <span className="subtitle-meta-label">任务:</span>
+            <span className="subtitle-meta-label">{t("subtitles:header.taskLabel")}</span>
             <button
               type="button"
               className="subtitle-task-link"
@@ -36,15 +38,15 @@ export default function SubtitleEditorHeader({
                 e.stopPropagation();
                 void onOpenSrtDir();
               }}
-              aria-label="打开任务目录"
-              title="打开任务目录"
+              aria-label={t("subtitles:header.openTaskDir")}
+              title={t("subtitles:header.openTaskDir")}
             >
               <span title={taskName || "--"}>{taskName || "--"}</span>
             </button>
           </div>
           {!canEdit && readOnlyReason ? (
             <div className="subtitle-meta-row">
-              <span className="subtitle-meta-label">状态:</span>
+              <span className="subtitle-meta-label">{t("subtitles:header.statusLabel")}</span>
               <span>{readOnlyReason}</span>
             </div>
           ) : null}
@@ -58,11 +60,11 @@ export default function SubtitleEditorHeader({
             e.stopPropagation();
             void onExportSrt();
           }}
-          aria-label="导出 SRT"
-          title="导出"
+          aria-label={t("subtitles:header.exportSrt")}
+          title={t("subtitles:header.export")}
         >
           <DownloadIcon />
-          <span>导出</span>
+          <span>{t("subtitles:header.export")}</span>
         </button>
         <button
           type="button"
@@ -71,11 +73,11 @@ export default function SubtitleEditorHeader({
             e.stopPropagation();
             void onOpenLogs();
           }}
-          aria-label="打开任务日志"
-          title="日志"
+          aria-label={t("subtitles:header.openLogs")}
+          title={t("subtitles:header.logs")}
         >
           <LogsIcon />
-          <span>日志</span>
+          <span>{t("subtitles:header.logs")}</span>
         </button>
       </div>
     </div>

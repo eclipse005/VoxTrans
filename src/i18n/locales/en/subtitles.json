@@ -1,0 +1,81 @@
+{
+  "toolbar": {
+    "findPlaceholder": "Find text",
+    "replacePlaceholder": "Replace with",
+    "findNavAriaLabel": "Find match navigation",
+    "prevMatch": "Previous match",
+    "nextMatch": "Next match",
+    "replaceAndAdvance": "Replace current match and advance",
+    "replace": "Replace",
+    "openReplaceMenu": "Open replace menu",
+    "replaceMenuAriaLabel": "Replace menu",
+    "replaceAll": "Replace all",
+    "addCue": "Add subtitle segment",
+    "mergeActive": "Merge {{count}} segments",
+    "mergeDisabled": "Select at least two subtitles to merge",
+    "mergeCount": "Merge ({{count}})",
+    "merge": "Merge",
+    "splitActive": "Split {{count}} segments",
+    "splitDisabled": "Select a subtitle to split",
+    "splitCount": "Split ({{count}})",
+    "split": "Split"
+  },
+  "header": {
+    "title": "Subtitle Editor",
+    "cueCount": "{{count}} segments",
+    "taskLabel": "Task:",
+    "openTaskDir": "Open task directory",
+    "statusLabel": "Status:",
+    "exportSrt": "Export SRT",
+    "export": "Export",
+    "openLogs": "Open task logs",
+    "logs": "Logs"
+  },
+  "cue": {
+    "warningCount": "This subtitle has {{count}} formatting issue(s)",
+    "collapseEdit": "Collapse editing",
+    "edit": "Edit subtitle",
+    "delete": "Delete subtitle segment",
+    "emptyText": "(empty text)",
+    "noTranslation": "(no translation yet)",
+    "startTime": "Start",
+    "endTime": "End",
+    "textPlaceholder": "Enter the text for this subtitle segment",
+    "translationPlaceholder": "Enter the translation for this subtitle segment (optional)"
+  },
+  "editor": {
+    "emptyEditable": "No subtitle segments yet. Click \"Add subtitle segment\" above to start editing.",
+    "emptyReadOnly": "Subtitles can only be edited after the task is complete.",
+    "regionLabel": "Subtitle Editor"
+  },
+  "export": {
+    "sourceMono": "Source language only",
+    "targetMono": "Target language only",
+    "bilingualSourceFirst": "Bilingual (source on top)",
+    "bilingualTargetFirst": "Bilingual (target on top)",
+    "title": "Export Subtitles",
+    "description": "Choose the subtitle types to export. File names are fixed as src.srt / trans.srt / src_trans.srt / trans_src.srt.",
+    "noTranslationTip": "This task has no translation yet; translation-related options are disabled.",
+    "button": "Export",
+    "itemCount": "{{count}} item(s)",
+    "dirPickerTitle": "Select export directory"
+  },
+  "findReplace": {
+    "noMatch": "No match",
+    "enterFindText": "Enter text to find",
+    "noMatchForReplace": "No match found to replace",
+    "nothingReplaced": "Nothing replaced",
+    "replacedOne": "Replaced 1 place",
+    "replacedCount": "Replaced {{count}} places"
+  },
+  "timeValidation": {
+    "startInvalid": "Invalid start time format, use HH:MM:SS,mmm",
+    "endInvalid": "Invalid end time format, use HH:MM:SS,mmm"
+  },
+  "warnings": {
+    "emptyText": "Empty text",
+    "endBeforeStart": "End time precedes start time",
+    "tooLong": "Longer than 60 seconds",
+    "overlap": "Overlaps with cue {{n}}"
+  }
+}

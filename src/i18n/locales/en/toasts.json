@@ -1,0 +1,68 @@
+{
+  "sourceLanguage": {
+    "loadFailed": "Failed to load source language list, using the default list",
+    "unsupported": "The current source language is no longer supported by the new model combination, switched to {{label}}"
+  },
+  "settings": {
+    "chunkMustBeNumber": "Chunk duration must be a number",
+    "concurrencyMustBeNumber": "Concurrency must be a number",
+    "saved": "Settings saved (takes effect on next task)",
+    "saveFailed": "Failed to save settings",
+    "terminologySaved": "Glossary saved",
+    "terminologySaveFailed": "Failed to save glossary",
+    "apiKeyRequiredFirst": "Please fill in the API key first",
+    "testingLlm": "Testing LLM connectivity...",
+    "testSuccess": "Test succeeded: model {{model}} is available",
+    "testFailed": "Test failed: {{message}}",
+    "testConnectFailed": "Connectivity test failed"
+  },
+  "updater": {
+    "downloadFailed": "Update download failed: {{message}}"
+  },
+  "workflow": {
+    "saveFailed": "Failed to save subtitles",
+    "loadInvalid": "Subtitle format is invalid; cannot load the editor",
+    "noExportTask": "No task available to export",
+    "selectAtLeastOne": "Select at least one item to export",
+    "exportedOne": "Exported: {{path}}",
+    "exportedMany": "Exported {{count}} files",
+    "exportFailed": "Failed to export subtitles"
+  },
+  "queue": {
+    "enqueueFailed": "Failed to enqueue task",
+    "enqueueFailure": "Failed: {{name}}, {{error}}",
+    "batchExecuteFailed": "Batch execution failed, please retry",
+    "nothingPending": "No files to process",
+    "enqueueAllFailed": "No processable files, all enqueue attempts failed",
+    "batchStarted": "Started batch {{mode}}, {{count}} file(s)",
+    "addedToQueue": "Queued: {{name}}",
+    "started": "Started: {{name}}",
+    "clearWhileBusy": "Cannot clear queue while processing",
+    "cleared": "Queue cleared",
+    "clearFailed": "Failed to clear queue",
+    "deleteWhileBusy": "Task is being processed or queued, cannot delete",
+    "deleteFailed": "Failed to delete task",
+    "addedCount": "{{count}} file(s) added to queue",
+    "addFailedCount": "{{count}} file(s) failed to enqueue, please retry",
+    "pickFilesFailed": "Failed to open file picker",
+    "languageBusyError": "Task is being processed or queued, cannot change language",
+    "languageSaveFailed": "Failed to save language settings",
+    "languageSaveFailedCount": "{{count}} task(s) failed to save language, please retry",
+    "terminologyBusyError": "Task is being processed or queued, cannot change glossary",
+    "terminologySaveFailed": "Failed to save glossary",
+    "noEditableLanguageTasks": "No tasks available to change language"
+  },
+  "youtube": {
+    "downloadComplete": "YouTube download complete, added to task list",
+    "commitFailed": "YouTube download finished, but saving the task failed, please retry",
+    "cancelCleanupFailed": "YouTube download cancelled, but task cleanup failed, please refresh the task list",
+    "downloadFailed": "YouTube download failed",
+    "emptyUrl": "Please enter a YouTube link first",
+    "addedToQueue": "Added to the YouTube download queue",
+    "missingUrl": "Missing download link, cannot retry. Please remove and add it again.",
+    "alreadyDownloading": "This task is currently downloading",
+    "alreadyInQueue": "This task is already in the download queue",
+    "retryQueued": "Added to the download retry queue",
+    "deleteFailed": "Failed to delete task"
+  }
+}

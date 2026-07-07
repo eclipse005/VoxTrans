@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { loadUserPreferences } from "../api/preferences";
 import { getDefaultSettings } from "../api/settings";
 import { normalizeSettings } from "../utils/normalizeSettings";
+import { changeAppLanguage } from "../../i18n";
 import type { SavedSettings } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 
@@ -28,7 +29,7 @@ const LAST_RESORT_DEFAULTS: SavedSettings = {
   translateBaseUrl: "https://api.deepseek.com/v1",
   translateModel: "deepseek-chat",
   llmConcurrency: 4,
-  terminologyGroups: [{ id: "group-default", name: "默认", terms: [] }],
+  terminologyGroups: [{ id: "group-default", name: "Default", terms: [] }],
   activeTerminologyGroupId: "",
   enableSubtitleBeautify: true,
   enableClickSound: true,
@@ -62,6 +63,7 @@ const LAST_RESORT_DEFAULTS: SavedSettings = {
   flatSrtOutput: false,
   flatSrtItems: ["source", "target"],
   enableVisionAssist: false,
+  locale: "zh-CN",
 };
 
 export function useAppPersistence(dispatch: DispatchState) {
@@ -83,11 +85,13 @@ export function useAppPersistence(dispatch: DispatchState) {
         if (cancelled) return;
         const settings = normalizeSettings(prefs.settings, defaults);
         dispatch({ type: "set_settings", settings });
+        void changeAppLanguage(settings.locale);
       } catch {
         if (cancelled) return;
         // DB read failed: fall back to authoritative defaults so the UI does
         // not stay on the loading screen forever.
         dispatch({ type: "set_settings", settings: defaults });
+        void changeAppLanguage(defaults.locale);
       }
     })();
 

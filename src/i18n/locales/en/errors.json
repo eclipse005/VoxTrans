@@ -1,0 +1,33 @@
+{
+  "fallback": "Operation failed, please try again later",
+  "cancelled": "Operation cancelled",
+  "code": {
+    "taskNotFound": "Task not found, please refresh the task list",
+    "taskBusy": "Task is being processed, please try again later",
+    "lockPoisoned": "Internal state error, please restart the app",
+    "invalidRequest": "Invalid request parameters",
+    "taskFailed": "Task failed, please check the logs",
+    "ioError": "File read/write failed, please check disk space",
+    "serializationError": "Data parsing failed"
+  },
+  "config": {
+    "httpClient": "Network configuration error, please check API settings",
+    "llmFailed": "AI call failed, please check your network connection and API configuration",
+    "timeout": "Request timed out, please check your network connection",
+    "apiKeyRequired": "Translation API Key is not set, please configure it in Settings",
+    "baseUrlRequired": "Translation API URL is not set, please configure it in Settings",
+    "modelRequired": "Translation model is not set, please configure it in Settings"
+  },
+  "stage": {
+    "downloading": "Downloading",
+    "preparing": "Preparing",
+    "separating": "Separating vocals",
+    "recognizing": "Recognizing speech",
+    "aligning": "Forcing alignment",
+    "segmenting": "Segmenting",
+    "summarizing": "Summarizing",
+    "terminology": "Extracting terminology",
+    "translating": "Translating",
+    "finalCheck": "Final local check"
+  }
+}

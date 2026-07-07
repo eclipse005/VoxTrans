@@ -302,7 +302,7 @@ fn map_transcribe_error(raw: &str, provider: &str, chunk_target_seconds: u32) ->
 
     if gpu_oom {
         return format!(
-            "转录失败：显存/图形资源不足（{}）。请在设置中将“分段时长”调小后重试（当前 {} 秒，建议 30-60 秒）。",
+            "Transcription failed: insufficient GPU/video memory ({}). Please reduce 'segment duration' in settings and retry (current {} seconds, recommended 30-60).",
             if provider.eq_ignore_ascii_case("cuda") {
                 "GPU"
             } else {

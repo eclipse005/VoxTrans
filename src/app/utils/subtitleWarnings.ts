@@ -1,14 +1,15 @@
+import i18n from "../../i18n";
 import type { SubtitleCue } from "../../features/media/types";
 
 const CUE_NUMBER_RE = /\bcue\s+(\d+)\b/i;
 
-function warningTextToZh(raw: string): string {
+function warningText(raw: string): string {
   const text = raw.trim();
-  if (/has empty text/i.test(text)) return "文本为空";
-  if (/has end before start/i.test(text)) return "结束时间早于开始时间";
-  if (/is longer than 60 seconds/i.test(text)) return "时长超过 60 秒";
+  if (/has empty text/i.test(text)) return i18n.t("subtitles:warnings.emptyText");
+  if (/has end before start/i.test(text)) return i18n.t("subtitles:warnings.endBeforeStart");
+  if (/is longer than 60 seconds/i.test(text)) return i18n.t("subtitles:warnings.tooLong");
   const overlap = /overlaps with cue\s+(\d+)/i.exec(text);
-  if (overlap) return `与第 ${overlap[1]} 条时间重叠`;
+  if (overlap) return i18n.t("subtitles:warnings.overlap", { n: overlap[1] });
   return text;
 }
 
@@ -27,7 +28,7 @@ export function buildCueWarningsById(cues: SubtitleCue[], warnings: string[]): R
     if (!Number.isFinite(cueNo) || cueNo <= 0) continue;
     const cue = ordered[cueNo - 1];
     if (!cue) continue;
-    pushWarning(cue.id, warningTextToZh(rawWarning));
+    pushWarning(cue.id, warningText(rawWarning));
   }
   return warningsById;
 }

@@ -35,12 +35,12 @@ pub fn burn_hard_subtitle(
 ) -> Result<BurnHardSubtitleResponse, String> {
     let media_path = Path::new(request.media_path.as_str());
     if request.subtitle_segments.is_empty() {
-        return Err("当前任务没有可压制的字幕".to_string());
+        return Err("Current task has no burnable subtitles".to_string());
     }
 
     let lines = build_ass_dialogue_lines(&request.subtitle_segments, request.burn_mode, &request.style);
     if lines.is_empty() {
-        return Err("所选字幕类型为空，无法压制硬字幕".to_string());
+        return Err("Selected subtitle type is empty, cannot burn hard subtitle".to_string());
     }
     let ass_text = build_ass_text(&request.style, &lines);
 
@@ -239,7 +239,7 @@ fn run_ffmpeg_burn(media_path: &Path, ass_path: &Path, output_path: &Path) -> Re
     let ass_name = ass_path
         .file_name()
         .and_then(|v| v.to_str())
-        .ok_or_else(|| "ASS 临时文件名无效".to_string())?;
+        .ok_or_else(|| "Invalid ASS temp file name".to_string())?;
     let target_video_bitrate_kbps = probe_source_video_bitrate_kbps(media_path);
 
     match execute_ffmpeg_burn(
@@ -260,7 +260,7 @@ fn run_ffmpeg_burn(media_path: &Path, ass_path: &Path, output_path: &Path) -> Re
                 target_video_bitrate_kbps,
                 false,
             )
-            .map_err(|aac_err| format!("{copy_err}; 回退 AAC 后仍失败: {aac_err}"))
+            .map_err(|aac_err| format!("{copy_err}; fallback to AAC also failed: {aac_err}"))
         }
     }
 }
@@ -314,7 +314,7 @@ fn execute_ffmpeg_burn(
     let output = command
         .arg(output_path)
         .output()
-        .map_err(|err| format!("压制硬字幕失败: 调用 ffmpeg 失败: {err}"))?;
+        .map_err(|err| format!("Failed to burn hard subtitle: ffmpeg call failed: {err}"))?;
 
     if output.status.success() {
         return Ok(());
@@ -322,7 +322,7 @@ fn execute_ffmpeg_burn(
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if stderr.is_empty() {
-        return Err("ffmpeg 执行失败".to_string());
+        return Err("ffmpeg execution failed".to_string());
     }
     Err(stderr)
 }

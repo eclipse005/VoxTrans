@@ -23,9 +23,9 @@ export function formatBytes(bytes: number): string {
 }
 
 export function statusLabel(status: QueueStatus): string {
-  if (status === "pending") return "待处理";
-  if (status === "queued") return "排队中";
-  if (status === "processing") return "处理中";
-  if (status === "done") return "已完成";
-  return "失败";
+  if (status === "pending") return "common:status.pending";
+  if (status === "queued") return "common:status.queued";
+  if (status === "processing") return "common:status.processing";
+  if (status === "done") return "common:status.done";
+  return "common:status.failed";
 }

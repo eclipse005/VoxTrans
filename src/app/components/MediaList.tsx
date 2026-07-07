@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import {
   DEFAULT_SOURCE_LANGUAGE,
   DEFAULT_TARGET_LANGUAGE,
@@ -123,10 +125,10 @@ function getTranscribeProcessingText(item: QueueItem): string {
     : stage.label.trim() || resolveStageLabel(stage.code);
   if (detail) return label ? `${label} ${detail}` : detail;
   if (shouldShowStageCounter(stage.code) && stage.current > 0 && stage.total > 0) {
-    return `${label || "处理中"} ${stage.current}/${stage.total}`;
+    return `${label || i18n.t("tasks:stage.processing")} ${stage.current}/${stage.total}`;
   }
   if (label) return label;
-  return "准备中";
+  return i18n.t("tasks:stage.preparing");
 }
 
 function shouldShowStageCounter(code: QueueItem["taskProgress"]["stage"]["code"]): boolean {
@@ -146,32 +148,8 @@ function shouldShowStageCounter(code: QueueItem["taskProgress"]["stage"]["code"]
 }
 
 function resolveStageLabel(code: QueueItem["taskProgress"]["stage"]["code"]): string {
-  switch (code) {
-    case "downloading":
-      return "下载中";
-    case "preparing":
-      return "准备中";
-    case "separating":
-      return "人声分离中";
-    case "recognizing":
-      return "语音识别中";
-    case "aligning":
-      return "强制对齐中";
-    case "segmenting":
-      return "断句中";
-    case "summarizing":
-      return "总结中";
-    case "terminology":
-      return "术语提取中";
-    case "translating":
-      return "翻译中";
-    case "subtitleLayout":
-      return "";
-    case "finalCheck":
-      return "本地最终检查中";
-    default:
-      return "";
-  }
+  if (code === "subtitleLayout") return "";
+  return i18n.t(`errors:stage.${code}`);
 }
 
 export default function MediaList({
@@ -194,6 +172,7 @@ export default function MediaList({
   terminologyGroups,
   onRemoveItem,
 }: MediaListProps) {
+  const { t } = useTranslation(["tasks", "common", "toasts"]);
   const listBusy = isProcessing || !workspaceHydrated;
   const [batchMode, setBatchMode] = useState<QueueBatchMode>(() => loadSavedBatchMode());
   const [batchMenuOpen, setBatchMenuOpen] = useState(false);
@@ -226,7 +205,7 @@ export default function MediaList({
   useEffect(() => {
     if (sourceLanguagesError && !sourceLanguagesErrorShown.current) {
       sourceLanguagesErrorShown.current = true;
-      pushToast("获取源语言列表失败，已使用默认列表", "error");
+      pushToast(t("toasts:sourceLanguage.loadFailed"), "error");
     }
     if (!sourceLanguagesError) {
       sourceLanguagesErrorShown.current = false;
@@ -251,12 +230,14 @@ export default function MediaList({
       if (!stillSupported) {
         const fallback = rawSourceLanguageOptions[0];
         void onUpdateTaskLanguages(item, fallback.tag, item.targetLang);
-        pushToast(`当前源语言不再被新模型组合支持，已切换为 ${fallback.label}`, "info");
+        pushToast(t("toasts:sourceLanguage.unsupported", { label: fallback.label }), "info");
       }
     }
   }, [rawSourceLanguageOptions, onUpdateTaskLanguages, pushToast]);
 
-  const modeLabel = batchMode === "transcribe" ? "转录" : "转译";
+  const modeLabel = batchMode === "transcribe"
+    ? t("tasks:batch.transcribe")
+    : t("tasks:batch.translate");
   const batchSourceLang = commonSourceLanguage(queue);
   const batchTargetLang = commonTargetLanguage(queue);
   const batchSourceOption = findSourceLanguageOption(
@@ -268,12 +249,12 @@ export default function MediaList({
   const batchLanguageDisabled = !workspaceHydrated || queue.length === 0;
   const batchLanguageChipText = batchSourceLang && batchTargetLang
     ? `${batchSourceOption.short} -> ${batchTargetOption.short}`
-    : "多语言";
+    : t("tasks:language.mixed");
 
   return (
     <div className="apple-animate-on-scroll apple-delay-200 file-list-section animated">
       <div className="file-list-header">
-        <span className="file-count">{workspaceHydrated ? `共 ${queueCount} 个媒体` : "加载任务中..."}</span>
+        <span className="file-count">{workspaceHydrated ? t("tasks:mediaCount", { count: queueCount }) : t("common:loading")}</span>
         <div className="file-list-actions">
           <div
             className="task-language-menu task-language-menu-batch"
@@ -284,8 +265,8 @@ export default function MediaList({
               disabled={batchLanguageDisabled}
               title={batchSourceLang && batchTargetLang
                 ? `${batchSourceOption.label} -> ${batchTargetOption.label}`
-                : "批量任务语言"}
-              aria-label="批量设置任务语言"
+                : t("tasks:language.batchTitle")}
+              aria-label={t("tasks:language.batchSet")}
               onClick={() => setLanguageMenuTaskId((current) => (
                 current === BATCH_LANGUAGE_MENU_ID ? "" : BATCH_LANGUAGE_MENU_ID
               ))}
@@ -295,7 +276,7 @@ export default function MediaList({
             {batchLanguageMenuOpen ? (
               <div className="task-language-popover">
                 <label className="task-language-field">
-                  <span>音频语言</span>
+                  <span>{t("tasks:language.audio")}</span>
                   <select
                     className="task-language-select"
                     value={batchSourceLang ?? MIXED_LANGUAGE_VALUE}
@@ -310,7 +291,7 @@ export default function MediaList({
                     }}
                   >
                     {batchSourceLang ? null : (
-                      <option value={MIXED_LANGUAGE_VALUE} disabled>多种语言</option>
+                      <option value={MIXED_LANGUAGE_VALUE} disabled>{t("tasks:language.mixedChip")}</option>
                     )}
                     {sourceLanguageOptions.map((option) => (
                       <option key={option.tag} value={option.tag}>
@@ -320,7 +301,7 @@ export default function MediaList({
                   </select>
                 </label>
                 <label className="task-language-field">
-                  <span>翻译语言</span>
+                  <span>{t("tasks:language.translate")}</span>
                   <select
                     className="task-language-select"
                     value={batchTargetLang ?? MIXED_LANGUAGE_VALUE}
@@ -334,7 +315,7 @@ export default function MediaList({
                     }}
                   >
                     {batchTargetLang ? null : (
-                      <option value={MIXED_LANGUAGE_VALUE} disabled>多种语言</option>
+                      <option value={MIXED_LANGUAGE_VALUE} disabled>{t("tasks:language.mixedChip")}</option>
                     )}
                     {TARGET_LANGUAGE_OPTIONS.map((option) => (
                       <option key={option.id} value={option.id}>
@@ -351,8 +332,8 @@ export default function MediaList({
               className="file-list-icon-btn file-list-split-btn-main"
               disabled={listBusy}
               onClick={() => { void onProcessQueue(batchMode); }}
-              title={`全部开始（${modeLabel}）`}
-              aria-label={`全部开始（${modeLabel}）`}
+              title={t("tasks:batch.startAll", { mode: modeLabel })}
+              aria-label={t("tasks:batch.startAll", { mode: modeLabel })}
             >
               {batchMode === "transcribe" ? <MicIcon /> : <TranslateIcon />}
             </button>
@@ -360,8 +341,8 @@ export default function MediaList({
               className="file-list-icon-btn file-list-split-btn-toggle"
               disabled={listBusy}
               onClick={() => setBatchMenuOpen((prev) => !prev)}
-              title="选择批量模式"
-              aria-label="选择批量模式"
+              title={t("tasks:batch.chooseMode")}
+              aria-label={t("tasks:batch.chooseMode")}
             >
               <ChevronDownIcon />
             </button>
@@ -375,7 +356,7 @@ export default function MediaList({
                   }}
                   role="menuitem"
                 >
-                  全部转录
+                  {t("tasks:batch.transcribeAll")}
                 </button>
                 <button
                   className={`file-list-split-menu-item ${batchMode === "transcribe_translate" ? "active" : ""}`}
@@ -385,7 +366,7 @@ export default function MediaList({
                   }}
                   role="menuitem"
                 >
-                  全部转译
+                  {t("tasks:batch.translateAll")}
                 </button>
               </div>
             ) : null}
@@ -394,8 +375,8 @@ export default function MediaList({
             className="file-list-icon-btn file-list-icon-btn-danger"
             disabled={listBusy}
             onClick={() => setClearConfirmOpen(true)}
-            title="清空"
-            aria-label="清空"
+            title={t("tasks:action.clear")}
+            aria-label={t("tasks:action.clear")}
           >
             <TrashIcon />
           </button>
@@ -446,10 +427,10 @@ export default function MediaList({
                       {transcribeProgressText}
                     </span>
                   ) : primaryStatus === "processing" ? (
-                    <span className="task-status status-processing">准备中</span>
+                    <span className="task-status status-processing">{t("tasks:stage.preparing")}</span>
                   ) : (
                     <span className={`task-status status-${primaryStatus}`}>
-                      {statusLabel(primaryStatus)}
+                      {t(statusLabel(primaryStatus))}
                     </span>
                   )}
                 </div>
@@ -466,7 +447,7 @@ export default function MediaList({
                         className="task-language-chip"
                         disabled={languageBusy}
                         title={`${sourceOption.label} -> ${targetOption.label}`}
-                        aria-label={`${sourceOption.label} 到 ${targetOption.label}`}
+                        aria-label={t("tasks:language.itemAria", { source: sourceOption.label, target: targetOption.label })}
                         onClick={() => setLanguageMenuTaskId((current) => (
                           current === item.id ? "" : item.id
                         ))}
@@ -476,7 +457,7 @@ export default function MediaList({
                       {languageMenuOpen ? (
                         <div className="task-language-popover">
                           <label className="task-language-field">
-                            <span>音频语言</span>
+                            <span>{t("tasks:language.audio")}</span>
                             <select
                               className="task-language-select"
                               value={normalizeSourceLanguage(item.sourceLang)}
@@ -497,7 +478,7 @@ export default function MediaList({
                             </select>
                           </label>
                           <label className="task-language-field">
-                            <span>翻译语言</span>
+                            <span>{t("tasks:language.translate")}</span>
                             <select
                               className="task-language-select"
                               value={normalizeTargetLanguage(item.targetLang)}
@@ -527,19 +508,19 @@ export default function MediaList({
                       <button
                         className={`task-terminology-chip ${terminologySelectedGroup ? "has-group" : "no-group"}`}
                         disabled={languageBusy}
-                        title={terminologySelectedGroup ? terminologySelectedGroup.name : "不使用术语"}
-                        aria-label={terminologySelectedGroup ? `术语组:${terminologySelectedGroup.name}` : "不使用术语"}
+                        title={terminologySelectedGroup ? terminologySelectedGroup.name : t("tasks:terminology.unused")}
+                        aria-label={terminologySelectedGroup ? t("tasks:terminology.groupLabel", { name: terminologySelectedGroup.name }) : t("tasks:terminology.unused")}
                         onClick={() => setTerminologyMenuTaskId((current) => (
                           current === item.id ? "" : item.id
                         ))}
                       >
                         <BookIcon />
-                        {terminologySelectedGroup ? terminologySelectedGroup.name : "术语:未使用"}
+                        {terminologySelectedGroup ? terminologySelectedGroup.name : t("tasks:terminology.notSet")}
                       </button>
                       {terminologyMenuOpen ? (
                         <div className="task-terminology-popover">
                           <label className="task-language-field">
-                            <span>术语组</span>
+                            <span>{t("tasks:terminology.group")}</span>
                             <select
                               className="task-language-select"
                               value={terminologyGroupId}
@@ -548,9 +529,9 @@ export default function MediaList({
                                 void onUpdateTaskTerminology(item, event.currentTarget.value);
                               }}
                             >
-                              <option value="">不使用</option>
+                              <option value="">{t("tasks:terminology.none")}</option>
                               {terminologyGroups.length === 0 ? (
-                                <option value="" disabled>暂未配置术语组,请前往术语管理</option>
+                                <option value="" disabled>{t("tasks:terminology.notConfigured")}</option>
                               ) : null}
                               {terminologyGroups.map((group) => (
                                 <option key={group.id} value={group.id}>
@@ -566,8 +547,8 @@ export default function MediaList({
                   <div className="file-actions">
                     <button
                       className="file-action-btn"
-                      title="转译"
-                      aria-label="转译"
+                      title={t("tasks:action.translate")}
+                      aria-label={t("tasks:action.translate")}
                       disabled={item.transcribeStatus === "processing"}
                       onClick={(event) => { event.stopPropagation(); void onProcessSingleTranscribeTranslate(item); }}
                     >
@@ -575,8 +556,8 @@ export default function MediaList({
                     </button>
                     <button
                       className="file-action-btn"
-                      title="转录"
-                      aria-label="转录"
+                      title={t("tasks:action.transcribe")}
+                      aria-label={t("tasks:action.transcribe")}
                       disabled={item.transcribeStatus === "processing"}
                       onClick={(event) => { event.stopPropagation(); void onProcessSingle(item); }}
                     >
@@ -584,8 +565,8 @@ export default function MediaList({
                     </button>
                     <button
                       className="file-action-btn delete"
-                      title="删除"
-                      aria-label="删除"
+                      title={t("tasks:action.delete")}
+                      aria-label={t("tasks:action.delete")}
                       disabled={!canDeleteQueueItem(item)}
                       onClick={(event) => { event.stopPropagation(); onRemoveItem(item.id); }}
                     >
@@ -600,16 +581,16 @@ export default function MediaList({
       </div>
 
       {clearConfirmOpen ? (
-        <div className="file-list-confirm-backdrop" role="dialog" aria-modal="true" aria-label="确认清空任务列表">
+        <div className="file-list-confirm-backdrop" role="dialog" aria-modal="true" aria-label={t("tasks:confirm.clearTitle")}>
           <div className="file-list-confirm-card">
-            <div className="file-list-confirm-title">确认清空任务列表？</div>
-            <div className="file-list-confirm-text">该操作不可恢复。</div>
+            <div className="file-list-confirm-title">{t("tasks:confirm.clearTitle")}</div>
+            <div className="file-list-confirm-text">{t("tasks:confirm.clearText")}</div>
             <div className="file-list-confirm-actions">
               <button
                 className="file-list-confirm-btn"
                 onClick={() => setClearConfirmOpen(false)}
               >
-                取消
+                {t("common:button.cancel")}
               </button>
               <button
                 className="file-list-confirm-btn file-list-confirm-btn-danger"
@@ -618,7 +599,7 @@ export default function MediaList({
                   void onClearQueue();
                 }}
               >
-                确认清空
+                {t("tasks:confirm.clearConfirm")}
               </button>
             </div>
           </div>

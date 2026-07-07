@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, MergeIcon, PlusIcon, ReplaceIcon, SplitIcon } from "../Icons";
 
 type SubtitleEditorToolbarProps = {
@@ -48,6 +49,7 @@ export default function SubtitleEditorToolbar({
   onMergeSelected,
   onSplitSelected,
 }: SubtitleEditorToolbarProps) {
+  const { t } = useTranslation(["subtitles", "common"]);
   return (
     <div className="subtitle-editor-topbar">
       <div className="subtitle-toolbar-shell">
@@ -57,23 +59,23 @@ export default function SubtitleEditorToolbar({
               className="apple-input subtitle-find-input"
               value={findText}
               onChange={(e) => onFindTextChange(e.target.value)}
-              placeholder="查找文本"
+              placeholder={t("subtitles:toolbar.findPlaceholder")}
             />
             <input
               className="apple-input subtitle-find-input"
               value={replaceText}
               onChange={(e) => onReplaceTextChange(e.target.value)}
-              placeholder="替换为"
+              placeholder={t("subtitles:toolbar.replacePlaceholder")}
               disabled={!canEdit}
             />
-            <div className="subtitle-find-nav" role="group" aria-label="查找匹配导航">
+            <div className="subtitle-find-nav" role="group" aria-label={t("subtitles:toolbar.findNavAriaLabel")}>
               <button
                 className="subtitle-find-nav-btn"
                 type="button"
                 onClick={onPrevMatch}
                 disabled={!findKeyword || matchCount === 0}
-                aria-label="上一条匹配"
-                title="上一条匹配"
+                aria-label={t("subtitles:toolbar.prevMatch")}
+                title={t("subtitles:toolbar.prevMatch")}
               >
                 <ChevronLeftIcon />
               </button>
@@ -83,8 +85,8 @@ export default function SubtitleEditorToolbar({
                 type="button"
                 onClick={onNextMatch}
                 disabled={!findKeyword || matchCount === 0}
-                aria-label="下一条匹配"
-                title="下一条匹配"
+                aria-label={t("subtitles:toolbar.nextMatch")}
+                title={t("subtitles:toolbar.nextMatch")}
               >
                 <ChevronRightIcon />
               </button>
@@ -93,24 +95,24 @@ export default function SubtitleEditorToolbar({
               <button
                 className="apple-button apple-button-secondary subtitle-find-text-btn subtitle-find-primary-btn subtitle-find-split-main"
                 onClick={onReplaceOne}
-                title="替换当前命中并跳到下一条"
-                aria-label="替换当前命中并跳到下一条"
+                title={t("subtitles:toolbar.replaceAndAdvance")}
+                aria-label={t("subtitles:toolbar.replaceAndAdvance")}
                 disabled={!canEdit || !findKeyword}
               >
-                替换
+                {t("subtitles:toolbar.replace")}
               </button>
               <button
                 className="apple-button apple-button-secondary subtitle-find-text-btn subtitle-find-split-toggle"
                 type="button"
                 onClick={onToggleReplaceMenu}
-                aria-label="打开替换菜单"
+                aria-label={t("subtitles:toolbar.openReplaceMenu")}
                 aria-expanded={isReplaceMenuOpen}
                 disabled={!canEdit || !findKeyword}
               >
                 <ChevronDownIcon />
               </button>
               {isReplaceMenuOpen ? (
-                <div className="subtitle-find-split-menu" role="menu" aria-label="替换菜单">
+                <div className="subtitle-find-split-menu" role="menu" aria-label={t("subtitles:toolbar.replaceMenuAriaLabel")}>
                   <button
                     type="button"
                     className="subtitle-find-split-menu-item"
@@ -119,7 +121,7 @@ export default function SubtitleEditorToolbar({
                     disabled={!canEdit}
                   >
                     <ReplaceIcon />
-                    全部替换
+                    {t("subtitles:toolbar.replaceAll")}
                   </button>
                 </div>
               ) : null}
@@ -135,25 +137,25 @@ export default function SubtitleEditorToolbar({
             disabled={!canEdit || isBatchAnimating}
           >
             <PlusIcon />
-            新增字幕段
+            {t("subtitles:toolbar.addCue")}
           </button>
           <button
             className="nav-button subtitle-batch-btn"
             disabled={!canEdit || selectedCount < 2 || isBatchAnimating}
             onClick={onMergeSelected}
-            title={selectedCount >= 2 ? `合并 ${selectedCount} 条` : "请选择至少两条字幕"}
+            title={selectedCount >= 2 ? t("subtitles:toolbar.mergeActive", { count: selectedCount }) : t("subtitles:toolbar.mergeDisabled")}
           >
             <MergeIcon />
-            {selectedCount >= 2 ? `合并(${selectedCount})` : "合并"}
+            {selectedCount >= 2 ? t("subtitles:toolbar.mergeCount", { count: selectedCount }) : t("subtitles:toolbar.merge")}
           </button>
           <button
             className="nav-button subtitle-batch-btn"
             disabled={!canEdit || selectedCount < 1 || isBatchAnimating}
             onClick={onSplitSelected}
-            title={selectedCount >= 1 ? `拆分 ${selectedCount} 条` : "请选择字幕"}
+            title={selectedCount >= 1 ? t("subtitles:toolbar.splitActive", { count: selectedCount }) : t("subtitles:toolbar.splitDisabled")}
           >
             <SplitIcon />
-            {selectedCount >= 1 ? `拆分(${selectedCount})` : "拆分"}
+            {selectedCount >= 1 ? t("subtitles:toolbar.splitCount", { count: selectedCount }) : t("subtitles:toolbar.split")}
           </button>
         </div>
       </div>

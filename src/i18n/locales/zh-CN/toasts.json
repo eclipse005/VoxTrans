@@ -1,0 +1,68 @@
+{
+  "sourceLanguage": {
+    "loadFailed": "获取源语言列表失败，已使用默认列表",
+    "unsupported": "当前源语言不再被新模型组合支持，已切换为 {{label}}"
+  },
+  "settings": {
+    "chunkMustBeNumber": "分段时长必须是数字",
+    "concurrencyMustBeNumber": "并发数必须是数字",
+    "saved": "设置已保存（后续任务生效）",
+    "saveFailed": "设置保存失败",
+    "terminologySaved": "术语已保存",
+    "terminologySaveFailed": "术语保存失败",
+    "apiKeyRequiredFirst": "请先填写接口密钥",
+    "testingLlm": "正在测试 LLM 连通性...",
+    "testSuccess": "测试成功：模型 {{model}} 可用",
+    "testFailed": "测试失败：{{message}}",
+    "testConnectFailed": "连通性测试失败"
+  },
+  "updater": {
+    "downloadFailed": "更新下载失败：{{message}}"
+  },
+  "workflow": {
+    "saveFailed": "字幕保存失败",
+    "loadInvalid": "字幕格式有误，无法加载编辑器",
+    "noExportTask": "当前没有可导出的任务",
+    "selectAtLeastOne": "请至少选择一项导出内容",
+    "exportedOne": "已导出：{{path}}",
+    "exportedMany": "已导出 {{count}} 个文件",
+    "exportFailed": "导出字幕失败"
+  },
+  "queue": {
+    "enqueueFailed": "任务入队失败",
+    "enqueueFailure": "失败：{{name}}，{{error}}",
+    "batchExecuteFailed": "批处理执行失败，请重试",
+    "nothingPending": "没有待处理文件",
+    "enqueueAllFailed": "没有可处理文件，入队均失败",
+    "batchStarted": "开始批量{{mode}}，共 {{count}} 个文件",
+    "addedToQueue": "已加入排队：{{name}}",
+    "started": "开始处理：{{name}}",
+    "clearWhileBusy": "正在处理时不能清空队列",
+    "cleared": "队列已清空",
+    "clearFailed": "清空队列失败",
+    "deleteWhileBusy": "任务正在处理或排队，不能删除",
+    "deleteFailed": "删除任务失败",
+    "addedCount": "已加入队列 {{count}} 个文件",
+    "addFailedCount": "有 {{count}} 个文件入队失败，请重试",
+    "pickFilesFailed": "打开文件选择器失败",
+    "languageBusyError": "任务正在处理或排队，不能修改语言",
+    "languageSaveFailed": "语言设置保存失败",
+    "languageSaveFailedCount": "有 {{count}} 个任务语言保存失败",
+    "terminologyBusyError": "任务正在处理或排队，不能修改术语组",
+    "terminologySaveFailed": "术语组保存失败",
+    "noEditableLanguageTasks": "没有可修改语言的任务"
+  },
+  "youtube": {
+    "downloadComplete": "YouTube 下载完成，已加入任务列表",
+    "commitFailed": "YouTube 下载已完成，但任务入库失败，请重试",
+    "cancelCleanupFailed": "YouTube 下载已取消，但任务清理失败，请刷新任务列表",
+    "downloadFailed": "YouTube 下载失败",
+    "emptyUrl": "请先输入 YouTube 链接",
+    "addedToQueue": "已加入 YouTube 下载队列",
+    "missingUrl": "缺少下载链接，无法重试。请删除后重新添加。",
+    "alreadyDownloading": "该任务正在下载中",
+    "alreadyInQueue": "该任务已在下载队列中",
+    "retryQueued": "已加入下载重试队列",
+    "deleteFailed": "删除任务失败"
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "batch": {
+    "transcribe": "Transcribe",
+    "translate": "Translate",
+    "transcribeAll": "Transcribe all",
+    "translateAll": "Translate all",
+    "startAll": "Start all ({{mode}})",
+    "chooseMode": "Choose batch mode"
+  },
+  "mediaCount": "{{count}} media",
+  "language": {
+    "mixed": "Multiple languages",
+    "batchTitle": "Batch task languages",
+    "batchSet": "Set batch task languages",
+    "audio": "Audio language",
+    "translate": "Translation language",
+    "mixedChip": "Multiple languages",
+    "itemAria": "{{source}} to {{target}}"
+  },
+  "action": {
+    "clear": "Clear",
+    "translate": "Translate",
+    "transcribe": "Transcribe",
+    "delete": "Delete"
+  },
+  "confirm": {
+    "clearTitle": "Clear task list?",
+    "clearText": "This action cannot be undone.",
+    "clearConfirm": "Clear"
+  },
+  "terminology": {
+    "unused": "No terminology",
+    "groupLabel": "Glossary: {{name}}",
+    "notSet": "Glossary: none",
+    "group": "Glossary",
+    "none": "None",
+    "notConfigured": "No glossary configured, go to Glossary Management",
+    "title": "Glossary",
+    "close": "Close glossary",
+    "addGroup": "New group",
+    "add": "Add",
+    "editTitle": "Edit glossary",
+    "editGroup": "Edit group name",
+    "saveGroup": "Save group name",
+    "cancelEdit": "Cancel edit",
+    "deleteGroup": "Delete group",
+    "deleteTerm": "Delete term",
+    "save": "Save glossary",
+    "addPlaceholder": "origin:target:note, separate multiple with commas, e.g. LLM:large model, hypertension:hypertension:medical term",
+    "emptyCreate": "Create a group first.",
+    "emptyHint": "Click a group above to select and edit it (the selected group becomes the default for new tasks).",
+    "emptyTerms": "No terms in the current group"
+  },
+  "stage": {
+    "processing": "Processing",
+    "preparing": "Preparing"
+  },
+  "editor": {
+    "readOnlyProcessing": "Task in progress, subtitles are read-only",
+    "readOnlyDone": "Subtitles can be edited only after the task completes",
+    "emptyEditable": "No subtitle cues yet, click \"Add cue\" above to start editing.",
+    "emptyProcessing": "Task in progress, subtitles will appear shortly.",
+    "emptyDone": "Subtitles can be edited only after the task completes.",
+    "title": "Subtitle Editor",
+    "emptyPrompt": "Select a media task from the list on the left to start editing subtitles."
+  },
+  "upload": {
+    "title": "Media Import",
+    "localTab": "Local Files",
+    "dropTitle": "Drag &amp; drop or click to upload",
+    "dropHint": "Multiple audio/video files supported",
+    "selectBtn": "Upload Files"
+  },
+  "youtube": {
+    "title": "YouTube Download",
+    "urlPlaceholder": "Paste a YouTube link",
+    "download": "Download video",
+    "notDetected": "not detected",
+    "updating": "Updating yt-dlp",
+    "update": "Update yt-dlp",
+    "updatingShort": "Updating..."
+  },
+  "queue": {
+    "modeTranscribe": "Transcribe",
+    "modeTranscribeTranslate": "Transcribe &amp; Translate"
+  },
+  "progress": {
+    "downloading": "Downloading"
+  },
+  "logs": {
+    "title": "Run logs",
+    "close": "Close logs",
+    "maximize": "Maximize",
+    "maximizeAria": "Maximize window",
+    "restore": "Restore",
+    "restoreAria": "Restore window size",
+    "channelToggle": "Log channel",
+    "openDir": "Open logs directory",
+    "refresh": "Refresh",
+    "refreshAria": "Refresh logs",
+    "clear": "Clear",
+    "clearAria": "Clear logs",
+    "tokens": "Tokens: {{count}}",
+    "searchAria": "Log search",
+    "searchPlaceholder": "Search logs",
+    "searchNavAria": "Log search navigation",
+    "prevMatch": "Previous match",
+    "nextMatch": "Next match",
+    "empty": "No logs",
+    "expandEntry": "Expand log details",
+    "collapseEntry": "Collapse log details",
+    "jumpToBottom": "Jump to bottom",
+    "loadFailed": "Failed to load logs",
+    "selectTaskFirst": "Please select a task on the left first",
+    "clearConfirm": "Clear the current {{channel}} log? This action cannot be undone.",
+    "cleared": "{{channel}} log cleared",
+    "clearFailed": "Failed to clear logs",
+    "openDirFailed": "Failed to open log folder"
+  },
+  "workspace": {
+    "downloadInterrupted": "Download interrupted. Click Transcribe or Translate to resume.",
+    "taskInterrupted": "Task was interrupted while running, please start over",
+    "openSubtitleDirFailed": "Failed to open subtitle folder"
+  },
+  "ytdlp": {
+    "updated": "yt-dlp updated: {{from}} -> {{to}}",
+    "alreadyLatest": "yt-dlp is up to date ({{version}})",
+    "updateFailed": "yt-dlp update failed"
+  }
+}

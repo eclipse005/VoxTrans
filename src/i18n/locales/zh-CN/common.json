@@ -1,0 +1,27 @@
+{
+  "appName": "VoxTrans",
+  "nav": {
+    "terminology": "术语",
+    "settings": "设置",
+    "toggleLanguage": "切换语言",
+    "newVersionAvailable": "发现新版本，点击查看详情"
+  },
+  "button": {
+    "cancel": "取消",
+    "close": "关闭",
+    "save": "保存"
+  },
+  "status": {
+    "pending": "待处理",
+    "queued": "排队中",
+    "processing": "处理中",
+    "done": "已完成",
+    "failed": "失败"
+  },
+  "loading": "加载中…",
+  "appError": {
+    "title": "应用发生异常",
+    "description": "当前页面渲染失败。你可以点击重试刷新应用，若问题持续出现，请把控制台日志发给我排查。",
+    "reload": "重新加载"
+  }
+}

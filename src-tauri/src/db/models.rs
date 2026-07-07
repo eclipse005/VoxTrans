@@ -33,6 +33,7 @@ pub struct SettingsRow {
     pub subtitle_render_style: SubtitleRenderStyle,
     pub flat_srt_output: bool,
     pub enable_vision_assist: bool,
+    pub locale: String,
     pub updated_at: i64,
 }
 

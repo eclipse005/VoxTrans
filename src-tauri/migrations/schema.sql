@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS settings (
     subtitle_render_style_json TEXT NOT NULL,
     flat_srt_output INTEGER NOT NULL,
     enable_vision_assist INTEGER NOT NULL DEFAULT 0,
+    locale TEXT NOT NULL DEFAULT 'zh-CN',
     updated_at INTEGER NOT NULL
 );
 

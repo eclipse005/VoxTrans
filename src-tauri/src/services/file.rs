@@ -103,7 +103,7 @@ pub fn export_srt(request: ExportSrtRequest) -> Result<String, String> {
 
     let dir_path = PathBuf::from(target_dir);
     if !dir_path.is_dir() {
-        return Err(format!("导出目录不存在: {}", target_dir));
+        return Err(format!("Export directory does not exist: {}", target_dir));
     }
 
     let file_stem = request
@@ -157,7 +157,7 @@ pub fn export_task_srts(store: &TaskStore, request: ExportTaskSrtsRequest) -> Re
     let logger = TaskLogger::main(request.task_id.clone());
     let dir_path = PathBuf::from(target_dir);
     if !dir_path.is_dir() {
-        return Err(format!("导出目录不存在: {}", target_dir));
+        return Err(format!("Export directory does not exist: {}", target_dir));
     }
 
     let task_item = crate::commands::workspace::get_task_queue_item_for_export(&request.task_id)?;
@@ -165,9 +165,9 @@ pub fn export_task_srts(store: &TaskStore, request: ExportTaskSrtsRequest) -> Re
         crate::commands::workspace::task_subtitle_beautify_context(store, &request.task_id)?;
     let segments =
         crate::services::subtitle_srt::parse_segments_json(&task_item.subtitle_segments_json)
-            .map_err(|err| format!("字幕片段解析失败: {err}"))?;
+            .map_err(|err| format!("Failed to parse subtitle segments: {err}"))?;
     if segments.is_empty() {
-        return Err("当前任务没有可导出的字幕片段".to_string());
+        return Err("Current task has no exportable subtitle segments".to_string());
     }
     let mut segments = segments;
     if task_enable_subtitle_beautify {

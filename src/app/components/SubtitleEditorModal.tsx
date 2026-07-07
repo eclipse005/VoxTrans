@@ -1,4 +1,5 @@
 import { type MouseEvent, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { SubtitleCue } from "../../features/media/types";
 import { useSubtitleBatchAnimations } from "../hooks/useSubtitleBatchAnimations";
 import { useSubtitleFindReplace } from "../hooks/useSubtitleFindReplace";
@@ -51,6 +52,7 @@ export default function SubtitleEditorModal({
   onOpenLogs,
   onClose,
 }: SubtitleEditorModalProps) {
+  const { t } = useTranslation(["subtitles", "common"]);
   const [editingCueId, setEditingCueId] = useState<string>("");
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -111,7 +113,7 @@ export default function SubtitleEditorModal({
   const content = (
     <div className={embedded ? "subtitle-inline-content" : "modal-content modal-content-subtitle"} onClick={handleContainerClick}>
       {!embedded ? (
-        <button className="modal-close" onClick={() => { void onClose(); }} aria-label="关闭">
+        <button className="modal-close" onClick={() => { void onClose(); }} aria-label={t("common:button.close")}>
           ×
         </button>
       ) : null}
@@ -156,7 +158,7 @@ export default function SubtitleEditorModal({
         canEdit={canEdit}
         cues={cues}
         cueWarningsById={cueWarningsById}
-        emptyText={emptyText ?? (canEdit ? "暂无字幕段，点击上方“新增字幕段”开始编辑。" : "任务完成后才可编辑字幕。")}
+        emptyText={emptyText ?? (canEdit ? t("subtitles.editor.emptyEditable") : t("subtitles.editor.emptyReadOnly"))}
         editingCueId={editingCueId}
         selectedCueIds={validSelectedCueIds}
         timeErrorByCue={timeErrorByCue}
@@ -194,7 +196,7 @@ export default function SubtitleEditorModal({
 
   if (embedded) {
     return (
-      <section className="subtitle-inline-root" role="region" aria-label="字幕编辑器">
+      <section className="subtitle-inline-root" role="region" aria-label={t("subtitles.editor.regionLabel")}>
         {content}
       </section>
     );

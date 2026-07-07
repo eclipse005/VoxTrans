@@ -106,14 +106,14 @@ pub async fn check_update(current_version: &str) -> Result<UpdateInfo, String> {
         }
     }
 
-    Err(last_err.unwrap_or_else(|| "未知错误".to_string()))
+    Err(last_err.unwrap_or_else(|| "Unknown error".to_string()))
 }
 
 async fn try_check(current_version: &str) -> Result<UpdateInfo, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
     let response = client
         .get("https://api.github.com/repos/eclipse005/VoxTrans/releases/latest")
@@ -121,23 +121,23 @@ async fn try_check(current_version: &str) -> Result<UpdateInfo, String> {
         .header("Accept", "application/vnd.github.v3+json")
         .send()
         .await
-        .map_err(|e| format!("请求 GitHub API 失败: {}", e))?;
+        .map_err(|e| format!("Failed to request GitHub API: {}", e))?;
 
     if !response.status().is_success() {
-        return Err(format!("GitHub API 返回错误: {}", response.status()));
+        return Err(format!("GitHub API returned error: {}", response.status()));
     }
 
     let body = response
         .text()
         .await
-        .map_err(|e| format!("读取响应体失败: {}", e))?;
+        .map_err(|e| format!("failed to read response body: {}", e))?;
 
     if body.trim().is_empty() {
-        return Err("GitHub API 返回空响应".to_string());
+        return Err("GitHub API returned empty response".to_string());
     }
 
     let release: GitHubReleaseInfo =
-        serde_json::from_str(&body).map_err(|e| format!("解析失败: {}", e))?;
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse: {}", e))?;
 
     let latest_version = release.tag_name.trim_start_matches('v').to_string();
     let has_update = latest_version != current_version;
@@ -146,7 +146,7 @@ async fn try_check(current_version: &str) -> Result<UpdateInfo, String> {
         .assets
         .iter()
         .find(|a| a.name.ends_with(".exe") && a.name.contains(BUILD_VARIANT))
-        .ok_or(format!("未找到当前版本对应的安装包（{BUILD_VARIANT}）"))?;
+        .ok_or(format!("Installer for current variant not found ({BUILD_VARIANT})"))?;
 
     Ok(UpdateInfo {
         current_version: current_version.to_string(),
@@ -171,7 +171,7 @@ pub fn download_and_install(
     cancel_flags().insert(task_id.clone(), cancel.clone());
 
     let temp_dir = std::env::temp_dir().join("voxtrans_update");
-    std::fs::create_dir_all(&temp_dir).map_err(|e| format!("创建临时目录失败: {}", e))?;
+    std::fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
     let installer_name = installer_filename_from_url(&download_url);
     let installer_path = temp_dir.join(Path::new(installer_name));
@@ -218,14 +218,14 @@ pub fn download_and_install(
 
     let result = super::file_download::download_file(&opts, &cancel, &mut cb)?;
     if cancel.load(Ordering::SeqCst) {
-        return Err("更新下载已取消".to_string());
+        return Err("Update download cancelled".to_string());
     }
 
     std::process::Command::new(&result.path)
         .arg("/UPDATE")
         .arg("/P")
         .spawn()
-        .map_err(|e| format!("启动安装程序失败: {}", e))?;
+        .map_err(|e| format!("Failed to launch installer: {}", e))?;
 
     app.exit(0);
     Ok(())

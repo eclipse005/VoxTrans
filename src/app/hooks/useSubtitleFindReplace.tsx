@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { SubtitleCue } from "../../features/media/types";
 import { formatSrtTime } from "../../features/media/srt";
 
@@ -17,6 +18,7 @@ export function useSubtitleFindReplace({
   cues,
   onReplaceText,
 }: UseSubtitleFindReplaceArgs) {
+  const { t } = useTranslation(["subtitles"]);
   const [findText, setFindText] = useState("");
   const [replaceText, setReplaceText] = useState("");
   const [findStatus, setFindStatus] = useState("");
@@ -72,7 +74,7 @@ export function useSubtitleFindReplace({
 
   const findStatusLabel = useMemo(() => {
     if (!findKeyword) return findStatus;
-    if (matchCueIndexes.length === 0) return findStatus || "无匹配";
+    if (matchCueIndexes.length === 0) return findStatus || t("subtitles.findReplace.noMatch");
     return findStatus;
   }, [findKeyword, findStatus, matchCueIndexes.length]);
 
@@ -124,21 +126,21 @@ export function useSubtitleFindReplace({
     setIsReplaceMenuOpen(false);
     const keyword = findText.trim();
     if (!keyword) {
-      setFindStatus("请输入查找内容");
+      setFindStatus(t("subtitles.findReplace.enterFindText"));
       return;
     }
     if (!currentMatch) {
-      setFindStatus("未找到匹配项");
+      setFindStatus(t("subtitles.findReplace.noMatchForReplace"));
       return;
     }
 
     const count = onReplaceText(keyword, replaceText, [currentMatch.cueId], 1);
     if (count <= 0) {
-      setFindStatus("未替换任何内容");
+      setFindStatus(t("subtitles.findReplace.nothingReplaced"));
       return;
     }
 
-    setFindStatus("已替换 1 处");
+    setFindStatus(t("subtitles.findReplace.replacedOne"));
     if (matchCueIndexes.length > 0) {
       setFindCursor((old) => {
         const next = old + 1;
@@ -150,27 +152,27 @@ export function useSubtitleFindReplace({
   const onReplaceAll = () => {
     const keyword = findText.trim();
     if (!keyword) {
-      setFindStatus("请输入查找内容");
+      setFindStatus(t("subtitles.findReplace.enterFindText"));
       setIsReplaceMenuOpen(false);
       return;
     }
 
     const count = onReplaceText(keyword, replaceText, null);
     if (count > 0) {
-      setFindStatus(`已替换 ${count} 处`);
+      setFindStatus(t("subtitles.findReplace.replacedCount", { count }));
     } else {
-      setFindStatus("未替换任何内容");
+      setFindStatus(t("subtitles.findReplace.nothingReplaced"));
     }
     setIsReplaceMenuOpen(false);
   };
 
   const onPrevMatch = () => {
     if (!findKeyword) {
-      setFindStatus("请输入查找内容");
+      setFindStatus(t("subtitles.findReplace.enterFindText"));
       return;
     }
     if (matchCueIndexes.length === 0) {
-      setFindStatus("无匹配");
+      setFindStatus(t("subtitles.findReplace.noMatch"));
       return;
     }
     setFindCursor((old) => (old <= 0 ? matchCueIndexes.length - 1 : old - 1));
@@ -179,11 +181,11 @@ export function useSubtitleFindReplace({
 
   const onNextMatch = () => {
     if (!findKeyword) {
-      setFindStatus("请输入查找内容");
+      setFindStatus(t("subtitles.findReplace.enterFindText"));
       return;
     }
     if (matchCueIndexes.length === 0) {
-      setFindStatus("无匹配");
+      setFindStatus(t("subtitles.findReplace.noMatch"));
       return;
     }
     setFindCursor((old) => (old + 1 >= matchCueIndexes.length ? 0 : old + 1));

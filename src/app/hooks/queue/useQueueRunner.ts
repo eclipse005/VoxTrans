@@ -13,6 +13,7 @@ import {
   type QueueRunMode,
 } from "../../../features/media/queueUtils";
 import { toUserErrorMessage } from "../../utils/errors";
+import i18n from "../../../i18n";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
@@ -32,7 +33,7 @@ export type { QueueRunMode };
 export function formatQueueFailureMessage(
   subject: string,
   error: unknown,
-  prefix = "失败",
+  prefix = i18n.t("common:status.failed"),
 ): string {
   return `${prefix}：${subject}，${toUserErrorMessage(error)}`;
 }

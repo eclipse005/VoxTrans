@@ -1,5 +1,6 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import {
   checkForUpdate,
   downloadUpdate,
@@ -13,6 +14,7 @@ import type { UpdateCheckResult } from "../api/updater";
 type PushToast = (message: string, tone?: "info" | "success" | "error") => void;
 
 export function useAutoUpdateCheck(pushToast: PushToast) {
+  const { t } = useTranslation(["toasts", "updater"]);
   const [availableUpdate, setAvailableUpdate] = useState<UpdateCheckResult | null>(null);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -95,7 +97,7 @@ export function useAutoUpdateCheck(pushToast: PushToast) {
       try {
         await downloadUpdate(availableUpdate.downloadUrl, taskIdRef.current);
       } catch (e) {
-        pushToast(`更新下载失败：${e instanceof Error ? e.message : String(e)}`, "error");
+        pushToast(t("toasts.updater.downloadFailed", { message: e instanceof Error ? e.message : String(e) }), "error");
       } finally {
         setInstalling(false);
         setInstallProgress(null);

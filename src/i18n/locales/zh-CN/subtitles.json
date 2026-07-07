@@ -1,0 +1,81 @@
+{
+  "toolbar": {
+    "findPlaceholder": "查找文本",
+    "replacePlaceholder": "替换为",
+    "findNavAriaLabel": "查找匹配导航",
+    "prevMatch": "上一条匹配",
+    "nextMatch": "下一条匹配",
+    "replaceAndAdvance": "替换当前命中并跳到下一条",
+    "replace": "替换",
+    "openReplaceMenu": "打开替换菜单",
+    "replaceMenuAriaLabel": "替换菜单",
+    "replaceAll": "全部替换",
+    "addCue": "新增字幕段",
+    "mergeActive": "合并 {{count}} 条",
+    "mergeDisabled": "请选择至少两条字幕",
+    "mergeCount": "合并({{count}})",
+    "merge": "合并",
+    "splitActive": "拆分 {{count}} 条",
+    "splitDisabled": "请选择字幕",
+    "splitCount": "拆分({{count}})",
+    "split": "拆分"
+  },
+  "header": {
+    "title": "字幕编辑器",
+    "cueCount": "{{count}} 条",
+    "taskLabel": "任务:",
+    "openTaskDir": "打开任务目录",
+    "statusLabel": "状态:",
+    "exportSrt": "导出 SRT",
+    "export": "导出",
+    "openLogs": "打开任务日志",
+    "logs": "日志"
+  },
+  "cue": {
+    "warningCount": "该字幕存在 {{count}} 条格式问题",
+    "collapseEdit": "收起编辑",
+    "edit": "编辑字幕",
+    "delete": "删除字幕段",
+    "emptyText": "(空文本)",
+    "noTranslation": "(暂无译文)",
+    "startTime": "开始",
+    "endTime": "结束",
+    "textPlaceholder": "输入该字幕段文本",
+    "translationPlaceholder": "输入该字幕段译文（可选）"
+  },
+  "editor": {
+    "emptyEditable": "暂无字幕段，点击上方\"新增字幕段\"开始编辑。",
+    "emptyReadOnly": "任务完成后才可编辑字幕。",
+    "regionLabel": "字幕编辑器"
+  },
+  "export": {
+    "sourceMono": "原文单语",
+    "targetMono": "译文单语",
+    "bilingualSourceFirst": "双语（原文在上）",
+    "bilingualTargetFirst": "双语（译文在上）",
+    "title": "导出字幕",
+    "description": "请选择要导出的字幕类型。文件名固定为 src.srt / trans.srt / src_trans.srt / trans_src.srt。",
+    "noTranslationTip": "当前任务暂无译文，译文相关选项已禁用。",
+    "button": "导出",
+    "itemCount": "{{count}} 项",
+    "dirPickerTitle": "选择导出目录"
+  },
+  "findReplace": {
+    "noMatch": "无匹配",
+    "enterFindText": "请输入查找内容",
+    "noMatchForReplace": "未找到匹配项",
+    "nothingReplaced": "未替换任何内容",
+    "replacedOne": "已替换 1 处",
+    "replacedCount": "已替换 {{count}} 处"
+  },
+  "timeValidation": {
+    "startInvalid": "开始时间格式错误，使用 HH:MM:SS,mmm",
+    "endInvalid": "结束时间格式错误，使用 HH:MM:SS,mmm"
+  },
+  "warnings": {
+    "emptyText": "文本为空",
+    "endBeforeStart": "结束时间早于开始时间",
+    "tooLong": "时长超过 60 秒",
+    "overlap": "与第 {{n}} 条时间重叠"
+  }
+}

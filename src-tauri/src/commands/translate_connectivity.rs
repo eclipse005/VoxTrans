@@ -66,11 +66,11 @@ pub async fn test_translate_llm(
         .map_err(|err| {
             if request.enable_vision_assist {
                 format!(
-                    "LLM 连通性测试失败(已启用图片辅助翻译): {}。若模型不支持图片输入,请关闭该开关。",
+                    "LLM connectivity test failed (vision assist enabled): {}. If the model does not support image input, turn off the vision assist toggle.",
                     err.message
                 )
             } else {
-                format!("LLM 连通性测试失败: {}", err.message)
+                format!("LLM connectivity test failed: {}", err.message)
             }
         })?;
     let ok = result
@@ -83,9 +83,9 @@ pub async fn test_translate_llm(
         .get("message")
         .and_then(|v| v.as_str())
         .filter(|v| !v.trim().is_empty())
-        .ok_or_else(|| "LLM 返回缺少 message 字段".to_string())?;
+        .ok_or_else(|| "LLM response missing 'message' field".to_string())?;
     if !ok {
-        return Err(format!("LLM 连通性测试失败: {msg}"));
+        return Err(format!("LLM connectivity test failed: {msg}"));
     }
     Ok(TestTranslateLlmResponse {
         ok: true,

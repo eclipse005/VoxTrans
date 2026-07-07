@@ -1,0 +1,33 @@
+{
+  "fallback": "操作失败，请稍后重试",
+  "cancelled": "操作已取消",
+  "code": {
+    "taskNotFound": "任务不存在，请刷新任务列表",
+    "taskBusy": "任务正在处理中，请稍后再试",
+    "lockPoisoned": "内部状态错误，请重启应用",
+    "invalidRequest": "请求参数无效",
+    "taskFailed": "任务执行失败，请查看日志",
+    "ioError": "文件读写失败，请检查磁盘空间",
+    "serializationError": "数据解析失败"
+  },
+  "config": {
+    "httpClient": "网络配置错误，请检查 API 设置",
+    "llmFailed": "AI 调用失败，请检查网络连接和 API 配置",
+    "timeout": "请求超时，请检查网络连接",
+    "apiKeyRequired": "翻译 API Key 未设置，请在设置中配置",
+    "baseUrlRequired": "翻译 API 地址未设置，请在设置中配置",
+    "modelRequired": "翻译模型未设置，请在设置中配置"
+  },
+  "stage": {
+    "downloading": "下载中",
+    "preparing": "准备中",
+    "separating": "人声分离中",
+    "recognizing": "语音识别中",
+    "aligning": "强制对齐中",
+    "segmenting": "断句中",
+    "summarizing": "总结中",
+    "terminology": "术语提取中",
+    "translating": "翻译中",
+    "finalCheck": "本地最终检查中"
+  }
+}

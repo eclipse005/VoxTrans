@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import {
   cancelModelDownload as cancelModelDownloadApi,
@@ -46,6 +47,7 @@ const initialAsrStatusByModel: AsrStatusByModel = {
 };
 
 export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }: UseModelManagerArgs) {
+  const { t } = useTranslation(["toasts", "tasks", "models"]);
   const [statusByTarget, setStatusByTarget] = useState<ModelStatusByTarget>(initialModelStatus);
   const [asrStatusByModel, setAsrStatusByModel] = useState<AsrStatusByModel>(initialAsrStatusByModel);
   const asrModelRef = useRef<AsrModel>(asrModel);
@@ -78,10 +80,10 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
         demucs,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "读取模型状态失败";
+      const message = error instanceof Error ? error.message : t("models.status.readFailed");
       pushToast(message, "error");
     }
-  }, [pushToast]);
+  }, [pushToast, t]);
 
   useEffect(() => {
     asrModelRef.current = asrModel;
@@ -178,13 +180,13 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
         target,
         modelForTarget(target, asrModelRef.current, alignModelRef.current, demucsModelRef.current, model),
       );
-      pushToast("开始后台下载模型", "info");
+      pushToast(t("models.download.start"), "info");
       await refreshModelStatus();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "启动模型下载失败";
+      const message = error instanceof Error ? error.message : t("models.download.startFailed");
       pushToast(message, "error");
     }
-  }, [pushToast, refreshModelStatus]);
+  }, [pushToast, refreshModelStatus, t]);
 
   const cancelModelDownload = useCallback(async (target: ModelTarget, model?: string) => {
     try {
@@ -192,13 +194,13 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
         target,
         modelForTarget(target, asrModelRef.current, alignModelRef.current, demucsModelRef.current, model),
       );
-      pushToast("已请求取消下载", "info");
+      pushToast(t("models.download.cancelRequest"), "info");
       await refreshModelStatus();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "取消下载失败";
+      const message = error instanceof Error ? error.message : t("models.download.cancelFailed");
       pushToast(message, "error");
     }
-  }, [pushToast, refreshModelStatus]);
+  }, [pushToast, refreshModelStatus, t]);
 
   const openModelDir = useCallback(async (target: ModelTarget, model?: string) => {
     try {
@@ -207,10 +209,10 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
         modelForTarget(target, asrModelRef.current, alignModelRef.current, demucsModelRef.current, model),
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "打开模型目录失败";
+      const message = error instanceof Error ? error.message : t("models.dir.openFailed");
       pushToast(message, "error");
     }
-  }, [pushToast]);
+  }, [pushToast, t]);
 
   return useMemo(() => ({
     statusByTarget,

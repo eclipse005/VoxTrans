@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import {
   createEmptyTaskProgress,
@@ -75,6 +76,7 @@ export function useYoutubeDownloadWorkflow({
   processSingleFromScheduler,
   processSingleTranscribeTranslateFromScheduler,
 }: UseYoutubeDownloadWorkflowArgs) {
+  const { t } = useTranslation(["toasts", "tasks", "models"]);
   const youtubeTrackedTaskIdsRef = useRef<Set<string>>(new Set());
   const youtubeRemovedTaskIdsRef = useRef<Set<string>>(new Set());
   const youtubeTaskUrlRef = useRef<Map<string, string>>(new Map());
@@ -148,7 +150,7 @@ export function useYoutubeDownloadWorkflow({
           transcribeStatus: "processing",
           taskProgress: createTaskProgress({
             code: "downloading",
-            label: "下载中",
+            label: t("tasks.progress.downloading"),
             detail: `${progress}%`,
             current: progress,
             total: 100,
@@ -156,7 +158,7 @@ export function useYoutubeDownloadWorkflow({
         };
       });
     },
-    [dispatch, isTaskPresent],
+    [dispatch, isTaskPresent, t],
   );
 
   useEffect(() => {
@@ -202,7 +204,7 @@ export function useYoutubeDownloadWorkflow({
       } else {
         addQueueItems(dispatch, [downloadedItem]);
       }
-      pushToast("YouTube 下载完成，已加入任务列表", "success");
+      pushToast(t("toasts.youtube.downloadComplete"), "success");
 
       const pendingMode = youtubePostDownloadModeRef.current.get(taskId);
       youtubePostDownloadModeRef.current.delete(taskId);
@@ -221,6 +223,7 @@ export function useYoutubeDownloadWorkflow({
       processSingleTranscribeTranslateFromScheduler,
       pushToast,
       queue,
+      t,
     ],
   );
 
@@ -228,7 +231,7 @@ export function useYoutubeDownloadWorkflow({
     (taskId: string, error: unknown) => {
       const message = toUserErrorMessage(
         error,
-        "YouTube 下载已完成，但任务入库失败，请重试",
+        t("toasts.youtube.commitFailed"),
       );
       if (isTaskPresent(taskId)) {
         patchQueueItem(dispatch, taskId, (item) => ({
@@ -240,7 +243,7 @@ export function useYoutubeDownloadWorkflow({
       }
       pushToast(message, "error");
     },
-    [dispatch, isTaskPresent, pushToast],
+    [dispatch, isTaskPresent, pushToast, t],
   );
 
   const restoreYoutubeDeferredCompletion = useCallback(
@@ -348,7 +351,7 @@ export function useYoutubeDownloadWorkflow({
           transcribeStatus: "processing",
           taskProgress: createTaskProgress({
             code: "downloading",
-            label: "下载中",
+            label: t("tasks.progress.downloading"),
             detail: "0%",
             current: 0,
             total: 100,
@@ -374,7 +377,7 @@ export function useYoutubeDownloadWorkflow({
         });
         if (commitResult.status === "compensationFailed") {
           reportError(commitResult.error, "youtubeDownloadCompensation");
-          pushToast("YouTube 下载已取消，但任务清理失败，请刷新任务列表", "error");
+          pushToast(t("toasts.youtube.cancelCleanupFailed"), "error");
           return;
         }
         if (commitResult.status === "commitFailed") {
@@ -397,7 +400,7 @@ export function useYoutubeDownloadWorkflow({
           return;
         }
       } catch (error) {
-        const message = toUserErrorMessage(error, "YouTube 下载失败");
+        const message = toUserErrorMessage(error, t("toasts.youtube.downloadFailed"));
         const cancelled =
           isCancelledMessage(message) ||
           youtubeRemovedTaskIdsRef.current.has(taskId);
@@ -427,6 +430,7 @@ export function useYoutubeDownloadWorkflow({
       isTaskPresent,
       markYoutubeCompletionRestoreError,
       pushToast,
+      t,
     ],
   );
 
@@ -444,7 +448,7 @@ export function useYoutubeDownloadWorkflow({
     async (url: string) => {
       const trimmed = url.trim();
       if (!trimmed) {
-        pushToast("请先输入 YouTube 链接", "info");
+        pushToast(t("toasts.youtube.emptyUrl"), "info");
         return;
       }
 
@@ -462,25 +466,25 @@ export function useYoutubeDownloadWorkflow({
         },
       ]);
 
-      pushToast("已加入 YouTube 下载队列", "info");
+      pushToast(t("toasts.youtube.addedToQueue"), "info");
       return Promise.resolve();
     },
-    [pushToast],
+    [pushToast, t],
   );
 
   const enqueueYoutubeRetry = useCallback(
     (taskId: string, mode: QueueRunMode) => {
       const url = youtubeTaskUrlRef.current.get(taskId);
       if (!url) {
-        pushToast("缺少下载链接，无法重试。请删除后重新添加。", "error");
+        pushToast(t("toasts.youtube.missingUrl"), "error");
         return;
       }
       if (runningYoutubeTaskIdRef.current === taskId) {
-        pushToast("该任务正在下载中", "info");
+        pushToast(t("toasts.youtube.alreadyDownloading"), "info");
         return;
       }
       if (youtubeDownloadQueue.some((item) => item.taskId === taskId)) {
-        pushToast("该任务已在下载队列中", "info");
+        pushToast(t("toasts.youtube.alreadyInQueue"), "info");
         return;
       }
 
@@ -491,8 +495,8 @@ export function useYoutubeDownloadWorkflow({
         transcribeStatus: "queued",
         taskProgress: createTaskProgress({
           code: "downloading",
-          label: "下载中",
-          detail: "排队中",
+          label: t("tasks.progress.downloading"),
+          detail: t("common:status.queued"),
           current: 0,
           total: 100,
         }),
@@ -506,9 +510,9 @@ export function useYoutubeDownloadWorkflow({
           createdAt: Date.now(),
         },
       ]);
-      pushToast("已加入下载重试队列", "info");
+      pushToast(t("toasts.youtube.retryQueued"), "info");
     },
-    [dispatch, pushToast, youtubeDownloadQueue],
+    [dispatch, pushToast, youtubeDownloadQueue, t],
   );
 
   const processSingle = useCallback(
@@ -530,7 +534,7 @@ export function useYoutubeDownloadWorkflow({
         item.transcribeStatus === "processing" ||
         item.transcribeStatus === "queued"
       ) {
-        pushToast("该任务正在下载中", "info");
+        pushToast(t("toasts.youtube.alreadyDownloading"), "info");
         return true;
       }
       enqueueYoutubeRetry(item.id, "transcribe");
@@ -560,7 +564,7 @@ export function useYoutubeDownloadWorkflow({
         item.transcribeStatus === "processing" ||
         item.transcribeStatus === "queued"
       ) {
-        pushToast("该任务正在下载中", "info");
+        pushToast(t("toasts.youtube.alreadyDownloading"), "info");
         return true;
       }
       enqueueYoutubeRetry(item.id, "transcribe_translate");
@@ -608,12 +612,12 @@ export function useYoutubeDownloadWorkflow({
         });
       } catch (error) {
         reportError(error, "removeYoutubeItem");
-        pushToast(toUserErrorMessage(error, "删除任务失败"), "error");
+        pushToast(toUserErrorMessage(error, t("toasts.youtube.deleteFailed")), "error");
         return true;
       }
       return true;
     },
-    [dispatch, prepareYoutubeRemoval, pushToast, queue, rollbackYoutubeRemoval],
+    [dispatch, prepareYoutubeRemoval, pushToast, queue, rollbackYoutubeRemoval, t],
   );
 
   const prepareClearYoutubeQueue = useCallback((): PreparedYoutubeClear => {
