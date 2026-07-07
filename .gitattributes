@@ -1,9 +1,8 @@
-# 统一所有文本文件使用 LF 行尾，跨平台一致。
-# Windows 用户配置 core.autocrlf=true 时，Git 也尊重此文件的规则。
-
+# Normalize all text files to LF on checkout and commit (cross-platform).
+# Git honors this even when a Windows user has core.autocrlf=true.
 * text=auto eol=lf
 
-# 二进制文件不做行尾转换
+# Binary files are not subject to line-ending conversion.
 *.png binary
 *.jpg binary
 *.jpeg binary
@@ -32,7 +31,6 @@
 *.safetensors binary
 *.onnx binary
 *.pt binary
-*.bin binary
 *.woff binary
 *.woff2 binary
 *.ttf binary
