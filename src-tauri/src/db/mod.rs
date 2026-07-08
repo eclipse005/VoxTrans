@@ -98,6 +98,7 @@ pub async fn init_pool(app: &tauri::AppHandle) -> Result<SqlitePool, String> {
 const MIGRATION_ALTERS: &[&str] = &[
     "ALTER TABLE settings ADD COLUMN enable_vision_assist INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE settings ADD COLUMN locale TEXT NOT NULL DEFAULT 'zh-CN'",
+    "ALTER TABLE settings ADD COLUMN models_dir TEXT",
 ];
 
 /// Parse the column name from an `ALTER TABLE settings ADD COLUMN <name> ...`

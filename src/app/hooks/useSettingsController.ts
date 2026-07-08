@@ -51,6 +51,7 @@ export type SettingsForm = {
   flatSrtItems: SubtitleBurnMode[];
   enableVisionAssist: boolean;
   locale: SavedSettings["locale"];
+  modelsDir: string;
 };
 
 function settingsToForm(settings: SavedSettings): SettingsForm {
@@ -77,6 +78,7 @@ function settingsToForm(settings: SavedSettings): SettingsForm {
     flatSrtItems: settings.flatSrtItems,
     enableVisionAssist: settings.enableVisionAssist,
     locale: settings.locale,
+    modelsDir: settings.modelsDir ?? "",
   };
 }
 
@@ -151,6 +153,7 @@ export function useSettingsController({
       flatSrtItems: form.flatSrtItems,
       enableVisionAssist: form.enableVisionAssist,
       locale: form.locale,
+      modelsDir: form.modelsDir.trim() || null,
     };
 
     const nextSettings = normalizeSettings(draft, settings);
@@ -172,11 +175,15 @@ export function useSettingsController({
       ) {
         invalidateSourceLanguages();
       }
+      // If the model storage directory changed, refresh model status cards.
+      if (settings.modelsDir !== nextSettings.modelsDir) {
+        void refreshModelStatus();
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : t("toasts.settings.saveFailed");
       pushToast(message, "error");
     }
-  }, [form, settings, dispatch, pushToast, invalidateSourceLanguages, t]);
+  }, [form, settings, dispatch, pushToast, invalidateSourceLanguages, refreshModelStatus, t]);
 
   const saveTerminologyGroups = useCallback(async (groups: SavedSettings["terminologyGroups"]) => {
     const normalizedGroups = normalizeTerminologyGroups(groups);

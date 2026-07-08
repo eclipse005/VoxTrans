@@ -212,6 +212,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
       openModelDir,
       startModelDownload,
       cancelModelDownload,
+      refreshModelStatus,
     }),
     [
       form,
@@ -225,6 +226,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
       openModelDir,
       startModelDownload,
       cancelModelDownload,
+      refreshModelStatus,
     ],
   );
 

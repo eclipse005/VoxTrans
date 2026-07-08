@@ -34,6 +34,7 @@ pub struct SettingsRow {
     pub flat_srt_output: bool,
     pub enable_vision_assist: bool,
     pub locale: String,
+    pub models_dir: Option<String>,
     pub updated_at: i64,
 }
 

@@ -33,8 +33,17 @@ CREATE TABLE IF NOT EXISTS settings (
     flat_srt_output INTEGER NOT NULL,
     enable_vision_assist INTEGER NOT NULL DEFAULT 0,
     locale TEXT NOT NULL DEFAULT 'zh-CN',
+    models_dir TEXT,
     updated_at INTEGER NOT NULL
 );
+
+-- Schema evolution: add columns that may not exist in older databases.
+-- The "IF NOT EXISTS" CREATE TABLE above covers new installs.  For existing
+-- databases the caller should execute each ALTER TABLE and ignore "duplicate
+-- column" errors.
+
+-- 2026-07-08: custom model storage directory
+-- ALTER TABLE settings ADD COLUMN models_dir TEXT;
 
 -- flat_srt_items: settings 的 1:N 子表
 CREATE TABLE IF NOT EXISTS flat_srt_items (

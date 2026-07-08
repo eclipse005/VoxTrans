@@ -29,7 +29,7 @@
     "test": "Test",
     "concurrency": "Concurrency",
     "visionAssist": "Vision-assisted translation",
-    "visionAssistDesc": "Requires a model that supports image input"
+    "visionAssistDesc": "Best for visually-dense videos (tutorials, screen recordings); requires a vision-capable model"
   },
   "subtitle": {
     "length": "Subtitle length",
@@ -101,6 +101,10 @@
     "alignTitle": "Alignment model",
     "alignDesc": "Qwen3 Forced Aligner aligns transcribed text back to the audio to produce word-level timestamps.",
     "demucsTitle": "Vocal separation model",
-    "demucsDesc": "htdemucs_ft is a high-fidelity vocal separation model that extracts cleaner vocals with less accompaniment residue."
+    "demucsDesc": "htdemucs_ft is a high-fidelity vocal separation model that extracts cleaner vocals with less accompaniment residue.",
+    "storageDefault": "Default",
+    "storageChange": "Change",
+    "storageReset": "Reset",
+    "storagePickerTitle": "Select model storage directory"
   }
 }

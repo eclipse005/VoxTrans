@@ -17,6 +17,7 @@ type SettingsFormContextValue = {
   openModelDir: (target: "asr" | "align" | "demucs", model?: string) => void | Promise<void>;
   startModelDownload: (target: "asr" | "align" | "demucs", model?: string) => void | Promise<void>;
   cancelModelDownload: (target: "asr" | "align" | "demucs", model?: string) => void | Promise<void>;
+  refreshModelStatus: () => Promise<void>;
 };
 
 export const SettingsFormContext = createContext<SettingsFormContextValue | null>(null);

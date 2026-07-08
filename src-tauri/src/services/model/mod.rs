@@ -13,7 +13,7 @@ pub(crate) use catalog::{ModelDefinition, model_definition};
 pub use downloader::{cancel_model_download, start_model_download};
 pub use path::{
     open_model_dir, resolve_aligner_model_dir, resolve_asr_model_dir, resolve_engine_model_dir,
-    resolve_model_dir,
+    resolve_model_dir, resolve_models_root, set_models_root_override,
 };
 pub use status::{ModelStatusResponse, get_model_status};
 

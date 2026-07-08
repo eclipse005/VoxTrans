@@ -39,6 +39,7 @@ pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
         locale: Locale::parse(&row.locale),
         // flat_srt_items is composed in store.rs from the flat_srt_items table.
         flat_srt_items: Vec::new(),
+        models_dir: row.models_dir,
     }
 }
 
@@ -64,6 +65,7 @@ pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
         flat_srt_output: settings.flat_srt_output,
         enable_vision_assist: settings.enable_vision_assist,
         locale: settings.locale.as_str().to_string(),
+        models_dir: settings.models_dir.clone(),
         updated_at: now_ms(),
     }
 }
@@ -235,6 +237,7 @@ mod tests {
             flat_srt_items: Vec::new(),
             enable_vision_assist: false,
             locale: Locale::ZhCn,
+            models_dir: None,
         }
     }
 

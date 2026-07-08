@@ -64,6 +64,7 @@ const LAST_RESORT_DEFAULTS: SavedSettings = {
   flatSrtItems: ["source", "target"],
   enableVisionAssist: false,
   locale: "zh-CN",
+  modelsDir: null,
 };
 
 export function useAppPersistence(dispatch: DispatchState) {

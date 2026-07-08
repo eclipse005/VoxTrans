@@ -67,6 +67,7 @@ export function normalizeSettings(raw: SavedSettings, defaults: SavedSettings): 
     flatSrtItems: dedupeFlatSrtItems(raw.flatSrtItems, defaults.flatSrtItems),
     enableVisionAssist: Boolean(raw.enableVisionAssist),
     locale: pickEnum(raw.locale, LOCALES, defaults.locale),
+    modelsDir: raw.modelsDir?.trim() || null,
   };
 }
 

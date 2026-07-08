@@ -339,6 +339,10 @@ pub struct SavedSettings {
     pub enable_vision_assist: bool,
     #[serde(default = "default_locale")]
     pub locale: Locale,
+    /// Custom model storage directory. When `None` or empty, models are stored
+    /// under the executable's `models/` subdirectory.
+    #[serde(default)]
+    pub models_dir: Option<String>,
 }
 
 /// UI locale. Defaults to Simplified Chinese (the app's original language).

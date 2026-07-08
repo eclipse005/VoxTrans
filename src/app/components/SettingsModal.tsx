@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { open } from "@tauri-apps/plugin-dialog";
 import type { SubtitleBurnMode } from "../../features/media/types";
 import { PROVIDER_OPTIONS } from "../../features/media/provider";
 import { listSystemFonts } from "../api/system";
@@ -79,6 +80,13 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
     }
     const nextValue = Math.max(30, Math.min(60, Number.parseInt(digits, 10)));
     ctx.setForm((prev) => ({ ...prev, chunkInput: String(nextValue) }));
+  };
+
+  const handlePickModelsDir = async () => {
+    const selected = await open({ directory: true, multiple: false, title: t("settings:models.storagePickerTitle") });
+    if (selected && typeof selected === "string") {
+      ctx.setForm((prev) => ({ ...prev, modelsDir: selected }));
+    }
   };
 
   return (
@@ -778,6 +786,24 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
               </div>
             </div>
           <div className="settings-tab-content model-center-content" hidden={activeTab !== "models"}>
+              <div className="model-dir-card">
+                <span className="model-dir-icon" aria-hidden="true">📁</span>
+                <span className="model-dir-path">{ctx.form.modelsDir || t("settings:models.storageDefault")}</span>
+                <div className="model-dir-actions">
+                  <button type="button" className="nav-button model-dir-btn" onClick={() => { void handlePickModelsDir(); }}>
+                    {t("settings:models.storageChange")}
+                  </button>
+                  {ctx.form.modelsDir ? (
+                    <button
+                      type="button"
+                      className="nav-button model-dir-btn"
+                      onClick={() => ctx.setForm((prev) => ({ ...prev, modelsDir: "" }))}
+                    >
+                      {t("settings:models.storageReset")}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
               <ModelDownloadCard
                 target="asr"
                 title={t("settings:models.asrTitle")}
