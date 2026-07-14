@@ -9,8 +9,12 @@ import {
   normalizeSourceLanguage,
   normalizeTargetLanguage,
 } from "../../../features/media/languages";
+import {
+  isSubtitleQueueItem,
+  toEnqueuePayload,
+  type QueueRunMode,
+} from "../../../features/media/queueUtils";
 import type { AppAction } from "../../state/appReducer";
-import type { QueueRunMode } from "./useQueueRunner";
 import {
   clearQueueItems,
   patchQueueItem,
@@ -65,20 +69,8 @@ export function useQueueScheduler({
   const enqueueForMode = useCallback(
     async (item: QueueItem, mode: QueueRunMode): Promise<boolean> => {
       try {
-        await enqueueTaskRun({
-          id: item.id,
-          mediaPath: item.path,
-          name: item.name,
-          mediaKind: item.mediaKind,
-          sizeBytes: item.sizeBytes,
-          intent:
-            mode === "transcribe_translate"
-              ? "TRANSCRIBE_TRANSLATE"
-              : "TRANSCRIBE",
-          sourceLang: normalizeSourceLanguage(item.sourceLang),
-          targetLang: normalizeTargetLanguage(item.targetLang),
-          maxRetries: 0,
-        });
+        const payload = toEnqueuePayload(item, mode);
+        await enqueueTaskRun(payload);
         // State is updated via task-state-changed event from backend
         return true;
       } catch (error) {
@@ -140,15 +132,34 @@ export function useQueueScheduler({
       }
 
       let queuedCount = 0;
+      let skippedSrtOnTranscribe = 0;
       for (const item of retryableItems) {
-        const resolvedMode =
+        // Batch "transcribe only" does not apply to SRT tasks — skip them.
+        if (mode === "transcribe" && isSubtitleQueueItem(item)) {
+          skippedSrtOnTranscribe += 1;
+          continue;
+        }
+        const resolvedMode: QueueRunMode =
           mode === "transcribe" ? "transcribe" : "transcribe_translate";
         if (await enqueueForMode(item, resolvedMode)) {
           queuedCount += 1;
         }
       }
 
+      if (skippedSrtOnTranscribe > 0) {
+        pushToast(
+          t("toasts:queue.srtSkippedOnTranscribeBatch", {
+            count: skippedSrtOnTranscribe,
+          }),
+          "info",
+        );
+      }
+
+      // Pure SRT queue under "transcribe only": skip is intentional, not a failure.
       if (queuedCount === 0) {
+        if (skippedSrtOnTranscribe > 0) {
+          return;
+        }
         pushToast(t("toasts:queue.enqueueAllFailed"), "error");
         return;
       }
@@ -173,6 +184,10 @@ export function useQueueScheduler({
         item.transcribeStatus === "queued"
       )
         return;
+      if (isSubtitleQueueItem(item)) {
+        pushToast(t("toasts:queue.srtUseTranslateOnly"), "info");
+        return;
+      }
       const mode: QueueRunMode = "transcribe";
       const ok = await enqueueForMode(item, mode);
       if (!ok) return;
@@ -194,6 +209,7 @@ export function useQueueScheduler({
         item.transcribeStatus === "queued"
       )
         return;
+      // SRT items always map to TRANSLATE_SRT inside enqueueForMode.
       const mode: QueueRunMode = "transcribe_translate";
       const ok = await enqueueForMode(item, mode);
       if (!ok) return;

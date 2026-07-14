@@ -18,6 +18,7 @@ pub mod preferences_normalize;
 pub mod preferences_types;
 pub mod prompts;
 pub mod subtitle_beautify;
+pub mod subtitle_import;
 pub mod subtitle_length;
 pub mod subtitle_render;
 pub mod subtitle_srt;

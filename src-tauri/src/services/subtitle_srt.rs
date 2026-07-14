@@ -49,25 +49,73 @@ impl ExportSrtItem {
     }
 }
 
+/// Fixed basenames written into the task folder by completion / export.
+/// Imported originals must not use these names or completion will overwrite them.
+pub const RESERVED_TASK_SRT_BASENAMES: &[&str] = &[
+    "src.srt",
+    "trans.srt",
+    "src_trans.srt",
+    "trans_src.srt",
+];
+
+pub fn is_reserved_task_srt_basename(file_name: &str) -> bool {
+    let name = Path::new(file_name)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| file_name.to_string());
+    RESERVED_TASK_SRT_BASENAMES
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(name.as_str()))
+}
+
 pub fn write_task_output_variants_for_completion(
     task_id: &str,
     media_path: &Path,
     segments: Vec<SubtitleSrtSegment>,
     include_translation_variants: bool,
 ) -> Result<Vec<String>, String> {
+    write_task_output_variants_for_completion_with_options(
+        task_id,
+        media_path,
+        segments,
+        include_translation_variants,
+        true,
+    )
+}
+
+/// When `include_source` is false (SRT-import translate tasks), skip writing
+/// another `src.srt` because the original subtitle file is already in the
+/// task folder under its real name. Only translation + bilingual outputs.
+pub fn write_task_output_variants_for_completion_with_options(
+    task_id: &str,
+    media_path: &Path,
+    segments: Vec<SubtitleSrtSegment>,
+    include_translation_variants: bool,
+    include_source: bool,
+) -> Result<Vec<String>, String> {
     // NB: beautify is the caller's responsibility now -- see
     // output_completion::finish_transcribe_only / finish_translate_with_step5
     // for the centralized point.
     let items = if include_translation_variants {
-        vec![
-            ExportSrtItem::Source,
-            ExportSrtItem::Target,
-            ExportSrtItem::BilingualSourceFirst,
-            ExportSrtItem::BilingualTargetFirst,
-        ]
-    } else {
+        let mut items = Vec::new();
+        if include_source {
+            items.push(ExportSrtItem::Source);
+        }
+        items.push(ExportSrtItem::Target);
+        items.push(ExportSrtItem::BilingualSourceFirst);
+        items.push(ExportSrtItem::BilingualTargetFirst);
+        items
+    } else if include_source {
         vec![ExportSrtItem::Source]
+    } else {
+        // Subtitle-import tasks never request this combination; fail closed.
+        return Err(
+            "completion SRT write requires at least one variant (source or translation)".to_string(),
+        );
     };
+    if items.is_empty() {
+        return Err("completion SRT write produced no variants".to_string());
+    }
     write_task_output_variants(task_id, media_path, &segments, &items)
 }
 

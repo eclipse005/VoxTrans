@@ -7,12 +7,14 @@
     "startAll": "全部开始（{{mode}}）",
     "chooseMode": "选择批量模式"
   },
-  "mediaCount": "共 {{count}} 个媒体",
+  "mediaCount": "共 {{count}} 个任务",
+  "cueCount": "{{count}} 条",
   "language": {
     "mixed": "多语言",
     "batchTitle": "批量任务语言",
     "batchSet": "批量设置任务语言",
     "audio": "音频语言",
+    "source": "原文语言",
     "translate": "翻译语言",
     "mixedChip": "多种语言",
     "itemAria": "{{source}} 到 {{target}}"
@@ -68,7 +70,7 @@
     "title": "媒体导入",
     "localTab": "本地文件",
     "dropTitle": "拖拽或点击上传",
-    "dropHint": "支持多选音视频文件",
+    "dropHint": "支持音视频与 SRT 字幕（可多选）",
     "selectBtn": "上传文件"
   },
   "youtube": {

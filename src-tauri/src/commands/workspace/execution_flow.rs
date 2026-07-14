@@ -24,7 +24,8 @@ use super::preview::update_subtitle_preview;
 use super::progress::{mark_task_failed, report_task_stage};
 use super::translation_flow::execute_translate_steps;
 use super::{
-    TaskStage, get_task_record, normalize_intent, normalize_task_target_lang, patch_task_item,
+    TaskStage, WorkspaceTaskRecord, get_task_record, normalize_intent, normalize_task_target_lang,
+    patch_task_item,
 };
 
 pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
@@ -41,6 +42,13 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Works
 async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
     let record = get_task_record(task_id)?;
     let intent = normalize_intent(&record.intent).to_string();
+    let is_srt_translate =
+        intent == "TRANSLATE_SRT" || record.item.media_kind.trim() == "subtitle";
+
+    if is_srt_translate {
+        return execute_srt_translate_task(app, task_id, &record).await;
+    }
+
     let store = app.state::<TaskStore>().inner();
     let runtime =
         resolve_runtime_settings(store, &record.frozen, intent == "TRANSCRIBE_TRANSLATE")?;
@@ -219,6 +227,92 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
     };
     run_result?;
     Ok(())
+}
+
+/// Translate an imported SRT task: skip ASR / Step2 segmentation entirely.
+/// Cue boundaries come only from the imported subtitle file.
+async fn execute_srt_translate_task(
+    app: &AppHandle,
+    task_id: &str,
+    record: &WorkspaceTaskRecord,
+) -> WorkspaceResult<()> {
+    if record.item.media_kind.trim() != "subtitle"
+        && !crate::services::subtitle_import::is_srt_path(&record.item.path)
+    {
+        return Err(WorkspaceError::InvalidRequest(
+            "TRANSLATE_SRT requires a subtitle task".to_string(),
+        ));
+    }
+
+    let store = app.state::<TaskStore>().inner();
+    let mut runtime = resolve_runtime_settings(store, &record.frozen, true)?;
+    // No video attached in MVP — never sample frames.
+    runtime.enable_vision_assist = false;
+
+    let source_lang = record.source_lang.clone();
+    let target_lang = normalize_task_target_lang(&record.target_lang);
+
+    let main_logger = TaskLogger::main_with_media(task_id.to_string(), record.item.path.clone());
+    main_logger.event(
+        event::TASK_STARTED,
+        Some(&serde_json::json!({
+            "taskId": task_id,
+            "intent": "TRANSLATE_SRT",
+            "mediaPath": record.item.path,
+            "sourceLang": source_lang,
+            "targetLang": target_lang,
+            "mediaKind": record.item.media_kind,
+        })),
+    );
+
+    report_task_stage(app, task_id, TaskStage::Preparing, "", 1, 1).await?;
+
+    let workspace_segments = crate::services::subtitle_import::load_srt_segments_for_run(
+        &record.item.subtitle_segments_json,
+        &record.item.path,
+    )
+    .map_err(WorkspaceError::InvalidRequest)?;
+    if workspace_segments.is_empty() {
+        return Err(WorkspaceError::InvalidRequest(
+            "SRT task has no subtitle cues to translate".to_string(),
+        ));
+    }
+
+    // Clear prior translations in the live preview, keep source cues.
+    let source_only: Vec<_> = workspace_segments
+        .iter()
+        .map(|segment| crate::services::workspace_subtitle::WorkspaceSubtitleSegment {
+            start_ms: segment.start_ms,
+            end_ms: segment.end_ms,
+            source_text: segment.source_text.clone(),
+            translated_text: String::new(),
+            source_words: Vec::new(),
+        })
+        .collect();
+    let source_text =
+        crate::services::subtitle_import::source_text_from_workspace_segments(&source_only);
+    update_subtitle_preview(app, task_id, &source_text, source_only).await?;
+
+    let step2_segments =
+        crate::services::subtitle_import::workspace_segments_to_step2(&workspace_segments);
+
+    // Force no beautify so imported cue boundaries stay intact.
+    let mut record = record.clone();
+    record.frozen.enable_subtitle_beautify = false;
+    record.intent = "TRANSLATE_SRT".to_string();
+
+    execute_translate_steps(
+        app,
+        task_id,
+        &record,
+        runtime,
+        source_lang,
+        target_lang,
+        &step2_segments,
+        source_text,
+        store,
+    )
+    .await
 }
 
 async fn mark_task_failed_after_execution_error<F, Fut>(

@@ -13,7 +13,7 @@ type DeleteTasksRequest = {
 
 type ExecuteTaskRunRequest = {
   taskId: string;
-  intent?: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE";
+  intent?: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" | "TRANSLATE_SRT";
 };
 
 type ExecuteTaskBatchRequest = {
@@ -36,9 +36,9 @@ type EnqueueTaskRunRequest = {
   id: string;
   mediaPath: string;
   name: string;
-  mediaKind: "audio" | "video";
+  mediaKind: "audio" | "video" | "subtitle";
   sizeBytes: number;
-  intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE";
+  intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" | "TRANSLATE_SRT";
   sourceLang?: LanguageTag;
   targetLang?: TargetLanguage;
   maxRetries?: number;
@@ -60,7 +60,7 @@ export type RegisterTaskUploadRequest = {
   id: string;
   mediaPath: string;
   name: string;
-  mediaKind: "audio" | "video";
+  mediaKind: "audio" | "video" | "subtitle";
   sizeBytes: number;
 };
 
@@ -89,8 +89,8 @@ export async function enqueueTaskRun(request: EnqueueTaskRunRequest): Promise<vo
   await invoke("enqueue_task_run", { request });
 }
 
-export async function registerTaskUpload(request: RegisterTaskUploadRequest): Promise<void> {
-  await invoke("register_task_upload", { request });
+export async function registerTaskUpload(request: RegisterTaskUploadRequest): Promise<QueueItem> {
+  return invoke<QueueItem>("register_task_upload", { request });
 }
 
 export async function updateTaskLanguages(request: UpdateTaskLanguagesRequest): Promise<void> {

@@ -66,7 +66,14 @@ pub(super) async fn finish_transcribe_only(
     }
     let subtitle_segments_json = serialize_segments(&workspace_segments);
     let store = app.state::<TaskStore>().inner();
-    write_completion_srts(store, task_id, media_path, &workspace_segments, false)?;
+    write_completion_srts(
+        store,
+        task_id,
+        media_path,
+        media_kind,
+        &workspace_segments,
+        false,
+    )?;
 
     // Write segments to DB BEFORE marking the task done. If segments
     // fail, the task stays in its previous status and the next restart
@@ -115,7 +122,14 @@ pub(super) async fn finish_translate_with_step5(
     }
     let subtitle_segments_json = serialize_segments(&workspace_segments);
     let store = app.state::<TaskStore>().inner();
-    write_completion_srts(store, task_id, media_path, &workspace_segments, true)?;
+    write_completion_srts(
+        store,
+        task_id,
+        media_path,
+        media_kind,
+        &workspace_segments,
+        true,
+    )?;
 
     // See `finish_transcribe_only` for the ordering rationale.
     persist_segments_to_db(app, task_id, &subtitle_segments_json).await?;
@@ -201,6 +215,7 @@ fn write_completion_srts(
     store: &TaskStore,
     task_id: &str,
     media_path: &str,
+    media_kind: &str,
     segments: &[WorkspaceSubtitleSegment],
     include_translation_variants: bool,
 ) -> Result<(), String> {
@@ -219,11 +234,17 @@ fn write_completion_srts(
             },
         )
         .collect::<Vec<_>>();
-    crate::services::subtitle_srt::write_task_output_variants_for_completion(
+    // SRT-import tasks already keep the original file in the task folder;
+    // do not emit a redundant src.srt on completion.
+    let is_subtitle_task = media_kind.trim() == "subtitle"
+        || crate::services::subtitle_import::is_srt_path(media_path);
+    let include_source = !is_subtitle_task;
+    crate::services::subtitle_srt::write_task_output_variants_for_completion_with_options(
         task_id,
         Path::new(media_path),
         srt_segments.clone(),
         include_translation_variants,
+        include_source,
     )?;
 
     // Flat SRT output to output/ root directory
@@ -233,15 +254,13 @@ fn write_completion_srts(
                 .flat_srt_items
                 .iter()
                 .filter_map(|s| crate::services::subtitle_srt::ExportSrtItem::parse(s.as_str()))
+                // SRT tasks: skip flat "source" — original is already the imported file.
+                .filter(|item| include_source || *item != crate::services::subtitle_srt::ExportSrtItem::Source)
                 .collect();
             if !flat_items.is_empty() {
                 let output_dir = crate::services::output::resolve_output_dir();
                 if output_dir.is_dir() {
-                    let file_stem = Path::new(media_path)
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_else(|| task_id.to_string());
+                    let file_stem = resolve_flat_output_stem(media_path, task_id);
                     let safe_stem =
                         crate::services::task_path::sanitize_filename_component(&file_stem);
                     if let Err(e) = crate::services::subtitle_srt::write_flat_variants_to_directory(
@@ -258,4 +277,32 @@ fn write_completion_srts(
     }
 
     Ok(())
+}
+
+/// Prefer the original media/subtitle stem for flat filenames.
+fn resolve_flat_output_stem(media_path: &str, task_id: &str) -> String {
+    let path = Path::new(media_path);
+    if let Some(stem) = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        return stem;
+    }
+    if let Some(parent_name) = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|s| s.to_string_lossy().to_string())
+    {
+        let suffix = format!("_{task_id}");
+        if let Some(stripped) = parent_name.strip_suffix(&suffix) {
+            if !stripped.is_empty() {
+                return stripped.to_string();
+            }
+        }
+        if !parent_name.is_empty() {
+            return parent_name;
+        }
+    }
+    task_id.to_string()
 }

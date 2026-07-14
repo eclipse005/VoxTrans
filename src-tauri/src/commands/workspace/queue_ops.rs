@@ -20,7 +20,7 @@ use super::{
 pub(super) async fn register_task_upload_internal(
     app: &AppHandle,
     request: RegisterTaskUploadCommandRequest,
-) -> WorkspaceResult<()> {
+) -> WorkspaceResult<WorkspaceQueueItem> {
     ensure_workspace_hydrated_from_db(app).await?;
     let id = request.id.trim();
     let media_path = request.media_path.trim();
@@ -32,6 +32,36 @@ pub(super) async fn register_task_upload_internal(
             "mediaPath is required".to_string(),
         ));
     }
+
+    let is_srt = crate::services::subtitle_import::is_srt_path(media_path)
+        || normalize_media_kind(&request.media_kind) == "subtitle";
+
+    let (resolved_path, media_kind, size_bytes, segments_json, result_text, result_srt) =
+        if is_srt {
+            let imported = crate::services::subtitle_import::import_srt_for_task(
+                id,
+                std::path::Path::new(media_path),
+                &request.name,
+            )
+            .map_err(WorkspaceError::InvalidRequest)?;
+            (
+                imported.path,
+                "subtitle".to_string(),
+                imported.size_bytes,
+                imported.subtitle_segments_json,
+                imported.result_text,
+                imported.result_srt,
+            )
+        } else {
+            (
+                media_path.to_string(),
+                normalize_media_kind(&request.media_kind).to_string(),
+                request.size_bytes,
+                "[]".to_string(),
+                String::new(),
+                String::new(),
+            )
+        };
 
     let db_store = app.state::<TaskStore>().inner();
     let existing = {
@@ -45,25 +75,41 @@ pub(super) async fn register_task_upload_internal(
         patch_task_item(app, id, |record| {
             apply_upload_fields(
                 &mut record.item,
-                media_path,
-                request.name,
-                &request.media_kind,
-                request.size_bytes,
+                &resolved_path,
+                request.name.clone(),
+                &media_kind,
+                size_bytes,
             );
+            if is_srt {
+                record.item.subtitle_segments_json = segments_json.clone();
+                record.item.result_text = result_text.clone();
+                record.item.result_srt = result_srt.clone();
+                record.intent = "TRANSLATE_SRT".to_string();
+            }
         })
         .await?;
     } else {
         let enqueue_seq = db_store.next_enqueue_seq().await?;
+        let mut item = new_workspace_queue_item(
+            id,
+            &resolved_path,
+            request.name,
+            &media_kind,
+            size_bytes,
+            "pending",
+        );
+        if is_srt {
+            item.subtitle_segments_json = segments_json;
+            item.result_text = result_text;
+            item.result_srt = result_srt;
+        }
         let record = WorkspaceTaskRecord {
-            item: new_workspace_queue_item(
-                id,
-                media_path,
-                request.name,
-                &request.media_kind,
-                request.size_bytes,
-                "pending",
-            ),
-            intent: "TRANSCRIBE".to_string(),
+            item,
+            intent: if is_srt {
+                "TRANSLATE_SRT".to_string()
+            } else {
+                "TRANSCRIBE".to_string()
+            },
             source_lang: default_task_source_lang(),
             target_lang: default_task_target_lang(),
             max_retries: 0,
@@ -75,7 +121,40 @@ pub(super) async fn register_task_upload_internal(
         store.push_task(record);
     }
 
-    Ok(())
+    // Persist SRT segments to the structured table so hydrate reloads them.
+    if is_srt {
+        let store = app.state::<TaskStore>().inner().clone();
+        let task_id = id.to_string();
+        let item_snapshot = {
+            let store_mem = lock_workspace_store()?;
+            store_mem
+                .tasks()
+                .iter()
+                .find(|entry| entry.item.id == id)
+                .map(|task| task.item.clone())
+                .ok_or_else(|| WorkspaceError::TaskNotFound(id.to_string()))?
+        };
+        let segs: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
+            serde_json::from_str(&item_snapshot.subtitle_segments_json).unwrap_or_default();
+        if !segs.is_empty() {
+            store
+                .replace_segments(&task_id, &segs)
+                .await
+                .map_err(|e| WorkspaceError::TaskFailed(format!("persist srt segments: {e}")))?;
+        }
+    }
+
+    let item = {
+        let store = lock_workspace_store()?;
+        store
+            .tasks()
+            .iter()
+            .find(|entry| entry.item.id == id)
+            .map(|task| task.item.clone())
+            .ok_or_else(|| WorkspaceError::TaskNotFound(id.to_string()))?
+    };
+    emit_task_state_changed(app, &item);
+    Ok(item)
 }
 
 pub(super) async fn delete_tasks_internal(
@@ -171,25 +250,60 @@ pub(super) async fn enqueue_task_run_internal(
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .unwrap_or_default();
-        let mut item = new_workspace_queue_item(
-            id,
-            media_path,
-            request.name,
-            &request.media_kind,
-            request.size_bytes,
-            "queued",
-        );
+        let intent = normalize_intent(&request.intent).to_string();
+        let is_srt = intent == "TRANSLATE_SRT"
+            || normalize_media_kind(&request.media_kind) == "subtitle"
+            || crate::services::subtitle_import::is_srt_path(media_path);
+
+        let mut item = if is_srt {
+            // Cold path: still materialize task-dir copy + parse cues.
+            let imported = crate::services::subtitle_import::import_srt_for_task(
+                id,
+                std::path::Path::new(media_path),
+                &request.name,
+            )
+            .map_err(WorkspaceError::InvalidRequest)?;
+            let mut item = new_workspace_queue_item(
+                id,
+                &imported.path,
+                request.name.clone(),
+                "subtitle",
+                imported.size_bytes,
+                "queued",
+            );
+            item.subtitle_segments_json = imported.subtitle_segments_json;
+            item.result_text = imported.result_text;
+            item.result_srt = imported.result_srt;
+            item
+        } else {
+            new_workspace_queue_item(
+                id,
+                media_path,
+                request.name.clone(),
+                &request.media_kind,
+                request.size_bytes,
+                "queued",
+            )
+        };
         item.source_lang = source_lang.clone();
         item.target_lang = target_lang.clone();
         item.terminology_group_id = terminology_group_id.clone();
+        let mut frozen = freeze_current_settings(db_store, &terminology_group_id)?;
+        if is_srt {
+            frozen.enable_subtitle_beautify = false;
+        }
         let enqueue_seq = db_store.next_enqueue_seq().await?;
         let record = WorkspaceTaskRecord {
             item,
-            intent: normalize_intent(&request.intent).to_string(),
+            intent: if is_srt {
+                "TRANSLATE_SRT".to_string()
+            } else {
+                intent
+            },
             source_lang,
             target_lang,
             max_retries: request.max_retries.unwrap_or(0),
-            frozen: freeze_current_settings(db_store, &terminology_group_id)?,
+            frozen,
             enqueue_seq,
         };
         let emitted = record.item.clone();
@@ -198,6 +312,24 @@ pub(super) async fn enqueue_task_run_internal(
         store.push_task(record);
         emitted
     };
+
+    // Keep structured segments table aligned with cleared-translation JSON so
+    // hydrate after restart does not resurrect old translations.
+    if queued_item.media_kind.trim() == "subtitle"
+        || crate::services::subtitle_import::is_srt_path(&queued_item.path)
+    {
+        let segs: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
+            serde_json::from_str(&queued_item.subtitle_segments_json).unwrap_or_default();
+        if !segs.is_empty() {
+            db_store
+                .replace_segments(id, &segs)
+                .await
+                .map_err(|e| {
+                    WorkspaceError::TaskFailed(format!("persist srt segments on enqueue: {e}"))
+                })?;
+        }
+    }
+
     emit_task_state_changed(app, &queued_item);
     Ok(())
 }
@@ -472,22 +604,53 @@ fn apply_enqueue_request(
     request: EnqueueTaskRunCommandRequest,
     frozen: FrozenSettings,
 ) {
+    let intent = normalize_intent(&request.intent).to_string();
+    let media_kind = normalize_media_kind(&request.media_kind).to_string();
+    let is_srt_task = intent == "TRANSLATE_SRT" || media_kind == "subtitle";
+
+    // Keep imported source cues for SRT translate; only clear translations.
+    let preserved_segments = if is_srt_task {
+        clear_translations_in_segments_json(&record.item.subtitle_segments_json)
+    } else {
+        "[]".to_string()
+    };
+    let preserved_result_text = if is_srt_task {
+        record.item.result_text.clone()
+    } else {
+        String::new()
+    };
+    let preserved_result_srt = if is_srt_task {
+        record.item.result_srt.clone()
+    } else {
+        String::new()
+    };
+    let path = if is_srt_task && !record.item.path.trim().is_empty() {
+        // Prefer the already-copied task-dir original (or renamed-if-reserved) over upload path.
+        record.item.path.clone()
+    } else {
+        request.media_path.trim().to_string()
+    };
+
     apply_upload_fields(
         &mut record.item,
-        request.media_path.trim(),
+        &path,
         request.name,
-        &request.media_kind,
+        if is_srt_task { "subtitle" } else { &request.media_kind },
         request.size_bytes,
     );
     record.item.transcribe_status = "queued".to_string();
     record.item.task_progress = WorkspaceTaskProgressState::default();
     record.item.transcribe_error = String::new();
-    record.item.result_text = String::new();
-    record.item.result_srt = String::new();
-    record.item.subtitle_segments_json = "[]".to_string();
+    record.item.result_text = preserved_result_text;
+    record.item.result_srt = preserved_result_srt;
+    record.item.subtitle_segments_json = preserved_segments;
     record.item.llm_total_tokens = 0;
 
-    record.intent = normalize_intent(&request.intent).to_string();
+    record.intent = if is_srt_task {
+        "TRANSLATE_SRT".to_string()
+    } else {
+        intent
+    };
     record.source_lang = request
         .source_lang
         .as_deref()
@@ -509,7 +672,21 @@ fn apply_enqueue_request(
     record.item.target_lang = record.target_lang.clone();
     record.item.terminology_group_id = terminology_group_id.clone();
     record.max_retries = request.max_retries.unwrap_or(0);
+    // SRT tasks must not reshape cue boundaries via beautify.
+    let mut frozen = frozen;
+    if is_srt_task {
+        frozen.enable_subtitle_beautify = false;
+    }
     record.frozen = frozen;
+}
+
+fn clear_translations_in_segments_json(raw: &str) -> String {
+    let mut segments: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
+        serde_json::from_str(raw).unwrap_or_default();
+    for segment in &mut segments {
+        segment.translated_text.clear();
+    }
+    crate::services::workspace_subtitle::serialize_segments(&segments)
 }
 
 /// Snapshot the user-frozen subset of the current saved settings. Tasks

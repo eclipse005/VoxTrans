@@ -69,7 +69,7 @@ pub async fn load_workspace_task(
 pub async fn register_task_upload(
     app: AppHandle,
     request: RegisterTaskUploadCommandRequest,
-) -> Result<(), String> {
+) -> Result<WorkspaceQueueItem, String> {
     Ok(register_task_upload_internal(&app, request).await?)
 }
 
@@ -277,6 +277,7 @@ pub fn add_task_total_tokens(task_id: &str, delta_tokens: u64) -> WorkspaceResul
 fn normalize_media_kind(raw: &str) -> &str {
     match raw.trim() {
         "video" => "video",
+        "subtitle" => "subtitle",
         _ => "audio",
     }
 }
@@ -284,6 +285,7 @@ fn normalize_media_kind(raw: &str) -> &str {
 fn normalize_intent(raw: &str) -> &str {
     match raw.trim() {
         "TRANSCRIBE_TRANSLATE" => "TRANSCRIBE_TRANSLATE",
+        "TRANSLATE_SRT" => "TRANSLATE_SRT",
         _ => "TRANSCRIBE",
     }
 }

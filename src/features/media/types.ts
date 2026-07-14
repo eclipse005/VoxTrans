@@ -95,7 +95,7 @@ export type QueueItem = {
   id: string;
   path: string;
   name: string;
-  mediaKind: "audio" | "video";
+  mediaKind: "audio" | "video" | "subtitle";
   sizeBytes: number;
   sourceLang: LanguageTag;
   targetLang: TargetLanguage;

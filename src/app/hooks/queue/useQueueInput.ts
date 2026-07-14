@@ -13,7 +13,7 @@ import {
   DEFAULT_SOURCE_LANGUAGE,
   DEFAULT_TARGET_LANGUAGE,
 } from "../../../features/media/languages";
-import { detectMediaKind, fileName } from "../../../features/media/utils";
+import { detectMediaKind, fileName, isSupportedUploadPath } from "../../../features/media/utils";
 import type { AppAction } from "../../state/appReducer";
 import { addQueueItems } from "../../state/queueDomainActions";
 import { reportError, toUserErrorMessage } from "../../utils/errors";
@@ -32,8 +32,15 @@ export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }:
   const appendPaths = useCallback(async (paths: string[]) => {
     if (!paths.length) return;
 
+    const supported = paths.filter((path) => isSupportedUploadPath(path));
+    const skipped = paths.length - supported.length;
+    if (skipped > 0) {
+      pushToast(t("toasts:queue.unsupportedFilesSkipped", { count: skipped }), "info");
+    }
+    if (!supported.length) return;
+
     const incoming = await Promise.all(
-      paths.map(async (path) => {
+      supported.map(async (path) => {
         let sizeBytes = 0;
         try {
           sizeBytes = await getFileSize(path);
@@ -41,11 +48,12 @@ export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }:
           sizeBytes = 0;
         }
 
+        const mediaKind = detectMediaKind(path);
         return {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           path,
           name: fileName(path),
-          mediaKind: detectMediaKind(path),
+          mediaKind,
           sizeBytes,
           sourceLang: DEFAULT_SOURCE_LANGUAGE satisfies LanguageTag,
           targetLang: DEFAULT_TARGET_LANGUAGE,
@@ -64,14 +72,23 @@ export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }:
     let failedCount = 0;
     for (const item of incoming) {
       try {
-        await registerTaskUpload({
+        const registered = await registerTaskUpload({
           id: item.id,
           mediaPath: item.path,
           name: item.name,
           mediaKind: item.mediaKind,
           sizeBytes: item.sizeBytes,
         });
-        persisted.push(item);
+        // Backend may rewrite path (SRT → task dir/source.srt) and fill segments.
+        persisted.push({
+          ...item,
+          ...registered,
+          id: registered.id || item.id,
+          terminologyGroupId:
+            registered.terminologyGroupId || item.terminologyGroupId || activeTerminologyGroupId,
+          sourceLang: registered.sourceLang || item.sourceLang,
+          targetLang: registered.targetLang || item.targetLang,
+        });
       } catch (error) {
         failedCount += 1;
         reportError(error, "registerTaskUpload");
@@ -85,7 +102,7 @@ export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }:
     if (failedCount > 0) {
       pushToast(t("toasts:queue.addFailedCount", { count: failedCount }), "error");
     }
-  }, [dispatch, pushToast, activeTerminologyGroupId]);
+  }, [dispatch, pushToast, activeTerminologyGroupId, t]);
 
   useEffect(() => {
     let disposed = false;
@@ -154,8 +171,12 @@ export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }:
         directory: false,
         filters: [
           {
-            name: "Media",
-            extensions: ["mp3", "wav", "m4a", "mp4", "mkv", "flac", "aac", "mov", "webm", "avi"],
+            name: "Media & Subtitles",
+            extensions: [
+              "mp3", "wav", "m4a", "flac", "aac", "ogg", "opus",
+              "mp4", "mkv", "mov", "avi", "webm", "m4v",
+              "srt",
+            ],
           },
         ],
       });
@@ -174,4 +195,3 @@ export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }:
     pickFiles,
   };
 }
-

@@ -7,12 +7,14 @@
     "startAll": "Start all ({{mode}})",
     "chooseMode": "Choose batch mode"
   },
-  "mediaCount": "{{count}} media",
+  "mediaCount": "{{count}} task(s)",
+  "cueCount": "{{count}} cues",
   "language": {
     "mixed": "Multiple languages",
     "batchTitle": "Batch task languages",
     "batchSet": "Set batch task languages",
     "audio": "Audio language",
+    "source": "Source language",
     "translate": "Translation language",
     "mixedChip": "Multiple languages",
     "itemAria": "{{source}} to {{target}}"
@@ -68,7 +70,7 @@
     "title": "Media Import",
     "localTab": "Local Files",
     "dropTitle": "Drag &amp; drop or click to upload",
-    "dropHint": "Multiple audio/video files supported",
+    "dropHint": "Audio, video, and SRT subtitles (multi-select)",
     "selectBtn": "Upload Files"
   },
   "youtube": {

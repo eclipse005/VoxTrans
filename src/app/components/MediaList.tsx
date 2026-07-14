@@ -24,7 +24,7 @@ import { useSourceLanguages } from "../hooks/useSourceLanguages";
 import type { AsrModel } from "../../generated/bindings/AsrModel";
 import type { AlignModel } from "../../generated/bindings/AlignModel";
 import type { SourceLanguageOption } from "../../generated/bindings/SourceLanguageOption";
-import { AudioFileIcon, BookIcon, ChevronDownIcon, MicIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
+import { AudioFileIcon, BookIcon, ChevronDownIcon, MicIcon, SubtitleFileIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
 
 function findSourceLanguageOption(
   tag: string,
@@ -93,11 +93,26 @@ type MediaListProps = {
   onRemoveItem: (id: string) => void;
 };
 
-function inferMediaKind(item: QueueItem): "audio" | "video" {
+function inferMediaKind(item: QueueItem): "audio" | "video" | "subtitle" {
+  if (item.mediaKind === "subtitle") return "subtitle";
+  const path = item.path.replace(/\\/g, "/");
+  const leaf = path.includes("/") ? path.slice(path.lastIndexOf("/") + 1) : path;
+  if (/\.srt$/i.test(leaf) || /\.srt$/i.test(item.name)) return "subtitle";
   const probe = `${item.path} ${item.name}`.toLowerCase();
   if (/\.(mp4|mkv|mov|avi|webm|m4v)\b/.test(probe)) return "video";
   if (/\.(mp3|wav|m4a|flac|aac|ogg|opus)\b/.test(probe)) return "audio";
-  return item.mediaKind;
+  return item.mediaKind === "video" ? "video" : "audio";
+}
+
+function cueCountFromItem(item: QueueItem): number | null {
+  if (inferMediaKind(item) !== "subtitle") return null;
+  try {
+    const parsed = JSON.parse(item.subtitleSegmentsJson || "[]");
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed.length;
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 function resolvePrimaryStatus(item: QueueItem): QueueStatus {
@@ -226,6 +241,8 @@ export default function MediaList({
         item.transcribeStatus !== "processing" && item.transcribeStatus !== "queued",
     );
     for (const item of editableItems) {
+      // SRT tasks are not bound to ASR model language support.
+      if (inferMediaKind(item) === "subtitle") continue;
       const stillSupported = rawSourceLanguageOptions.some((o) => o.tag === item.sourceLang);
       if (!stillSupported) {
         const fallback = rawSourceLanguageOptions[0];
@@ -407,12 +424,25 @@ export default function MediaList({
             const terminologySelectedGroup =
               terminologyGroups.find((group) => group.id === terminologyGroupId) ?? null;
 
+            const kind = inferMediaKind(item);
+            const cueCount = cueCountFromItem(item);
+            const metaParts = [formatBytes(item.sizeBytes)];
+            if (cueCount != null) {
+              metaParts.push(t("tasks:cueCount", { count: cueCount }));
+            }
+
             return (
               <div key={item.id} className={`file-item ${item.id === activeId ? "active" : ""}`} onClick={() => onSetActiveId(item.id)}>
                 {/* Row 1: inline media tag + title (no truncation). */}
                 <div className="file-title-row">
                   <span className="file-type-tag" aria-hidden="true">
-                    {inferMediaKind(item) === "video" ? <VideoFileIcon /> : <AudioFileIcon />}
+                    {kind === "subtitle" ? (
+                      <SubtitleFileIcon />
+                    ) : kind === "video" ? (
+                      <VideoFileIcon />
+                    ) : (
+                      <AudioFileIcon />
+                    )}
                   </span>
                   <span className="file-name" title={item.name}>
                     {item.name}
@@ -421,7 +451,7 @@ export default function MediaList({
 
                 {/* Row 2: file size (left) + status/progress badge (right). */}
                 <div className="file-status-row">
-                  <span className="file-meta">{formatBytes(item.sizeBytes)}</span>
+                  <span className="file-meta">{metaParts.join(" · ")}</span>
                   {transcribeProcessing ? (
                     <span className="task-step task-step-progress">
                       {transcribeProgressText}
@@ -457,11 +487,11 @@ export default function MediaList({
                       {languageMenuOpen ? (
                         <div className="task-language-popover">
                           <label className="task-language-field">
-                            <span>{t("tasks:language.audio")}</span>
+                            <span>{kind === "subtitle" ? t("tasks:language.source") : t("tasks:language.audio")}</span>
                             <select
                               className="task-language-select"
                               value={normalizeSourceLanguage(item.sourceLang)}
-                              disabled={sourceLanguagesLoading}
+                              disabled={sourceLanguagesLoading && kind !== "subtitle"}
                               onChange={(event) => {
                                 void onUpdateTaskLanguages(
                                   item,
@@ -470,7 +500,14 @@ export default function MediaList({
                                 );
                               }}
                             >
-                              {sourceLanguageOptions.map((option) => (
+                              {(kind === "subtitle"
+                                ? SOURCE_LANGUAGE_OPTIONS.map(({ id, short, label }) => ({
+                                    tag: id,
+                                    short,
+                                    label,
+                                  }))
+                                : sourceLanguageOptions
+                              ).map((option) => (
                                 <option key={option.tag} value={option.tag}>
                                   {option.label}
                                 </option>
@@ -554,15 +591,17 @@ export default function MediaList({
                     >
                       <TranslateIcon />
                     </button>
-                    <button
-                      className="file-action-btn"
-                      title={t("tasks:action.transcribe")}
-                      aria-label={t("tasks:action.transcribe")}
-                      disabled={item.transcribeStatus === "processing"}
-                      onClick={(event) => { event.stopPropagation(); void onProcessSingle(item); }}
-                    >
-                      <MicIcon />
-                    </button>
+                    {kind === "subtitle" ? null : (
+                      <button
+                        className="file-action-btn"
+                        title={t("tasks:action.transcribe")}
+                        aria-label={t("tasks:action.transcribe")}
+                        disabled={item.transcribeStatus === "processing"}
+                        onClick={(event) => { event.stopPropagation(); void onProcessSingle(item); }}
+                      >
+                        <MicIcon />
+                      </button>
+                    )}
                     <button
                       className="file-action-btn delete"
                       title={t("tasks:action.delete")}

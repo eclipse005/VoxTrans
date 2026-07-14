@@ -12,12 +12,22 @@ import {
 } from "./types";
 import { normalizeTranscribeStatus } from "./stateMachine";
 
-export type QueueRunMode = "transcribe" | "transcribe_translate";
+export type QueueRunMode = "transcribe" | "transcribe_translate" | "translate_srt";
 
-type MediaKind = "audio" | "video";
+type MediaKind = "audio" | "video" | "subtitle";
 
 function normalizeMediaKind(value: unknown): MediaKind {
-  return value === "video" ? "video" : "audio";
+  if (value === "video") return "video";
+  if (value === "subtitle") return "subtitle";
+  return "audio";
+}
+
+export function isSubtitleQueueItem(item: { mediaKind?: string; path?: string; name?: string }): boolean {
+  if (item.mediaKind === "subtitle") return true;
+  const path = (item.path ?? "").replace(/\\/g, "/");
+  const name = item.name ?? "";
+  const leaf = path.includes("/") ? path.slice(path.lastIndexOf("/") + 1) : path;
+  return /\.srt$/i.test(leaf) || /\.srt$/i.test(name);
 }
 
 type TaskStateChangedEvent = {
@@ -101,21 +111,22 @@ export function toEnqueuePayload(
   id: string;
   mediaPath: string;
   name: string;
-  mediaKind: "audio" | "video";
+  mediaKind: "audio" | "video" | "subtitle";
   sizeBytes: number;
-  intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE";
+  intent: "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" | "TRANSLATE_SRT";
   sourceLang: LanguageTag;
   targetLang: TargetLanguage;
   maxRetries: number;
   terminologyGroupId: string;
 } {
+  const srt = isSubtitleQueueItem(item);
   return {
     id: item.id,
     mediaPath: item.path,
     name: item.name,
-    mediaKind: item.mediaKind,
+    mediaKind: srt ? "subtitle" : item.mediaKind,
     sizeBytes: item.sizeBytes,
-    intent: toIntent(mode),
+    intent: srt ? "TRANSLATE_SRT" : toIntent(mode),
     sourceLang: normalizeSourceLanguage(item.sourceLang),
     targetLang: normalizeTargetLanguage(item.targetLang),
     maxRetries: 0,
@@ -123,7 +134,8 @@ export function toEnqueuePayload(
   };
 }
 
-function toIntent(mode: QueueRunMode): "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" {
+function toIntent(mode: QueueRunMode): "TRANSCRIBE" | "TRANSCRIBE_TRANSLATE" | "TRANSLATE_SRT" {
+  if (mode === "translate_srt") return "TRANSLATE_SRT";
   if (mode === "transcribe_translate") return "TRANSCRIBE_TRANSLATE";
   return "TRANSCRIBE";
 }
