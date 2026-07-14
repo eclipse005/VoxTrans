@@ -7,9 +7,31 @@
     "openDirAria": "Open {{target}} model folder",
     "cancelDownload": "Cancel download",
     "download": "Download model",
+    "redownload": "Re-download",
     "cancelDownloadAria": "Cancel {{target}} download",
     "readyAria": "{{target}} ready",
-    "downloadAria": "Download {{target}} model"
+    "downloadAria": "Download {{target}} model",
+    "redownloadAria": "Re-download {{target}} model"
+  },
+  "section": {
+    "storage": "Storage",
+    "asr": "Speech recognition (ASR)",
+    "currentAsr": "Selected",
+    "support": "Supporting models",
+    "alignRole": "Required · timestamps",
+    "demucsRole": "Optional · vocals",
+    "downloadEssentials": "Download selected ASR + aligner"
+  },
+  "tags": {
+    "recommended": "Recommended",
+    "lightweight": "Lightweight",
+    "highAccuracy": "High accuracy",
+    "multilingual": "Multilingual",
+    "langs14": "14 languages",
+    "european": "Strong EU langs",
+    "params2b": "2B",
+    "chunk180": "180s chunks",
+    "meeting": "Meetings / talk"
   },
   "status": {
     "readFailed": "Failed to read model status"

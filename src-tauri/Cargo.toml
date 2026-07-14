@@ -6,7 +6,7 @@ default-run = "voxtrans"
 
 [features]
 default = []
-cuda = ["qwen3-asr/cuda", "qwen-forced-aligner-rs/cuda"]
+cuda = ["qwen3-asr/cuda", "qwen-forced-aligner-rs/cuda", "moss-transcribe-diarize-rs/cuda"]
 
 [build-dependencies]
 tauri-build = { version = "2.4.1", features = [] }
@@ -37,3 +37,6 @@ qwen-forced-aligner-rs = { git = "https://github.com/eclipse005/qwen-aligner-rs.
 # Cohere ASR — second backend, selected at runtime by `asr_model` name.
 # Default features include CUDA; CPU inference also works when selected at runtime.
 native-transcribe = { git = "https://github.com/eclipse005/cohere-transcribe-rs.git" }
+# MOSS-Transcribe-Diarize Rust engine — third ASR backend. CPU by default;
+# CUDA enabled via the workspace `cuda` feature.
+moss-transcribe-diarize-rs = { git = "https://github.com/eclipse005/moss-transcribe-diarize-rs.git", default-features = false }

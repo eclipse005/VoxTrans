@@ -74,7 +74,7 @@ export function useSubtitleFindReplace({
 
   const findStatusLabel = useMemo(() => {
     if (!findKeyword) return findStatus;
-    if (matchCueIndexes.length === 0) return findStatus || t("subtitles.findReplace.noMatch");
+    if (matchCueIndexes.length === 0) return findStatus || t("subtitles:findReplace.noMatch");
     return findStatus;
   }, [findKeyword, findStatus, matchCueIndexes.length]);
 
@@ -126,21 +126,21 @@ export function useSubtitleFindReplace({
     setIsReplaceMenuOpen(false);
     const keyword = findText.trim();
     if (!keyword) {
-      setFindStatus(t("subtitles.findReplace.enterFindText"));
+      setFindStatus(t("subtitles:findReplace.enterFindText"));
       return;
     }
     if (!currentMatch) {
-      setFindStatus(t("subtitles.findReplace.noMatchForReplace"));
+      setFindStatus(t("subtitles:findReplace.noMatchForReplace"));
       return;
     }
 
     const count = onReplaceText(keyword, replaceText, [currentMatch.cueId], 1);
     if (count <= 0) {
-      setFindStatus(t("subtitles.findReplace.nothingReplaced"));
+      setFindStatus(t("subtitles:findReplace.nothingReplaced"));
       return;
     }
 
-    setFindStatus(t("subtitles.findReplace.replacedOne"));
+    setFindStatus(t("subtitles:findReplace.replacedOne"));
     if (matchCueIndexes.length > 0) {
       setFindCursor((old) => {
         const next = old + 1;
@@ -152,27 +152,27 @@ export function useSubtitleFindReplace({
   const onReplaceAll = () => {
     const keyword = findText.trim();
     if (!keyword) {
-      setFindStatus(t("subtitles.findReplace.enterFindText"));
+      setFindStatus(t("subtitles:findReplace.enterFindText"));
       setIsReplaceMenuOpen(false);
       return;
     }
 
     const count = onReplaceText(keyword, replaceText, null);
     if (count > 0) {
-      setFindStatus(t("subtitles.findReplace.replacedCount", { count }));
+      setFindStatus(t("subtitles:findReplace.replacedCount", { count }));
     } else {
-      setFindStatus(t("subtitles.findReplace.nothingReplaced"));
+      setFindStatus(t("subtitles:findReplace.nothingReplaced"));
     }
     setIsReplaceMenuOpen(false);
   };
 
   const onPrevMatch = () => {
     if (!findKeyword) {
-      setFindStatus(t("subtitles.findReplace.enterFindText"));
+      setFindStatus(t("subtitles:findReplace.enterFindText"));
       return;
     }
     if (matchCueIndexes.length === 0) {
-      setFindStatus(t("subtitles.findReplace.noMatch"));
+      setFindStatus(t("subtitles:findReplace.noMatch"));
       return;
     }
     setFindCursor((old) => (old <= 0 ? matchCueIndexes.length - 1 : old - 1));
@@ -181,11 +181,11 @@ export function useSubtitleFindReplace({
 
   const onNextMatch = () => {
     if (!findKeyword) {
-      setFindStatus(t("subtitles.findReplace.enterFindText"));
+      setFindStatus(t("subtitles:findReplace.enterFindText"));
       return;
     }
     if (matchCueIndexes.length === 0) {
-      setFindStatus(t("subtitles.findReplace.noMatch"));
+      setFindStatus(t("subtitles:findReplace.noMatch"));
       return;
     }
     setFindCursor((old) => (old + 1 >= matchCueIndexes.length ? 0 : old + 1));

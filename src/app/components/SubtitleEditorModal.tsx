@@ -158,7 +158,7 @@ export default function SubtitleEditorModal({
         canEdit={canEdit}
         cues={cues}
         cueWarningsById={cueWarningsById}
-        emptyText={emptyText ?? (canEdit ? t("subtitles.editor.emptyEditable") : t("subtitles.editor.emptyReadOnly"))}
+        emptyText={emptyText ?? (canEdit ? t("subtitles:editor.emptyEditable") : t("subtitles:editor.emptyReadOnly"))}
         editingCueId={editingCueId}
         selectedCueIds={validSelectedCueIds}
         timeErrorByCue={timeErrorByCue}
@@ -196,7 +196,7 @@ export default function SubtitleEditorModal({
 
   if (embedded) {
     return (
-      <section className="subtitle-inline-root" role="region" aria-label={t("subtitles.editor.regionLabel")}>
+      <section className="subtitle-inline-root" role="region" aria-label={t("subtitles:editor.regionLabel")}>
         {content}
       </section>
     );

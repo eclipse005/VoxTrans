@@ -144,7 +144,7 @@ export function useQueueWorkflow({
         item.transcribeStatus === "processing" ||
         item.transcribeStatus === "queued"
       ) {
-        pushToast(t("toasts.queue.languageBusyError"), "error");
+        pushToast(t("toasts:queue.languageBusyError"), "error");
         return;
       }
 
@@ -171,7 +171,7 @@ export function useQueueWorkflow({
           sourceLang: previousSourceLang,
           targetLang: previousTargetLang,
         }));
-        pushToast(toUserErrorMessage(error, t("toasts.queue.languageSaveFailed")), "error");
+        pushToast(toUserErrorMessage(error, t("toasts:queue.languageSaveFailed")), "error");
       }
     },
     [dispatch, pushToast],
@@ -183,7 +183,7 @@ export function useQueueWorkflow({
         item.transcribeStatus === "processing" ||
         item.transcribeStatus === "queued"
       ) {
-        pushToast(t("toasts.queue.terminologyBusyError"), "error");
+        pushToast(t("toasts:queue.terminologyBusyError"), "error");
         return;
       }
 
@@ -205,7 +205,7 @@ export function useQueueWorkflow({
           ...current,
           terminologyGroupId: previousGroupId,
         }));
-        pushToast(toUserErrorMessage(error, t("toasts.queue.terminologySaveFailed")), "error");
+        pushToast(toUserErrorMessage(error, t("toasts:queue.terminologySaveFailed")), "error");
       }
     },
     [dispatch, pushToast],
@@ -219,7 +219,7 @@ export function useQueueWorkflow({
           item.transcribeStatus !== "queued",
       );
       if (editableItems.length === 0) {
-        pushToast(t("toasts.queue.noEditableLanguageTasks"), "info");
+        pushToast(t("toasts:queue.noEditableLanguageTasks"), "info");
         return;
       }
 
@@ -282,7 +282,7 @@ export function useQueueWorkflow({
       });
 
       if (failedCount > 0) {
-        pushToast(t("toasts.queue.languageSaveFailedCount", { count: failedCount }), "error");
+        pushToast(t("toasts:queue.languageSaveFailedCount", { count: failedCount }), "error");
       }
     },
     [dispatch, pushToast],

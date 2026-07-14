@@ -87,17 +87,17 @@ export default function LogsModal({
               return next;
             });
           }}
-          aria-label={isMaximized ? t("tasks.logs.restoreAria") : t("tasks.logs.maximizeAria")}
-          title={isMaximized ? t("tasks.logs.restore") : t("tasks.logs.maximize")}
+          aria-label={isMaximized ? t("tasks:logs.restoreAria") : t("tasks:logs.maximizeAria")}
+          title={isMaximized ? t("tasks:logs.restore") : t("tasks:logs.maximize")}
         >
           {isMaximized ? "❐" : "□"}
         </button>
-        <button className="modal-close" onClick={onClose} aria-label={t("tasks.logs.close")}>×</button>
+        <button className="modal-close" onClick={onClose} aria-label={t("tasks:logs.close")}>×</button>
         <div className="logs-header">
           <div className="logs-title-block">
             <div className="logs-title-row">
-              <h3 id="logs-modal-title" className="apple-heading-small">{t("tasks.logs.title")}</h3>
-              <div className="logs-channel-toggle" role="tablist" aria-label={t("tasks.logs.channelToggle")}>
+              <h3 id="logs-modal-title" className="apple-heading-small">{t("tasks:logs.title")}</h3>
+              <div className="logs-channel-toggle" role="tablist" aria-label={t("tasks:logs.channelToggle")}>
                 <button
                   type="button"
                   className={`logs-channel-btn ${channel === "main" ? "active" : ""}`}
@@ -118,8 +118,8 @@ export default function LogsModal({
                   className="file-list-icon-btn"
                   onClick={() => { void onOpenDir(); }}
                   disabled={loading}
-                  title={t("tasks.logs.openDir")}
-                  aria-label={t("tasks.logs.openDir")}
+                  title={t("tasks:logs.openDir")}
+                  aria-label={t("tasks:logs.openDir")}
                 >
                   <FolderIcon />
                 </button>
@@ -127,8 +127,8 @@ export default function LogsModal({
                   className="file-list-icon-btn"
                   onClick={() => { void onRefresh(); }}
                   disabled={loading}
-                  title={t("tasks.logs.refresh")}
-                  aria-label={t("tasks.logs.refreshAria")}
+                  title={t("tasks:logs.refresh")}
+                  aria-label={t("tasks:logs.refreshAria")}
                 >
                   <RefreshIcon />
                 </button>
@@ -136,16 +136,16 @@ export default function LogsModal({
                   className="file-list-icon-btn file-list-icon-btn-danger"
                   onClick={() => { void onClear(); }}
                   disabled={loading || content.trim().length === 0}
-                  title={t("tasks.logs.clear")}
-                  aria-label={t("tasks.logs.clearAria")}
+                  title={t("tasks:logs.clear")}
+                  aria-label={t("tasks:logs.clearAria")}
                 >
                   <TrashIcon />
                 </button>
               </div>
               <div className="logs-usage-stage">
-                {t("tasks.logs.tokens", { count: formatNumber(totalTokens) })}
+                {t("tasks:logs.tokens", { count: formatNumber(totalTokens) })}
               </div>
-              <div className="logs-search" role="search" aria-label={t("tasks.logs.searchAria")}>
+              <div className="logs-search" role="search" aria-label={t("tasks:logs.searchAria")}>
                 <input
                   className="apple-input logs-search-input"
                   value={searchText}
@@ -153,8 +153,8 @@ export default function LogsModal({
                     setSearchText(event.target.value);
                     setActiveMatchIndex(0);
                   }}
-                  placeholder={t("tasks.logs.searchPlaceholder")}
-                  aria-label={t("tasks.logs.searchPlaceholder")}
+                  placeholder={t("tasks:logs.searchPlaceholder")}
+                  aria-label={t("tasks:logs.searchPlaceholder")}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter") return;
                     event.preventDefault();
@@ -165,7 +165,7 @@ export default function LogsModal({
                     });
                   }}
                 />
-                <div className="logs-search-nav" role="group" aria-label={t("tasks.logs.searchNavAria")}>
+                <div className="logs-search-nav" role="group" aria-label={t("tasks:logs.searchNavAria")}>
                   <button
                     type="button"
                     className="logs-search-btn"
@@ -174,8 +174,8 @@ export default function LogsModal({
                       setActiveMatchIndex((prev) => (prev <= 0 ? matchCount - 1 : prev - 1));
                     }}
                     disabled={matchCount === 0}
-                    aria-label={t("tasks.logs.prevMatch")}
-                    title={t("tasks.logs.prevMatch")}
+                    aria-label={t("tasks:logs.prevMatch")}
+                    title={t("tasks:logs.prevMatch")}
                   >
                     <ChevronLeftIcon />
                   </button>
@@ -190,8 +190,8 @@ export default function LogsModal({
                       setActiveMatchIndex((prev) => (prev >= matchCount - 1 ? 0 : prev + 1));
                     }}
                     disabled={matchCount === 0}
-                    aria-label={t("tasks.logs.nextMatch")}
-                    title={t("tasks.logs.nextMatch")}
+                    aria-label={t("tasks:logs.nextMatch")}
+                    title={t("tasks:logs.nextMatch")}
                   >
                     <ChevronRightIcon />
                   </button>
@@ -207,7 +207,7 @@ export default function LogsModal({
           className="logs-body"
         >
           {loading ? <div className="logs-empty">{t("common:loading")}</div> : null}
-          {!loading && content.trim().length === 0 ? <div className="logs-empty">{t("tasks.logs.empty")}</div> : null}
+          {!loading && content.trim().length === 0 ? <div className="logs-empty">{t("tasks:logs.empty")}</div> : null}
           {!loading && content.trim().length > 0 ? (
             <div className="logs-entries">
               {viewEntries.map((entry, index) => {
@@ -239,7 +239,7 @@ export default function LogsModal({
                     <button
                       type="button"
                       className="logs-entry-toggle"
-                      aria-label={collapsed ? t("tasks.logs.expandEntry") : t("tasks.logs.collapseEntry")}
+                      aria-label={collapsed ? t("tasks:logs.expandEntry") : t("tasks:logs.collapseEntry")}
                       onClick={() => {
                         setCollapsedMap((prev) => ({ ...prev, [entryKey]: !collapsed }));
                       }}
@@ -275,8 +275,8 @@ export default function LogsModal({
             <button
               type="button"
               className="logs-jump-bottom"
-              title={t("tasks.logs.jumpToBottom")}
-              aria-label={t("tasks.logs.jumpToBottom")}
+              title={t("tasks:logs.jumpToBottom")}
+              aria-label={t("tasks:logs.jumpToBottom")}
               onClick={() => {
                 const node = bodyRef.current;
                 if (!node) return;

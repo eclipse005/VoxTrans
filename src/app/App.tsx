@@ -272,7 +272,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     setForm((prev) => ({ ...prev, locale: nextLocale }));
     void changeAppLanguage(nextLocale);
     void saveAppSettings(nextSettings).catch(() => {
-      pushToast(t("toasts.settings.saveFailed"), "error");
+      pushToast(t("toasts:settings.saveFailed"), "error");
     });
   }, [settings, dispatch, setForm, pushToast, t]);
 

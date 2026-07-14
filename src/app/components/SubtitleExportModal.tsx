@@ -102,9 +102,9 @@ export default function SubtitleExportModal({
           ×
         </button>
 
-        <h3 className="apple-heading-small">{t("subtitles.export.title")}</h3>
+        <h3 className="apple-heading-small">{t("subtitles:export.title")}</h3>
         <p className="apple-body-small export-modal-desc">
-          {t("subtitles.export.description")}
+          {t("subtitles:export.description")}
         </p>
 
         <div className="export-option-list">
@@ -136,7 +136,7 @@ export default function SubtitleExportModal({
         </div>
 
         {!canExportTranslated ? (
-          <p className="apple-body-small export-modal-tip">{t("subtitles.export.noTranslationTip")}</p>
+          <p className="apple-body-small export-modal-tip">{t("subtitles:export.noTranslationTip")}</p>
         ) : null}
 
         <div className="export-modal-actions">
@@ -151,7 +151,7 @@ export default function SubtitleExportModal({
               void onConfirm(selectedItems);
             }}
           >
-            {t("subtitles.export.button")} {selectedCount > 0 ? t("subtitles.export.itemCount", { count: selectedCount }) : ""}
+            {t("subtitles:export.button")} {selectedCount > 0 ? t("subtitles:export.itemCount", { count: selectedCount }) : ""}
           </button>
         </div>
       </div>

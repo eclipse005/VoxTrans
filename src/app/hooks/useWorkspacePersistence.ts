@@ -86,7 +86,7 @@ function recoverTransientStates(item: QueueItem): QueueItem {
       ...item,
       transcribeStatus: "error",
       taskProgress: createEmptyTaskProgress(),
-      transcribeError: i18n.t("tasks.workspace.downloadInterrupted"),
+      transcribeError: i18n.t("tasks:workspace.downloadInterrupted"),
     };
   }
 
@@ -104,7 +104,7 @@ function recoverTransientStates(item: QueueItem): QueueItem {
       ...item,
       transcribeStatus: "error",
       taskProgress: createEmptyTaskProgress(),
-      transcribeError: item.transcribeError || i18n.t("tasks.workspace.taskInterrupted"),
+      transcribeError: item.transcribeError || i18n.t("tasks:workspace.taskInterrupted"),
     };
   }
 

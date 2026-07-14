@@ -4,15 +4,11 @@ import type {
   SubtitleLineStyle,
   SubtitleRenderStyle,
 } from "../../features/media/types";
+import { ASR_MODELS, DEFAULT_ALIGN_MODEL } from "../../features/media/modelCatalog";
 import { normalizeTerminologyGroups } from "./terminology";
 
 const PROVIDERS: readonly SavedSettings["provider"][] = ["cpu", "cuda"];
-const ASR_MODELS: readonly SavedSettings["asrModel"][] = [
-  "Qwen3-ASR-0.6B",
-  "Qwen3-ASR-1.7B",
-  "cohere-transcribe-03-2026",
-];
-const ALIGN_MODELS: readonly SavedSettings["alignModel"][] = ["Qwen3-ForcedAligner-0.6B"];
+const ALIGN_MODELS: readonly SavedSettings["alignModel"][] = [DEFAULT_ALIGN_MODEL];
 const DEMUCUS_MODELS: readonly SavedSettings["demucsModel"][] = ["htdemucs_ft"];
 const SUBTITLE_LENGTH_PRESETS: readonly SavedSettings["subtitleLengthPreset"][] = [
   "short",

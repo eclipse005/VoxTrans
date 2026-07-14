@@ -150,7 +150,7 @@ export function useYoutubeDownloadWorkflow({
           transcribeStatus: "processing",
           taskProgress: createTaskProgress({
             code: "downloading",
-            label: t("tasks.progress.downloading"),
+            label: t("tasks:progress.downloading"),
             detail: `${progress}%`,
             current: progress,
             total: 100,
@@ -204,7 +204,7 @@ export function useYoutubeDownloadWorkflow({
       } else {
         addQueueItems(dispatch, [downloadedItem]);
       }
-      pushToast(t("toasts.youtube.downloadComplete"), "success");
+      pushToast(t("toasts:youtube.downloadComplete"), "success");
 
       const pendingMode = youtubePostDownloadModeRef.current.get(taskId);
       youtubePostDownloadModeRef.current.delete(taskId);
@@ -231,7 +231,7 @@ export function useYoutubeDownloadWorkflow({
     (taskId: string, error: unknown) => {
       const message = toUserErrorMessage(
         error,
-        t("toasts.youtube.commitFailed"),
+        t("toasts:youtube.commitFailed"),
       );
       if (isTaskPresent(taskId)) {
         patchQueueItem(dispatch, taskId, (item) => ({
@@ -351,7 +351,7 @@ export function useYoutubeDownloadWorkflow({
           transcribeStatus: "processing",
           taskProgress: createTaskProgress({
             code: "downloading",
-            label: t("tasks.progress.downloading"),
+            label: t("tasks:progress.downloading"),
             detail: "0%",
             current: 0,
             total: 100,
@@ -377,7 +377,7 @@ export function useYoutubeDownloadWorkflow({
         });
         if (commitResult.status === "compensationFailed") {
           reportError(commitResult.error, "youtubeDownloadCompensation");
-          pushToast(t("toasts.youtube.cancelCleanupFailed"), "error");
+          pushToast(t("toasts:youtube.cancelCleanupFailed"), "error");
           return;
         }
         if (commitResult.status === "commitFailed") {
@@ -400,7 +400,7 @@ export function useYoutubeDownloadWorkflow({
           return;
         }
       } catch (error) {
-        const message = toUserErrorMessage(error, t("toasts.youtube.downloadFailed"));
+        const message = toUserErrorMessage(error, t("toasts:youtube.downloadFailed"));
         const cancelled =
           isCancelledMessage(message) ||
           youtubeRemovedTaskIdsRef.current.has(taskId);
@@ -448,7 +448,7 @@ export function useYoutubeDownloadWorkflow({
     async (url: string) => {
       const trimmed = url.trim();
       if (!trimmed) {
-        pushToast(t("toasts.youtube.emptyUrl"), "info");
+        pushToast(t("toasts:youtube.emptyUrl"), "info");
         return;
       }
 
@@ -466,7 +466,7 @@ export function useYoutubeDownloadWorkflow({
         },
       ]);
 
-      pushToast(t("toasts.youtube.addedToQueue"), "info");
+      pushToast(t("toasts:youtube.addedToQueue"), "info");
       return Promise.resolve();
     },
     [pushToast, t],
@@ -476,15 +476,15 @@ export function useYoutubeDownloadWorkflow({
     (taskId: string, mode: QueueRunMode) => {
       const url = youtubeTaskUrlRef.current.get(taskId);
       if (!url) {
-        pushToast(t("toasts.youtube.missingUrl"), "error");
+        pushToast(t("toasts:youtube.missingUrl"), "error");
         return;
       }
       if (runningYoutubeTaskIdRef.current === taskId) {
-        pushToast(t("toasts.youtube.alreadyDownloading"), "info");
+        pushToast(t("toasts:youtube.alreadyDownloading"), "info");
         return;
       }
       if (youtubeDownloadQueue.some((item) => item.taskId === taskId)) {
-        pushToast(t("toasts.youtube.alreadyInQueue"), "info");
+        pushToast(t("toasts:youtube.alreadyInQueue"), "info");
         return;
       }
 
@@ -495,7 +495,7 @@ export function useYoutubeDownloadWorkflow({
         transcribeStatus: "queued",
         taskProgress: createTaskProgress({
           code: "downloading",
-          label: t("tasks.progress.downloading"),
+          label: t("tasks:progress.downloading"),
           detail: t("common:status.queued"),
           current: 0,
           total: 100,
@@ -510,7 +510,7 @@ export function useYoutubeDownloadWorkflow({
           createdAt: Date.now(),
         },
       ]);
-      pushToast(t("toasts.youtube.retryQueued"), "info");
+      pushToast(t("toasts:youtube.retryQueued"), "info");
     },
     [dispatch, pushToast, youtubeDownloadQueue, t],
   );
@@ -534,7 +534,7 @@ export function useYoutubeDownloadWorkflow({
         item.transcribeStatus === "processing" ||
         item.transcribeStatus === "queued"
       ) {
-        pushToast(t("toasts.youtube.alreadyDownloading"), "info");
+        pushToast(t("toasts:youtube.alreadyDownloading"), "info");
         return true;
       }
       enqueueYoutubeRetry(item.id, "transcribe");
@@ -564,7 +564,7 @@ export function useYoutubeDownloadWorkflow({
         item.transcribeStatus === "processing" ||
         item.transcribeStatus === "queued"
       ) {
-        pushToast(t("toasts.youtube.alreadyDownloading"), "info");
+        pushToast(t("toasts:youtube.alreadyDownloading"), "info");
         return true;
       }
       enqueueYoutubeRetry(item.id, "transcribe_translate");
@@ -612,7 +612,7 @@ export function useYoutubeDownloadWorkflow({
         });
       } catch (error) {
         reportError(error, "removeYoutubeItem");
-        pushToast(toUserErrorMessage(error, t("toasts.youtube.deleteFailed")), "error");
+        pushToast(toUserErrorMessage(error, t("toasts:youtube.deleteFailed")), "error");
         return true;
       }
       return true;

@@ -5,6 +5,9 @@ use std::time::Instant;
 use crate::domain::language::LanguageTag;
 use crate::domain::language_registry::LanguageRegistry;
 use crate::services::preferences_types::{AlignModel, AsrModel};
+use moss_transcribe_diarize_rs::{
+    AsrInference as MossAsrInference, Backend as MossBackend,
+};
 use native_transcribe::transcribe::{Device as CohereDevice, Transcriber as CohereTranscriber};
 use qwen3_asr::{AsrInference, Backend as AsrBackend, TranscribeOptions as AsrTranscribeOptions};
 use qwen_forced_aligner_rs::{
@@ -13,19 +16,32 @@ use qwen_forced_aligner_rs::{
 };
 use voxtrans_core::subtitle::{alignment::align_text_to_timestamps, segmenter::WordToken};
 
-/// The two ASR backends, abstracted behind a uniform `transcribe` call so the
-/// segment loop below never branches on engine identity. Selection is by the
-/// parsed `AsrModel` enum. The aligner (qwen-forced-aligner) is the same for
-/// both.
+/// Official English diarize prompt from MOSS-Transcribe-Diarize. Must not be
+/// altered — any change breaks model output alignment.
+const MOSS_OFFICIAL_EN_PROMPT: &str = "Transcribe the audio. For each segment, start with the timestamp and speaker ID ([S01], [S02], [S03], ...), then the spoken text, and end with the segment timestamp.";
+
+/// Fixed chunk target for MOSS (seconds). Larger than Qwen/Cohere's 30–60s window.
+const MOSS_CHUNK_TARGET_SECONDS: f64 = 180.0;
+
+/// Default generation budget for a ~180s MOSS window (matches CLI default).
+const MOSS_MAX_NEW_TOKENS: usize = 2048;
+
+/// ASR backends abstracted behind a uniform `transcribe` call so the segment
+/// loop never branches on engine identity. Selection is by the parsed
+/// `AsrModel` enum. The aligner (qwen-forced-aligner) is shared by all.
 enum AsrEngine {
     Qwen(AsrInference),
     Cohere(CohereTranscriber),
+    Moss(MossAsrInference),
 }
 
 impl AsrEngine {
-    /// Transcribe one segment of raw f32 mono samples → cleaned text. Both
-    /// backends take `&[f32]`; the language code is backend-specific
-    /// ("english" full-name for Qwen, "en" short code for Cohere).
+    /// Transcribe one segment of raw f32 mono samples → cleaned plain text.
+    /// Language is backend-specific for Qwen/Cohere; MOSS always uses the
+    /// official English prompt and strips tags post-decode.
+    ///
+    /// Progress callbacks use **1-based "now processing"** counters
+    /// (`1/N` … `N/N`), not zero-based completed counts.
     fn transcribe(&self, samples: &[f32], language: &str) -> Result<String, String> {
         match self {
             AsrEngine::Qwen(engine) => {
@@ -40,6 +56,12 @@ impl AsrEngine {
                 .transcribe_samples(samples, language)
                 .map_err(|err| format!("cohere transcription failed: {err:#}"))
                 .map(|text| clean_asr_text(&text)),
+            AsrEngine::Moss(engine) => {
+                let raw = engine
+                    .transcribe_samples(samples, MOSS_OFFICIAL_EN_PROMPT, MOSS_MAX_NEW_TOKENS, None)
+                    .map_err(|err| format!("moss transcription failed: {err:#}"))?;
+                Ok(clean_asr_text(&strip_moss_tags(&raw)))
+            }
         }
     }
 }
@@ -97,7 +119,12 @@ where
     F: FnMut(TranscribeProgressStage, usize, usize, Option<FreshSegmentResult>),
 {
     let started_at = Instant::now();
-    let chunk_target_seconds = request.chunk_target_seconds.clamp(30, 60) as f64;
+    let asr_model = AsrModel::parse(&request.asr_model);
+    let align_model = AlignModel::parse(&request.align_model);
+    let chunk_target_seconds = match asr_model {
+        AsrModel::MossTranscribeDiarize => MOSS_CHUNK_TARGET_SECONDS,
+        _ => request.chunk_target_seconds.clamp(30, 60) as f64,
+    };
     let prepare_started_at = Instant::now();
     let prepared =
         voxtrans_core::prepare_audio_segments_for_asr(&request.audio_path, chunk_target_seconds)
@@ -107,10 +134,6 @@ where
         vad_elapsed_sec: prepared.vad_elapsed_sec,
         ..AsrAlignTiming::default()
     };
-
-    let asr_model = AsrModel::parse(&request.asr_model);
-    let align_model = AlignModel::parse(&request.align_model);
-    let cohere = matches!(asr_model, AsrModel::CohereTranscribe032026);
 
     let asr_model_dir = request
         .model_dir
@@ -134,30 +157,58 @@ where
 
     let segment_transcripts = {
         let load_started_at = Instant::now();
-        let engine = if cohere {
-            let t = CohereTranscriber::load_with_device(&asr_model_dir, device.cohere_device, false)
+        let engine = match asr_model {
+            AsrModel::CohereTranscribe032026 => {
+                let t = CohereTranscriber::load_with_device(
+                    &asr_model_dir,
+                    device.cohere_device,
+                    false,
+                )
                 .map_err(|err| {
                     format!(
                         "failed to load Cohere ASR model from {}: {err:#}",
                         asr_model_dir.display()
                     )
                 })?;
-            AsrEngine::Cohere(t)
-        } else {
-            let t =
-                AsrInference::load(&asr_model_dir, device.asr_device.clone()).map_err(|err| {
-                    format!(
-                        "failed to load ASR model from {}: {err:#}",
-                        asr_model_dir.display()
-                    )
-                })?;
-            AsrEngine::Qwen(t)
+                AsrEngine::Cohere(t)
+            }
+            AsrModel::MossTranscribeDiarize => {
+                let t = MossAsrInference::load_with(&asr_model_dir, device.moss_device).map_err(
+                    |err| {
+                        format!(
+                            "failed to load MOSS ASR model from {}: {err:#}",
+                            asr_model_dir.display()
+                        )
+                    },
+                )?;
+                AsrEngine::Moss(t)
+            }
+            AsrModel::Qwen3Asr06B | AsrModel::Qwen3Asr17B => {
+                let t = AsrInference::load(&asr_model_dir, device.asr_device.clone()).map_err(
+                    |err| {
+                        format!(
+                            "failed to load ASR model from {}: {err:#}",
+                            asr_model_dir.display()
+                        )
+                    },
+                )?;
+                AsrEngine::Qwen(t)
+            }
         };
         timing.asr_load_sec = load_started_at.elapsed().as_secs_f64();
 
         let mut transcripts = Vec::new();
         let mut new_results = Vec::new();
-        for segment in &prepared.segment_summaries {
+        // Progress current is 1-based "now processing" (1/N … N/N), not completed count.
+        for (loop_index, segment) in prepared.segment_summaries.iter().enumerate() {
+            let progress_current = loop_index + 1;
+            on_progress(
+                TranscribeProgressStage::Asr,
+                progress_current,
+                total_segments,
+                None,
+            );
+
             let start_index = ((segment.start_sec * voxtrans_core::TARGET_SAMPLE_RATE as f64)
                 .floor() as usize)
                 .min(sample_len);
@@ -165,7 +216,6 @@ where
                 as usize)
                 .min(sample_len);
             if end_index <= start_index {
-                on_progress(TranscribeProgressStage::Asr, segment.index, total_segments, None);
                 continue;
             }
 
@@ -184,7 +234,6 @@ where
                         text: cached_text.clone(),
                     });
                 }
-                on_progress(TranscribeProgressStage::Asr, segment.index, total_segments, None);
                 continue;
             }
 
@@ -197,12 +246,11 @@ where
             let text = engine.transcribe(segment_samples, &language)?;
             timing.asr_transcribe_sec += transcribe_started_at.elapsed().as_secs_f64();
             if text.is_empty() {
-                on_progress(TranscribeProgressStage::Asr, segment.index, total_segments, None);
                 continue;
             }
             on_progress(
                 TranscribeProgressStage::Asr,
-                segment.index,
+                progress_current,
                 total_segments,
                 Some(FreshSegmentResult::Asr {
                     segment_index: segment.index,
@@ -315,6 +363,7 @@ pub(crate) enum FreshSegmentResult {
 struct RuntimeDevice {
     asr_device: AsrBackend,
     cohere_device: CohereDevice,
+    moss_device: MossBackend,
     qwen_device: DeviceRequest,
     label: String,
 }
@@ -334,9 +383,10 @@ fn align_segments(
     let total = segment_transcripts.len();
     let mut results = Vec::with_capacity(total);
     for (index, segment) in segment_transcripts.iter().enumerate() {
+        // 1-based "now processing" counter (1/N … N/N).
         let current = index + 1;
+        on_progress(TranscribeProgressStage::Align, current, total, None);
         if let Some(cached) = precomputed_alignment.get(&segment.segment_index) {
-            on_progress(TranscribeProgressStage::Align, current, total, None);
             results.push(cached.clone());
             continue;
         }
@@ -367,6 +417,7 @@ fn provider_to_device(provider: &str) -> Result<RuntimeDevice, String> {
         return Ok(RuntimeDevice {
             asr_device: AsrBackend::Cpu,
             cohere_device: CohereDevice::Cpu,
+            moss_device: MossBackend::Cpu,
             qwen_device: DeviceRequest::Cpu,
             label: "cpu".to_string(),
         });
@@ -377,6 +428,7 @@ fn provider_to_device(provider: &str) -> Result<RuntimeDevice, String> {
         Ok(RuntimeDevice {
             asr_device: AsrBackend::Cuda,
             cohere_device: CohereDevice::Cuda,
+            moss_device: MossBackend::Cuda,
             qwen_device: DeviceRequest::Cuda(0),
             label: "cuda".to_string(),
         })
@@ -395,6 +447,71 @@ fn clean_asr_text(raw: &str) -> String {
         }
     }
     text.trim_matches(['<', '>']).trim().to_string()
+}
+
+/// Strip MOSS diarize/timestamp tags, leaving plain spoken text only.
+/// Official output shape: `[start][S01]text[end][start][S02]...`
+fn strip_moss_tags(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            if let Some(end) = raw[i + 1..].find(']') {
+                let tag = &raw[i + 1..i + 1 + end];
+                if is_moss_meta_tag(tag) {
+                    i = i + 2 + end;
+                    continue;
+                }
+            }
+        }
+        // Advance by one UTF-8 char so multi-byte text is preserved.
+        let ch = raw[i..].chars().next().unwrap_or('\0');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    collapse_whitespace(out.trim())
+}
+
+fn is_moss_meta_tag(tag: &str) -> bool {
+    let tag = tag.trim();
+    if tag.is_empty() {
+        return false;
+    }
+    // Speaker: S01, S02, ...
+    if let Some(rest) = tag.strip_prefix('S') {
+        return !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit());
+    }
+    // Timestamp: 0.13, 12, 89.93, ...
+    let mut seen_digit = false;
+    let mut seen_dot = false;
+    for c in tag.chars() {
+        if c.is_ascii_digit() {
+            seen_digit = true;
+        } else if c == '.' && !seen_dot {
+            seen_dot = true;
+        } else {
+            return false;
+        }
+    }
+    seen_digit
+}
+
+fn collapse_whitespace(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut prev_space = false;
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            if !prev_space && !out.is_empty() {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+    out
 }
 
 fn round_millis(value: f64) -> f64 {
@@ -670,5 +787,19 @@ mod tests {
             "God bless."
         );
         assert_eq!(clean_asr_text("  Plain text.  "), "Plain text.");
+    }
+
+    #[test]
+    fn strip_moss_tags_keeps_spoken_text_only() {
+        let raw = "[0.13][S01]我现在在天海酒吧[1.37][1.41][S01]限你十分钟内到我面前[2.91][2.94][S02]十分钟 二十公里呢";
+        assert_eq!(
+            strip_moss_tags(raw),
+            "我现在在天海酒吧限你十分钟内到我面前十分钟 二十公里呢"
+        );
+        assert_eq!(
+            strip_moss_tags("[1.96][S01] All right, whippers! [6.52]"),
+            "All right, whippers!"
+        );
+        assert_eq!(strip_moss_tags("plain text only"), "plain text only");
     }
 }

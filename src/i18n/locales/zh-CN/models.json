@@ -7,9 +7,31 @@
     "openDirAria": "打开 {{target}} 模型目录",
     "cancelDownload": "取消下载",
     "download": "下载模型",
+    "redownload": "重新下载",
     "cancelDownloadAria": "取消 {{target}} 下载",
     "readyAria": "{{target}} 已就绪",
-    "downloadAria": "下载 {{target}} 模型"
+    "downloadAria": "下载 {{target}} 模型",
+    "redownloadAria": "重新下载 {{target}} 模型"
+  },
+  "section": {
+    "storage": "存储位置",
+    "asr": "语音识别（ASR）",
+    "currentAsr": "当前选用",
+    "support": "配套模型",
+    "alignRole": "必需 · 词级时间戳",
+    "demucsRole": "可选 · 人声分离",
+    "downloadEssentials": "下载当前 ASR 与对齐模型"
+  },
+  "tags": {
+    "recommended": "推荐",
+    "lightweight": "轻量",
+    "highAccuracy": "高精度",
+    "multilingual": "多语言",
+    "langs14": "14 语",
+    "european": "欧语强",
+    "params2b": "2B",
+    "chunk180": "180s 分段",
+    "meeting": "会议/对话"
   },
   "status": {
     "readFailed": "读取模型状态失败"

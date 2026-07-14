@@ -120,12 +120,12 @@ export function useSettingsController({
   const saveSettings = useCallback(async () => {
     const parsed = Number.parseInt(form.chunkInput.trim(), 10);
     if (!Number.isFinite(parsed)) {
-      pushToast(t("toasts.settings.chunkMustBeNumber"), "error");
+      pushToast(t("toasts:settings.chunkMustBeNumber"), "error");
       return;
     }
     const parsedConcurrency = Number.parseInt(form.llmConcurrencyInput.trim(), 10);
     if (!Number.isFinite(parsedConcurrency)) {
-      pushToast(t("toasts.settings.concurrencyMustBeNumber"), "error");
+      pushToast(t("toasts:settings.concurrencyMustBeNumber"), "error");
       return;
     }
 
@@ -163,7 +163,7 @@ export function useSettingsController({
 
     try {
       await saveAppSettingsApi(nextSettings);
-      pushToast(t("toasts.settings.saved"), "success");
+      pushToast(t("toasts:settings.saved"), "success");
       // The saved locale may differ from the active one — apply it so the UI
       // switches language immediately on save (no restart needed).
       if (nextSettings.locale !== settings.locale) {
@@ -180,7 +180,7 @@ export function useSettingsController({
         void refreshModelStatus();
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("toasts.settings.saveFailed");
+      const message = error instanceof Error ? error.message : t("toasts:settings.saveFailed");
       pushToast(message, "error");
     }
   }, [form, settings, dispatch, pushToast, invalidateSourceLanguages, refreshModelStatus, t]);
@@ -196,9 +196,9 @@ export function useSettingsController({
     setForm((prev) => ({ ...prev, terminologyGroups: normalizedGroups }));
     try {
       await saveAppSettingsApi(nextSettings);
-      pushToast(t("toasts.settings.terminologySaved"), "success");
+      pushToast(t("toasts:settings.terminologySaved"), "success");
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("toasts.settings.terminologySaveFailed");
+      const message = error instanceof Error ? error.message : t("toasts:settings.terminologySaveFailed");
       pushToast(message, "error");
     }
   }, [settings, form.activeTerminologyGroupId, dispatch, pushToast, t]);
@@ -208,10 +208,10 @@ export function useSettingsController({
     const baseUrl = form.translateBaseUrl.trim() || settings.translateBaseUrl;
     const configuredModel = form.translateModel.trim() || settings.translateModel;
     if (!apiKey) {
-      pushToast(t("toasts.settings.apiKeyRequiredFirst"), "error");
+      pushToast(t("toasts:settings.apiKeyRequiredFirst"), "error");
       return;
     }
-    const toastId = pushToast(t("toasts.settings.testingLlm"), "info", { sticky: true });
+    const toastId = pushToast(t("toasts:settings.testingLlm"), "info", { sticky: true });
     try {
       const response = await testTranslateLlmConnection({
         apiKey,
@@ -221,12 +221,12 @@ export function useSettingsController({
       });
       if (response.ok) {
         const modelName = response.model?.trim() || configuredModel;
-        pushToast(t("toasts.settings.testSuccess", { model: modelName }), "success", { id: toastId, durationMs: 2600 });
+        pushToast(t("toasts:settings.testSuccess", { model: modelName }), "success", { id: toastId, durationMs: 2600 });
         return;
       }
-      pushToast(t("toasts.settings.testFailed", { message: response.message || t("errors:fallback") }), "error", { id: toastId, durationMs: 3000 });
+      pushToast(t("toasts:settings.testFailed", { message: response.message || t("errors:fallback") }), "error", { id: toastId, durationMs: 3000 });
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("toasts.settings.testConnectFailed");
+      const message = error instanceof Error ? error.message : t("toasts:settings.testConnectFailed");
       pushToast(message, "error", { id: toastId, durationMs: 3000 });
     }
   }, [form.translateApiKey, form.translateBaseUrl, form.translateModel, form.enableVisionAssist, settings.translateBaseUrl, settings.translateModel, pushToast, t]);

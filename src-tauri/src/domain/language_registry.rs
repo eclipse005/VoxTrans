@@ -80,6 +80,26 @@ fn cohere_asr_code(lang: LanguageTag) -> Option<&'static str> {
     })
 }
 
+/// MOSS always uses the fixed official English diarize prompt; language code is
+/// unused by the engine. Still expose aligner-compatible source languages so
+/// the UI language list is the intersection with ForcedAligner.
+fn moss_asr_code(lang: LanguageTag) -> Option<&'static str> {
+    match lang {
+        LanguageTag::En
+        | LanguageTag::Zh
+        | LanguageTag::Yue
+        | LanguageTag::Ja
+        | LanguageTag::Ko
+        | LanguageTag::Fr
+        | LanguageTag::De
+        | LanguageTag::It
+        | LanguageTag::Es
+        | LanguageTag::Pt
+        | LanguageTag::Ru => Some("en"),
+        _ => None,
+    }
+}
+
 fn qwen3_align_code(lang: LanguageTag) -> Option<&'static str> {
     Some(match lang {
         LanguageTag::En => "English",
@@ -130,6 +150,23 @@ static ASR_MAPPINGS: &[AsrLanguageMapping] = &[
             LanguageTag::Ar,
         ],
         code_for: cohere_asr_code,
+    },
+    AsrLanguageMapping {
+        model: AsrModel::MossTranscribeDiarize,
+        supported: &[
+            LanguageTag::En,
+            LanguageTag::Zh,
+            LanguageTag::Yue,
+            LanguageTag::Ja,
+            LanguageTag::Ko,
+            LanguageTag::Fr,
+            LanguageTag::De,
+            LanguageTag::It,
+            LanguageTag::Es,
+            LanguageTag::Pt,
+            LanguageTag::Ru,
+        ],
+        code_for: moss_asr_code,
     },
 ];
 
@@ -280,5 +317,19 @@ mod tests {
         assert_eq!(LanguageRegistry::asr_code(AsrModel::Qwen3Asr06B, LanguageTag::Zh).unwrap(), "chinese");
         assert_eq!(LanguageRegistry::asr_code(AsrModel::CohereTranscribe032026, LanguageTag::Zh).unwrap(), "zh");
         assert_eq!(LanguageRegistry::align_code(AlignModel::Qwen3ForcedAligner06B, LanguageTag::Zh).unwrap(), "Chinese");
+    }
+
+    #[test]
+    fn moss_aligner_intersection_is_eleven() {
+        let supported = LanguageRegistry::supported_for(
+            AsrModel::MossTranscribeDiarize,
+            AlignModel::Qwen3ForcedAligner06B,
+        );
+        assert_eq!(supported.len(), 11);
+        assert_eq!(
+            LanguageRegistry::asr_code(AsrModel::MossTranscribeDiarize, LanguageTag::Zh).unwrap(),
+            "en"
+        );
+        assert!(LanguageRegistry::asr_code(AsrModel::MossTranscribeDiarize, LanguageTag::Ar).is_err());
     }
 }

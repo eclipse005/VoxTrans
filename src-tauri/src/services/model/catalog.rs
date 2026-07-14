@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use super::{
     COHERE_ASR_MODEL, DEFAULT_ALIGN_MODEL, DEFAULT_ASR_MODEL, DEMUCS_MODEL_DOWNLOAD_FILES,
-    ModelTarget, QWEN3_ASR_06B_MODEL, QWEN3_ASR_17B_MODEL, REQUIRED_COHERE_ASR_MODEL_FILES,
+    MOSS_ASR_MODEL, ModelTarget, QWEN3_ASR_06B_MODEL, QWEN3_ASR_17B_MODEL,
+    REQUIRED_COHERE_ASR_MODEL_FILES, REQUIRED_MOSS_ASR_MODEL_FILES,
     REQUIRED_QWEN_ALIGNER_MODEL_FILES, REQUIRED_QWEN3_ASR_06B_MODEL_FILES,
     REQUIRED_QWEN3_ASR_17B_MODEL_FILES, resolve_model_dir,
 };
@@ -40,7 +41,7 @@ pub(crate) fn model_definition(
                     .iter()
                     .map(|(file_name, expected_size)| ModelDownloadFile {
                         file_name: (*file_name).to_string(),
-                        url: modelscope_download_url(&model, file_name),
+                        url: asr_download_url(&model, file_name),
                         expected_size: *expected_size,
                     })
                     .collect(),
@@ -101,11 +102,12 @@ pub(crate) fn normalize_model_name(target: ModelTarget, model: Option<&str>) -> 
 }
 
 /// Resolve the (file, expected_size) download list for an ASR model. Dispatches
-/// to the Qwen or Cohere backend based on the model name.
+/// to the Qwen, Cohere, or MOSS backend based on the model name.
 fn asr_download_files(model: &str) -> Result<Vec<(&'static str, u64)>, String> {
     match model {
         QWEN3_ASR_06B_MODEL | QWEN3_ASR_17B_MODEL => Ok(qwen3_asr_download_files(model)),
         COHERE_ASR_MODEL => Ok(cohere_asr_download_files()),
+        MOSS_ASR_MODEL => Ok(moss_asr_download_files()),
         _ => Err(format!("unknown asr model: {model}")),
     }
 }
@@ -131,6 +133,13 @@ fn cohere_asr_download_files() -> Vec<(&'static str, u64)> {
         .collect()
 }
 
+fn moss_asr_download_files() -> Vec<(&'static str, u64)> {
+    REQUIRED_MOSS_ASR_MODEL_FILES
+        .iter()
+        .map(|file| (*file, moss_asr_file_size(file)))
+        .collect()
+}
+
 // Cohere model file sizes (measured from the local source model). Used for
 // download-progress accounting; the weight file dominates.
 fn cohere_asr_file_size(file: &str) -> u64 {
@@ -141,6 +150,17 @@ fn cohere_asr_file_size(file: &str) -> u64 {
         "tokenizer.model" => 492_827,
         "tokenizer_config.json" => 48_141,
         "vocab.json" => 305_750,
+        _ => 1,
+    }
+}
+
+// MOSS model file sizes from ModelScope openmoss/MOSS-Transcribe-Diarize.
+fn moss_asr_file_size(file: &str) -> u64 {
+    match file {
+        "config.json" => 2_335,
+        "model.safetensors.index.json" => 65_401,
+        "model-00000-of-00001.safetensors" => 1_817_113_576,
+        "tokenizer.json" => 11_423_222,
         _ => 1,
     }
 }
@@ -174,6 +194,18 @@ fn aligner_download_files() -> Vec<(&'static str, u64)> {
             (*file, expected_size)
         })
         .collect()
+}
+
+fn asr_download_url(model: &str, file_name: &str) -> String {
+    if model == MOSS_ASR_MODEL {
+        // Official ModelScope repo (not under eclipse005/*).
+        // https://modelscope.cn/models/openmoss/MOSS-Transcribe-Diarize
+        format!(
+            "https://modelscope.cn/models/openmoss/MOSS-Transcribe-Diarize/resolve/master/{file_name}"
+        )
+    } else {
+        modelscope_download_url(model, file_name)
+    }
 }
 
 fn modelscope_download_url(model: &str, file_name: &str) -> String {

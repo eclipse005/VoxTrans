@@ -46,7 +46,7 @@ export function useTaskLogs({
       });
       setLogContent(content || "");
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("tasks.logs.loadFailed");
+      const message = error instanceof Error ? error.message : t("tasks:logs.loadFailed");
       pushToast(message, "error");
       setLoadingLogs(false);
       return;
@@ -64,7 +64,7 @@ export function useTaskLogs({
 
   const openLogs = useCallback(() => {
     if (!activeQueueItem) {
-      pushToast(t("tasks.logs.selectTaskFirst"), "error");
+      pushToast(t("tasks:logs.selectTaskFirst"), "error");
       return;
     }
     setLogTaskContext({
@@ -81,7 +81,7 @@ export function useTaskLogs({
   const clearLogs = useCallback(async () => {
     if (!logTaskContext) return;
     const confirmed = window.confirm(
-      t("tasks.logs.clearConfirm", { channel: logChannel.toUpperCase() }),
+      t("tasks:logs.clearConfirm", { channel: logChannel.toUpperCase() }),
     );
     if (!confirmed) return;
     try {
@@ -97,9 +97,9 @@ export function useTaskLogs({
       } catch {
         // Ignore token refresh failure; keep previous visible value.
       }
-      pushToast(t("tasks.logs.cleared", { channel: logChannel.toUpperCase() }), "success");
+      pushToast(t("tasks:logs.cleared", { channel: logChannel.toUpperCase() }), "success");
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("tasks.logs.clearFailed");
+      const message = error instanceof Error ? error.message : t("tasks:logs.clearFailed");
       pushToast(message, "error");
     }
   }, [logChannel, logTaskContext, pushToast, t]);
@@ -111,7 +111,7 @@ export function useTaskLogs({
         mediaPath: logTaskContext?.mediaPath ?? "",
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("tasks.logs.openDirFailed");
+      const message = error instanceof Error ? error.message : t("tasks:logs.openDirFailed");
       pushToast(message, "error");
     }
   }, [logTaskContext, pushToast, t]);

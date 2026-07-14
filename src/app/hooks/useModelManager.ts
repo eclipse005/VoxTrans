@@ -7,6 +7,12 @@ import {
   startModelDownload as startModelDownloadApi,
 } from "../api/model";
 import { openModelDir as openModelDirApi } from "../api/system";
+import {
+  ASR_MODELS,
+  DEFAULT_ALIGN_MODEL,
+  DEFAULT_DEMUCS_MODEL,
+  isAsrModel,
+} from "../../features/media/modelCatalog";
 import type {
   AlignModel,
   AsrModel,
@@ -34,22 +40,20 @@ type ModelDownloadProgressEvent = ModelDownloadStateSnapshot & {
 type ModelStatusByTarget = Record<ModelTarget, ModelStatusResponse | null>;
 type AsrStatusByModel = Record<AsrModel, ModelStatusResponse | null>;
 
+function emptyAsrStatusMap(): AsrStatusByModel {
+  return Object.fromEntries(ASR_MODELS.map((id) => [id, null])) as AsrStatusByModel;
+}
+
 const initialModelStatus: ModelStatusByTarget = {
   asr: null,
   align: null,
   demucs: null,
 };
 
-const initialAsrStatusByModel: AsrStatusByModel = {
-  "Qwen3-ASR-0.6B": null,
-  "Qwen3-ASR-1.7B": null,
-  "cohere-transcribe-03-2026": null,
-};
-
 export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }: UseModelManagerArgs) {
   const { t } = useTranslation(["toasts", "tasks", "models"]);
   const [statusByTarget, setStatusByTarget] = useState<ModelStatusByTarget>(initialModelStatus);
-  const [asrStatusByModel, setAsrStatusByModel] = useState<AsrStatusByModel>(initialAsrStatusByModel);
+  const [asrStatusByModel, setAsrStatusByModel] = useState<AsrStatusByModel>(emptyAsrStatusMap);
   const asrModelRef = useRef<AsrModel>(asrModel);
   const alignModelRef = useRef<AlignModel>(alignModel);
   const demucsModelRef = useRef<DemucsModel>(demucsModel);
@@ -61,18 +65,17 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
 
   const refreshModelStatus = useCallback(async () => {
     try {
-      const [asr06b, asr17b, cohere, align, demucs] = await Promise.all([
-        getModelStatus("asr", "Qwen3-ASR-0.6B"),
-        getModelStatus("asr", "Qwen3-ASR-1.7B"),
-        getModelStatus("asr", "cohere-transcribe-03-2026"),
-        getModelStatus("align", alignModelRef.current),
-        getModelStatus("demucs", demucsModelRef.current),
+      const asrStatuses = await Promise.all(
+        ASR_MODELS.map((model) => getModelStatus("asr", model)),
+      );
+      const [align, demucs] = await Promise.all([
+        getModelStatus("align", alignModelRef.current || DEFAULT_ALIGN_MODEL),
+        getModelStatus("demucs", demucsModelRef.current || DEFAULT_DEMUCS_MODEL),
       ]);
-      const nextAsrStatusByModel = {
-        "Qwen3-ASR-0.6B": asr06b,
-        "Qwen3-ASR-1.7B": asr17b,
-        "cohere-transcribe-03-2026": cohere,
-      };
+      const nextAsrStatusByModel = emptyAsrStatusMap();
+      ASR_MODELS.forEach((model, index) => {
+        nextAsrStatusByModel[model] = asrStatuses[index] ?? null;
+      });
       setAsrStatusByModel(nextAsrStatusByModel);
       setStatusByTarget({
         asr: nextAsrStatusByModel[asrModelRef.current],
@@ -80,7 +83,7 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
         demucs,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("models.status.readFailed");
+      const message = error instanceof Error ? error.message : t("models:status.readFailed");
       pushToast(message, "error");
     }
   }, [pushToast, t]);
@@ -102,17 +105,11 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
       const payload = event.payload;
       if (!payload?.target) return;
       const target = payload.target;
-      if (
-        target === "asr" &&
-        payload.model !== "Qwen3-ASR-0.6B" &&
-        payload.model !== "Qwen3-ASR-1.7B" &&
-        payload.model !== "cohere-transcribe-03-2026"
-      )
-        return;
+      if (target === "asr" && !isAsrModel(payload.model)) return;
       if (target === "align" && payload.model !== alignModelRef.current) return;
       if (target === "demucs" && payload.model !== demucsModelRef.current) return;
-      if (target === "asr") {
-        const model = payload.model as AsrModel;
+      if (target === "asr" && isAsrModel(payload.model)) {
+        const model = payload.model;
         setAsrStatusByModel((prev) => {
           const current = prev[model];
           if (!current) return prev;
@@ -180,10 +177,10 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
         target,
         modelForTarget(target, asrModelRef.current, alignModelRef.current, demucsModelRef.current, model),
       );
-      pushToast(t("models.download.start"), "info");
+      pushToast(t("models:download.start"), "info");
       await refreshModelStatus();
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("models.download.startFailed");
+      const message = error instanceof Error ? error.message : t("models:download.startFailed");
       pushToast(message, "error");
     }
   }, [pushToast, refreshModelStatus, t]);
@@ -194,10 +191,10 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
         target,
         modelForTarget(target, asrModelRef.current, alignModelRef.current, demucsModelRef.current, model),
       );
-      pushToast(t("models.download.cancelRequest"), "info");
+      pushToast(t("models:download.cancelRequest"), "info");
       await refreshModelStatus();
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("models.download.cancelFailed");
+      const message = error instanceof Error ? error.message : t("models:download.cancelFailed");
       pushToast(message, "error");
     }
   }, [pushToast, refreshModelStatus, t]);
@@ -209,7 +206,7 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
         modelForTarget(target, asrModelRef.current, alignModelRef.current, demucsModelRef.current, model),
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("models.dir.openFailed");
+      const message = error instanceof Error ? error.message : t("models:dir.openFailed");
       pushToast(message, "error");
     }
   }, [pushToast, t]);
@@ -241,15 +238,12 @@ function modelForTarget(
   demucsModel: DemucsModel,
   overrideModel?: string,
 ): AsrModel | AlignModel | DemucsModel {
-  if (
-    target === "asr" &&
-    (overrideModel === "Qwen3-ASR-0.6B" ||
-      overrideModel === "Qwen3-ASR-1.7B" ||
-      overrideModel === "cohere-transcribe-03-2026")
-  ) {
-    return overrideModel;
+  if (target === "asr") {
+    if (overrideModel && isAsrModel(overrideModel)) return overrideModel;
+    return asrModel;
   }
-  if (target === "asr") return asrModel;
-  if (target === "align") return alignModel;
-  return demucsModel;
+  if (target === "align") {
+    return (overrideModel as AlignModel | undefined) || alignModel || DEFAULT_ALIGN_MODEL;
+  }
+  return (overrideModel as DemucsModel | undefined) || demucsModel || DEFAULT_DEMUCS_MODEL;
 }

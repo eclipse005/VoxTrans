@@ -73,6 +73,8 @@ pub enum AsrModel {
     Qwen3Asr17B,
     #[serde(rename = "cohere-transcribe-03-2026")]
     CohereTranscribe032026,
+    #[serde(rename = "moss-transcribe-diarize")]
+    MossTranscribeDiarize,
 }
 
 impl fmt::Display for AsrModel {
@@ -87,6 +89,7 @@ impl AsrModel {
             Self::Qwen3Asr06B => "Qwen3-ASR-0.6B",
             Self::Qwen3Asr17B => "Qwen3-ASR-1.7B",
             Self::CohereTranscribe032026 => "cohere-transcribe-03-2026",
+            Self::MossTranscribeDiarize => "moss-transcribe-diarize",
         }
     }
 
@@ -94,6 +97,7 @@ impl AsrModel {
         match value.trim() {
             "Qwen3-ASR-1.7B" => Self::Qwen3Asr17B,
             "cohere-transcribe-03-2026" => Self::CohereTranscribe032026,
+            "moss-transcribe-diarize" => Self::MossTranscribeDiarize,
             _ => Self::Qwen3Asr06B,
         }
     }
@@ -490,6 +494,10 @@ mod enum_parse_tests {
             AsrModel::parse("cohere-transcribe-03-2026"),
             AsrModel::CohereTranscribe032026
         );
+        assert_eq!(
+            AsrModel::parse("moss-transcribe-diarize"),
+            AsrModel::MossTranscribeDiarize
+        );
     }
 
     #[test]
@@ -536,6 +544,10 @@ mod enum_parse_tests {
         assert_eq!(
             serde_json::to_string(&AsrModel::CohereTranscribe032026).unwrap(),
             "\"cohere-transcribe-03-2026\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AsrModel::MossTranscribeDiarize).unwrap(),
+            "\"moss-transcribe-diarize\""
         );
         assert_eq!(
             serde_json::to_string(&AlignModel::Qwen3ForcedAligner06B).unwrap(),

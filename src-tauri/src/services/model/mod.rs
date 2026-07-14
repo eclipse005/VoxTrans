@@ -39,6 +39,7 @@ pub(crate) const DEFAULT_ASR_MODEL: &str = QWEN3_ASR_06B_MODEL;
 pub(crate) const QWEN3_ASR_06B_MODEL: &str = "Qwen3-ASR-0.6B";
 pub(crate) const QWEN3_ASR_17B_MODEL: &str = "Qwen3-ASR-1.7B";
 pub(crate) const COHERE_ASR_MODEL: &str = "cohere-transcribe-03-2026";
+pub(crate) const MOSS_ASR_MODEL: &str = "moss-transcribe-diarize";
 pub(crate) const DEFAULT_ALIGN_MODEL: &str = "Qwen3-ForcedAligner-0.6B";
 
 pub(crate) const REQUIRED_QWEN3_ASR_06B_MODEL_FILES: [&str; 3] =
@@ -64,6 +65,15 @@ pub(crate) const REQUIRED_COHERE_ASR_MODEL_FILES: [&str; 6] = [
     "tokenizer.model",
     "tokenizer_config.json",
     "vocab.json",
+];
+
+// MOSS-Transcribe-Diarize: sharded safetensors + HF tokenizer.
+// Enough for moss-transcribe-diarize-rs `AsrInference::load_with`.
+pub(crate) const REQUIRED_MOSS_ASR_MODEL_FILES: [&str; 4] = [
+    "config.json",
+    "model.safetensors.index.json",
+    "model-00000-of-00001.safetensors",
+    "tokenizer.json",
 ];
 
 pub(crate) const REQUIRED_QWEN_ALIGNER_MODEL_FILES: [&str; 5] = [

@@ -291,7 +291,7 @@ export function useSubtitleWorkflow({
       const picked = await open({
         directory: true,
         multiple: false,
-        title: t("subtitles.export.dirPickerTitle"),
+        title: t("subtitles:export.dirPickerTitle"),
       });
       if (!picked || Array.isArray(picked)) return;
 

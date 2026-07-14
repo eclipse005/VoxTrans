@@ -80,10 +80,10 @@ export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }:
 
     if (persisted.length > 0) {
       addQueueItems(dispatch, persisted);
-      pushToast(t("toasts.queue.addedCount", { count: persisted.length }), "success");
+      pushToast(t("toasts:queue.addedCount", { count: persisted.length }), "success");
     }
     if (failedCount > 0) {
-      pushToast(t("toasts.queue.addFailedCount", { count: failedCount }), "error");
+      pushToast(t("toasts:queue.addFailedCount", { count: failedCount }), "error");
     }
   }, [dispatch, pushToast, activeTerminologyGroupId]);
 

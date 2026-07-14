@@ -5,7 +5,12 @@ import type { SubtitleBurnMode } from "../../features/media/types";
 import { PROVIDER_OPTIONS } from "../../features/media/provider";
 import { listSystemFonts } from "../api/system";
 import { CheckIcon, CpuIcon, GpuIcon } from "./Icons";
-import { ModelDownloadCard } from "./settings/ModelDownloadCard";
+import {
+  MOSS_FIXED_CHUNK_SECONDS,
+  asrUsesFixedChunk,
+  isAsrModel,
+} from "../../features/media/modelCatalog";
+import { ModelCenter } from "./settings/ModelCenter";
 import { SubtitleStylePreview } from "./settings/SubtitleStylePreview";
 import { SUBTITLE_STYLE_PRESETS } from "./settings/subtitleStylePresets";
 import { useDialogA11y } from "./useDialogA11y";
@@ -160,19 +165,42 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                     </div>
                     <div className="form-group">
                       <label>{t("settings:transcribe.chunkDuration")}</label>
-                      <div className="bounded-number-field">
-                        <input
-                          className="apple-input"
-                          type="number"
-                          inputMode="numeric"
-                          min={30}
-                          max={60}
-                          value={ctx.form.chunkInput}
-                          onChange={(e) => handleChunkInputChange(e.target.value)}
-                          placeholder="30 - 60"
-                        />
-                        <span className="bounded-number-hint">30-60</span>
-                      </div>
+                      {isAsrModel(ctx.form.asrModel) && asrUsesFixedChunk(ctx.form.asrModel) ? (
+                        <>
+                          <div className="bounded-number-field is-disabled">
+                            <input
+                              className="apple-input"
+                              type="text"
+                              value={String(MOSS_FIXED_CHUNK_SECONDS)}
+                              disabled
+                              readOnly
+                              aria-describedby="chunk-duration-moss-hint"
+                            />
+                            <span className="bounded-number-hint">
+                              {t("settings:transcribe.chunkDurationMossFixed", {
+                                seconds: MOSS_FIXED_CHUNK_SECONDS,
+                              })}
+                            </span>
+                          </div>
+                          <p id="chunk-duration-moss-hint" className="field-inline-hint">
+                            {t("settings:transcribe.chunkDurationMossHint")}
+                          </p>
+                        </>
+                      ) : (
+                        <div className="bounded-number-field">
+                          <input
+                            className="apple-input"
+                            type="number"
+                            inputMode="numeric"
+                            min={30}
+                            max={60}
+                            value={ctx.form.chunkInput}
+                            onChange={(e) => handleChunkInputChange(e.target.value)}
+                            placeholder="30 - 60"
+                          />
+                          <span className="bounded-number-hint">30-60</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <label className="setting-toggle" htmlFor="enable-vocal-separation">
@@ -785,90 +813,14 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                 </div>
               </div>
             </div>
-          <div className="settings-tab-content model-center-content" hidden={activeTab !== "models"}>
-              <div className="model-dir-card">
-                <span className="model-dir-icon" aria-hidden="true">📁</span>
-                <span className="model-dir-path">{ctx.form.modelsDir || t("settings:models.storageDefault")}</span>
-                <div className="model-dir-actions">
-                  <button type="button" className="nav-button model-dir-btn" onClick={() => { void handlePickModelsDir(); }}>
-                    {t("settings:models.storageChange")}
-                  </button>
-                  {ctx.form.modelsDir ? (
-                    <button
-                      type="button"
-                      className="nav-button model-dir-btn"
-                      onClick={() => ctx.setForm((prev) => ({ ...prev, modelsDir: "" }))}
-                    >
-                      {t("settings:models.storageReset")}
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-              <ModelDownloadCard
-                target="asr"
-                title={t("settings:models.asrTitle")}
-                description={t("settings:models.asr06bDesc")}
-                modelName="Qwen3-ASR-0.6B"
-                selected={ctx.form.asrModel === "Qwen3-ASR-0.6B"}
-                status={ctx.asrStatusByModel["Qwen3-ASR-0.6B"] ?? (ctx.form.asrModel === "Qwen3-ASR-0.6B" ? ctx.asrStatus : null)}
-                onSelect={() => ctx.setForm((prev) => ({ ...prev, asrModel: "Qwen3-ASR-0.6B" }))}
-                onOpenModelDir={ctx.openModelDir}
-                onStartModelDownload={ctx.startModelDownload}
-                onCancelModelDownload={ctx.cancelModelDownload}
-              />
-
-              <ModelDownloadCard
-                target="asr"
-                title={t("settings:models.asrTitle")}
-                description={t("settings:models.asr17bDesc")}
-                modelName="Qwen3-ASR-1.7B"
-                selected={ctx.form.asrModel === "Qwen3-ASR-1.7B"}
-                status={ctx.asrStatusByModel["Qwen3-ASR-1.7B"] ?? (ctx.form.asrModel === "Qwen3-ASR-1.7B" ? ctx.asrStatus : null)}
-                onSelect={() => ctx.setForm((prev) => ({ ...prev, asrModel: "Qwen3-ASR-1.7B" }))}
-                onOpenModelDir={ctx.openModelDir}
-                onStartModelDownload={ctx.startModelDownload}
-                onCancelModelDownload={ctx.cancelModelDownload}
-              />
-
-              <ModelDownloadCard
-                target="asr"
-                title={t("settings:models.asrTitle")}
-                description={t("settings:models.asrCohereDesc")}
-                modelName="cohere-transcribe-03-2026"
-                selected={ctx.form.asrModel === "cohere-transcribe-03-2026"}
-                status={ctx.asrStatusByModel["cohere-transcribe-03-2026"] ?? (ctx.form.asrModel === "cohere-transcribe-03-2026" ? ctx.asrStatus : null)}
-                onSelect={() => ctx.setForm((prev) => ({ ...prev, asrModel: "cohere-transcribe-03-2026" }))}
-                onOpenModelDir={ctx.openModelDir}
-                onStartModelDownload={ctx.startModelDownload}
-                onCancelModelDownload={ctx.cancelModelDownload}
-              />
-
-              <ModelDownloadCard
-                target="align"
-                title={t("settings:models.alignTitle")}
-                description={t("settings:models.alignDesc")}
-                modelName="Qwen3-ForcedAligner-0.6B"
-                selected={ctx.form.alignModel === "Qwen3-ForcedAligner-0.6B"}
-                status={ctx.alignStatus}
-                onSelect={() => ctx.setForm((prev) => ({ ...prev, alignModel: "Qwen3-ForcedAligner-0.6B" }))}
-                onOpenModelDir={ctx.openModelDir}
-                onStartModelDownload={ctx.startModelDownload}
-                onCancelModelDownload={ctx.cancelModelDownload}
-              />
-
-              <ModelDownloadCard
-                target="demucs"
-                title={t("settings:models.demucsTitle")}
-                description={t("settings:models.demucsDesc")}
-                modelName="htdemucs_ft"
-                selected={ctx.form.demucsModel === "htdemucs_ft"}
-                status={ctx.demucsStatus}
-                onSelect={() => ctx.setForm((prev) => ({ ...prev, demucsModel: "htdemucs_ft" }))}
-                onOpenModelDir={ctx.openModelDir}
-                onStartModelDownload={ctx.startModelDownload}
-                onCancelModelDownload={ctx.cancelModelDownload}
-              />
-            </div>
+          <div className="settings-tab-content" hidden={activeTab !== "models"}>
+            <ModelCenter
+              modelsDir={ctx.form.modelsDir}
+              storageDefaultLabel={t("settings:models.storageDefault")}
+              onPickModelsDir={handlePickModelsDir}
+              onResetModelsDir={() => ctx.setForm((prev) => ({ ...prev, modelsDir: "" }))}
+            />
+          </div>
         </div>
         <div className="settings-footer">
           <button className="nav-button" onClick={ctx.saveSettings} title={t("settings:modal.save")} aria-label={t("settings:modal.save")}>

@@ -97,7 +97,7 @@ export function useAutoUpdateCheck(pushToast: PushToast) {
       try {
         await downloadUpdate(availableUpdate.downloadUrl, taskIdRef.current);
       } catch (e) {
-        pushToast(t("toasts.updater.downloadFailed", { message: e instanceof Error ? e.message : String(e) }), "error");
+        pushToast(t("toasts:updater.downloadFailed", { message: e instanceof Error ? e.message : String(e) }), "error");
       } finally {
         setInstalling(false);
         setInstallProgress(null);

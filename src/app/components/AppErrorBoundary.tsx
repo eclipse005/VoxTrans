@@ -38,12 +38,12 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     return (
       <div className="app-error-boundary">
         <div className="app-error-boundary-card">
-          <h1 className="apple-heading-small">{t("common.appError.title")}</h1>
+          <h1 className="apple-heading-small">{t("common:appError.title")}</h1>
           <p className="apple-body">
-            {t("common.appError.description")}
+            {t("common:appError.description")}
           </p>
           <button className="apple-button" onClick={this.handleReload}>
-            {t("common.appError.reload")}
+            {t("common:appError.reload")}
           </button>
         </div>
       </div>

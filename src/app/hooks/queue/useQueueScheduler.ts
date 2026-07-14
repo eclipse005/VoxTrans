@@ -91,7 +91,7 @@ export function useQueueScheduler({
           transcribeError: message,
         }));
         pushToast(
-          t("toasts.queue.enqueueFailure", { name: item.name, error: message }),
+          t("toasts:queue.enqueueFailure", { name: item.name, error: message }),
           "error",
         );
         return false;
@@ -111,7 +111,7 @@ export function useQueueScheduler({
     runBatchInFlightRef.current = true;
     void runQueuedByTaskIds(queuedItems.map((item) => item.id))
       .catch(() => {
-        pushToast(t("toasts.queue.batchExecuteFailed"), "error");
+        pushToast(t("toasts:queue.batchExecuteFailed"), "error");
       })
       .finally(() => {
         runBatchInFlightRef.current = false;
@@ -135,7 +135,7 @@ export function useQueueScheduler({
           !isYoutubePlaceholder(item),
       );
       if (!retryableItems.length) {
-        pushToast(t("toasts.queue.nothingPending"), "error");
+        pushToast(t("toasts:queue.nothingPending"), "error");
         return;
       }
 
@@ -149,16 +149,16 @@ export function useQueueScheduler({
       }
 
       if (queuedCount === 0) {
-        pushToast(t("toasts.queue.enqueueAllFailed"), "error");
+        pushToast(t("toasts:queue.enqueueAllFailed"), "error");
         return;
       }
 
       const modeLabel =
         mode === "transcribe"
-          ? t("tasks.queue.modeTranscribe")
-          : t("tasks.queue.modeTranscribeTranslate");
+          ? t("tasks:queue.modeTranscribe")
+          : t("tasks:queue.modeTranscribeTranslate");
       pushToast(
-        t("toasts.queue.batchStarted", { mode: modeLabel, count: queuedCount }),
+        t("toasts:queue.batchStarted", { mode: modeLabel, count: queuedCount }),
         "info",
       );
     },
@@ -178,8 +178,8 @@ export function useQueueScheduler({
       if (!ok) return;
       pushToast(
         queueBusy
-          ? t("toasts.queue.addedToQueue", { name: item.name })
-          : t("toasts.queue.started", { name: item.name }),
+          ? t("toasts:queue.addedToQueue", { name: item.name })
+          : t("toasts:queue.started", { name: item.name }),
         "info",
       );
     },
@@ -199,8 +199,8 @@ export function useQueueScheduler({
       if (!ok) return;
       pushToast(
         queueBusy
-          ? t("toasts.queue.addedToQueue", { name: item.name })
-          : t("toasts.queue.started", { name: item.name }),
+          ? t("toasts:queue.addedToQueue", { name: item.name })
+          : t("toasts:queue.started", { name: item.name }),
         "info",
       );
     },
@@ -209,7 +209,7 @@ export function useQueueScheduler({
 
   const clearQueue = useCallback(async (): Promise<boolean> => {
     if (queueBusy) {
-      pushToast(t("toasts.queue.clearWhileBusy"), "error");
+      pushToast(t("toasts:queue.clearWhileBusy"), "error");
       return false;
     }
     try {
@@ -217,7 +217,7 @@ export function useQueueScheduler({
         () => deleteTasks({ taskId: null, mediaPath: null }),
         () => clearQueueItems(dispatch),
       );
-      pushToast(t("toasts.queue.cleared"), "info");
+      pushToast(t("toasts:queue.cleared"), "info");
       return true;
     } catch (error) {
       reportError(error, "clearQueue");
@@ -233,7 +233,7 @@ export function useQueueScheduler({
         return;
       }
       if (item.transcribeStatus === "processing" || item.transcribeStatus === "queued") {
-        pushToast(t("toasts.queue.deleteWhileBusy"), "error");
+        pushToast(t("toasts:queue.deleteWhileBusy"), "error");
         return;
       }
       try {

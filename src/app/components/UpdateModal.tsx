@@ -68,7 +68,7 @@ export default function UpdateModal({
         aria-labelledby="update-modal-title"
         tabIndex={-1}
       >
-        <button className="modal-close" onClick={onClose} aria-label={t("updater.modal.closeAriaLabel")}>×</button>
+        <button className="modal-close" onClick={onClose} aria-label={t("updater:modal.closeAriaLabel")}>×</button>
 
         <div className="update-header">
           <h3 id="update-modal-title" className="apple-heading-medium">
@@ -87,7 +87,7 @@ export default function UpdateModal({
             dangerouslySetInnerHTML={
               notesHtml
                 ? { __html: notesHtml }
-                : { __html: `<p>${t("updater.modal.noNotes")}</p>` }
+                : { __html: `<p>${t("updater:modal.noNotes")}</p>` }
             }
           />
         </div>
@@ -105,7 +105,7 @@ export default function UpdateModal({
                 }
               }}
             >
-              {t("updater.modal.viewReleaseNotes")} ↗
+              {t("updater:modal.viewReleaseNotes")} ↗
             </a>
           </div>
         ) : null}
@@ -113,18 +113,18 @@ export default function UpdateModal({
         <div className="settings-footer">
           {installing ? (
             <>
-              <button className="nav-button" onClick={onCancelInstall ?? onClose}>{t("updater.button.cancelDownload")}</button>
+              <button className="nav-button" onClick={onCancelInstall ?? onClose}>{t("updater:button.cancelDownload")}</button>
               <button className="nav-button" disabled>
-                {t("updater.status.downloading")} {installProgress != null ? `${installProgress}%` : ""}
+                {t("updater:status.downloading")} {installProgress != null ? `${installProgress}%` : ""}
               </button>
             </>
           ) : (
             <>
               <button className="nav-button" onClick={onClose}>{t("common:button.cancel")}</button>
               {onSkipVersion ? (
-                <button className="nav-button" onClick={() => { void onSkipVersion(); }}>{t("updater.button.skipVersion")}</button>
+                <button className="nav-button" onClick={() => { void onSkipVersion(); }}>{t("updater:button.skipVersion")}</button>
               ) : null}
-              <button className="nav-button" onClick={() => { void onInstall(); }}>{t("updater.button.downloadInstall")}</button>
+              <button className="nav-button" onClick={() => { void onInstall(); }}>{t("updater:button.downloadInstall")}</button>
             </>
           )}
         </div>
@@ -146,10 +146,10 @@ function formatDateRelative(value: string | null): string {
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
 
-  if (diffMins < 1) return i18n.t("updater.relative.justNow");
-  if (diffMins < 60) return i18n.t("updater.relative.minutesAgo", { n: diffMins });
-  if (diffHours < 24) return i18n.t("updater.relative.hoursAgo", { n: diffHours });
-  if (diffDays < 30) return i18n.t("updater.relative.daysAgo", { n: diffDays });
+  if (diffMins < 1) return i18n.t("updater:relative.justNow");
+  if (diffMins < 60) return i18n.t("updater:relative.minutesAgo", { n: diffMins });
+  if (diffHours < 24) return i18n.t("updater:relative.hoursAgo", { n: diffHours });
+  if (diffDays < 30) return i18n.t("updater:relative.daysAgo", { n: diffDays });
 
   // Fall back to an absolute date, localized to the active UI language.
   return date.toLocaleDateString(i18n.language, {
