@@ -1,5 +1,32 @@
 # VoxTrans Release Notes
-# VoxTrans v1.1.0
+# VoxTrans v1.2.0
+
+## v1.2.0
+
+**第三 ASR 后端、模型中心改版、真正 token 级流式翻译**
+
+### ASR
+
+- **MOSS-Transcribe-Diarize** — 新增第三 ASR 后端（官方英文 prompt、纯文本 strip、固定约 180s 分段）
+- 模型下载走 ModelScope 官方仓库 `openmoss/MOSS-Transcribe-Diarize`
+- 依赖改为 git：`eclipse005/moss-transcribe-diarize-rs`
+
+### 模型管理 UI
+
+- 设置中心改为分组 ASR 单选列表 + 标签说明
+- 配套模型（对齐 / 人声分离）单独分区
+- 选用 MOSS 时分段时长显示固定 180s 提示
+
+### 翻译体验
+
+- **真正的 token 流式预览** — 批次内译文边生成边在字幕编辑器中生长（非整批贴上）
+- 流式请求附带 `stream_options.include_usage`，保证 token 统计可正常累计
+- 不支持流式的接口自动回退非流式
+
+### 其它修复
+
+- i18n 命名空间分隔符修正（日志标题等不再显示 `tasks.logs.*` 键名）
+- ASR / 对齐进度改为 1 基「正在处理」`1/N … N/N`
 
 ## v1.1.0
 

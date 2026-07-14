@@ -14,7 +14,9 @@ A localized audio/video transcription and subtitle translation tool. Runs fully 
 ## Features
 
 - **Multilingual transcription**: 11 source languages (English, Mandarin Chinese, Cantonese, Japanese, Korean, French, German, Italian, Spanish, Portuguese, Russian)
+- **Multi-engine ASR**: Qwen3-ASR / Cohere Transcribe / MOSS-Transcribe-Diarize, switchable in Settings
 - **Multilingual translation**: 18 target languages (Simplified Chinese, Traditional Chinese, English, Japanese, Korean, French, German, Spanish, Italian, Portuguese, Russian, Arabic, Vietnamese, Thai, Indonesian, Turkish, Dutch, Polish)
+- **Streaming translation preview**: LLM tokens appear live in the subtitle editor as they generate
 - **Vocal separation**: built-in Demucs HT to reduce background-music interference with transcription
 - **Subtitle export**: 4 SRT formats — source / target / bilingual (source first) / bilingual (target first)
 - **Subtitle editor**: sentence-by-sentence proofreading and fine-tuning
@@ -35,6 +37,7 @@ VoxTrans currently enables 11 source languages in the UI (Chinese, English, Cant
 | **Qwen3-ASR-0.6B** (default) | ~0.6B | ~1.8 GB | balanced accuracy/speed, low-VRAM friendly |
 | **Qwen3-ASR-1.7B** | ~1.7B | ~4.7 GB | open-source SOTA accuracy, needs more VRAM |
 | **cohere-transcribe-03-2026** | 2B | ~3.9 GB | English, European languages |
+| **MOSS-Transcribe-Diarize** | Whisper-M + Qwen3-0.6B | ~1.8 GB | meetings/dialogue; fixed ~180s chunks |
 
 ### Aligner (required)
 

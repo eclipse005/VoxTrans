@@ -20,10 +20,10 @@ N卡用户请下载 VoxTrans_cuda.exe
 
 ## 转录说明
 
-- 双引擎：**Qwen3-ASR** / **Cohere Transcribe**，设置中切换
+- 三引擎：**Qwen3-ASR** / **Cohere Transcribe** / **MOSS-Transcribe-Diarize**，设置中切换
 - **完全本地运行**，模型首次下载后永久离线可用
 - 支持 **CPU / CUDA** 双后端，N 卡用户可切换 CUDA 加速
-- 翻译功能依赖外部 LLM，需自行配置 API Key
+- 翻译功能依赖外部 LLM，需自行配置 API Key；支持 token 级流式预览
 
 ## 使用步骤
 
@@ -34,6 +34,25 @@ N卡用户请下载 VoxTrans_cuda.exe
 5. 输出文件位于安装目录 `output/` 文件夹
 
 ## 更新记录
+
+### v1.2.0
+
+**ASR**
+- MOSS-Transcribe-Diarize — 新增第三转录引擎（官方英文 prompt、纯文本、固定约 180s 分段）
+- 模型自 ModelScope `openmoss/MOSS-Transcribe-Diarize` 下载
+
+**模型管理 UI**
+- 设置中心改为分组 ASR 单选列表 + 标签说明
+- 配套模型（对齐 / 人声分离）单独分区
+- 选用 MOSS 时分段时长显示固定 180s 提示
+
+**翻译体验**
+- 真正的 token 流式预览 — 批次内译文边生成边在字幕编辑器中生长
+- 流式 token 统计可正常累计；不支持流式的接口自动回退
+
+**其它修复**
+- i18n 命名空间修正（日志标题等不再显示键名）
+- ASR / 对齐进度改为 1 基「正在处理」`1/N … N/N`
 
 ### v1.1.0
 
