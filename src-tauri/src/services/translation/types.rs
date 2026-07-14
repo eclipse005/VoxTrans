@@ -60,14 +60,13 @@ pub struct BuildTranslationLayerResponse {
     pub segments: Vec<TranslationSegmentOutput>,
 }
 
-/// Structured progress emitted after each batch completes.
+/// Structured progress for translation.
 ///
+/// Emitted mid-batch (token stream, throttled) and when a batch completes.
 /// `partial_outputs` is a full snapshot of all segments rebuilt from the
-/// cumulative translations so far: segments that have been translated carry
-/// their translation, the rest carry only the source (translation empty).
-/// Callers (orchestration layer) can stream this straight to the UI so the
-/// subtitle editor fills in incrementally instead of waiting for the whole
-/// run to finish.
+/// cumulative translations so far: finished lines are complete; the line
+/// currently streaming may grow character-by-character; the rest keep an
+/// empty translation until their batch runs.
 #[derive(Debug, Clone)]
 pub struct TranslationProgress {
     pub done: usize,

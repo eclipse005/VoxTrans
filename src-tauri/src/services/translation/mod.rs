@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::services::llm::batch::run_indexed_concurrent_idempotent;
 use crate::services::llm::client::OpenAiCompatLlmClient;
@@ -7,6 +9,7 @@ use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_ll
 use crate::services::task_log::TaskLogger;
 
 mod batches;
+mod partial_parse;
 mod responses;
 mod segments;
 #[cfg(test)]
@@ -27,6 +30,10 @@ const DEFAULT_BATCH_SIZE: usize = 20;
 const MAX_BATCH_SIZE: usize = 40;
 const CONTEXT_LINE_LIMIT: usize = 6;
 const MAX_TERMS_PER_BATCH: usize = 16;
+/// Min interval between mid-stream subtitle preview patches (per batch worker).
+const STREAM_PREVIEW_MIN_INTERVAL: Duration = Duration::from_millis(100);
+/// Also emit when this many new chars accumulate since last preview.
+const STREAM_PREVIEW_MIN_CHARS: usize = 24;
 
 pub async fn build_translation_layer_with_progress(
     request: BuildTranslationLayerRequest,
@@ -184,16 +191,26 @@ pub async fn build_translation_layer_with_progress(
         }
     };
 
+    let batch_total_for_stream = windows.len();
+    let completed_batches = Arc::new(AtomicUsize::new(precomputed.len()));
     let results = run_indexed_concurrent_idempotent(
         tasks,
         concurrency,
         {
             let llm_client = llm_client.clone();
             let context = context.clone();
+            let partial_map_for_stream = partial_map.clone();
+            let progress_for_stream = progress_callback.clone();
+            let segments_for_stream = normalized_for_progress.clone();
+            let completed_batches = completed_batches.clone();
             move |task| {
                 let llm_client = llm_client.clone();
                 let context = context.clone();
                 let windows = windows_for_worker.clone();
+                let partial_map = partial_map_for_stream.clone();
+                let progress_callback = progress_for_stream.clone();
+                let segments = segments_for_stream.clone();
+                let completed_batches = completed_batches.clone();
                 async move {
                     let Some(window) = windows.get(task.id) else {
                         return Err(format!("missing batch window for index {}", task.id));
@@ -220,14 +237,75 @@ pub async fn build_translation_layer_with_progress(
                         );
                     }
 
+                    let local_to_global = window.local_to_global.clone();
+                    let local_ids = window.local_ids.clone();
+                    let throttle = Arc::new(Mutex::new(StreamThrottle::new()));
+                    let on_partial: Arc<dyn Fn(String) + Send + Sync> = Arc::new({
+                        let partial_map = partial_map.clone();
+                        let progress_callback = progress_callback.clone();
+                        let segments = segments.clone();
+                        let throttle = throttle.clone();
+                        let local_to_global = local_to_global.clone();
+                        let completed_batches = completed_batches.clone();
+                        move |raw: String| {
+                            let extracted = partial_parse::extract_partial_translations(&raw);
+                            if extracted.is_empty() {
+                                return;
+                            }
+                            let mut changed = false;
+                            if let Ok(mut map) = partial_map.lock() {
+                                for (local_id, text) in extracted {
+                                    if text.is_empty() {
+                                        continue;
+                                    }
+                                    let idx = local_id.saturating_sub(1);
+                                    let Some(global_id) = local_to_global.get(idx).copied() else {
+                                        continue;
+                                    };
+                                    let entry = map.entry(global_id).or_default();
+                                    // Keep longer (growing) text; allow replacement if model rewrote.
+                                    if text.len() >= entry.len() || entry.is_empty() {
+                                        if text != *entry {
+                                            *entry = text;
+                                            changed = true;
+                                        }
+                                    }
+                                }
+                            } else {
+                                return;
+                            }
+                            if !changed {
+                                return;
+                            }
+                            let should_emit = match throttle.lock() {
+                                Ok(mut t) => t.should_emit(raw.len()),
+                                Err(_) => true,
+                            };
+                            if !should_emit {
+                                return;
+                            }
+                            if let Some(callback) = progress_callback.as_ref() {
+                                let partial_outputs =
+                                    rebuild_partial_outputs(&segments, &partial_map);
+                                let done = completed_batches.load(Ordering::Relaxed);
+                                callback(TranslationProgress {
+                                    done,
+                                    total: batch_total_for_stream,
+                                    partial_outputs,
+                                });
+                            }
+                        }
+                    });
+
                     let call = llm_client
-                        .call_json_validated(
+                        .call_json_validated_streaming(
                             &context,
                             &llm_id,
                             &task.user_prompt,
                             Some(task.images.as_ref()),
                             task.response_validator.as_ref(),
-                            |value| validate_batch_translation_response(value, &window.local_ids),
+                            on_partial,
+                            |value| validate_batch_translation_response(value, &local_ids),
                         )
                         .await
                         .map_err(|err| {
@@ -241,7 +319,7 @@ pub async fn build_translation_layer_with_progress(
                     let mut translated_map = HashMap::<usize, String>::new();
                     for (local_id, translated) in call.value {
                         let idx = local_id.saturating_sub(1);
-                        let Some(global_id) = window.local_to_global.get(idx).copied() else {
+                        let Some(global_id) = local_to_global.get(idx).copied() else {
                             continue;
                         };
                         translated_map.insert(global_id, translated);
@@ -255,33 +333,37 @@ pub async fn build_translation_layer_with_progress(
             let partial_map = partial_map.clone();
             let segments = normalized_for_progress.clone();
             let progress_callback = progress_callback.clone();
-            move |done: usize, total: usize, result: Option<&(usize, HashMap<usize, String>)>| {
-                if let Some((_, translations)) = result {
-                    match partial_map.lock() {
-                        Ok(mut map) => {
-                            for (id, text) in translations {
-                                map.insert(*id, text.clone());
+            {
+                let completed_batches = completed_batches.clone();
+                move |done: usize, total: usize, result: Option<&(usize, HashMap<usize, String>)>| {
+                    completed_batches.store(done, Ordering::Relaxed);
+                    if let Some((_, translations)) = result {
+                        match partial_map.lock() {
+                            Ok(mut map) => {
+                                for (id, text) in translations {
+                                    map.insert(*id, text.clone());
+                                }
+                            }
+                            Err(err) => {
+                                // Lock poisoned = another worker panicked mid-update.
+                                // Surfacing this as a warning rather than silently
+                                // dropping progress updates. The poisoned lock will
+                                // also fail the main-thread read below, which will
+                                // propagate the error properly.
+                                eprintln!(
+                                    "[warn] translation partial_map lock poisoned: {err}"
+                                );
                             }
                         }
-                        Err(err) => {
-                            // Lock poisoned = another worker panicked mid-update.
-                            // Surfacing this as a warning rather than silently
-                            // dropping progress updates. The poisoned lock will
-                            // also fail the main-thread read below, which will
-                            // propagate the error properly.
-                            eprintln!(
-                                "[warn] translation partial_map lock poisoned: {err}"
-                            );
-                        }
                     }
-                }
-                if let Some(callback) = progress_callback.as_ref() {
-                    let partial_outputs = rebuild_partial_outputs(&segments, &partial_map);
-                    callback(TranslationProgress {
-                        done,
-                        total,
-                        partial_outputs,
-                    });
+                    if let Some(callback) = progress_callback.as_ref() {
+                        let partial_outputs = rebuild_partial_outputs(&segments, &partial_map);
+                        callback(TranslationProgress {
+                            done,
+                            total,
+                            partial_outputs,
+                        });
+                    }
                 }
             }
         },
@@ -331,6 +413,34 @@ pub async fn build_translation_layer_with_progress(
         segment_total: outputs.len(),
         segments: outputs,
     })
+}
+
+struct StreamThrottle {
+    last_emit: Instant,
+    last_len: usize,
+}
+
+impl StreamThrottle {
+    fn new() -> Self {
+        Self {
+            last_emit: Instant::now()
+                .checked_sub(STREAM_PREVIEW_MIN_INTERVAL)
+                .unwrap_or_else(Instant::now),
+            last_len: 0,
+        }
+    }
+
+    fn should_emit(&mut self, acc_len: usize) -> bool {
+        let elapsed = self.last_emit.elapsed() >= STREAM_PREVIEW_MIN_INTERVAL;
+        let chars = acc_len.saturating_sub(self.last_len) >= STREAM_PREVIEW_MIN_CHARS;
+        if elapsed || chars {
+            self.last_emit = Instant::now();
+            self.last_len = acc_len;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// Flatten precomputed (cached/resumed) batch results into a single
