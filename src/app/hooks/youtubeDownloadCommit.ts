@@ -20,7 +20,7 @@ type CommitDownloadedYoutubeTaskArgs = {
   placeholderTaskId: string;
   response: DownloadYoutubeTaskResponse;
   isRemoved: (taskId: string) => boolean;
-  registerTask: (request: RegisterTaskUploadRequest) => Promise<void>;
+  registerTask: (request: RegisterTaskUploadRequest) => Promise<unknown>;
   deleteRegisteredTask: (request: DeleteRegisteredTaskRequest) => Promise<void>;
   commitLocal: (response: DownloadYoutubeTaskResponse) => void;
 };

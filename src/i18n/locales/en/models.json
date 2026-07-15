@@ -19,8 +19,7 @@
     "currentAsr": "Selected",
     "support": "Supporting models",
     "alignRole": "Required · timestamps",
-    "demucsRole": "Optional · vocals",
-    "downloadEssentials": "Download selected ASR + aligner"
+    "demucsRole": "Optional · vocals"
   },
   "tags": {
     "recommended": "Recommended",

@@ -6,10 +6,6 @@ import {
   type QueueItem,
 } from "../../../features/media/types";
 import {
-  normalizeSourceLanguage,
-  normalizeTargetLanguage,
-} from "../../../features/media/languages";
-import {
   isSubtitleQueueItem,
   toEnqueuePayload,
   type QueueRunMode,

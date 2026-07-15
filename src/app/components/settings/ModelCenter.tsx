@@ -1,11 +1,10 @@
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ASR_CATALOG,
   SUPPORT_CATALOG,
   tagLabelKey,
 } from "../../../features/media/modelCatalog";
-import type { AsrModel, ModelStatusResponse, ModelTarget } from "../../../features/media/types";
+import type { AsrModel, ModelStatusResponse } from "../../../features/media/types";
 import { useSettingsFormContext } from "../../contexts/SettingsFormContext";
 import { ModelActions } from "./ModelActions";
 import { isModelReady } from "./modelStatusUtils";
@@ -28,28 +27,10 @@ export function ModelCenter({
   const selectedAsr = ctx.form.asrModel;
 
   const selectedStatus = ctx.asrStatusByModel[selectedAsr] ?? ctx.asrStatus;
-  const alignReady = isModelReady(ctx.alignStatus);
   const selectedReady = isModelReady(selectedStatus);
-
-  const essentialsMissing = useMemo(() => {
-    const missing: { target: ModelTarget; model: string }[] = [];
-    if (!selectedReady) {
-      missing.push({ target: "asr", model: selectedAsr });
-    }
-    if (!alignReady) {
-      missing.push({ target: "align", model: SUPPORT_CATALOG[0].id });
-    }
-    return missing;
-  }, [alignReady, selectedAsr, selectedReady]);
 
   const handleSelectAsr = (id: AsrModel) => {
     ctx.setForm((prev) => ({ ...prev, asrModel: id }));
-  };
-
-  const handleDownloadEssentials = () => {
-    for (const item of essentialsMissing) {
-      void ctx.startModelDownload(item.target, item.model);
-    }
   };
 
   return (
@@ -145,18 +126,6 @@ export function ModelCenter({
             );
           })}
         </div>
-
-        {essentialsMissing.length > 0 ? (
-          <div className="model-panel-footer">
-            <button
-              type="button"
-              className="nav-button model-essentials-btn"
-              onClick={handleDownloadEssentials}
-            >
-              {t("models:section.downloadEssentials")}
-            </button>
-          </div>
-        ) : null}
       </section>
 
       <section className="model-section model-panel" aria-labelledby="model-support-heading">

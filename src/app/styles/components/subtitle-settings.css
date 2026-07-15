@@ -504,23 +504,6 @@
   border: 1px solid #e2e8f0;
 }
 
-.model-panel-footer {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding-top: 2px;
-}
-
-.model-essentials-btn {
-  font-size: 13px;
-}
-
-.model-panel-footer-hint {
-  color: var(--apple-text-secondary);
-  margin: 0;
-}
-
 .model-actions {
   display: grid;
   justify-items: end;

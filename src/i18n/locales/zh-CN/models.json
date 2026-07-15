@@ -19,8 +19,7 @@
     "currentAsr": "当前选用",
     "support": "配套模型",
     "alignRole": "必需 · 词级时间戳",
-    "demucsRole": "可选 · 人声分离",
-    "downloadEssentials": "下载当前 ASR 与对齐模型"
+    "demucsRole": "可选 · 人声分离"
   },
   "tags": {
     "recommended": "推荐",
