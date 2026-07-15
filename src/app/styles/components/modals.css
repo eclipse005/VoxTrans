@@ -694,8 +694,8 @@
   }
 
   .modal-content-settings {
-    width: min(700px, calc(100vw - 30px));
-    height: min(750px, calc(100vh - 30px));
+    width: min(920px, calc(100vw - 30px));
+    height: min(860px, calc(100vh - 30px));
     max-width: none;
     max-height: none;
   }

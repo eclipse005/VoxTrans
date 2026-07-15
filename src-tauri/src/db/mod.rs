@@ -99,6 +99,8 @@ const MIGRATION_ALTERS: &[&str] = &[
     "ALTER TABLE settings ADD COLUMN enable_vision_assist INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE settings ADD COLUMN locale TEXT NOT NULL DEFAULT 'zh-CN'",
     "ALTER TABLE settings ADD COLUMN models_dir TEXT",
+    "ALTER TABLE settings ADD COLUMN llm_profiles_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE settings ADD COLUMN active_llm_profile_id TEXT NOT NULL DEFAULT 'deepseek'",
 ];
 
 /// Parse the column name from an `ALTER TABLE settings ADD COLUMN <name> ...`

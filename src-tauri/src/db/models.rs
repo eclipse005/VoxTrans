@@ -23,6 +23,9 @@ pub struct SettingsRow {
     pub translate_api_key: String,
     pub translate_base_url: String,
     pub translate_model: String,
+    /// JSON array of `LlmProfile`. Empty / missing → normalize fills defaults.
+    pub llm_profiles_json: String,
+    pub active_llm_profile_id: String,
     pub llm_concurrency: u32,
     pub active_terminology_group_id: String,
     pub enable_subtitle_beautify: bool,

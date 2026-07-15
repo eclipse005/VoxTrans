@@ -1,20 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { SubtitleBurnMode } from "../../features/media/types";
 import { PROVIDER_OPTIONS } from "../../features/media/provider";
 import { listSystemFonts } from "../api/system";
-import { CheckIcon, CpuIcon, GpuIcon } from "./Icons";
+import { CheckIcon, CpuIcon, GpuIcon, UpdateIcon } from "./Icons";
 import {
   MOSS_FIXED_CHUNK_SECONDS,
   asrUsesFixedChunk,
   isAsrModel,
 } from "../../features/media/modelCatalog";
 import { ModelCenter } from "./settings/ModelCenter";
+import { ProviderPresetPicker } from "./settings/ProviderPresetPicker";
 import { SubtitleStylePreview } from "./settings/SubtitleStylePreview";
 import { SUBTITLE_STYLE_PRESETS } from "./settings/subtitleStylePresets";
 import { useDialogA11y } from "./useDialogA11y";
 import { useSettingsFormContext } from "../contexts/SettingsFormContext";
+import {
+  getActiveProfile,
+  isProfileAtPresetDefaults,
+  isProfileConfigured,
+} from "../../features/media/llmProfiles";
+import type { LlmModelInfo } from "../api/settings";
 
 const SUBTITLE_LENGTH_PRESETS = [
   { id: "short", labelKey: "settings:subtitle.lengthShort" },
@@ -40,7 +47,80 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
 
   const [activeTab, setActiveTab] = useState<"transcribe" | "translate" | "subtitle" | "models">("transcribe");
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
+  const [chatModels, setChatModels] = useState<LlmModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelFilter, setModelFilter] = useState("");
+  const modelPickerRef = useRef<HTMLDivElement | null>(null);
+  /** Bumped on provider switch / new fetch so stale in-flight work cannot clear UI. */
+  const fetchGenRef = useRef(0);
   const dialogRef = useDialogA11y(visible, onClose);
+
+  const activeLlm = useMemo(
+    () => getActiveProfile(ctx.form.llmProfiles, ctx.form.activeLlmProfileId),
+    [ctx.form.llmProfiles, ctx.form.activeLlmProfileId],
+  );
+  const configuredProviderIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const p of ctx.form.llmProfiles) {
+      // Keyful: green when key set. Keyless (Ollama): ready without key.
+      if (isProfileConfigured(p) && (p.requiresKey === false || p.apiKey?.trim())) {
+        s.add(p.id);
+      }
+    }
+    return s;
+  }, [ctx.form.llmProfiles]);
+
+  useEffect(() => {
+    // Invalidate any in-flight fetch for the previous provider.
+    fetchGenRef.current += 1;
+    setModelsLoading(false);
+    setChatModels([]);
+    setModelPickerOpen(false);
+    setModelFilter("");
+  }, [ctx.form.activeLlmProfileId]);
+
+  useEffect(() => {
+    if (!modelPickerOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (modelPickerRef.current?.contains(e.target as Node)) return;
+      setModelPickerOpen(false);
+      setModelFilter("");
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [modelPickerOpen]);
+
+  const filteredModels = chatModels.filter((m) =>
+    !modelFilter.trim() ? true : m.id.toLowerCase().includes(modelFilter.trim().toLowerCase()),
+  );
+
+  const canFetchModels = Boolean(
+    activeLlm.baseUrl?.trim() &&
+      (activeLlm.requiresKey === false || activeLlm.apiKey?.trim()),
+  );
+
+  const handleFetchModels = async () => {
+    if (!canFetchModels) return;
+    // New generation: previous in-flight work must not touch list/loading.
+    const gen = ++fetchGenRef.current;
+    const profileId = ctx.form.activeLlmProfileId;
+    setModelsLoading(true);
+    try {
+      const result = await ctx.fetchLlmModels();
+      if (gen !== fetchGenRef.current) return;
+      if (!result.ok) {
+        // discarded / validation / empty / error — never apply [] onto the UI
+        return;
+      }
+      // Only apply if this fetch still matches the slot it was started for.
+      if (result.profileId !== profileId) return;
+      setChatModels(result.models);
+      if (result.models.length > 0) setModelPickerOpen(true);
+    } finally {
+      if (gen === fetchGenRef.current) setModelsLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!visible) return;
@@ -273,35 +353,99 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
           <div className="settings-tab-content" hidden={activeTab !== "translate"}>
               <div className="settings-section">
                 <div className="api-config-form">
+                  <p className="llm-provider-section-hint">{t("settings:translate.providerHint")}</p>
+                  <ProviderPresetPicker
+                    selectedId={ctx.form.activeLlmProfileId}
+                    activeModel={activeLlm.model}
+                    configuredIds={configuredProviderIds}
+                    atPresetDefaults={isProfileAtPresetDefaults(activeLlm)}
+                    onSelect={ctx.selectLlmProvider}
+                    onResetPreset={ctx.resetActiveLlmProfile}
+                  />
                   <div className="form-row">
                     <div className="form-group">
                       <label>{t("settings:translate.apiKey")}</label>
                       <input
                         className="apple-input"
                         type="password"
-                        value={ctx.form.translateApiKey}
-                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, translateApiKey: e.target.value }))}
-                        placeholder="sk-..."
+                        value={activeLlm.apiKey}
+                        onChange={(e) => ctx.updateActiveLlmProfile({ apiKey: e.target.value })}
+                        placeholder={activeLlm.requiresKey === false ? "ollama" : "sk-..."}
+                        autoComplete="off"
                       />
                     </div>
                     <div className="form-group">
                       <label>{t("settings:translate.baseUrl")}</label>
                       <input
                         className="apple-input"
-                        value={ctx.form.translateBaseUrl}
-                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, translateBaseUrl: e.target.value }))}
+                        value={activeLlm.baseUrl}
+                        onChange={(e) => ctx.updateActiveLlmProfile({ baseUrl: e.target.value })}
                         placeholder="https://api.openai.com/v1"
                       />
                     </div>
                     <div className="form-group llm-model-field">
-                      <label>{t("settings:translate.modelName")}</label>
-                      <div className="llm-model-test-row">
-                        <input
-                          className="apple-input llm-model-input"
-                          value={ctx.form.translateModel}
-                          onChange={(e) => ctx.setForm((prev) => ({ ...prev, translateModel: e.target.value }))}
-                          placeholder="gpt-4.1-mini"
-                        />
+                      <div className="llm-model-label-row">
+                        <label>{t("settings:translate.modelName")}</label>
+                        <button
+                          type="button"
+                          className="llm-fetch-models-btn"
+                          disabled={!canFetchModels || modelsLoading}
+                          onClick={() => { void handleFetchModels(); }}
+                        >
+                          <UpdateIcon />
+                          {modelsLoading
+                            ? t("settings:translate.fetchingModels")
+                            : t("settings:translate.fetchModels")}
+                        </button>
+                      </div>
+                      <div className="llm-model-test-row" ref={modelPickerRef}>
+                        <div className="llm-model-input-wrap">
+                          <input
+                            className="apple-input llm-model-input"
+                            value={modelPickerOpen ? modelFilter : activeLlm.model}
+                            onChange={(e) => {
+                              if (modelPickerOpen) setModelFilter(e.target.value);
+                              else ctx.updateActiveLlmProfile({ model: e.target.value });
+                            }}
+                            onFocus={() => {
+                              if (chatModels.length > 0) {
+                                setModelPickerOpen(true);
+                                setModelFilter("");
+                              }
+                            }}
+                            placeholder="deepseek-v4-flash"
+                            autoComplete="off"
+                          />
+                          {modelPickerOpen && chatModels.length > 0 ? (
+                            <div className="llm-model-dropdown" role="listbox">
+                              {filteredModels.length === 0 ? (
+                                <p className="llm-model-dropdown-empty">—</p>
+                              ) : (
+                                filteredModels.map((m) => {
+                                  const active = m.id === activeLlm.model;
+                                  return (
+                                    <button
+                                      key={m.id}
+                                      type="button"
+                                      role="option"
+                                      aria-selected={active}
+                                      className={`llm-model-option ${active ? "active" : ""}`}
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() => {
+                                        ctx.updateActiveLlmProfile({ model: m.id });
+                                        setModelPickerOpen(false);
+                                        setModelFilter("");
+                                      }}
+                                    >
+                                      <span className="llm-model-option-id">{m.id}</span>
+                                      <span className="llm-model-option-kind">{m.kind}</span>
+                                    </button>
+                                  );
+                                })
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
                         <button
                           type="button"
                           className="nav-button llm-test-btn"

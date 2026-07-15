@@ -33,3 +33,34 @@ export async function testTranslateLlmConnection(
 ): Promise<TestTranslateLlmResponse> {
   return invoke<TestTranslateLlmResponse>("test_translate_llm", { request });
 }
+
+export type LlmModelKind = "chat" | "image" | "video" | "audio" | "embedding" | "other";
+
+export type LlmModelInfo = {
+  id: string;
+  kind: LlmModelKind | string;
+};
+
+export type ListLlmModelsResponse = {
+  chatModels: LlmModelInfo[];
+  excludedModels: LlmModelInfo[];
+  allModels: LlmModelInfo[];
+};
+
+/**
+ * Result of settings "fetch models" with explicit discard signaling so the UI
+ * never applies a stale empty list when the user switched providers mid-flight.
+ */
+export type FetchLlmModelsResult =
+  | { ok: true; profileId: string; models: LlmModelInfo[] }
+  | {
+      ok: false;
+      reason: "discarded" | "validation" | "empty" | "error";
+    };
+
+export async function listLlmModels(request: {
+  apiKey: string;
+  baseUrl: string;
+}): Promise<ListLlmModelsResponse> {
+  return invoke<ListLlmModelsResponse>("list_llm_models", { request });
+}

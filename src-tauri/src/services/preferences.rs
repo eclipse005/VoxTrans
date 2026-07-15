@@ -9,6 +9,9 @@ pub async fn load_user_preferences(
     store: &crate::db::store::TaskStore,
 ) -> Result<UserPreferencesResponse, String> {
     let settings = store.load_settings().await?;
+    // Ensure multi-profile slots exist for pre-profile DBs and keep translate_*
+    // denormalized from the active profile for pipeline consumers.
+    let settings = super::preferences_normalize::normalize_saved_settings(settings);
     Ok(UserPreferencesResponse { settings })
 }
 
@@ -36,10 +39,11 @@ pub fn load_saved_settings_from_default_path(
 ) -> Result<SavedSettings, String> {
     let load = store.load_settings();
 
-    match Handle::try_current() {
+    let settings = match Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
             tokio::task::block_in_place(|| handle.block_on(load))
         }
         _ => tauri::async_runtime::block_on(load),
-    }
+    }?;
+    Ok(super::preferences_normalize::normalize_saved_settings(settings))
 }

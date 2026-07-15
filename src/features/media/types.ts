@@ -4,6 +4,7 @@ export type { AlignModel } from "../../generated/bindings/AlignModel";
 export type { AsrModel } from "../../generated/bindings/AsrModel";
 export type { DefaultSettingsResponse } from "../../generated/bindings/DefaultSettingsResponse";
 export type { DemucsModel } from "../../generated/bindings/DemucsModel";
+export type { LlmProfile } from "../../generated/bindings/LlmProfile";
 export type { Provider } from "../../generated/bindings/Provider";
 export type { SaveAppSettingsRequest } from "../../generated/bindings/SaveAppSettingsRequest";
 export type { SavedSettings } from "../../generated/bindings/SavedSettings";

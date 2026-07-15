@@ -5,6 +5,7 @@ import type {
   SubtitleRenderStyle,
 } from "../../features/media/types";
 import { ASR_MODELS, DEFAULT_ALIGN_MODEL } from "../../features/media/modelCatalog";
+import { ensureProfiles, flattenActiveToTranslateFields } from "../../features/media/llmProfiles";
 import { normalizeTerminologyGroups } from "./terminology";
 
 const PROVIDERS: readonly SavedSettings["provider"][] = ["cpu", "cuda"];
@@ -36,6 +37,17 @@ function pickEnum<T>(value: unknown, allowed: readonly T[], fallback: T): T {
  * validates enum/union fields, and fills missing/invalid fields with `defaults`.
  */
 export function normalizeSettings(raw: SavedSettings, defaults: SavedSettings): SavedSettings {
+  const ensured = ensureProfiles(
+    raw.llmProfiles ?? defaults.llmProfiles,
+    raw.activeLlmProfileId ?? defaults.activeLlmProfileId,
+    {
+      apiKey: raw.translateApiKey,
+      baseUrl: raw.translateBaseUrl,
+      model: raw.translateModel,
+    },
+  );
+  const flat = flattenActiveToTranslateFields(ensured.profiles, ensured.activeLlmProfileId);
+
   return {
     provider: pickEnum(raw.provider, PROVIDERS, defaults.provider),
     chunkTargetSeconds: clampInt(raw.chunkTargetSeconds, 30, 60, defaults.chunkTargetSeconds),
@@ -48,9 +60,13 @@ export function normalizeSettings(raw: SavedSettings, defaults: SavedSettings): 
     alignModel: pickEnum(raw.alignModel, ALIGN_MODELS, defaults.alignModel),
     demucsModel: pickEnum(raw.demucsModel, DEMUCUS_MODELS, defaults.demucsModel),
     enableVocalSeparation: Boolean(raw.enableVocalSeparation),
-    translateApiKey: String(raw.translateApiKey ?? "").trim(),
-    translateBaseUrl: String(raw.translateBaseUrl ?? "").trim() || defaults.translateBaseUrl,
-    translateModel: String(raw.translateModel ?? "").trim() || defaults.translateModel,
+    llmProfiles: ensured.profiles,
+    activeLlmProfileId: ensured.activeLlmProfileId,
+    // Strictly mirror the active profile — never splice key/url/model from
+    // stale denormalized fields of a previous vendor (cross-profile mix).
+    translateApiKey: flat.translateApiKey,
+    translateBaseUrl: flat.translateBaseUrl,
+    translateModel: flat.translateModel,
     llmConcurrency: clampInt(raw.llmConcurrency, 1, 16, defaults.llmConcurrency),
     terminologyGroups: normalizeTerminologyGroups(raw.terminologyGroups ?? []),
     activeTerminologyGroupId: String(raw.activeTerminologyGroupId ?? ""),

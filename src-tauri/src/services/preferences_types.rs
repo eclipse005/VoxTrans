@@ -305,6 +305,26 @@ impl Default for SubtitleRenderStyle {
     }
 }
 
+/// One LLM provider slot (Egg-style multi-profile). `id` matches a preset id
+/// (`deepseek`, `custom`, …). Pipeline still reads the denormalized
+/// `translate_*` fields, which always mirror the active profile after normalize.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct LlmProfile {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    /// Which vendor preset this slot came from (usually equals `id`).
+    #[serde(default)]
+    pub preset_id: String,
+    /// When false (e.g. local Ollama), empty key is allowed and treated as `"ollama"`.
+    #[serde(default = "default_true")]
+    pub requires_key: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
@@ -320,6 +340,12 @@ pub struct SavedSettings {
     pub translate_api_key: String,
     pub translate_base_url: String,
     pub translate_model: String,
+    /// Multi-provider LLM archives. Source of truth for Key/URL/Model per vendor.
+    #[serde(default)]
+    pub llm_profiles: Vec<LlmProfile>,
+    /// Active profile id within `llm_profiles` (e.g. `"deepseek"`).
+    #[serde(default)]
+    pub active_llm_profile_id: String,
     pub llm_concurrency: u32,
     #[serde(default)]
     pub terminology_groups: Vec<TerminologyGroup>,
@@ -448,6 +474,7 @@ mod ts_export_tests {
         SubtitleLayoutStyle::export_all().expect("export SubtitleLayoutStyle");
         SubtitleRenderStyle::export_all().expect("export SubtitleRenderStyle");
         Locale::export_all().expect("export Locale");
+        LlmProfile::export_all().expect("export LlmProfile");
         SavedSettings::export_all().expect("export SavedSettings");
         UserPreferencesResponse::export_all().expect("export UserPreferencesResponse");
         SaveAppSettingsRequest::export_all().expect("export SaveAppSettingsRequest");

@@ -11,10 +11,17 @@
     "terminologySaved": "Glossary saved",
     "terminologySaveFailed": "Failed to save glossary",
     "apiKeyRequiredFirst": "Please fill in the API key first",
+    "baseUrlRequiredFirst": "Please fill in the API URL first",
+    "modelRequiredFirst": "Please fill in the model name first",
     "testingLlm": "Testing LLM connectivity...",
     "testSuccess": "Test succeeded: model {{model}} is available",
     "testFailed": "Test failed: {{message}}",
-    "testConnectFailed": "Connectivity test failed"
+    "testConnectFailed": "Connectivity test failed",
+    "fetchModelsSuccess": "Loaded {{count}} chat models",
+    "fetchModelsFiltered": "Loaded {{count}} chat models (filtered {{excluded}} non-chat)",
+    "fetchModelsEmpty": "No chat models found; enter a model name manually",
+    "fetchModelsEmptyExcluded": "Got {{excluded}} models but none are chat models; enter a name manually",
+    "fetchModelsFailed": "Failed to fetch models: {{message}}"
   },
   "updater": {
     "downloadFailed": "Update download failed: {{message}}"

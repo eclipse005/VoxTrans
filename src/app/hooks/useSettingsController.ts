@@ -1,13 +1,16 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  listLlmModels,
   saveAppSettings as saveAppSettingsApi,
   testTranslateLlmConnection,
+  type FetchLlmModelsResult,
 } from "../api/settings";
 import type {
   AlignModel,
   AsrModel,
   DemucsModel,
+  LlmProfile,
   Provider,
   SavedSettings,
   SubtitleBurnMode,
@@ -20,6 +23,16 @@ import { normalizeTerminologyGroups } from "../utils/terminology";
 import { normalizeSettings } from "../utils/normalizeSettings";
 import { useInvalidateSourceLanguages } from "./useSourceLanguages";
 import { changeAppLanguage } from "../../i18n";
+import {
+  effectiveApiKey,
+  ensureProfiles,
+  flattenActiveToTranslateFields,
+  getActiveProfile,
+  resetProfileToPreset,
+  selectProvider,
+  updateActiveProfile,
+} from "../../features/media/llmProfiles";
+import type { LlmProviderId } from "../../features/media/llmProviders";
 
 type DispatchState = (action: AppAction) => void;
 type PushToast = (
@@ -36,9 +49,9 @@ export type SettingsForm = {
   alignModel: AlignModel;
   demucsModel: DemucsModel;
   enableVocalSeparation: boolean;
-  translateApiKey: string;
-  translateBaseUrl: string;
-  translateModel: string;
+  /** Multi-vendor LLM archives (source of truth for keys). */
+  llmProfiles: LlmProfile[];
+  activeLlmProfileId: string;
   llmConcurrencyInput: string;
   terminologyGroups: SavedSettings["terminologyGroups"];
   activeTerminologyGroupId: string;
@@ -55,6 +68,11 @@ export type SettingsForm = {
 };
 
 function settingsToForm(settings: SavedSettings): SettingsForm {
+  const ensured = ensureProfiles(settings.llmProfiles, settings.activeLlmProfileId, {
+    apiKey: settings.translateApiKey,
+    baseUrl: settings.translateBaseUrl,
+    model: settings.translateModel,
+  });
   return {
     provider: settings.provider,
     chunkInput: String(settings.chunkTargetSeconds),
@@ -63,9 +81,8 @@ function settingsToForm(settings: SavedSettings): SettingsForm {
     alignModel: settings.alignModel,
     demucsModel: settings.demucsModel,
     enableVocalSeparation: settings.enableVocalSeparation,
-    translateApiKey: settings.translateApiKey,
-    translateBaseUrl: settings.translateBaseUrl,
-    translateModel: settings.translateModel,
+    llmProfiles: ensured.profiles,
+    activeLlmProfileId: ensured.activeLlmProfileId,
     llmConcurrencyInput: String(settings.llmConcurrency),
     terminologyGroups: settings.terminologyGroups,
     activeTerminologyGroupId: settings.activeTerminologyGroupId,
@@ -117,6 +134,35 @@ export function useSettingsController({
     dispatch({ type: "set_ui", payload: { showSettings: true } });
   }, [dispatch, refreshModelStatus, settings]);
 
+  const selectLlmProvider = useCallback((id: LlmProviderId) => {
+    setForm((prev) => {
+      const next = selectProvider(prev.llmProfiles, id);
+      return {
+        ...prev,
+        llmProfiles: next.profiles,
+        activeLlmProfileId: next.activeLlmProfileId,
+      };
+    });
+  }, []);
+
+  const updateActiveLlmProfile = useCallback(
+    (patch: Partial<Pick<LlmProfile, "baseUrl" | "apiKey" | "model" | "name" | "requiresKey">>) => {
+      setForm((prev) => ({
+        ...prev,
+        llmProfiles: updateActiveProfile(prev.llmProfiles, prev.activeLlmProfileId, patch),
+      }));
+    },
+    [],
+  );
+
+  /** Restore catalog URL/model for the active slot only; keeps API key. Needs Save. */
+  const resetActiveLlmProfile = useCallback(() => {
+    setForm((prev) => ({
+      ...prev,
+      llmProfiles: resetProfileToPreset(prev.llmProfiles, prev.activeLlmProfileId),
+    }));
+  }, []);
+
   const saveSettings = useCallback(async () => {
     const parsed = Number.parseInt(form.chunkInput.trim(), 10);
     if (!Number.isFinite(parsed)) {
@@ -129,6 +175,23 @@ export function useSettingsController({
       return;
     }
 
+    const ensured = ensureProfiles(form.llmProfiles, form.activeLlmProfileId);
+    const active = getActiveProfile(ensured.profiles, ensured.activeLlmProfileId);
+    // Block cross-vendor mix: denormalized translate_* must equal the active slot.
+    if (active.requiresKey !== false && !active.apiKey.trim()) {
+      pushToast(t("toasts:settings.apiKeyRequiredFirst"), "error");
+      return;
+    }
+    if (!active.baseUrl.trim()) {
+      pushToast(t("toasts:settings.baseUrlRequiredFirst"), "error");
+      return;
+    }
+    if (!active.model.trim()) {
+      pushToast(t("toasts:settings.modelRequiredFirst"), "error");
+      return;
+    }
+    const flat = flattenActiveToTranslateFields(ensured.profiles, ensured.activeLlmProfileId);
+
     const draft: SavedSettings = {
       ...settings,
       provider: form.provider,
@@ -138,9 +201,11 @@ export function useSettingsController({
       alignModel: form.alignModel,
       demucsModel: form.demucsModel,
       enableVocalSeparation: form.enableVocalSeparation,
-      translateApiKey: form.translateApiKey,
-      translateBaseUrl: form.translateBaseUrl,
-      translateModel: form.translateModel,
+      llmProfiles: ensured.profiles,
+      activeLlmProfileId: ensured.activeLlmProfileId,
+      translateApiKey: flat.translateApiKey,
+      translateBaseUrl: flat.translateBaseUrl,
+      translateModel: flat.translateModel,
       llmConcurrency: parsedConcurrency,
       terminologyGroups: normalizeTerminologyGroups(form.terminologyGroups),
       activeTerminologyGroupId: form.activeTerminologyGroupId,
@@ -204,11 +269,21 @@ export function useSettingsController({
   }, [settings, form.activeTerminologyGroupId, dispatch, pushToast, t]);
 
   const testTranslateConnection = useCallback(async () => {
-    const apiKey = form.translateApiKey.trim();
-    const baseUrl = form.translateBaseUrl.trim() || settings.translateBaseUrl;
-    const configuredModel = form.translateModel.trim() || settings.translateModel;
-    if (!apiKey) {
+    // Only the current form slot — never fall back to last-saved translate_*.
+    const active = getActiveProfile(form.llmProfiles, form.activeLlmProfileId);
+    const apiKey = effectiveApiKey(active);
+    const baseUrl = active.baseUrl.trim();
+    const configuredModel = active.model.trim();
+    if (active.requiresKey !== false && !active.apiKey.trim()) {
       pushToast(t("toasts:settings.apiKeyRequiredFirst"), "error");
+      return;
+    }
+    if (!baseUrl) {
+      pushToast(t("toasts:settings.baseUrlRequiredFirst"), "error");
+      return;
+    }
+    if (!configuredModel) {
+      pushToast(t("toasts:settings.modelRequiredFirst"), "error");
       return;
     }
     const toastId = pushToast(t("toasts:settings.testingLlm"), "info", { sticky: true });
@@ -229,13 +304,88 @@ export function useSettingsController({
       const message = error instanceof Error ? error.message : t("toasts:settings.testConnectFailed");
       pushToast(message, "error", { id: toastId, durationMs: 3000 });
     }
-  }, [form.translateApiKey, form.translateBaseUrl, form.translateModel, form.enableVisionAssist, settings.translateBaseUrl, settings.translateModel, pushToast, t]);
+  }, [form.llmProfiles, form.activeLlmProfileId, form.enableVisionAssist, pushToast, t]);
+
+  /**
+   * Fetch OpenAI-compatible model list for the active profile.
+   * Returns a tagged result: discarded mid-flight requests never surface as
+   * an empty list (which would wipe the UI for the *current* provider).
+   */
+  const fetchLlmModels = useCallback(async (): Promise<FetchLlmModelsResult> => {
+    const profileId = form.activeLlmProfileId;
+    const active = getActiveProfile(form.llmProfiles, profileId);
+    const baseUrl = active.baseUrl.trim();
+    if (!baseUrl) {
+      pushToast(t("toasts:settings.baseUrlRequiredFirst"), "error");
+      return { ok: false, reason: "validation" };
+    }
+    if (active.requiresKey !== false && !active.apiKey.trim()) {
+      pushToast(t("toasts:settings.apiKeyRequiredFirst"), "error");
+      return { ok: false, reason: "validation" };
+    }
+    try {
+      const { chatModels, excludedModels } = await listLlmModels({
+        apiKey: effectiveApiKey(active),
+        baseUrl,
+      });
+
+      // Drop stale results if the user switched provider while awaiting.
+      let discarded = false;
+      setForm((prev) => {
+        if (prev.activeLlmProfileId !== profileId) {
+          discarded = true;
+          return prev;
+        }
+        // Autofill only if this slot is *still* empty at apply time (user may
+        // have typed a model while the request was in flight).
+        const slot = getActiveProfile(prev.llmProfiles, profileId);
+        if (!(slot.model ?? "").trim() && chatModels.length > 0) {
+          return {
+            ...prev,
+            llmProfiles: updateActiveProfile(prev.llmProfiles, profileId, {
+              model: chatModels[0].id,
+            }),
+          };
+        }
+        return prev;
+      });
+      if (discarded) return { ok: false, reason: "discarded" };
+
+      if (chatModels.length === 0) {
+        pushToast(
+          excludedModels.length > 0
+            ? t("toasts:settings.fetchModelsEmptyExcluded", { excluded: excludedModels.length })
+            : t("toasts:settings.fetchModelsEmpty"),
+          "error",
+        );
+        return { ok: false, reason: "empty" };
+      }
+      pushToast(
+        excludedModels.length > 0
+          ? t("toasts:settings.fetchModelsFiltered", {
+              count: chatModels.length,
+              excluded: excludedModels.length,
+            })
+          : t("toasts:settings.fetchModelsSuccess", { count: chatModels.length }),
+        "success",
+      );
+      return { ok: true, profileId, models: chatModels };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("errors:fallback");
+      pushToast(t("toasts:settings.fetchModelsFailed", { message }), "error");
+      return { ok: false, reason: "error" };
+    }
+  }, [form.llmProfiles, form.activeLlmProfileId, pushToast, t]);
 
   return {
     openSettings,
     saveSettings,
     saveTerminologyGroups,
     testTranslateConnection,
+    fetchLlmModels,
+    selectLlmProvider,
+    updateActiveLlmProfile,
+    resetActiveLlmProfile,
     prepareTerminologyForm,
     form,
     setForm,

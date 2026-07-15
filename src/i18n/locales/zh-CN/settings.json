@@ -25,9 +25,17 @@
     "flatSrtItemsLabel": "输出字幕类型"
   },
   "translate": {
+    "provider": "服务商",
+    "providerHint": "点选服务商即切换；每家是一套独立配置，URL/模型可自由修改，重置可恢复该服务商预设",
+    "getKey": "获取 {{name}} Key",
+    "resetPreset": "恢复预设",
+    "resetPresetTitle": "将当前服务商的接口地址与模型恢复为预设（保留 Key，需点保存才生效）",
+    "configured": "已配置",
     "apiKey": "接口密钥",
     "baseUrl": "接口地址",
     "modelName": "模型名称",
+    "fetchModels": "获取模型",
+    "fetchingModels": "获取中…",
     "test": "测试",
     "concurrency": "并发数",
     "visionAssist": "视觉辅助翻译",

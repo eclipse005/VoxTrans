@@ -11,10 +11,17 @@
     "terminologySaved": "术语已保存",
     "terminologySaveFailed": "术语保存失败",
     "apiKeyRequiredFirst": "请先填写接口密钥",
+    "baseUrlRequiredFirst": "请先填写接口地址",
+    "modelRequiredFirst": "请先填写模型名称",
     "testingLlm": "正在测试 LLM 连通性...",
     "testSuccess": "测试成功：模型 {{model}} 可用",
     "testFailed": "测试失败：{{message}}",
-    "testConnectFailed": "连通性测试失败"
+    "testConnectFailed": "连通性测试失败",
+    "fetchModelsSuccess": "已加载 {{count}} 个对话模型",
+    "fetchModelsFiltered": "已加载 {{count}} 个对话模型（已过滤 {{excluded}} 个非对话）",
+    "fetchModelsEmpty": "未解析到可用对话模型，请手填",
+    "fetchModelsEmptyExcluded": "返回 {{excluded}} 个模型，但都是生图/视频等，请手填对话模型名",
+    "fetchModelsFailed": "获取模型失败：{{message}}"
   },
   "updater": {
     "downloadFailed": "更新下载失败：{{message}}"

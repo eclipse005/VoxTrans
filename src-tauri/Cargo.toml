@@ -43,4 +43,4 @@ qwen-forced-aligner-rs = { git = "https://github.com/eclipse005/qwen-aligner-rs.
 native-transcribe = { git = "https://github.com/eclipse005/cohere-transcribe-rs.git", rev = "2f5df6616ea20347a9d907ba780aefef680894e7" }
 # MOSS-Transcribe-Diarize Rust engine — third ASR backend. CPU by default;
 # CUDA enabled via the workspace `cuda` feature.
-moss-transcribe-diarize-rs = { git = "https://github.com/eclipse005/moss-transcribe-diarize-rs.git", rev = "6a05439b7c7f746f096401d1682c54de77aacecc", default-features = false }
+moss-transcribe-diarize-rs = { git = "https://github.com/eclipse005/moss-transcribe-diarize-rs.git", rev = "4faf0dc9e665be266a258e5c1a28ce7e051fa59c", default-features = false }

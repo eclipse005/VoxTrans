@@ -5,6 +5,7 @@ import { normalizeSettings } from "../utils/normalizeSettings";
 import { changeAppLanguage } from "../../i18n";
 import type { SavedSettings } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
+import { createDefaultProfiles } from "../../features/media/llmProfiles";
 
 type DispatchState = (action: AppAction) => void;
 
@@ -17,6 +18,7 @@ type DispatchState = (action: AppAction) => void;
  * on an infinite loading screen. This guarantees the UI always reaches a usable
  * state even when the backend IPC layer is unavailable.
  */
+
 const LAST_RESORT_DEFAULTS: SavedSettings = {
   provider: "cpu",
   chunkTargetSeconds: 30,
@@ -27,7 +29,9 @@ const LAST_RESORT_DEFAULTS: SavedSettings = {
   enableVocalSeparation: false,
   translateApiKey: "",
   translateBaseUrl: "https://api.deepseek.com/v1",
-  translateModel: "deepseek-chat",
+  translateModel: "deepseek-v4-flash",
+  llmProfiles: createDefaultProfiles(),
+  activeLlmProfileId: "deepseek",
   llmConcurrency: 4,
   terminologyGroups: [{ id: "group-default", name: "Default", terms: [] }],
   activeTerminologyGroupId: "",

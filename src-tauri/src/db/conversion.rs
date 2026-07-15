@@ -8,12 +8,17 @@ use crate::commands::workspace::{
 };
 use crate::db::models::{SettingsRow, SubtitleSegmentRow, SubtitleWordRow, TaskRow};
 use crate::services::preferences_types::{
-    AlignModel, AsrModel, DemucsModel, Locale, Provider, SavedSettings, SubtitleBurnMode,
-    SubtitleLengthPreset,
+    AlignModel, AsrModel, DemucsModel, LlmProfile, Locale, Provider, SavedSettings,
+    SubtitleBurnMode, SubtitleLengthPreset,
 };
 use crate::services::workspace_subtitle::WorkspaceSubtitleSegment;
 
 pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
+    let llm_profiles: Vec<LlmProfile> = if row.llm_profiles_json.trim().is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str(&row.llm_profiles_json).unwrap_or_default()
+    };
     SavedSettings {
         provider: Provider::parse(&row.provider),
         chunk_target_seconds: row.chunk_target_seconds,
@@ -25,6 +30,8 @@ pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
         translate_api_key: row.translate_api_key,
         translate_base_url: row.translate_base_url,
         translate_model: row.translate_model,
+        llm_profiles,
+        active_llm_profile_id: row.active_llm_profile_id,
         llm_concurrency: row.llm_concurrency,
         // terminology_groups is composed in store.rs from terminology tables.
         terminology_groups: Vec::new(),
@@ -44,6 +51,8 @@ pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
 }
 
 pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
+    let llm_profiles_json =
+        serde_json::to_string(&settings.llm_profiles).unwrap_or_else(|_| "[]".to_string());
     SettingsRow {
         provider: settings.provider.as_str().to_string(),
         chunk_target_seconds: settings.chunk_target_seconds,
@@ -55,6 +64,8 @@ pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
         translate_api_key: settings.translate_api_key.clone(),
         translate_base_url: settings.translate_base_url.clone(),
         translate_model: settings.translate_model.clone(),
+        llm_profiles_json,
+        active_llm_profile_id: settings.active_llm_profile_id.clone(),
         llm_concurrency: settings.llm_concurrency,
         active_terminology_group_id: settings.active_terminology_group_id.clone(),
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
@@ -225,6 +236,16 @@ mod tests {
             translate_api_key: "k".into(),
             translate_base_url: "https://api.example.com".into(),
             translate_model: "gpt-4o".into(),
+            llm_profiles: vec![LlmProfile {
+                id: "custom".into(),
+                name: "自定义".into(),
+                base_url: "https://api.example.com".into(),
+                api_key: "k".into(),
+                model: "gpt-4o".into(),
+                preset_id: "custom".into(),
+                requires_key: true,
+            }],
+            active_llm_profile_id: "custom".into(),
             llm_concurrency: 4,
             terminology_groups: Vec::new(),
             active_terminology_group_id: String::new(),
@@ -257,6 +278,8 @@ mod tests {
         assert_eq!(restored.translate_api_key, original.translate_api_key);
         assert_eq!(restored.translate_base_url, original.translate_base_url);
         assert_eq!(restored.translate_model, original.translate_model);
+        assert_eq!(restored.llm_profiles, original.llm_profiles);
+        assert_eq!(restored.active_llm_profile_id, original.active_llm_profile_id);
         assert_eq!(restored.llm_concurrency, original.llm_concurrency);
         assert_eq!(restored.active_terminology_group_id, original.active_terminology_group_id);
         assert_eq!(restored.enable_subtitle_beautify, original.enable_subtitle_beautify);

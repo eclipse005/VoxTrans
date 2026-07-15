@@ -43,7 +43,8 @@ impl TaskStore {
         let row: Option<SettingsRow> = sqlx::query_as(
             "SELECT provider, chunk_target_seconds, subtitle_length_preset, asr_model, \
              align_model, demucs_model, enable_vocal_separation, translate_api_key, \
-             translate_base_url, translate_model, llm_concurrency, active_terminology_group_id, \
+             translate_base_url, translate_model, llm_profiles_json, active_llm_profile_id, \
+             llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
              enable_vision_assist, locale, models_dir, updated_at \
@@ -84,11 +85,12 @@ impl TaskStore {
         sqlx::query(
             "INSERT INTO settings (id, provider, chunk_target_seconds, subtitle_length_preset, \
              asr_model, align_model, demucs_model, enable_vocal_separation, translate_api_key, \
-             translate_base_url, translate_model, llm_concurrency, active_terminology_group_id, \
+             translate_base_url, translate_model, llm_profiles_json, active_llm_profile_id, \
+             llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
              enable_vision_assist, locale, models_dir, updated_at) \
-             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(id) DO UPDATE SET \
              provider=excluded.provider, chunk_target_seconds=excluded.chunk_target_seconds, \
              subtitle_length_preset=excluded.subtitle_length_preset, asr_model=excluded.asr_model, \
@@ -96,7 +98,10 @@ impl TaskStore {
              enable_vocal_separation=excluded.enable_vocal_separation, \
              translate_api_key=excluded.translate_api_key, \
              translate_base_url=excluded.translate_base_url, \
-             translate_model=excluded.translate_model, llm_concurrency=excluded.llm_concurrency, \
+             translate_model=excluded.translate_model, \
+             llm_profiles_json=excluded.llm_profiles_json, \
+             active_llm_profile_id=excluded.active_llm_profile_id, \
+             llm_concurrency=excluded.llm_concurrency, \
              active_terminology_group_id=excluded.active_terminology_group_id, \
              enable_subtitle_beautify=excluded.enable_subtitle_beautify, \
              enable_click_sound=excluded.enable_click_sound, \
@@ -119,6 +124,8 @@ impl TaskStore {
         .bind(&row.translate_api_key)
         .bind(&row.translate_base_url)
         .bind(&row.translate_model)
+        .bind(&row.llm_profiles_json)
+        .bind(&row.active_llm_profile_id)
         .bind(row.llm_concurrency)
         .bind(&row.active_terminology_group_id)
         .bind(row.enable_subtitle_beautify)
@@ -792,6 +799,8 @@ mod tests {
             translate_api_key: "k".into(),
             translate_base_url: "https://api.example.com".into(),
             translate_model: "gpt-4o".into(),
+            llm_profiles: crate::services::preferences_normalize::default_llm_profiles(),
+            active_llm_profile_id: "deepseek".into(),
             llm_concurrency: 4,
             terminology_groups: Vec::new(),
             active_terminology_group_id: String::new(),

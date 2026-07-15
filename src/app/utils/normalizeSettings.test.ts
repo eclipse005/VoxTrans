@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizeSettings } from "./normalizeSettings";
 import type { SavedSettings } from "../../features/media/types";
+import { createDefaultProfiles } from "../../features/media/llmProfiles";
 
 // A non-empty group so normalizeTerminologyGroups is a no-op for pass-through.
 const DEFAULT_GROUP = { id: "group-test", name: "默认", terms: [] };
@@ -16,7 +17,9 @@ function baseDefaults(): SavedSettings {
     enableVocalSeparation: false,
     translateApiKey: "",
     translateBaseUrl: "https://api.deepseek.com/v1",
-    translateModel: "deepseek-chat",
+    translateModel: "deepseek-v4-flash",
+    llmProfiles: createDefaultProfiles(),
+    activeLlmProfileId: "deepseek",
     llmConcurrency: 4,
     terminologyGroups: [DEFAULT_GROUP],
     activeTerminologyGroupId: "",
@@ -64,7 +67,15 @@ function baseDefaults(): SavedSettings {
 describe("normalizeSettings", () => {
   it("passes through valid settings unchanged", () => {
     const defaults = baseDefaults();
-    const input: SavedSettings = { ...defaults, translateApiKey: "sk-abc" };
+    const profiles = createDefaultProfiles().map((p) =>
+      p.id === "deepseek" ? { ...p, apiKey: "sk-abc" } : p,
+    );
+    const input: SavedSettings = {
+      ...defaults,
+      llmProfiles: profiles,
+      activeLlmProfileId: "deepseek",
+      translateApiKey: "sk-abc",
+    };
     const result = normalizeSettings(input, defaults);
     expect(result).toEqual(input);
   });
@@ -85,31 +96,86 @@ describe("normalizeSettings", () => {
     expect(tooHigh.llmConcurrency).toBe(16);
   });
 
-  it("falls back to defaults when translateBaseUrl is empty", () => {
+  it("mirrors active profile baseUrl (no stale denormalized fallback)", () => {
     const defaults = baseDefaults();
+    const profiles = createDefaultProfiles().map((p) =>
+      p.id === "deepseek"
+        ? { ...p, baseUrl: "https://api.deepseek.com/v1", model: "deepseek-v4-flash", apiKey: "k" }
+        : p,
+    );
     const result = normalizeSettings(
-      { ...defaults, translateBaseUrl: "   " },
+      {
+        ...defaults,
+        llmProfiles: profiles,
+        activeLlmProfileId: "deepseek",
+        // Stale denormalized fields from another vendor must not win.
+        translateBaseUrl: "https://other.example/v1",
+        translateModel: "other-model",
+        translateApiKey: "stale",
+      },
       defaults,
     );
     expect(result.translateBaseUrl).toBe("https://api.deepseek.com/v1");
+    expect(result.translateModel).toBe("deepseek-v4-flash");
+    expect(result.translateApiKey).toBe("k");
   });
 
-  it("falls back to defaults when translateModel is empty", () => {
+  it("keeps empty custom baseUrl without inventing deepseek endpoint", () => {
     const defaults = baseDefaults();
+    const profiles = createDefaultProfiles().map((p) =>
+      p.id === "custom" ? { ...p, baseUrl: "", model: "m", apiKey: "k" } : p,
+    );
     const result = normalizeSettings(
-      { ...defaults, translateModel: "" },
+      {
+        ...defaults,
+        llmProfiles: profiles,
+        activeLlmProfileId: "custom",
+        translateBaseUrl: "https://api.deepseek.com/v1",
+        translateModel: "deepseek-v4-flash",
+        translateApiKey: "stale",
+      },
       defaults,
     );
-    expect(result.translateModel).toBe("deepseek-chat");
+    expect(result.translateBaseUrl).toBe("");
+    expect(result.translateModel).toBe("m");
+    expect(result.translateApiKey).toBe("k");
   });
 
-  it("trims translateApiKey", () => {
+  it("trims translateApiKey via active profile flatten", () => {
     const defaults = baseDefaults();
+    const profiles = createDefaultProfiles().map((p) =>
+      p.id === "deepseek" ? { ...p, apiKey: "  sk-abc  " } : p,
+    );
     const result = normalizeSettings(
-      { ...defaults, translateApiKey: "  sk-abc  " },
+      { ...defaults, llmProfiles: profiles, activeLlmProfileId: "deepseek" },
       defaults,
     );
     expect(result.translateApiKey).toBe("sk-abc");
+  });
+
+  it("fills missing llm profile slots from catalog", () => {
+    const defaults = baseDefaults();
+    const result = normalizeSettings(
+      {
+        ...defaults,
+        llmProfiles: [
+          {
+            id: "custom",
+            name: "自定义",
+            baseUrl: "",
+            apiKey: "k",
+            model: "m",
+            presetId: "custom",
+            requiresKey: true,
+          },
+        ],
+        activeLlmProfileId: "custom",
+      },
+      defaults,
+    );
+    expect(result.llmProfiles.some((p) => p.id === "deepseek")).toBe(true);
+    expect(result.llmProfiles.find((p) => p.id === "custom")?.apiKey).toBe("k");
+    expect(result.activeLlmProfileId).toBe("custom");
   });
 
   it("clamps subtitle font size to [16, 96]", () => {

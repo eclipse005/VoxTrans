@@ -3143,7 +3143,7 @@ dependencies = [
 [[package]]
 name = "moss-transcribe-diarize-rs"
 version = "0.1.0"
-source = "git+https://github.com/eclipse005/moss-transcribe-diarize-rs.git?rev=6a05439b7c7f746f096401d1682c54de77aacecc#6a05439b7c7f746f096401d1682c54de77aacecc"
+source = "git+https://github.com/eclipse005/moss-transcribe-diarize-rs.git?rev=4faf0dc9e665be266a258e5c1a28ce7e051fa59c#4faf0dc9e665be266a258e5c1a28ce7e051fa59c"
 dependencies = [
  "anyhow",
  "bytes",

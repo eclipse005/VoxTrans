@@ -133,6 +133,29 @@ pub struct TestTranslateLlmResponse {
     pub model: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListLlmModelsRequest {
+    pub api_key: String,
+    pub base_url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmModelInfoDto {
+    pub id: String,
+    /// chat | image | video | audio | embedding | other
+    pub kind: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListLlmModelsResponse {
+    pub chat_models: Vec<LlmModelInfoDto>,
+    pub excluded_models: Vec<LlmModelInfoDto>,
+    pub all_models: Vec<LlmModelInfoDto>,
+}
+
 pub fn default_llm_concurrency() -> u32 {
     4
 }

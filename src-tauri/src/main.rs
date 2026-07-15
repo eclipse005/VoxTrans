@@ -50,6 +50,7 @@ fn main() {
             commands::translate_terminology::build_terminology_layer,
             commands::translate_translation::build_translation_layer,
             commands::translate_connectivity::test_translate_llm,
+            commands::translate_connectivity::list_llm_models,
             commands::file::get_file_size,
             commands::system::open_in_explorer,
             commands::system::open_output_dir,

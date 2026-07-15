@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS settings (
     translate_api_key TEXT NOT NULL,
     translate_base_url TEXT NOT NULL,
     translate_model TEXT NOT NULL,
+    llm_profiles_json TEXT NOT NULL DEFAULT '[]',
+    active_llm_profile_id TEXT NOT NULL DEFAULT 'deepseek',
     llm_concurrency INTEGER NOT NULL,
     active_terminology_group_id TEXT NOT NULL DEFAULT '',
     enable_subtitle_beautify INTEGER NOT NULL,

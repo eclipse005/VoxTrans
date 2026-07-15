@@ -25,9 +25,17 @@
     "flatSrtItemsLabel": "Output subtitle type"
   },
   "translate": {
+    "provider": "Provider",
+    "providerHint": "Each provider is an independent profile. URL and model are freely editable; Reset restores that provider's preset.",
+    "getKey": "Get {{name}} key",
+    "resetPreset": "Reset preset",
+    "resetPresetTitle": "Restore this provider's default URL and model (keeps the key; click Save to persist)",
+    "configured": "Configured",
     "apiKey": "API key",
     "baseUrl": "API URL",
     "modelName": "Model name",
+    "fetchModels": "Fetch models",
+    "fetchingModels": "Fetching…",
     "test": "Test",
     "concurrency": "Concurrency",
     "visionAssist": "Vision-assisted translation",
