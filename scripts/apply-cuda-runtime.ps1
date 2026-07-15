@@ -11,12 +11,15 @@ if (-not (Test-Path $installerNsi)) {
 }
 
 # ── 1. Inject CUDA runtime download + delete blocks ──
+# Scheme B: only compute runtime DLLs (cudart / cublas / cublasLt / curand).
+# Do NOT download nvrtc / nvrtc-builtins / nvJitLink / CUDA headers — kernels
+# ship as precompiled multi-arch PTX embedded in the engine crates.
 $content = Get-Content $installerNsi -Raw
 
 $installBlock = @'
   ; Copy external binaries
   !ifdef INCLUDE_CUDA_RUNTIME
-  ; Skip download if DLLs already present (e.g., update from bundled version)
+  ; CUDA 12.8 user-mode libs only (no NVRTC). Skip if already present.
   ${IfNot} ${FileExists} "$INSTDIR\cudart64_12.dll"
     DetailPrint "Downloading CUDA runtime..."
     NSISdl::download "https://modelscope.cn/models/eclipse005/cuda-runtime-12.8/resolve/master/cudart64_12.dll" "$INSTDIR\cudart64_12.dll"

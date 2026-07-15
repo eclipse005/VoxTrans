@@ -61,9 +61,13 @@ The aligner aligns the ASR transcript with the audio to produce word-level times
 
 Optional: download htdemucs_ft to enable vocal separation. If you have an NVIDIA GPU, enable CUDA acceleration in Settings to significantly shorten processing time.
 
+**CUDA edition requirements:** A recent NVIDIA GPU driver is enough (if you can play games, you are fine). **No CUDA Toolkit install.** The installer downloads CUDA 12.8 compute libraries (cudart / cublas / …) on demand; kernels ship as precompiled multi-arch PTX (no NVRTC).
+
 ## Build
 
 **Prerequisites:** Node.js 18+ · Rust 1.75+ · [VS2022 Build Tools](https://visualstudio.microsoft.com/downloads/) (C++ Desktop Development)
+
+Building the CUDA edition also needs CUDA Toolkit 12.x on the **developer** machine only. After changing engine `.cu` sources, run `scripts/compile-ptx.ps1` in each engine repo to regenerate `ptx/`, then bump the git revs here.
 
 **Get the binary tools:**
 
@@ -80,7 +84,7 @@ Or run the script to download them automatically:
 ```powershell
 npm install
 npm run tauri build                  # CPU version
-npm run tauri build -- --features cuda  # CUDA version (requires CUDA Toolkit)
+npm run tauri build -- --features cuda  # CUDA version (dev machine needs Toolkit 12.x; end users do not)
 ```
 
 The installer is output to `target\release\bundle\nsis\`.

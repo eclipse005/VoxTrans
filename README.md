@@ -60,9 +60,13 @@ VoxTrans 当前 UI 启用 11 种源语言（中英粤日韩德意西葡法俄）
 
 可选：下载 htdemucs_ft 启用人声分离。有 NVIDIA 显卡可在设置中启用 CUDA 加速，显著缩短处理时间。
 
+**CUDA 版用户要求：** 安装较新的 NVIDIA 显卡驱动即可（能正常玩游戏一般就够）。**无需**安装 CUDA Toolkit。安装包会按需下载 CUDA 12.8 计算库（cudart / cublas 等），内核以预编译 PTX 内嵌，不依赖 NVRTC。
+
 ## 构建
 
 **前置依赖：** Node.js 18+ · Rust 1.75+ · [VS2022 Build Tools](https://visualstudio.microsoft.com/downloads/)（C++ 桌面开发）
+
+编 CUDA 版时，本机还需 CUDA Toolkit 12.x（仅开发/发版机；用户不需要）。引擎 `.cu` 变更后请在对应引擎仓库运行 `scripts/compile-ptx.ps1` 重新生成 `ptx/` 再 bump 依赖。
 
 **获取二进制工具：**
 
@@ -79,7 +83,7 @@ VoxTrans 当前 UI 启用 11 种源语言（中英粤日韩德意西葡法俄）
 ```powershell
 npm install
 npm run tauri build                  # CPU 版本
-npm run tauri build -- --features cuda  # CUDA 版本（需 CUDA Toolkit）
+npm run tauri build -- --features cuda  # CUDA 版本（开发机需 CUDA Toolkit 12.x 以链接/构建；用户运行无需 Toolkit）
 ```
 
 安装包输出到 `target\release\bundle\nsis\`。
