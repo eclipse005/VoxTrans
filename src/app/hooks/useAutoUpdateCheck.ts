@@ -77,18 +77,27 @@ export function useAutoUpdateCheck(pushToast: PushToast) {
     setShowUpdateDialog(false);
   }, [availableUpdate]);
 
+  const toggleUpdateDialog = useCallback(() => {
+    if (!hasAvailableUpdate) return;
+    // Keep progress visible while downloading; use Cancel / Esc to abort.
+    if (showUpdateDialog && installing) return;
+    setShowUpdateDialog((open) => !open);
+  }, [hasAvailableUpdate, showUpdateDialog, installing]);
+
+  const closeUpdateDialog = useCallback(() => {
+    // Don't orphan an in-flight download behind a closed panel.
+    if (installing) return;
+    setShowUpdateDialog(false);
+  }, [installing]);
+
   return {
     availableUpdate,
     hasAvailableUpdate,
     showUpdateDialog,
     installing,
     installProgress,
-    openUpdateDialog: () => {
-      if (hasAvailableUpdate) setShowUpdateDialog(true);
-    },
-    closeUpdateDialog: () => {
-      setShowUpdateDialog(false);
-    },
+    toggleUpdateDialog,
+    closeUpdateDialog,
     installUpdate: async () => {
       if (!availableUpdate?.hasUpdate || installing) return;
       setInstalling(true);

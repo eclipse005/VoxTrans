@@ -1,5 +1,6 @@
 import { BookIcon, SettingsIcon } from "./Icons";
 import { useEffect, useState } from "react";
+import type { Ref } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { useTranslation } from "react-i18next";
 import type { AppLocale } from "../../i18n";
@@ -8,7 +9,9 @@ type NavbarProps = {
   onOpenSettings: () => void;
   onOpenTerminology: () => void;
   hasAvailableUpdate: boolean;
-  onOpenUpdateDialog: () => void;
+  updateDialogOpen: boolean;
+  onToggleUpdateDialog: () => void;
+  versionAnchorRef: Ref<HTMLButtonElement>;
   currentLocale: AppLocale;
   onToggleLocale: () => void;
 };
@@ -17,7 +20,9 @@ export default function Navbar({
   onOpenSettings,
   onOpenTerminology,
   hasAvailableUpdate,
-  onOpenUpdateDialog,
+  updateDialogOpen,
+  onToggleUpdateDialog,
+  versionAnchorRef,
   currentLocale,
   onToggleLocale,
 }: NavbarProps) {
@@ -52,10 +57,13 @@ export default function Navbar({
           {t("common:appName")}
           {hasAvailableUpdate ? (
             <button
+              ref={versionAnchorRef}
               type="button"
               className="app-version-btn"
-              onClick={onOpenUpdateDialog}
+              onClick={onToggleUpdateDialog}
               title={t("common:nav.newVersionAvailable")}
+              aria-expanded={updateDialogOpen}
+              aria-haspopup="dialog"
             >
               <span className="app-version has-update">
                 v{version}

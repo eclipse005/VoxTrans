@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import type { ExportSrtItem } from "../api/transcribe";
 import type { UpdateCheckResult } from "../api/updater";
 import type { SettingsForm } from "../hooks/useSettingsController";
@@ -30,6 +31,7 @@ type ModalLayerProps = {
   availableUpdate: UpdateCheckResult | null;
   installing: boolean;
   installProgress: number | null;
+  updateAnchorRef: RefObject<HTMLElement | null>;
   dispatch: (action: AppAction) => void;
   setForm: React.Dispatch<React.SetStateAction<SettingsForm>>;
   setShowTerminologyModal: (visible: boolean) => void;
@@ -66,6 +68,7 @@ export function ModalLayer({
   availableUpdate,
   installing,
   installProgress,
+  updateAnchorRef,
   dispatch,
   setForm,
   setShowTerminologyModal,
@@ -135,6 +138,7 @@ export function ModalLayer({
         update={availableUpdate}
         installing={installing}
         installProgress={installProgress}
+        anchorRef={updateAnchorRef}
         onClose={closeUpdateDialog}
         onInstall={installUpdate}
         onCancelInstall={cancelInstall}

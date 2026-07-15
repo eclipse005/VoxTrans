@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import type { RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -7,29 +8,101 @@ import { invoke } from "@tauri-apps/api/core";
 import i18n from "../../i18n";
 import type { UpdateCheckResult } from "../api/updater";
 
+const POPOVER_WIDTH = 400;
+const POPOVER_GAP = 8;
+const VIEWPORT_PAD = 12;
+const MAX_POPOVER_HEIGHT = 520;
+
 type UpdateModalProps = {
   visible: boolean;
   update: UpdateCheckResult | null;
   installing: boolean;
   installProgress: number | null;
+  anchorRef: RefObject<HTMLElement | null>;
   onClose: () => void;
   onInstall: () => void | Promise<void>;
   onCancelInstall?: () => void | Promise<void>;
   onSkipVersion?: () => void | Promise<void>;
 };
 
+function positionPopover(el: HTMLElement, anchor: HTMLElement) {
+  const rect = anchor.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  let left = rect.left;
+  if (left + POPOVER_WIDTH > vw - VIEWPORT_PAD) {
+    left = Math.max(VIEWPORT_PAD, vw - POPOVER_WIDTH - VIEWPORT_PAD);
+  }
+  if (left < VIEWPORT_PAD) left = VIEWPORT_PAD;
+
+  const spaceBelow = vh - rect.bottom - POPOVER_GAP - VIEWPORT_PAD;
+  const spaceAbove = rect.top - POPOVER_GAP - VIEWPORT_PAD;
+  const preferBelow = spaceBelow >= 240 || spaceBelow >= spaceAbove;
+
+  const originX = Math.min(
+    Math.max(rect.left - left + rect.width / 2, 16),
+    POPOVER_WIDTH - 16,
+  );
+
+  // Cap height first so offsetHeight reflects the constrained layout.
+  const maxHeight = preferBelow
+    ? Math.min(MAX_POPOVER_HEIGHT, Math.max(200, spaceBelow))
+    : Math.min(MAX_POPOVER_HEIGHT, Math.max(200, spaceAbove));
+  el.style.maxHeight = `${maxHeight}px`;
+  el.style.left = `${left}px`;
+
+  if (preferBelow) {
+    el.style.top = `${rect.bottom + POPOVER_GAP}px`;
+    el.style.transformOrigin = `${originX}px 0`;
+  } else {
+    // Align to actual rendered height so short content sits just above the badge.
+    const measured = el.offsetHeight || maxHeight;
+    const height = Math.min(measured, maxHeight);
+    el.style.top = `${Math.max(VIEWPORT_PAD, rect.top - POPOVER_GAP - height)}px`;
+    el.style.transformOrigin = `${originX}px 100%`;
+  }
+
+  el.dataset.ready = "true";
+}
+
 export default function UpdateModal({
   visible,
   update,
   installing,
   installProgress,
+  anchorRef,
   onClose,
   onInstall,
   onCancelInstall,
   onSkipVersion,
 }: UpdateModalProps) {
   const { t } = useTranslation(["updater", "common"]);
-  const dialogRef = useDialogA11y(visible, onClose);
+  const installingRef = useRef(installing);
+  const onCancelInstallRef = useRef(onCancelInstall);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    installingRef.current = installing;
+  }, [installing]);
+  useEffect(() => {
+    onCancelInstallRef.current = onCancelInstall;
+  }, [onCancelInstall]);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  // Esc / × : during download → cancel install (don't orphan a background download).
+  // Outside click while installing is ignored (see document listener).
+  const requestDismiss = useCallback(() => {
+    if (installingRef.current) {
+      void onCancelInstallRef.current?.();
+      return;
+    }
+    onCloseRef.current();
+  }, []);
+
+  const dialogRef = useDialogA11y(visible, requestDismiss);
   const publishedAt = update ? formatDateRelative(update.publishedAt) : "";
   const notes = update?.notes.trim() ?? "";
   const releaseUrl = update?.htmlUrl ?? "";
@@ -42,6 +115,58 @@ export default function UpdateModal({
       : ""),
     [notes],
   );
+
+  const setDialogNode = useCallback(
+    (node: HTMLDivElement | null) => {
+      dialogRef.current = node;
+      if (node && anchorRef.current) {
+        positionPopover(node, anchorRef.current);
+      }
+    },
+    [anchorRef, dialogRef],
+  );
+
+  useEffect(() => {
+    if (!visible) return;
+
+    const onReposition = () => {
+      const el = dialogRef.current;
+      const anchor = anchorRef.current;
+      if (el && anchor) positionPopover(el, anchor);
+    };
+
+    window.addEventListener("resize", onReposition);
+    window.addEventListener("scroll", onReposition, true);
+    return () => {
+      window.removeEventListener("resize", onReposition);
+      window.removeEventListener("scroll", onReposition, true);
+    };
+  }, [visible, anchorRef, dialogRef]);
+
+  // Outside click: close when idle; ignore while installing.
+  // Exclude the version anchor so its onClick can toggle the popover.
+  // Delay attach so the opening click does not immediately dismiss.
+  useEffect(() => {
+    if (!visible) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (installingRef.current) return;
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (dialogRef.current?.contains(target)) return;
+      if (anchorRef.current?.contains(target)) return;
+      onCloseRef.current();
+    };
+
+    const timer = window.setTimeout(() => {
+      document.addEventListener("pointerdown", onPointerDown, true);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, [visible, anchorRef, dialogRef]);
 
   const handleNotesClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const anchor = (e.target as HTMLElement).closest("a");
@@ -59,16 +184,26 @@ export default function UpdateModal({
   }
 
   return (
-    <div className="modal-overlay">
+    <div className="update-popover-layer" aria-hidden={false}>
       <div
-        ref={dialogRef}
-        className="modal-content modal-content-update"
+        ref={setDialogNode}
+        className="update-popover"
         role="dialog"
         aria-modal="true"
         aria-labelledby="update-modal-title"
         tabIndex={-1}
       >
-        <button className="modal-close" onClick={onClose} aria-label={t("updater:modal.closeAriaLabel")}>×</button>
+        <button
+          className="modal-close"
+          onClick={requestDismiss}
+          aria-label={
+            installing
+              ? t("updater:button.cancelDownload")
+              : t("updater:modal.closeAriaLabel")
+          }
+        >
+          ×
+        </button>
 
         <div className="update-header">
           <h3 id="update-modal-title" className="apple-heading-medium">
@@ -110,10 +245,12 @@ export default function UpdateModal({
           </div>
         ) : null}
 
-        <div className="settings-footer">
+        <div className="settings-footer update-popover-footer">
           {installing ? (
             <>
-              <button className="nav-button" onClick={onCancelInstall ?? onClose}>{t("updater:button.cancelDownload")}</button>
+              <button className="nav-button" onClick={() => { void onCancelInstall?.(); }}>
+                {t("updater:button.cancelDownload")}
+              </button>
               <button className="nav-button" disabled>
                 {t("updater:status.downloading")} {installProgress != null ? `${installProgress}%` : ""}
               </button>

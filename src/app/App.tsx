@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer, useState } from "react";
+import { useCallback, useMemo, useReducer, useRef, useState } from "react";
 import type { Dispatch } from "react";
 import { useTranslation } from "react-i18next";
 import type { ExportSrtItem } from "./api/transcribe";
@@ -106,12 +106,13 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     showUpdateDialog,
     installing,
     installProgress,
-    openUpdateDialog,
+    toggleUpdateDialog,
     closeUpdateDialog,
     installUpdate,
     cancelInstall,
     skipVersion,
   } = useAutoUpdateCheck(pushToast);
+  const updateAnchorRef = useRef<HTMLButtonElement | null>(null);
 
   useClickSound(settings.enableClickSound);
   const { workspaceHydrated } = useWorkspacePersistence({
@@ -299,7 +300,9 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
         onOpenSettings={openSettings}
         onOpenTerminology={handleOpenTerminology}
         hasAvailableUpdate={hasAvailableUpdate}
-        onOpenUpdateDialog={openUpdateDialog}
+        updateDialogOpen={showUpdateDialog}
+        onToggleUpdateDialog={toggleUpdateDialog}
+        versionAnchorRef={updateAnchorRef}
         currentLocale={settings.locale}
         onToggleLocale={handleToggleLocale}
       />
@@ -370,6 +373,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
           availableUpdate={availableUpdate}
           installing={installing}
           installProgress={installProgress}
+          updateAnchorRef={updateAnchorRef}
           dispatch={dispatch}
           setForm={setForm}
           setShowTerminologyModal={setShowTerminologyModal}
