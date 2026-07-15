@@ -1,3 +1,16 @@
+## v1.2.1
+
+### CUDA（重要）
+- GPU 内核改为预编译多架构 PTX，运行时不再依赖 NVRTC / CUDA Toolkit
+- 用户只需较新的 NVIDIA 驱动（nvidia-smi 中 CUDA Version 建议 ≥ 12.6/12.8）
+- 安装时下载 CUDA 12.8 计算库（cudart/cublas 等），不含 nvrtc
+- 过旧驱动（如 545 / CUDA 12.3）会报 PTX 工具链不支持，请升级驱动
+
+### 其他
+- 模型中心去掉「一键下载当前 ASR+对齐」按钮，改为各模型单独下载
+- 修复前端构建类型错误
+
+---
 # VoxTrans Release Notes
 # VoxTrans v1.2.0
 
