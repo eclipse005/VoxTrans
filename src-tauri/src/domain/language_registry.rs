@@ -117,6 +117,12 @@ fn qwen3_align_code(lang: LanguageTag) -> Option<&'static str> {
     })
 }
 
+/// CTC path: language fixed eng inside the engine; registry only gates UI
+/// intersection (all source tags) and returns a dummy code for callers.
+fn ctc_align_code(_lang: LanguageTag) -> Option<&'static str> {
+    Some("eng")
+}
+
 static ASR_MAPPINGS: &[AsrLanguageMapping] = &[
     AsrLanguageMapping {
         model: AsrModel::Qwen3Asr06B,
@@ -187,6 +193,13 @@ static ALIGN_MAPPINGS: &[AlignLanguageMapping] = &[
             LanguageTag::Ru,
         ],
         code_for: qwen3_align_code,
+    },
+    // MMS CTC + romanize handles all UI source languages; split_size is set
+    // by AlignEngine (Zh/Ja → char, else word), not by this code string.
+    AlignLanguageMapping {
+        model: AlignModel::MmsCtcForcedAligner300m,
+        supported: LanguageTag::ALL,
+        code_for: ctc_align_code,
     },
 ];
 
@@ -331,5 +344,19 @@ mod tests {
             "en"
         );
         assert!(LanguageRegistry::asr_code(AsrModel::MossTranscribeDiarize, LanguageTag::Ar).is_err());
+    }
+
+    #[test]
+    fn ctc_aligner_does_not_narrow_qwen_asr_languages() {
+        let supported = LanguageRegistry::supported_for(
+            AsrModel::Qwen3Asr06B,
+            AlignModel::MmsCtcForcedAligner300m,
+        );
+        assert_eq!(supported.len(), LanguageTag::ALL.len());
+        assert!(LanguageRegistry::align_code(
+            AlignModel::MmsCtcForcedAligner300m,
+            LanguageTag::Ar
+        )
+        .is_ok());
     }
 }

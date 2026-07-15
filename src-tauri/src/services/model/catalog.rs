@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use super::{
     COHERE_ASR_MODEL, DEFAULT_ALIGN_MODEL, DEFAULT_ASR_MODEL, DEMUCS_MODEL_DOWNLOAD_FILES,
-    MOSS_ASR_MODEL, ModelTarget, QWEN3_ASR_06B_MODEL, QWEN3_ASR_17B_MODEL,
-    REQUIRED_COHERE_ASR_MODEL_FILES, REQUIRED_MOSS_ASR_MODEL_FILES,
-    REQUIRED_QWEN_ALIGNER_MODEL_FILES, REQUIRED_QWEN3_ASR_06B_MODEL_FILES,
-    REQUIRED_QWEN3_ASR_17B_MODEL_FILES, resolve_model_dir,
+    MMS_CTC_ALIGN_MODEL, MOSS_ASR_MODEL, ModelTarget, QWEN3_ASR_06B_MODEL, QWEN3_ASR_17B_MODEL,
+    QWEN_ALIGN_MODEL, REQUIRED_COHERE_ASR_MODEL_FILES, REQUIRED_MMS_CTC_ALIGNER_MODEL_FILES,
+    REQUIRED_MOSS_ASR_MODEL_FILES, REQUIRED_QWEN_ALIGNER_MODEL_FILES,
+    REQUIRED_QWEN3_ASR_06B_MODEL_FILES, REQUIRED_QWEN3_ASR_17B_MODEL_FILES, resolve_model_dir,
 };
 
 #[derive(Debug, Clone)]
@@ -47,23 +47,23 @@ pub(crate) fn model_definition(
                     .collect(),
             })
         }
-        ModelTarget::Align => Ok(ModelDefinition {
-            target,
-            model: model.clone(),
-            model_dir: resolve_model_dir(target, &model),
-            required_files: aligner_download_files()
-                .iter()
-                .map(|(name, _)| (*name).to_string())
-                .collect(),
-            download_files: aligner_download_files()
-                .iter()
-                .map(|(file_name, expected_size)| ModelDownloadFile {
-                    file_name: (*file_name).to_string(),
-                    url: modelscope_download_url(&model, file_name),
-                    expected_size: *expected_size,
-                })
-                .collect(),
-        }),
+        ModelTarget::Align => {
+            let files = aligner_download_files(&model)?;
+            Ok(ModelDefinition {
+                target,
+                model: model.clone(),
+                model_dir: resolve_model_dir(target, &model),
+                required_files: files.iter().map(|(name, _)| (*name).to_string()).collect(),
+                download_files: files
+                    .iter()
+                    .map(|(file_name, expected_size)| ModelDownloadFile {
+                        file_name: (*file_name).to_string(),
+                        url: aligner_download_url(&model, file_name),
+                        expected_size: *expected_size,
+                    })
+                    .collect(),
+            })
+        }
         ModelTarget::Demucs => {
             let weights_name = format!("{model}.safetensors");
             let Some((_, url, expected_size)) = DEMUCS_MODEL_DOWNLOAD_FILES
@@ -179,21 +179,46 @@ fn qwen3_asr_file_size(model: &str, file: &str) -> u64 {
     }
 }
 
-fn aligner_download_files() -> Vec<(&'static str, u64)> {
-    REQUIRED_QWEN_ALIGNER_MODEL_FILES
-        .iter()
-        .map(|file| {
-            let expected_size = match *file {
-                "config.json" => 5_982,
-                "merges.txt" => 1_671_853,
-                "model.safetensors" => 1_835_544_544,
-                "tokenizer_config.json" => 12_666,
-                "vocab.json" => 2_776_833,
-                _ => 1,
-            };
-            (*file, expected_size)
-        })
-        .collect()
+fn aligner_download_files(model: &str) -> Result<Vec<(&'static str, u64)>, String> {
+    match model {
+        QWEN_ALIGN_MODEL => Ok(REQUIRED_QWEN_ALIGNER_MODEL_FILES
+            .iter()
+            .map(|file| {
+                let expected_size = match *file {
+                    "config.json" => 5_982,
+                    "merges.txt" => 1_671_853,
+                    "model.safetensors" => 1_835_544_544,
+                    "tokenizer_config.json" => 12_666,
+                    "vocab.json" => 2_776_833,
+                    _ => 1,
+                };
+                (*file, expected_size)
+            })
+            .collect()),
+        MMS_CTC_ALIGN_MODEL => Ok(REQUIRED_MMS_CTC_ALIGNER_MODEL_FILES
+            .iter()
+            .map(|file| {
+                let expected_size = match *file {
+                    "config.json" => 2_076,
+                    "model.safetensors" => 1_261_930_388,
+                    "vocab.json" => 286,
+                    _ => 1,
+                };
+                (*file, expected_size)
+            })
+            .collect()),
+        _ => Err(format!("unknown align model: {model}")),
+    }
+}
+
+fn aligner_download_url(model: &str, file_name: &str) -> String {
+    match model {
+        // Community mirror: https://modelscope.cn/models/AI-ModelScope/mms-300m-1130-forced-aligner
+        MMS_CTC_ALIGN_MODEL => format!(
+            "https://modelscope.cn/models/AI-ModelScope/mms-300m-1130-forced-aligner/resolve/master/{file_name}"
+        ),
+        _ => modelscope_download_url(model, file_name),
+    }
 }
 
 fn asr_download_url(model: &str, file_name: &str) -> String {

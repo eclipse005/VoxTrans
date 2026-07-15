@@ -18,7 +18,7 @@ fn default_asr_model() -> String {
 }
 
 fn default_align_model() -> String {
-    "Qwen3-ForcedAligner-0.6B".to_string()
+    crate::services::model::DEFAULT_ALIGN_MODEL.to_string()
 }
 
 #[derive(Debug, serde::Serialize)]

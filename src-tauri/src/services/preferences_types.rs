@@ -105,9 +105,13 @@ impl AsrModel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default, TS)]
 pub enum AlignModel {
-    #[default]
     #[serde(rename = "Qwen3-ForcedAligner-0.6B")]
     Qwen3ForcedAligner06B,
+    /// MMS CTC forced aligner (romanize path; language fixed eng at engine).
+    /// Default: lighter weights, good accuracy for word-level timestamps.
+    #[default]
+    #[serde(rename = "mms-300m-1130-forced-aligner")]
+    MmsCtcForcedAligner300m,
 }
 
 impl fmt::Display for AlignModel {
@@ -120,12 +124,16 @@ impl AlignModel {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Qwen3ForcedAligner06B => "Qwen3-ForcedAligner-0.6B",
+            Self::MmsCtcForcedAligner300m => "mms-300m-1130-forced-aligner",
         }
     }
 
     pub fn parse(value: &str) -> Self {
-        let _ = value.trim();
-        Self::Qwen3ForcedAligner06B
+        match value.trim() {
+            "Qwen3-ForcedAligner-0.6B" => Self::Qwen3ForcedAligner06B,
+            "mms-300m-1130-forced-aligner" => Self::MmsCtcForcedAligner300m,
+            _ => Self::MmsCtcForcedAligner300m,
+        }
     }
 }
 
@@ -444,7 +452,7 @@ fn default_true() -> bool {
 }
 
 fn default_align_model() -> AlignModel {
-    AlignModel::Qwen3ForcedAligner06B
+    AlignModel::default()
 }
 
 fn default_subtitle_burn_mode() -> SubtitleBurnMode {

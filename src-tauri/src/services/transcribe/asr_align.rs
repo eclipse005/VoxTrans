@@ -10,11 +10,10 @@ use moss_transcribe_diarize_rs::{
 };
 use native_transcribe::transcribe::{Device as CohereDevice, Transcriber as CohereTranscriber};
 use qwen3_asr::{AsrInference, Backend as AsrBackend, TranscribeOptions as AsrTranscribeOptions};
-use qwen_forced_aligner_rs::{
-    AlignRequest, AudioInput, DeviceRequest, ForcedAlignItem, ForcedAlignResult,
-    ModelOptions, TextInput, load_model,
-};
+use crate::domain::AlignedSpan;
 use voxtrans_core::subtitle::{alignment::align_text_to_timestamps, segmenter::WordToken};
+
+use super::align_engine::AlignEngine;
 
 /// Official English diarize prompt from MOSS-Transcribe-Diarize. Must not be
 /// altered — any change breaks model output alignment.
@@ -28,7 +27,7 @@ const MOSS_MAX_NEW_TOKENS: usize = 2048;
 
 /// ASR backends abstracted behind a uniform `transcribe` call so the segment
 /// loop never branches on engine identity. Selection is by the parsed
-/// `AsrModel` enum. The aligner (qwen-forced-aligner) is shared by all.
+/// `AsrModel` enum. Alignment is selected separately via `AlignEngine`.
 enum AsrEngine {
     Qwen(AsrInference),
     Cohere(CohereTranscriber),
@@ -77,9 +76,9 @@ pub(super) struct AsrAlignRequest {
     /// Previously computed ASR transcripts keyed by segment index.
     /// When non-empty, ASR is skipped for these segments.
     pub(super) precomputed_asr: Vec<(usize, String)>,
-    /// Previously computed alignment results keyed by segment index.
+    /// Previously computed alignment spans keyed by segment index.
     /// When non-empty, alignment is skipped for these segments.
-    pub(super) precomputed_alignment: Vec<(usize, ForcedAlignResult)>,
+    pub(super) precomputed_alignment: Vec<(usize, Vec<AlignedSpan>)>,
 }
 
 pub(super) struct AsrAlignOutput {
@@ -105,13 +104,13 @@ pub(super) struct AsrAlignTiming {
     pub(super) temp_wav_write_sec: f64,
     pub(super) asr_load_sec: f64,
     pub(super) asr_transcribe_sec: f64,
-    pub(super) qwen_load_sec: f64,
-    pub(super) qwen_align_sec: f64,
+    pub(super) align_load_sec: f64,
+    pub(super) align_sec: f64,
     pub(super) punctuation_map_sec: f64,
     pub(super) total_elapsed_sec: f64,
 }
 
-pub(super) fn transcribe_with_asr_and_qwen<F>(
+pub(super) fn transcribe_with_asr_and_align<F>(
     request: AsrAlignRequest,
     mut on_progress: F,
 ) -> Result<AsrAlignOutput, String>
@@ -145,14 +144,14 @@ where
         .map_err(|e| format!("invalid source language: {e}"))?;
     let language = LanguageRegistry::asr_code(asr_model, lang_tag)
         .map_err(|e| e.to_string())?;
-    let aligner_language = LanguageRegistry::align_code(align_model, lang_tag)
-        .map_err(|e| e.to_string())?;
+    // Ensure source language is in ASR∩align support (CTC maps any tag → eng).
+    LanguageRegistry::align_code(align_model, lang_tag).map_err(|e| e.to_string())?;
     let total_segments = prepared.segment_summaries.len();
     let sample_len = prepared.mono_samples.len();
 
     let precomputed_asr_map: std::collections::HashMap<usize, String> =
         request.precomputed_asr.into_iter().collect();
-    let precomputed_alignment_map: std::collections::HashMap<usize, ForcedAlignResult> =
+    let precomputed_alignment_map: std::collections::HashMap<usize, Vec<AlignedSpan>> =
         request.precomputed_alignment.into_iter().collect();
 
     let segment_transcripts = {
@@ -276,30 +275,18 @@ where
         (Vec::new(), String::new())
     } else {
         let load_started_at = Instant::now();
-        let aligner = load_model(
-            &aligner_model_dir,
-            ModelOptions {
-                device: device.qwen_device,
-            },
-        )
-        .map_err(|err| {
-            format!(
-                "failed to load Qwen aligner model from {}: {err:#}",
-                aligner_model_dir.display()
-            )
-        })?;
-        timing.qwen_load_sec = load_started_at.elapsed().as_secs_f64();
+        let aligner = AlignEngine::load(align_model, &aligner_model_dir, device.use_cuda)?;
+        timing.align_load_sec = load_started_at.elapsed().as_secs_f64();
 
         let align_started_at = Instant::now();
         let results = align_segments(
             &aligner,
-            &aligner_language,
+            lang_tag,
             &segment_transcripts.transcripts,
             precomputed_alignment_map,
             &mut on_progress,
-        )
-        .map_err(|err| format!("qwen alignment failed: {err:#}"))?;
-        timing.qwen_align_sec = align_started_at.elapsed().as_secs_f64();
+        )?;
+        timing.align_sec = align_started_at.elapsed().as_secs_f64();
         let segment_starts = segment_transcripts
             .transcripts
             .iter()
@@ -311,7 +298,14 @@ where
             .map(|segment| segment.text.as_str())
             .collect::<Vec<_>>();
         let punctuation_started_at = Instant::now();
-        let output = words_from_alignment_results(&segment_starts, &segment_texts, results);
+        // Qwen align: tokens lack punct → restore from ASR. CTC: punct already in tokens.
+        let restore_punctuation = aligner.restores_punctuation_from_transcript();
+        let output = words_from_alignment_results(
+            &segment_starts,
+            &segment_texts,
+            results,
+            restore_punctuation,
+        );
         timing.punctuation_map_sec = punctuation_started_at.elapsed().as_secs_f64();
         (output.words, output.aligned_text)
     };
@@ -356,7 +350,7 @@ pub(crate) enum FreshSegmentResult {
     Asr { segment_index: usize, text: String },
     Align {
         segment_index: usize,
-        items: Vec<ForcedAlignItem>,
+        items: Vec<AlignedSpan>,
     },
 }
 
@@ -364,7 +358,7 @@ struct RuntimeDevice {
     asr_device: AsrBackend,
     cohere_device: CohereDevice,
     moss_device: MossBackend,
-    qwen_device: DeviceRequest,
+    use_cuda: bool,
     label: String,
 }
 
@@ -374,12 +368,12 @@ struct AlignmentWordsOutput {
 }
 
 fn align_segments(
-    aligner: &qwen_forced_aligner_rs::Qwen3ForcedAligner,
-    aligner_language: &str,
+    aligner: &AlignEngine,
+    source_lang: LanguageTag,
     segment_transcripts: &[SegmentTranscript],
-    precomputed_alignment: std::collections::HashMap<usize, ForcedAlignResult>,
+    precomputed_alignment: std::collections::HashMap<usize, Vec<AlignedSpan>>,
     on_progress: &mut impl FnMut(TranscribeProgressStage, usize, usize, Option<FreshSegmentResult>),
-) -> Result<Vec<ForcedAlignResult>, String> {
+) -> Result<Vec<Vec<AlignedSpan>>, String> {
     let total = segment_transcripts.len();
     let mut results = Vec::with_capacity(total);
     for (index, segment) in segment_transcripts.iter().enumerate() {
@@ -390,23 +384,19 @@ fn align_segments(
             results.push(cached.clone());
             continue;
         }
-        let result = aligner
-            .align(AlignRequest::new(
-                AudioInput::Path(segment.wav.path.clone()),
-                TextInput::Text(segment.text.clone()),
-                aligner_language.to_string(),
-            ))
-            .map_err(|err| format!("failed align request {current}: {err:#}"))?;
+        let items = aligner
+            .align_segment(&segment.wav.path, &segment.text, source_lang)
+            .map_err(|err| format!("failed align request {current}: {err}"))?;
         on_progress(
             TranscribeProgressStage::Align,
             current,
             total,
             Some(FreshSegmentResult::Align {
                 segment_index: segment.segment_index,
-                items: result.items.clone(),
+                items: items.clone(),
             }),
         );
-        results.push(result);
+        results.push(items);
     }
     Ok(results)
 }
@@ -418,7 +408,7 @@ fn provider_to_device(provider: &str) -> Result<RuntimeDevice, String> {
             asr_device: AsrBackend::Cpu,
             cohere_device: CohereDevice::Cpu,
             moss_device: MossBackend::Cpu,
-            qwen_device: DeviceRequest::Cpu,
+            use_cuda: false,
             label: "cpu".to_string(),
         });
     }
@@ -429,7 +419,7 @@ fn provider_to_device(provider: &str) -> Result<RuntimeDevice, String> {
             asr_device: AsrBackend::Cuda,
             cohere_device: CohereDevice::Cuda,
             moss_device: MossBackend::Cuda,
-            qwen_device: DeviceRequest::Cuda(0),
+            use_cuda: true,
             label: "cuda".to_string(),
         })
     }
@@ -521,22 +511,23 @@ fn round_millis(value: f64) -> f64 {
 fn words_from_alignment_results(
     segment_starts: &[f64],
     segment_texts: &[&str],
-    results: Vec<ForcedAlignResult>,
+    results: Vec<Vec<AlignedSpan>>,
+    restore_punctuation: bool,
 ) -> AlignmentWordsOutput {
     let mut words = Vec::new();
     let mut aligned_text = String::new();
-    for ((segment_start, transcript_text), result) in
+    for ((segment_start, transcript_text), items) in
         segment_starts.iter().zip(segment_texts.iter()).zip(results)
     {
         let mut segment_words = Vec::new();
-        for item in result.items {
+        for item in items {
             let word = item.text.trim();
             if word.is_empty() {
                 continue;
             }
             segment_words.push(WordToken {
-                start: round_millis(segment_start + item.start_time.max(0.0)),
-                end: round_millis(segment_start + item.end_time.max(item.start_time)),
+                start: round_millis(segment_start + item.start.max(0.0)),
+                end: round_millis(segment_start + item.end.max(item.start)),
                 word: word.to_string(),
             });
         }
@@ -544,10 +535,16 @@ fn words_from_alignment_results(
         if !aligned_segment_text.is_empty() {
             append_debug_piece(&mut aligned_text, &aligned_segment_text);
         }
-        words.extend(attach_transcript_punctuation(
-            transcript_text,
-            &segment_words,
-        ));
+        if restore_punctuation {
+            // Qwen forced-align path only (tokens have no punctuation).
+            words.extend(attach_transcript_punctuation(
+                transcript_text,
+                &segment_words,
+            ));
+        } else {
+            // CTC (and any aligner that already embeds ASR punct in tokens).
+            words.extend(segment_words);
+        }
     }
     AlignmentWordsOutput {
         words,
@@ -670,30 +667,17 @@ fn temp_wav_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qwen_forced_aligner_rs::{ForcedAlignItem, ForcedAlignResult};
 
     #[test]
     fn alignment_results_are_offset_to_original_timeline() {
         let output = words_from_alignment_results(
             &[12.5],
             &["hello"],
-            vec![ForcedAlignResult {
-                items: vec![
-                    ForcedAlignItem {
-                        text: " hello ".to_string(),
-                        start_time: 0.1234,
-                        end_time: 0.4567,
-                    },
-                    ForcedAlignItem {
-                        text: "".to_string(),
-                        start_time: 0.5,
-                        end_time: 0.6,
-                    },
-                ],
-                output_ids: Vec::new(),
-                raw_timestamp_ms: Vec::new(),
-                fixed_timestamp_ms: Vec::new(),
-            }],
+            vec![vec![
+                AlignedSpan::new(" hello ", 0.1234, 0.4567),
+                AlignedSpan::new("", 0.5, 0.6),
+            ]],
+            false,
         );
         assert_eq!(output.aligned_text, "hello");
         let words = output.words;
@@ -706,26 +690,15 @@ mod tests {
 
     #[test]
     fn alignment_results_attach_transcript_punctuation() {
+        // Qwen path: tokens without punct → restore from ASR transcript.
         let output = words_from_alignment_results(
             &[3.0],
             &["Hello, world!"],
-            vec![ForcedAlignResult {
-                items: vec![
-                    ForcedAlignItem {
-                        text: "Hello".to_string(),
-                        start_time: 0.0,
-                        end_time: 0.4,
-                    },
-                    ForcedAlignItem {
-                        text: "world".to_string(),
-                        start_time: 0.5,
-                        end_time: 0.9,
-                    },
-                ],
-                output_ids: Vec::new(),
-                raw_timestamp_ms: Vec::new(),
-                fixed_timestamp_ms: Vec::new(),
-            }],
+            vec![vec![
+                AlignedSpan::new("Hello", 0.0, 0.4),
+                AlignedSpan::new("world", 0.5, 0.9),
+            ]],
+            true,
         );
         assert_eq!(output.aligned_text, "Hello world");
         let words = output.words;
@@ -742,38 +715,40 @@ mod tests {
         let output = words_from_alignment_results(
             &[0.0],
             &["你好,世界。"],
-            vec![ForcedAlignResult {
-                items: vec![
-                    ForcedAlignItem {
-                        text: "你".to_string(),
-                        start_time: 0.0,
-                        end_time: 0.1,
-                    },
-                    ForcedAlignItem {
-                        text: "好".to_string(),
-                        start_time: 0.1,
-                        end_time: 0.2,
-                    },
-                    ForcedAlignItem {
-                        text: "世".to_string(),
-                        start_time: 0.2,
-                        end_time: 0.3,
-                    },
-                    ForcedAlignItem {
-                        text: "界".to_string(),
-                        start_time: 0.3,
-                        end_time: 0.4,
-                    },
-                ],
-                output_ids: Vec::new(),
-                raw_timestamp_ms: Vec::new(),
-                fixed_timestamp_ms: Vec::new(),
-            }],
+            vec![vec![
+                AlignedSpan::new("你", 0.0, 0.1),
+                AlignedSpan::new("好", 0.1, 0.2),
+                AlignedSpan::new("世", 0.2, 0.3),
+                AlignedSpan::new("界", 0.3, 0.4),
+            ]],
+            true,
         );
 
         assert_eq!(output.aligned_text, "你好世界");
         assert_eq!(output.words[1].word, "好,");
         assert_eq!(output.words[3].word, "界。");
+    }
+
+    #[test]
+    fn ctc_path_keeps_inline_punctuation_without_restore() {
+        // CTC char path already emits punct spans from the ASR string.
+        // Restoring again would yield "好,," / "界。。" — must not run.
+        let output = words_from_alignment_results(
+            &[0.0],
+            &["你好,世界。"],
+            vec![vec![
+                AlignedSpan::new("你", 0.0, 0.1),
+                AlignedSpan::new("好", 0.1, 0.2),
+                AlignedSpan::new(",", 0.2, 0.2),
+                AlignedSpan::new("世", 0.2, 0.3),
+                AlignedSpan::new("界", 0.3, 0.4),
+                AlignedSpan::new("。", 0.4, 0.4),
+            ]],
+            false,
+        );
+        let words: Vec<&str> = output.words.iter().map(|w| w.word.as_str()).collect();
+        assert_eq!(words, vec!["你", "好", ",", "世", "界", "。"]);
+        assert!(!output.words.iter().any(|w| w.word.contains(",,") || w.word.contains("。。")));
     }
 
     #[test]

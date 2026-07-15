@@ -8,9 +8,11 @@ import {
 } from "../api/model";
 import { openModelDir as openModelDirApi } from "../api/system";
 import {
+  ALIGN_MODELS,
   ASR_MODELS,
   DEFAULT_ALIGN_MODEL,
   DEFAULT_DEMUCS_MODEL,
+  isAlignModel,
   isAsrModel,
 } from "../../features/media/modelCatalog";
 import type {
@@ -39,9 +41,14 @@ type ModelDownloadProgressEvent = ModelDownloadStateSnapshot & {
 
 type ModelStatusByTarget = Record<ModelTarget, ModelStatusResponse | null>;
 type AsrStatusByModel = Record<AsrModel, ModelStatusResponse | null>;
+type AlignStatusByModel = Record<AlignModel, ModelStatusResponse | null>;
 
 function emptyAsrStatusMap(): AsrStatusByModel {
   return Object.fromEntries(ASR_MODELS.map((id) => [id, null])) as AsrStatusByModel;
+}
+
+function emptyAlignStatusMap(): AlignStatusByModel {
+  return Object.fromEntries(ALIGN_MODELS.map((id) => [id, null])) as AlignStatusByModel;
 }
 
 const initialModelStatus: ModelStatusByTarget = {
@@ -54,6 +61,7 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
   const { t } = useTranslation(["toasts", "tasks", "models"]);
   const [statusByTarget, setStatusByTarget] = useState<ModelStatusByTarget>(initialModelStatus);
   const [asrStatusByModel, setAsrStatusByModel] = useState<AsrStatusByModel>(emptyAsrStatusMap);
+  const [alignStatusByModel, setAlignStatusByModel] = useState<AlignStatusByModel>(emptyAlignStatusMap);
   const asrModelRef = useRef<AsrModel>(asrModel);
   const alignModelRef = useRef<AlignModel>(alignModel);
   const demucsModelRef = useRef<DemucsModel>(demucsModel);
@@ -65,21 +73,24 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
 
   const refreshModelStatus = useCallback(async () => {
     try {
-      const asrStatuses = await Promise.all(
-        ASR_MODELS.map((model) => getModelStatus("asr", model)),
-      );
-      const [align, demucs] = await Promise.all([
-        getModelStatus("align", alignModelRef.current || DEFAULT_ALIGN_MODEL),
+      const [asrStatuses, alignStatuses, demucs] = await Promise.all([
+        Promise.all(ASR_MODELS.map((model) => getModelStatus("asr", model))),
+        Promise.all(ALIGN_MODELS.map((model) => getModelStatus("align", model))),
         getModelStatus("demucs", demucsModelRef.current || DEFAULT_DEMUCS_MODEL),
       ]);
       const nextAsrStatusByModel = emptyAsrStatusMap();
       ASR_MODELS.forEach((model, index) => {
         nextAsrStatusByModel[model] = asrStatuses[index] ?? null;
       });
+      const nextAlignStatusByModel = emptyAlignStatusMap();
+      ALIGN_MODELS.forEach((model, index) => {
+        nextAlignStatusByModel[model] = alignStatuses[index] ?? null;
+      });
       setAsrStatusByModel(nextAsrStatusByModel);
+      setAlignStatusByModel(nextAlignStatusByModel);
       setStatusByTarget({
         asr: nextAsrStatusByModel[asrModelRef.current],
-        align,
+        align: nextAlignStatusByModel[alignModelRef.current],
         demucs,
       });
     } catch (error) {
@@ -106,7 +117,7 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
       if (!payload?.target) return;
       const target = payload.target;
       if (target === "asr" && !isAsrModel(payload.model)) return;
-      if (target === "align" && payload.model !== alignModelRef.current) return;
+      if (target === "align" && !isAlignModel(payload.model)) return;
       if (target === "demucs" && payload.model !== demucsModelRef.current) return;
       if (target === "asr" && isAsrModel(payload.model)) {
         const model = payload.model;
@@ -128,8 +139,29 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
           };
         });
       }
+      if (target === "align" && isAlignModel(payload.model)) {
+        const model = payload.model;
+        setAlignStatusByModel((prev) => {
+          const current = prev[model];
+          if (!current) return prev;
+          return {
+            ...prev,
+            [model]: {
+              ...current,
+              download: {
+                phase: payload.phase,
+                downloadedBytes: payload.downloadedBytes,
+                totalBytes: payload.totalBytes,
+                speedBytesPerSec: payload.speedBytesPerSec,
+                message: payload.message,
+              },
+            },
+          };
+        });
+      }
       setStatusByTarget((prev) => {
         if (target === "asr" && payload.model !== asrModelRef.current) return prev;
+        if (target === "align" && payload.model !== alignModelRef.current) return prev;
         const current = prev[target];
         if (!current) return prev;
         return {
@@ -216,12 +248,14 @@ export function useModelManager({ pushToast, asrModel, alignModel, demucsModel }
     asrStatus: statusByTarget.asr,
     asrStatusByModel,
     alignStatus: statusByTarget.align,
+    alignStatusByModel,
     demucsStatus: statusByTarget.demucs,
     refreshModelStatus,
     startModelDownload,
     cancelModelDownload,
     openModelDir,
   }), [
+    alignStatusByModel,
     asrStatusByModel,
     cancelModelDownload,
     openModelDir,
@@ -243,7 +277,8 @@ function modelForTarget(
     return asrModel;
   }
   if (target === "align") {
-    return (overrideModel as AlignModel | undefined) || alignModel || DEFAULT_ALIGN_MODEL;
+    if (overrideModel && isAlignModel(overrideModel)) return overrideModel;
+    return alignModel || DEFAULT_ALIGN_MODEL;
   }
   return (overrideModel as DemucsModel | undefined) || demucsModel || DEFAULT_DEMUCS_MODEL;
 }

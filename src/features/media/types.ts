@@ -237,8 +237,8 @@ type TranscribeTimingSec = {
   tempWavWriteSec: number;
   asrLoadSec: number;
   asrTranscribeSec: number;
-  qwenLoadSec: number;
-  qwenAlignSec: number;
+  alignLoadSec: number;
+  alignSec: number;
   punctuationMapSec: number;
   totalElapsedSec: number;
 };
@@ -247,8 +247,8 @@ type TranscribeRtfBreakdownX = {
   total: number;
   asrStage: number;
   asrTranscribe: number;
-  qwenStage: number;
-  qwenAlign: number;
+  alignStage: number;
+  align: number;
   modelOnly: number;
 };
 

@@ -23,7 +23,7 @@
     "preparing": "准备中",
     "separating": "人声分离中",
     "recognizing": "语音识别中",
-    "aligning": "强制对齐中",
+    "aligning": "时间轴对齐中",
     "segmenting": "断句中",
     "summarizing": "总结中",
     "terminology": "术语提取中",

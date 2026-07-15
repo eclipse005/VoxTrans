@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import type {
   ModelStatusResponse,
+  AlignModel,
   AsrModel,
   LlmProfile,
 } from "../../features/media/types";
@@ -14,6 +15,7 @@ type SettingsFormContextValue = {
   asrStatus: ModelStatusResponse | null;
   asrStatusByModel: Record<AsrModel, ModelStatusResponse | null>;
   alignStatus: ModelStatusResponse | null;
+  alignStatusByModel: Record<AlignModel, ModelStatusResponse | null>;
   demucsStatus: ModelStatusResponse | null;
   saveSettings: () => void | Promise<void>;
   testTranslateConnection: () => void | Promise<void>;

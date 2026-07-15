@@ -598,11 +598,14 @@ impl TaskStore {
         Ok(())
     }
 
-    // Step 1 alignment: Cached ForcedAlignResult items per segment.
+    // Step 1 alignment: Cached AlignedSpan items per segment (engine-agnostic).
+    // Payload is versioned by `align_model` so switching CTC ↔ Qwen never resumes
+    // the other engine's spans (and skips untagged legacy rows once).
 
     pub async fn load_alignment_results(
         &self,
         task_id: &str,
+        align_model: &str,
     ) -> Result<Vec<crate::services::pipeline::AlignmentResultRow>, String> {
         let rows: Vec<AlignmentInternalRow> = sqlx::query_as(
             "SELECT segment_index, result_json FROM alignment_results \
@@ -613,15 +616,20 @@ impl TaskStore {
         .await
         .map_err(|e| format!("load alignment results: {e}"))?;
 
+        let want = align_model.trim();
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
-            let items: Vec<qwen_forced_aligner_rs::ForcedAlignItem> =
-                serde_json::from_str(&r.result_json)
-                    .map_err(|e| format!("deserialize alignment result: {e}"))?;
-            out.push(crate::services::pipeline::AlignmentResultRow {
-                segment_index: r.segment_index as usize,
-                items,
-            });
+            match parse_alignment_cache_payload(&r.result_json) {
+                Some((cached_model, items)) if cached_model == want && !items.is_empty() => {
+                    out.push(crate::services::pipeline::AlignmentResultRow {
+                        segment_index: r.segment_index as usize,
+                        items,
+                    });
+                }
+                _ => {
+                    // Wrong engine, legacy bare array, or corrupt → recompute this segment.
+                }
+            }
         }
         Ok(out)
     }
@@ -629,9 +637,14 @@ impl TaskStore {
     pub async fn save_alignment_result(
         &self,
         task_id: &str,
+        align_model: &str,
         row: &crate::services::pipeline::AlignmentResultRow,
     ) -> Result<(), String> {
-        let json = serde_json::to_string(&row.items)
+        let payload = AlignmentCachePayload {
+            align_model: align_model.trim().to_string(),
+            items: row.items.clone(),
+        };
+        let json = serde_json::to_string(&payload)
             .map_err(|e| format!("serialize alignment result: {e}"))?;
         sqlx::query(
             "INSERT INTO alignment_results (task_id, segment_index, result_json) \
@@ -715,6 +728,55 @@ struct AsrTranscriptInternalRow {
 struct AlignmentInternalRow {
     segment_index: i64,
     result_json: String,
+}
+
+/// Versioned alignment cache blob stored in `alignment_results.result_json`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct AlignmentCachePayload {
+    align_model: String,
+    items: Vec<crate::domain::AlignedSpan>,
+}
+
+/// Parse cache JSON. Returns `None` for legacy bare arrays or corrupt data
+/// so callers recompute instead of mixing engines / old punct policies.
+fn parse_alignment_cache_payload(
+    raw: &str,
+) -> Option<(String, Vec<crate::domain::AlignedSpan>)> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    // Legacy: bare array of spans (pre multi-align) — never reuse for resume.
+    if value.is_array() {
+        return None;
+    }
+    let payload: AlignmentCachePayload = serde_json::from_value(value).ok()?;
+    if payload.align_model.trim().is_empty() {
+        return None;
+    }
+    Some((payload.align_model, payload.items))
+}
+
+#[cfg(test)]
+mod alignment_cache_tests {
+    use super::*;
+    use crate::domain::AlignedSpan;
+
+    #[test]
+    fn rejects_legacy_bare_array() {
+        let raw = r#"[{"text":"你","start":0.0,"end":0.1}]"#;
+        assert!(parse_alignment_cache_payload(raw).is_none());
+    }
+
+    #[test]
+    fn accepts_versioned_payload() {
+        let payload = AlignmentCachePayload {
+            align_model: "mms-300m-1130-forced-aligner".into(),
+            items: vec![AlignedSpan::new("你", 0.0, 0.1)],
+        };
+        let raw = serde_json::to_string(&payload).unwrap();
+        let (model, items) = parse_alignment_cache_payload(&raw).expect("ok");
+        assert_eq!(model, "mms-300m-1130-forced-aligner");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].text, "你");
+    }
 }
 
 #[derive(sqlx::FromRow)]

@@ -83,11 +83,11 @@ pub struct TranslationBatchRow {
     pub segment_translations: HashMap<usize, String>,
 }
 
-/// Step 1 alignment: Cached ForcedAlignResult for a single segment.
+/// Step 1 alignment: cached spans for a single segment (engine-agnostic).
 #[derive(Debug, Clone)]
 pub struct AlignmentResultRow {
     pub segment_index: usize,
-    pub items: Vec<qwen_forced_aligner_rs::ForcedAlignItem>,
+    pub items: Vec<crate::domain::AlignedSpan>,
 }
 
 // ── UnitStore: task-scoped accessor for domain tables ───────────
@@ -141,14 +141,25 @@ impl UnitStore {
         self.store.save_asr_transcript(&self.task_id, row).await
     }
 
-    // ── Step 1 alignment: Cached alignment results ──
+    // ── Step 1 alignment: Cached alignment results (scoped by align_model) ──
 
-    pub async fn load_alignment_results(&self) -> Result<Vec<AlignmentResultRow>, String> {
-        self.store.load_alignment_results(&self.task_id).await
+    pub async fn load_alignment_results(
+        &self,
+        align_model: &str,
+    ) -> Result<Vec<AlignmentResultRow>, String> {
+        self.store
+            .load_alignment_results(&self.task_id, align_model)
+            .await
     }
 
-    pub async fn save_alignment_result(&self, row: &AlignmentResultRow) -> Result<(), String> {
-        self.store.save_alignment_result(&self.task_id, row).await
+    pub async fn save_alignment_result(
+        &self,
+        align_model: &str,
+        row: &AlignmentResultRow,
+    ) -> Result<(), String> {
+        self.store
+            .save_alignment_result(&self.task_id, align_model, row)
+            .await
     }
 
     // ── Step 4: Translation batches ──

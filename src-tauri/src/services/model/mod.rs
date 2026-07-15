@@ -40,7 +40,9 @@ pub(crate) const QWEN3_ASR_06B_MODEL: &str = "Qwen3-ASR-0.6B";
 pub(crate) const QWEN3_ASR_17B_MODEL: &str = "Qwen3-ASR-1.7B";
 pub(crate) const COHERE_ASR_MODEL: &str = "cohere-transcribe-03-2026";
 pub(crate) const MOSS_ASR_MODEL: &str = "moss-transcribe-diarize";
-pub(crate) const DEFAULT_ALIGN_MODEL: &str = "Qwen3-ForcedAligner-0.6B";
+pub(crate) const DEFAULT_ALIGN_MODEL: &str = "mms-300m-1130-forced-aligner";
+pub(crate) const QWEN_ALIGN_MODEL: &str = "Qwen3-ForcedAligner-0.6B";
+pub(crate) const MMS_CTC_ALIGN_MODEL: &str = "mms-300m-1130-forced-aligner";
 
 pub(crate) const REQUIRED_QWEN3_ASR_06B_MODEL_FILES: [&str; 3] =
     ["config.json", "model.safetensors", "tokenizer.json"];
@@ -81,6 +83,13 @@ pub(crate) const REQUIRED_QWEN_ALIGNER_MODEL_FILES: [&str; 5] = [
     "merges.txt",
     "model.safetensors",
     "tokenizer_config.json",
+    "vocab.json",
+];
+
+// MMS CTC forced aligner — only files read by ctc-forced-aligner-rs.
+pub(crate) const REQUIRED_MMS_CTC_ALIGNER_MODEL_FILES: [&str; 3] = [
+    "config.json",
+    "model.safetensors",
     "vocab.json",
 ];
 

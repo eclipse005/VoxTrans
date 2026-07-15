@@ -17,20 +17,34 @@
     "storage": "存储位置",
     "asr": "语音识别（ASR）",
     "currentAsr": "当前选用",
+    "align": "时间轴对齐",
+    "currentAlign": "当前选用",
     "support": "配套模型",
     "alignRole": "必需 · 词级时间戳",
     "demucsRole": "可选 · 人声分离"
   },
-  "tags": {
+  "names": {
+    "asr06b": "Qwen3 语音 0.6B",
+    "asr17b": "Qwen3 语音 1.7B",
+    "asrCohere": "Cohere 转录",
+    "asrMoss": "MOSS 会议转录",
+    "alignCtc": "CTC 对齐",
+    "alignQwen": "Qwen 时间轴对齐",
+    "demucs": "人声分离"
+  },
+  "facts": {
     "recommended": "推荐",
-    "lightweight": "轻量",
-    "highAccuracy": "高精度",
-    "multilingual": "多语言",
-    "langs14": "14 语",
-    "european": "欧语强",
-    "params2b": "2B",
-    "chunk180": "180s 分段",
-    "meeting": "会议/对话"
+    "accHigher": "精度更高",
+    "accBalanced": "精度均衡",
+    "accGood": "精度够用",
+    "langWide": "多语种",
+    "lang14": "14 种语言",
+    "langMeeting": "会议/对话",
+    "langLimited": "可选语言更少",
+    "speedFaster": "识别更快",
+    "speedBalanced": "速度均衡",
+    "speedSlower": "相对较慢",
+    "chunk180": "固定约 180 秒分段"
   },
   "status": {
     "readFailed": "读取模型状态失败"

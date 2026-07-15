@@ -4,6 +4,7 @@ use serde_json::json;
 use std::path::PathBuf;
 use voxtrans_core::subtitle::segmenter::{WordToken, normalize_word_tokens};
 
+mod align_engine;
 mod asr_align;
 pub(crate) use asr_align::{FreshSegmentResult, TranscribeProgressStage};
 
@@ -24,10 +25,10 @@ pub struct TranscribeRequest {
     /// These segments will be skipped during ASR.
     #[serde(default)]
     pub precomputed_asr_segments: Vec<(usize, String)>,
-    /// Precomputed alignment results: `Vec<(segment_index, ForcedAlignResult)>`.
+    /// Precomputed alignment results: `Vec<(segment_index, spans)>`.
     /// These segments will be skipped during alignment.
     #[serde(default)]
-    pub precomputed_alignment: Vec<(usize, qwen_forced_aligner_rs::ForcedAlignResult)>,
+    pub precomputed_alignment: Vec<(usize, Vec<crate::domain::AlignedSpan>)>,
 }
 
 fn default_asr_model() -> String {
@@ -35,7 +36,7 @@ fn default_asr_model() -> String {
 }
 
 fn default_align_model() -> String {
-    "Qwen3-ForcedAligner-0.6B".to_string()
+    crate::services::model::DEFAULT_ALIGN_MODEL.to_string()
 }
 
 #[derive(Debug, Serialize)]
@@ -67,8 +68,8 @@ pub struct TranscribeTimingSecDto {
     pub temp_wav_write_sec: f64,
     pub asr_load_sec: f64,
     pub asr_transcribe_sec: f64,
-    pub qwen_load_sec: f64,
-    pub qwen_align_sec: f64,
+    pub align_load_sec: f64,
+    pub align_sec: f64,
     pub punctuation_map_sec: f64,
     pub total_elapsed_sec: f64,
 }
@@ -79,8 +80,8 @@ pub struct TranscribeRtfBreakdownDto {
     pub total: f64,
     pub asr_stage: f64,
     pub asr_transcribe: f64,
-    pub qwen_stage: f64,
-    pub qwen_align: f64,
+    pub align_stage: f64,
+    pub align: f64,
     pub model_only: f64,
 }
 
@@ -119,7 +120,7 @@ where
         }),
     );
 
-    let output = asr_align::transcribe_with_asr_and_qwen(
+    let output = asr_align::transcribe_with_asr_and_align(
         asr_align::AsrAlignRequest {
             audio_path: PathBuf::from(&request.audio_path),
             source_lang: request.source_lang.clone(),
@@ -218,7 +219,7 @@ fn normalize_asr_model(raw: &str) -> String {
 fn normalize_align_model(raw: &str) -> String {
     let value = raw.trim();
     if value.is_empty() {
-        "Qwen3-ForcedAligner-0.6B".to_string()
+        crate::services::model::DEFAULT_ALIGN_MODEL.to_string()
     } else {
         value.to_string()
     }
@@ -259,8 +260,8 @@ fn build_phase_metrics(
     timing: asr_align::AsrAlignTiming,
 ) -> TranscribePhaseMetrics {
     let asr_stage_sec = timing.asr_load_sec + timing.temp_wav_write_sec + timing.asr_transcribe_sec;
-    let qwen_stage_sec = timing.qwen_load_sec + timing.qwen_align_sec + timing.punctuation_map_sec;
-    let model_only_sec = timing.asr_transcribe_sec + timing.qwen_align_sec;
+    let align_stage_sec = timing.align_load_sec + timing.align_sec + timing.punctuation_map_sec;
+    let model_only_sec = timing.asr_transcribe_sec + timing.align_sec;
 
     TranscribePhaseMetrics {
         timing_sec: TranscribeTimingSecDto {
@@ -269,8 +270,8 @@ fn build_phase_metrics(
             temp_wav_write_sec: round2(timing.temp_wav_write_sec),
             asr_load_sec: round2(timing.asr_load_sec),
             asr_transcribe_sec: round2(timing.asr_transcribe_sec),
-            qwen_load_sec: round2(timing.qwen_load_sec),
-            qwen_align_sec: round2(timing.qwen_align_sec),
+            align_load_sec: round2(timing.align_load_sec),
+            align_sec: round2(timing.align_sec),
             punctuation_map_sec: round2(timing.punctuation_map_sec),
             total_elapsed_sec: round2(timing.total_elapsed_sec),
         },
@@ -284,8 +285,8 @@ fn build_phase_metrics(
                 audio_duration_sec,
                 timing.asr_transcribe_sec,
             )),
-            qwen_stage: round2(calculate_rtf_x(audio_duration_sec, qwen_stage_sec)),
-            qwen_align: round2(calculate_rtf_x(audio_duration_sec, timing.qwen_align_sec)),
+            align_stage: round2(calculate_rtf_x(audio_duration_sec, align_stage_sec)),
+            align: round2(calculate_rtf_x(audio_duration_sec, timing.align_sec)),
             model_only: round2(calculate_rtf_x(audio_duration_sec, model_only_sec)),
         },
     }
@@ -329,8 +330,8 @@ mod tests {
                 temp_wav_write_sec: 2.0,
                 asr_load_sec: 3.0,
                 asr_transcribe_sec: 10.0,
-                qwen_load_sec: 4.0,
-                qwen_align_sec: 20.0,
+                align_load_sec: 4.0,
+                align_sec: 20.0,
                 punctuation_map_sec: 1.0,
                 total_elapsed_sec: 50.0,
             },
@@ -339,9 +340,9 @@ mod tests {
         assert_eq!(metrics.timing_sec.total_elapsed_sec, 50.0);
         assert_eq!(metrics.rtf_x.total, 4.0);
         assert_eq!(metrics.rtf_x.asr_transcribe, 20.0);
-        assert_eq!(metrics.rtf_x.qwen_align, 10.0);
+        assert_eq!(metrics.rtf_x.align, 10.0);
         assert_eq!(metrics.rtf_x.model_only, 6.67);
         assert_eq!(metrics.rtf_x.asr_stage, 13.33);
-        assert_eq!(metrics.rtf_x.qwen_stage, 8.0);
+        assert_eq!(metrics.rtf_x.align_stage, 8.0);
     }
 }

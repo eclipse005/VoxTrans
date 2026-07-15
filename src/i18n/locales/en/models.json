@@ -17,20 +17,34 @@
     "storage": "Storage",
     "asr": "Speech recognition (ASR)",
     "currentAsr": "Selected",
+    "align": "Timeline alignment",
+    "currentAlign": "Selected",
     "support": "Supporting models",
     "alignRole": "Required · timestamps",
     "demucsRole": "Optional · vocals"
   },
-  "tags": {
+  "names": {
+    "asr06b": "Qwen3 Speech 0.6B",
+    "asr17b": "Qwen3 Speech 1.7B",
+    "asrCohere": "Cohere Transcribe",
+    "asrMoss": "MOSS Meeting ASR",
+    "alignCtc": "CTC Align",
+    "alignQwen": "Qwen Timeline Align",
+    "demucs": "Vocal separation"
+  },
+  "facts": {
     "recommended": "Recommended",
-    "lightweight": "Lightweight",
-    "highAccuracy": "High accuracy",
-    "multilingual": "Multilingual",
-    "langs14": "14 languages",
-    "european": "Strong EU langs",
-    "params2b": "2B",
-    "chunk180": "180s chunks",
-    "meeting": "Meetings / talk"
+    "accHigher": "Higher accuracy",
+    "accBalanced": "Balanced accuracy",
+    "accGood": "Good enough",
+    "langWide": "Multilingual",
+    "lang14": "14 languages",
+    "langMeeting": "Meetings / talk",
+    "langLimited": "Fewer languages",
+    "speedFaster": "Faster recognition",
+    "speedBalanced": "Balanced speed",
+    "speedSlower": "Slower overall",
+    "chunk180": "Fixed ~180s chunks"
   },
   "status": {
     "readFailed": "Failed to read model status"

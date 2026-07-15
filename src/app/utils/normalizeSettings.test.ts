@@ -12,7 +12,7 @@ function baseDefaults(): SavedSettings {
     chunkTargetSeconds: 30,
     subtitleLengthPreset: "standard",
     asrModel: "Qwen3-ASR-0.6B",
-    alignModel: "Qwen3-ForcedAligner-0.6B",
+    alignModel: "mms-300m-1130-forced-aligner",
     demucsModel: "htdemucs_ft",
     enableVocalSeparation: false,
     translateApiKey: "",

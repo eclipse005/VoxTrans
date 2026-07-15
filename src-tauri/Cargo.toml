@@ -6,7 +6,12 @@ default-run = "voxtrans"
 
 [features]
 default = []
-cuda = ["qwen3-asr/cuda", "qwen-forced-aligner-rs/cuda", "moss-transcribe-diarize-rs/cuda"]
+cuda = [
+    "qwen3-asr/cuda",
+    "qwen-forced-aligner-rs/cuda",
+    "moss-transcribe-diarize-rs/cuda",
+    "ctc-forced-aligner-rs/cuda",
+]
 
 [build-dependencies]
 tauri-build = { version = "2.4.1", features = [] }
@@ -38,6 +43,8 @@ open = "5"
 # downloads cudart/cublas/cublasLt/curand from ModelScope (see apply-cuda-runtime.ps1).
 qwen3-asr = { git = "https://github.com/eclipse005/qwen3-asr-rs.git", rev = "b468cb92613fcec913749431e56380399138dfb8", default-features = false }
 qwen-forced-aligner-rs = { git = "https://github.com/eclipse005/qwen-aligner-rs.git", rev = "a8d77031daaf4a216f07f53e72c803814afd3680", default-features = false, features = ["cpu"] }
+# CTC forced aligner (MMS 300M) — pin rev like other engines.
+ctc-forced-aligner-rs = { git = "https://github.com/eclipse005/ctc-aligner-rs.git", rev = "c99cc99ae2f2a996467d4eaed04197ce0a68c042", default-features = false, features = ["cpu"] }
 # Cohere ASR — second backend, selected at runtime by `asr_model` name.
 # Default features include CUDA; CPU inference also works when selected at runtime.
 native-transcribe = { git = "https://github.com/eclipse005/cohere-transcribe-rs.git", rev = "2f5df6616ea20347a9d907ba780aefef680894e7" }

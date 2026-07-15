@@ -4,12 +4,12 @@ import type {
   SubtitleLineStyle,
   SubtitleRenderStyle,
 } from "../../features/media/types";
-import { ASR_MODELS, DEFAULT_ALIGN_MODEL } from "../../features/media/modelCatalog";
+import { ALIGN_MODELS, ASR_MODELS, DEFAULT_ALIGN_MODEL } from "../../features/media/modelCatalog";
 import { ensureProfiles, flattenActiveToTranslateFields } from "../../features/media/llmProfiles";
 import { normalizeTerminologyGroups } from "./terminology";
 
 const PROVIDERS: readonly SavedSettings["provider"][] = ["cpu", "cuda"];
-const ALIGN_MODELS: readonly SavedSettings["alignModel"][] = [DEFAULT_ALIGN_MODEL];
+const ALIGN_MODEL_ALLOWLIST: readonly SavedSettings["alignModel"][] = ALIGN_MODELS;
 const DEMUCUS_MODELS: readonly SavedSettings["demucsModel"][] = ["htdemucs_ft"];
 const SUBTITLE_LENGTH_PRESETS: readonly SavedSettings["subtitleLengthPreset"][] = [
   "short",
@@ -57,7 +57,7 @@ export function normalizeSettings(raw: SavedSettings, defaults: SavedSettings): 
       defaults.subtitleLengthPreset,
     ),
     asrModel: pickEnum(raw.asrModel, ASR_MODELS, defaults.asrModel),
-    alignModel: pickEnum(raw.alignModel, ALIGN_MODELS, defaults.alignModel),
+    alignModel: pickEnum(raw.alignModel, ALIGN_MODEL_ALLOWLIST, defaults.alignModel ?? DEFAULT_ALIGN_MODEL),
     demucsModel: pickEnum(raw.demucsModel, DEMUCUS_MODELS, defaults.demucsModel),
     enableVocalSeparation: Boolean(raw.enableVocalSeparation),
     llmProfiles: ensured.profiles,

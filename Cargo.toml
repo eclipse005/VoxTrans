@@ -16,6 +16,10 @@ opt-level = 2
 [profile.dev.package.qwen-forced-aligner-rs]
 opt-level = 2
 
+# CTC aligner weight load / gemm path is also slow under opt-level 0.
+[profile.dev.package.ctc-forced-aligner-rs]
+opt-level = 2
+
 # Cohere ASR native engine — same story: safetensors f16 weight parsing +
 # GPU upload in ModelWeights::load is slow under opt-level 0.
 [profile.dev.package.native-transcribe]

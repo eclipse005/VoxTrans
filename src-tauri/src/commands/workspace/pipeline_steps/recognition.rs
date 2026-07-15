@@ -67,24 +67,15 @@ impl PipelineStep for Step1AsrPipelineStep {
             .map(|row| (row.segment_index, row.text))
             .collect();
 
-        let precomputed_alignment = unit_store.load_alignment_results().await?;
-        let precomputed_alignment_segments: Vec<(
-            usize,
-            qwen_forced_aligner_rs::ForcedAlignResult,
-        )> = precomputed_alignment
-            .into_iter()
-            .map(|row| {
-                (
-                    row.segment_index,
-                    qwen_forced_aligner_rs::ForcedAlignResult {
-                        items: row.items,
-                        output_ids: Vec::new(),
-                        raw_timestamp_ms: Vec::new(),
-                        fixed_timestamp_ms: Vec::new(),
-                    },
-                )
-            })
-            .collect();
+        let align_model_for_cache = self.align_model.clone();
+        let precomputed_alignment = unit_store
+            .load_alignment_results(&align_model_for_cache)
+            .await?;
+        let precomputed_alignment_segments: Vec<(usize, Vec<crate::domain::AlignedSpan>)> =
+            precomputed_alignment
+                .into_iter()
+                .map(|row| (row.segment_index, row.items))
+                .collect();
 
         let unit_store_cb = unit_store.clone();
 
@@ -105,8 +96,10 @@ impl PipelineStep for Step1AsrPipelineStep {
             precomputed_asr_segments,
             precomputed_alignment: precomputed_alignment_segments,
         };
+        let align_model_save = align_model_for_cache.clone();
         let transcribe_response = tauri::async_runtime::spawn_blocking(move || {
             let us = unit_store_cb;
+            let align_model_save = align_model_save;
             crate::services::transcribe::transcribe_blocking(
                 transcribe_request,
                 move |stage, current, total, fresh_result| {
@@ -160,8 +153,11 @@ impl PipelineStep for Step1AsrPipelineStep {
                                 segment_index,
                                 items,
                             };
+                            let align_model = align_model_save.clone();
                             block_on_runtime_worker(async {
-                                if let Err(err) = us.save_alignment_result(&row).await {
+                                if let Err(err) =
+                                    us.save_alignment_result(&align_model, &row).await
+                                {
                                     eprintln!(
                                         "[warn] step1 alignment save failed for segment {segment_index}: {err}"
                                     );
