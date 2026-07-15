@@ -107,7 +107,7 @@ where
     F: FnMut(crate::services::transcribe::asr_align::TranscribeProgressStage, usize, usize, Option<crate::services::transcribe::asr_align::FreshSegmentResult>),
 {
     let logger = TaskLogger::main_with_media(request.task_id.clone(), request.audio_path.clone());
-    let chunk_target_seconds = request.chunk_target_seconds.clamp(30, 60);
+    let chunk_target_seconds = request.chunk_target_seconds.clamp(30, 180);
     append_transcribe_log(
         &logger,
         event::TRANSCRIBE_STARTED,
@@ -303,13 +303,13 @@ fn map_transcribe_error(raw: &str, provider: &str, chunk_target_seconds: u32) ->
 
     if gpu_oom {
         return format!(
-            "Transcription failed: insufficient GPU/video memory ({}). Please reduce 'segment duration' in settings and retry (current {} seconds, recommended 30-60).",
+            "Transcription failed: insufficient GPU/video memory ({}). Please reduce 'segment duration' in settings and retry (current {} seconds, recommended 30-60 for lower VRAM).",
             if provider.eq_ignore_ascii_case("cuda") {
                 "GPU"
             } else {
                 provider
             },
-            chunk_target_seconds.clamp(30, 60)
+            chunk_target_seconds.clamp(30, 180)
         );
     }
 

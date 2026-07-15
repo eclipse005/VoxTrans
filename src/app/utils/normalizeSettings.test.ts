@@ -9,7 +9,7 @@ const DEFAULT_GROUP = { id: "group-test", name: "默认", terms: [] };
 function baseDefaults(): SavedSettings {
   return {
     provider: "cpu",
-    chunkTargetSeconds: 30,
+    chunkTargetSeconds: 60,
     subtitleLengthPreset: "standard",
     asrModel: "Qwen3-ASR-0.6B",
     alignModel: "mms-300m-1130-forced-aligner",
@@ -80,12 +80,14 @@ describe("normalizeSettings", () => {
     expect(result).toEqual(input);
   });
 
-  it("clamps chunkTargetSeconds to [30, 60]", () => {
+  it("clamps chunkTargetSeconds to [30, 180]", () => {
     const defaults = baseDefaults();
     const tooLow = normalizeSettings({ ...defaults, chunkTargetSeconds: 10 }, defaults);
     expect(tooLow.chunkTargetSeconds).toBe(30);
-    const tooHigh = normalizeSettings({ ...defaults, chunkTargetSeconds: 100 }, defaults);
-    expect(tooHigh.chunkTargetSeconds).toBe(60);
+    const mid = normalizeSettings({ ...defaults, chunkTargetSeconds: 120 }, defaults);
+    expect(mid.chunkTargetSeconds).toBe(120);
+    const tooHigh = normalizeSettings({ ...defaults, chunkTargetSeconds: 200 }, defaults);
+    expect(tooHigh.chunkTargetSeconds).toBe(180);
   });
 
   it("clamps llmConcurrency to [1, 16]", () => {
@@ -391,12 +393,12 @@ describe("normalizeSettings", () => {
       { ...defaults, chunkTargetSeconds: "forty" as unknown as number },
       defaults,
     );
-    expect(fromString.chunkTargetSeconds).toBe(30);
+    expect(fromString.chunkTargetSeconds).toBe(60);
     const fromUndefined = normalizeSettings(
       { ...defaults, chunkTargetSeconds: undefined as unknown as number },
       defaults,
     );
-    expect(fromUndefined.chunkTargetSeconds).toBe(30);
+    expect(fromUndefined.chunkTargetSeconds).toBe(60);
   });
 
   it("defaults enableSubtitleBeautify/enableClickSound to true when missing", () => {

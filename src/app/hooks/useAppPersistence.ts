@@ -21,7 +21,7 @@ type DispatchState = (action: AppAction) => void;
 
 const LAST_RESORT_DEFAULTS: SavedSettings = {
   provider: "cpu",
-  chunkTargetSeconds: 30,
+  chunkTargetSeconds: 60,
   subtitleLengthPreset: "standard",
   asrModel: "Qwen3-ASR-0.6B",
   alignModel: "mms-300m-1130-forced-aligner",

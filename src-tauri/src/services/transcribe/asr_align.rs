@@ -19,7 +19,7 @@ use super::align_engine::AlignEngine;
 /// altered — any change breaks model output alignment.
 const MOSS_OFFICIAL_EN_PROMPT: &str = "Transcribe the audio. For each segment, start with the timestamp and speaker ID ([S01], [S02], [S03], ...), then the spoken text, and end with the segment timestamp.";
 
-/// Fixed chunk target for MOSS (seconds). Larger than Qwen/Cohere's 30–60s window.
+/// Fixed chunk target for MOSS (seconds). At the top of Qwen/Cohere's 30–180s range.
 const MOSS_CHUNK_TARGET_SECONDS: f64 = 180.0;
 
 /// Default generation budget for a ~180s MOSS window (matches CLI default).
@@ -122,7 +122,7 @@ where
     let align_model = AlignModel::parse(&request.align_model);
     let chunk_target_seconds = match asr_model {
         AsrModel::MossTranscribeDiarize => MOSS_CHUNK_TARGET_SECONDS,
-        _ => request.chunk_target_seconds.clamp(30, 60) as f64,
+        _ => request.chunk_target_seconds.clamp(30, 180) as f64,
     };
     let prepare_started_at = Instant::now();
     let prepared =

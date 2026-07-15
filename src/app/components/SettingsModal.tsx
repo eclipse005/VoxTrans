@@ -163,7 +163,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
       ctx.setForm((prev) => ({ ...prev, chunkInput: "" }));
       return;
     }
-    const nextValue = Math.max(30, Math.min(60, Number.parseInt(digits, 10)));
+    const nextValue = Math.max(30, Math.min(180, Number.parseInt(digits, 10)));
     ctx.setForm((prev) => ({ ...prev, chunkInput: String(nextValue) }));
   };
 
@@ -273,12 +273,12 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                             type="number"
                             inputMode="numeric"
                             min={30}
-                            max={60}
+                            max={180}
                             value={ctx.form.chunkInput}
                             onChange={(e) => handleChunkInputChange(e.target.value)}
-                            placeholder="30 - 60"
+                            placeholder="30 - 180"
                           />
-                          <span className="bounded-number-hint">30-60</span>
+                          <span className="bounded-number-hint">30-180</span>
                         </div>
                       )}
                     </div>

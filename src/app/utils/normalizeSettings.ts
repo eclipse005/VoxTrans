@@ -50,7 +50,7 @@ export function normalizeSettings(raw: SavedSettings, defaults: SavedSettings): 
 
   return {
     provider: pickEnum(raw.provider, PROVIDERS, defaults.provider),
-    chunkTargetSeconds: clampInt(raw.chunkTargetSeconds, 30, 60, defaults.chunkTargetSeconds),
+    chunkTargetSeconds: clampInt(raw.chunkTargetSeconds, 30, 180, defaults.chunkTargetSeconds),
     subtitleLengthPreset: pickEnum(
       raw.subtitleLengthPreset,
       SUBTITLE_LENGTH_PRESETS,

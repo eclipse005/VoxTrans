@@ -852,7 +852,7 @@ mod tests {
     fn sample_settings() -> SavedSettings {
         let mut s = SavedSettings {
             provider: crate::services::preferences_types::Provider::Cpu,
-            chunk_target_seconds: 30,
+            chunk_target_seconds: 60,
             subtitle_length_preset: crate::services::preferences_types::SubtitleLengthPreset::Standard,
             asr_model: crate::services::preferences_types::AsrModel::Qwen3Asr06B,
             align_model: crate::services::preferences_types::AlignModel::Qwen3ForcedAligner06B,

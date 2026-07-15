@@ -81,7 +81,7 @@ pub fn resolve_runtime_settings(
     let saved = crate::services::preferences::load_saved_settings_from_default_path(store)?;
 
     let provider = saved.provider;
-    let chunk_target_seconds = saved.chunk_target_seconds.clamp(30, 60);
+    let chunk_target_seconds = saved.chunk_target_seconds.clamp(30, 180);
     let asr_model = saved.asr_model.as_str().to_string();
     let align_model = saved.align_model.as_str().to_string();
     let enable_vocal_separation = saved.enable_vocal_separation;

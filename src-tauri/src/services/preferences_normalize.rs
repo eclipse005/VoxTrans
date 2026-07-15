@@ -91,7 +91,7 @@ pub fn default_settings() -> SavedSettings {
         .unwrap_or_else(|| profiles[0].clone());
     SavedSettings {
         provider: Provider::Cpu,
-        chunk_target_seconds: 30,
+        chunk_target_seconds: 60,
         subtitle_length_preset: SubtitleLengthPreset::Standard,
         asr_model: AsrModel::default(),
         align_model: AlignModel::default(),
@@ -133,7 +133,7 @@ pub fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings {
 
     SavedSettings {
         provider: settings.provider,
-        chunk_target_seconds: settings.chunk_target_seconds.clamp(30, 60),
+        chunk_target_seconds: settings.chunk_target_seconds.clamp(30, 180),
         subtitle_length_preset: settings.subtitle_length_preset,
         asr_model: settings.asr_model,
         align_model: settings.align_model,
@@ -488,18 +488,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_chunk_target_seconds_is_thirty() {
-        assert_eq!(default_settings().chunk_target_seconds, 30);
+    fn default_chunk_target_seconds_is_sixty() {
+        assert_eq!(default_settings().chunk_target_seconds, 60);
     }
 
     #[test]
     fn normalize_saved_settings_clamps_chunk_target_upper_bound() {
         let mut settings = default_settings();
-        settings.chunk_target_seconds = 61;
+        settings.chunk_target_seconds = 181;
 
         let normalized = normalize_saved_settings(settings);
 
-        assert_eq!(normalized.chunk_target_seconds, 60);
+        assert_eq!(normalized.chunk_target_seconds, 180);
     }
 
     #[test]

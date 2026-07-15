@@ -227,7 +227,7 @@ mod tests {
     fn sample_settings() -> SavedSettings {
         SavedSettings {
             provider: Provider::Cpu,
-            chunk_target_seconds: 30,
+            chunk_target_seconds: 60,
             subtitle_length_preset: SubtitleLengthPreset::Standard,
             asr_model: AsrModel::Qwen3Asr06B,
             align_model: AlignModel::Qwen3ForcedAligner06B,
