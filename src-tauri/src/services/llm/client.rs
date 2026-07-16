@@ -284,7 +284,7 @@ impl OpenAiCompatLlmClient {
                             return Ok(LlmValidatedJsonResult { value });
                         }
                         Err(LlmSemanticValidationError::Retryable(message)) => {
-                            let feedback = feedback_for_semantic(message);
+                            let feedback = feedback_for_semantic(message, Some(&raw_text));
                             last_error = feedback.detail.clone();
                             last_feedback = Some(feedback.clone());
                             let backoff_ms = retry_backoff_ms(attempt, max_attempts);
@@ -342,6 +342,7 @@ impl OpenAiCompatLlmClient {
             retryable: true,
             retry_hint: None,
             detail: last_error.clone(),
+            previous_output: None,
         });
 
         let retry_hint_suffix = exhausted_feedback
