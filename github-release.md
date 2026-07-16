@@ -1,3 +1,16 @@
+## v1.3.1
+
+### 修复（重点）
+
+- **修复 CUDA 版默认 CTC 对齐在部分 N 卡上失败**（日志常见 `CUDA init failed (device 0): CudaKernels::load_all`）
+- 根因：MMS CTC 引擎预编译 PTX 缺符号（尤其 sm70–sm90，含 RTX 40 系 / sm_89），与「未下载对齐模型」无关
+- 已重生多架构 PTX 并加符号自检，避免再次发版漂移
+
+**受影响用户：** 使用 **CUDA 版 + 默认 mms-300m CTC 对齐** 的 N 卡用户（含 4060 笔电）。自动更新到 1.3.1 即可；无需重装驱动 / CUDA Toolkit。
+
+临时绕过（未更新前）：设置里改用 **Qwen3-ForcedAligner**，或执行后端改 **CPU**。
+
+---
 ## v1.3.0
 
 自 v1.2.1 起的功能更新。
