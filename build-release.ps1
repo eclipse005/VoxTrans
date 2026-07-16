@@ -20,14 +20,16 @@ function Update-FileContent {
     [string]$Pattern
   )
 
-  $content = Get-Content -LiteralPath $Path -Raw
+  # Read/write as UTF-8 without BOM so Cargo.toml and JSON stay valid for Rust/Node.
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  $content = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $Path), $utf8NoBom)
   if (-not [regex]::IsMatch($content, $Pattern, [System.Text.RegularExpressions.RegexOptions]::Multiline)) {
     throw "Version field not found in: $Path"
   }
   $replacement = '${1}' + $Version + '${2}'
   $updated = [regex]::Replace($content, $Pattern, $replacement, [System.Text.RegularExpressions.RegexOptions]::Multiline)
   if ($updated -ne $content) {
-    Set-Content -LiteralPath $Path -Value $updated -NoNewline
+    [System.IO.File]::WriteAllText((Resolve-Path -LiteralPath $Path), $updated, $utf8NoBom)
   }
 }
 
