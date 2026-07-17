@@ -100,3 +100,19 @@ export async function updateTaskLanguages(request: UpdateTaskLanguagesRequest): 
 export async function updateTaskTerminology(request: UpdateTaskTerminologyRequest): Promise<void> {
   await invoke("update_task_terminology", { request });
 }
+
+export async function updateTaskReviewFlags(request: {
+  taskId: string;
+  reviewSource?: boolean;
+  reviewTarget?: boolean;
+}): Promise<QueueItem> {
+  return invoke<QueueItem>("update_task_review_flags", { request });
+}
+
+export async function resumeTaskAfterReview(request: {
+  taskId: string;
+  action: "continue" | "finalize" | "finalize_source_only";
+  subtitleSegmentsJson?: string;
+}): Promise<void> {
+  await invoke("resume_task_after_review", { request });
+}

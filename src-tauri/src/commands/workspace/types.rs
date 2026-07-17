@@ -22,6 +22,15 @@ pub struct WorkspaceQueueItem {
     pub llm_total_tokens: u64,
     #[serde(default)]
     pub terminology_group_id: String,
+    /// Pause after source cues are ready (before terminology). Task-effective.
+    #[serde(default)]
+    pub review_source: bool,
+    /// Pause after translation (before SRT/burn deliver). Task-effective.
+    #[serde(default)]
+    pub review_target: bool,
+    /// Mid-pipeline resume marker for the worker: "" | "translate".
+    #[serde(default)]
+    pub resume_from: String,
 }
 
 fn default_source_lang() -> String {

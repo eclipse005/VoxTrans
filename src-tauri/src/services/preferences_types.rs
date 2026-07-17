@@ -365,6 +365,12 @@ pub struct SavedSettings {
     pub enable_click_sound: bool,
     #[serde(default)]
     pub auto_burn_hard_subtitle: bool,
+    /// When adding a task, seed `review_source` from this default.
+    #[serde(default)]
+    pub default_review_source: bool,
+    /// When adding a task, seed `review_target` from this default.
+    #[serde(default)]
+    pub default_review_target: bool,
     #[serde(default = "default_subtitle_burn_mode")]
     pub subtitle_burn_mode: SubtitleBurnMode,
     #[serde(default)]

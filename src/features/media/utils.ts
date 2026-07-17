@@ -44,6 +44,8 @@ export function statusLabel(status: QueueStatus): string {
   if (status === "pending") return "common:status.pending";
   if (status === "queued") return "common:status.queued";
   if (status === "processing") return "common:status.processing";
+  if (status === "review_source") return "common:status.reviewSource";
+  if (status === "review_target") return "common:status.reviewTarget";
   if (status === "done") return "common:status.done";
   return "common:status.failed";
 }

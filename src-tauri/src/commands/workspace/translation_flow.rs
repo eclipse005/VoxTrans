@@ -1,23 +1,21 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
-use crate::commands::translate_types::BuildTranslationSegmentCommand;
 use crate::db::store::TaskStore;
 use crate::domain::error::WorkspaceResult;
-use crate::domain::task::adapters::{
-    map_step2_segments_for_translate,
-    workspace_subtitle_segments_from_translation_segments,
-};
-use crate::domain::task::runtime_settings::PipelineRuntimeSettings;
+use crate::domain::task::adapters::map_step2_segments_for_translate;
+use crate::domain::task::runtime_settings::{resolve_runtime_settings, PipelineRuntimeSettings};
 use crate::services::pipeline::{StepContext, StepSource};
 
-use super::output_completion::finish_translate_with_step5;
+use super::output_completion::deliver_from_sot;
 use super::pipeline_runner::execute_workspace_step;
 use super::pipeline_steps::{
     Step3TerminologyPipelineStep, Step4TranslationPipelineStep,
 };
-use super::preview::update_subtitle_preview;
 use super::progress::report_task_stage;
-use super::{TaskStage, WorkspaceTaskRecord};
+use super::review_flow::{
+    enter_review_target, materialize_target_sot, read_task_review_flags,
+};
+use super::{TaskStage, WorkspaceTaskRecord, get_task_record, normalize_task_target_lang};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn execute_translate_steps(
@@ -92,55 +90,60 @@ pub(super) async fn execute_translate_steps(
     if step4_exec.source == StepSource::Cache {
         report_task_stage(app, task_id, TaskStage::Translating, "step_cache_hit", 1, 1).await?;
     }
-    update_subtitle_preview(
+
+    // Materialize target SoT once (publishes JSON+DB), then checkpoint T or deliver.
+    let workspace_segments = materialize_target_sot(
         app,
         task_id,
+        &step4_exec.output.segments,
         &source_text,
-        workspace_subtitle_segments_from_translation_segments(&step4_exec.output.segments),
+        record.frozen.enable_subtitle_beautify,
+        record.frozen.subtitle_length_preset.as_str(),
+        &target_lang,
     )
     .await?;
 
-    // Step 5 (LLM split/align) was removed: sentence_boundary already
-    // segments to subtitle length and step4 translates each 1:1, so rows
-    // are already the right length and zero-leak. Eval confirmed step5
-    // had no measurable quality effect (identical row count and
-    // length/CPS distribution on/off). The dead code, DB table, and
-    // UnitStore methods were removed; `finalize_translate_with_step5`
-    // kept its name for minimal diff churn but only does beautify + SRT.
-    finalize_translate_with_step5(
-        app,
-        task_id,
-        record,
-        &target_lang,
-        &step4_exec.output.segments,
-        source_text,
-        record.frozen.enable_subtitle_beautify,
-        record.frozen.subtitle_length_preset.as_str(),
-    )
-    .await
-}
+    let (_, review_target) = read_task_review_flags(task_id).await?;
+    if review_target {
+        enter_review_target(app, task_id).await?;
+        return Ok(());
+    }
 
-#[allow(clippy::too_many_arguments)]
-async fn finalize_translate_with_step5(
-    app: &AppHandle,
-    task_id: &str,
-    record: &WorkspaceTaskRecord,
-    target_lang: &str,
-    segments: &[BuildTranslationSegmentCommand],
-    source_text: String,
-    enable_subtitle_beautify: bool,
-    subtitle_length_preset: &str,
-) -> WorkspaceResult<()> {
-    finish_translate_with_step5(
+    deliver_from_sot(
         app,
         task_id,
         &record.item.path,
         &record.item.media_kind,
-        segments,
-        source_text,
-        enable_subtitle_beautify,
-        subtitle_length_preset,
-        target_lang,
+        &workspace_segments,
+        true,
+        &source_text,
     )
     .await
 }
+
+/// Resume translation from current SoT-derived step2 segments (after source review).
+pub(super) async fn execute_translate_steps_from_step2(
+    app: &AppHandle,
+    task_id: &str,
+    step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
+    source_text: String,
+) -> WorkspaceResult<()> {
+    let record = get_task_record(task_id)?;
+    let store = app.state::<TaskStore>().inner();
+    let runtime = resolve_runtime_settings(store, &record.frozen, true)?;
+    let source_lang = record.source_lang.clone();
+    let target_lang = normalize_task_target_lang(&record.target_lang);
+    execute_translate_steps(
+        app,
+        task_id,
+        &record,
+        runtime,
+        source_lang,
+        target_lang,
+        step2_segments,
+        source_text,
+        store,
+    )
+    .await
+}
+

@@ -13,6 +13,7 @@ mod pipeline_steps;
 mod preview;
 mod progress;
 mod queue_ops;
+mod review_flow;
 mod store;
 mod task_logs;
 mod translation_flow;
@@ -103,6 +104,24 @@ pub async fn update_task_terminology(
     request: UpdateTaskTerminologyCommandRequest,
 ) -> Result<(), String> {
     Ok(update_task_terminology_internal(&app, request).await?)
+}
+
+#[tauri::command]
+pub async fn update_task_review_flags(
+    app: AppHandle,
+    request: review_flow::UpdateTaskReviewFlagsRequest,
+) -> Result<WorkspaceQueueItem, String> {
+    ensure_workspace_hydrated_from_db(&app).await?;
+    Ok(review_flow::update_task_review_flags_internal(&app, request).await?)
+}
+
+#[tauri::command]
+pub async fn resume_task_after_review(
+    app: AppHandle,
+    request: review_flow::ResumeTaskAfterReviewRequest,
+) -> Result<(), String> {
+    ensure_workspace_hydrated_from_db(&app).await?;
+    Ok(review_flow::resume_task_after_review_internal(&app, request).await?)
 }
 
 #[tauri::command]

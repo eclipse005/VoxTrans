@@ -45,6 +45,9 @@ type TaskStateChangedEvent = {
   resultSrt: string;
   subtitleSegmentsJson: string;
   terminologyGroupId?: string;
+  reviewSource?: boolean;
+  reviewTarget?: boolean;
+  resumeFrom?: string;
 };
 
 export function stageOrder(stage: Partial<TaskStageProgress> | null | undefined): number {
@@ -99,8 +102,23 @@ export function mergeTaskStateChanged(current: QueueItem, payload: TaskStateChan
     transcribeError: payload.transcribeError || "",
     resultText: payload.resultText || "",
     resultSrt: payload.resultSrt || "",
-    subtitleSegmentsJson: payload.subtitleSegmentsJson || "",
+    // Prefer payload JSON when present (including "[]"); only fall back if
+    // the field is missing so a partial-shaped event cannot wipe a stream.
+    subtitleSegmentsJson: typeof payload.subtitleSegmentsJson === "string"
+      ? payload.subtitleSegmentsJson
+      : (current.subtitleSegmentsJson || ""),
     terminologyGroupId: payload.terminologyGroupId || current.terminologyGroupId,
+    // Task-level review flags: prefer event payload, else keep current so
+    // progress ticks never wipe checkboxes the user already set.
+    reviewSource: typeof payload.reviewSource === "boolean"
+      ? payload.reviewSource
+      : Boolean(current.reviewSource),
+    reviewTarget: typeof payload.reviewTarget === "boolean"
+      ? payload.reviewTarget
+      : Boolean(current.reviewTarget),
+    resumeFrom: typeof payload.resumeFrom === "string"
+      ? payload.resumeFrom
+      : (current.resumeFrom ?? ""),
   };
 }
 

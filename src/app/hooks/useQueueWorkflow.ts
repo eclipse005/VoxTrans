@@ -28,6 +28,7 @@ type UseQueueWorkflowArgs = {
   dispatch: DispatchState;
   pushToast: PushToast;
   activeTerminologyGroupId: string;
+  getReviewFlushJson?: (taskId: string) => string | undefined;
 };
 
 export function useQueueWorkflow({
@@ -35,6 +36,7 @@ export function useQueueWorkflow({
   dispatch,
   pushToast,
   activeTerminologyGroupId,
+  getReviewFlushJson,
 }: UseQueueWorkflowArgs) {
   const { t } = useTranslation(["tasks", "toasts"]);
   const queueRef = useRef(queue);
@@ -74,6 +76,7 @@ export function useQueueWorkflow({
     dispatch,
     pushToast,
     runQueuedByTaskIds,
+    getReviewFlushJson,
   });
 
   const {

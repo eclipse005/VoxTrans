@@ -76,6 +76,9 @@ function normalizeQueueItem(item: QueueItem): QueueItem {
     subtitleSegmentsJson: normalizeSubtitleSegmentsJson(item.subtitleSegmentsJson),
     terminologyGroupId:
       typeof item.terminologyGroupId === "string" ? item.terminologyGroupId : "",
+    reviewSource: Boolean(item.reviewSource),
+    reviewTarget: Boolean(item.reviewTarget),
+    resumeFrom: typeof item.resumeFrom === "string" ? item.resumeFrom : "",
   });
 }
 

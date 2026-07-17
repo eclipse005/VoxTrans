@@ -76,56 +76,102 @@ pub async fn init_pool(app: &tauri::AppHandle) -> Result<SqlitePool, String> {
 
     // Hand-written idempotent ALTERs for columns added after the initial
     // schema. SQLite doesn't support `ADD COLUMN IF NOT EXISTS`, so we use
-    // `PRAGMA table_info(settings)` to skip columns that already exist.
-    for stmt in MIGRATION_ALTERS {
-        let column_name = parse_settings_column_name(stmt)
-            .ok_or_else(|| format!("migration statement does not target a settings column: {stmt}"))?;
-        if has_settings_column(&pool, &column_name).await? {
+    // `PRAGMA table_info(<table>)` to skip columns that already exist.
+    for mig in MIGRATION_ALTERS {
+        if has_table_column(&pool, mig.table, mig.column).await? {
             continue;
         }
-        if let Err(e) = sqlx::query(stmt).execute(&pool).await {
-            return Err(format!("failed to apply migration `{stmt}`: {e}"));
+        if let Err(e) = sqlx::query(mig.sql).execute(&pool).await {
+            return Err(format!("failed to apply migration `{}`: {e}", mig.sql));
         }
     }
 
     Ok(pool)
 }
 
-/// Hand-written ALTER statements run after SCHEMA_SQL. Each is made idempotent
-/// by the `has_settings_column` PRAGMA pre-check in `init_pool` (which skips a
-/// statement if its target column already exists) — NOT by error suppression.
-/// Add columns introduced after the initial schema here.
-const MIGRATION_ALTERS: &[&str] = &[
-    "ALTER TABLE settings ADD COLUMN enable_vision_assist INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE settings ADD COLUMN locale TEXT NOT NULL DEFAULT 'zh-CN'",
-    "ALTER TABLE settings ADD COLUMN models_dir TEXT",
-    "ALTER TABLE settings ADD COLUMN llm_profiles_json TEXT NOT NULL DEFAULT '[]'",
-    "ALTER TABLE settings ADD COLUMN active_llm_profile_id TEXT NOT NULL DEFAULT 'deepseek'",
-];
-
-/// Parse the column name from an `ALTER TABLE settings ADD COLUMN <name> ...`
-/// statement. Returns `None` if the statement doesn't match the expected shape.
-fn parse_settings_column_name(sql: &str) -> Option<String> {
-    let lower = sql.to_lowercase();
-    let after_add_column = lower
-        .split_once("add column")
-        .map(|(_, rest)| rest.trim())?;
-    let column_name = after_add_column
-        .split_whitespace()
-        .next()?;
-    Some(column_name.to_string())
+struct MigrationAlter {
+    table: &'static str,
+    column: &'static str,
+    sql: &'static str,
 }
 
-/// Check whether `settings` already has a column named `column_name`.
-async fn has_settings_column(pool: &SqlitePool, column_name: &str) -> Result<bool, String> {
+/// Hand-written ALTER statements run after SCHEMA_SQL. Each is made idempotent
+/// by the `has_table_column` PRAGMA pre-check in `init_pool` (which skips a
+/// statement if its target column already exists) — NOT by error suppression.
+/// Add columns introduced after the initial schema here.
+const MIGRATION_ALTERS: &[MigrationAlter] = &[
+    MigrationAlter {
+        table: "settings",
+        column: "enable_vision_assist",
+        sql: "ALTER TABLE settings ADD COLUMN enable_vision_assist INTEGER NOT NULL DEFAULT 0",
+    },
+    MigrationAlter {
+        table: "settings",
+        column: "locale",
+        sql: "ALTER TABLE settings ADD COLUMN locale TEXT NOT NULL DEFAULT 'zh-CN'",
+    },
+    MigrationAlter {
+        table: "settings",
+        column: "models_dir",
+        sql: "ALTER TABLE settings ADD COLUMN models_dir TEXT",
+    },
+    MigrationAlter {
+        table: "settings",
+        column: "llm_profiles_json",
+        sql: "ALTER TABLE settings ADD COLUMN llm_profiles_json TEXT NOT NULL DEFAULT '[]'",
+    },
+    MigrationAlter {
+        table: "settings",
+        column: "active_llm_profile_id",
+        sql: "ALTER TABLE settings ADD COLUMN active_llm_profile_id TEXT NOT NULL DEFAULT 'deepseek'",
+    },
+    MigrationAlter {
+        table: "settings",
+        column: "default_review_source",
+        sql: "ALTER TABLE settings ADD COLUMN default_review_source INTEGER NOT NULL DEFAULT 0",
+    },
+    MigrationAlter {
+        table: "settings",
+        column: "default_review_target",
+        sql: "ALTER TABLE settings ADD COLUMN default_review_target INTEGER NOT NULL DEFAULT 0",
+    },
+    MigrationAlter {
+        table: "tasks",
+        column: "review_source",
+        sql: "ALTER TABLE tasks ADD COLUMN review_source INTEGER NOT NULL DEFAULT 0",
+    },
+    MigrationAlter {
+        table: "tasks",
+        column: "review_target",
+        sql: "ALTER TABLE tasks ADD COLUMN review_target INTEGER NOT NULL DEFAULT 0",
+    },
+    MigrationAlter {
+        table: "tasks",
+        column: "resume_from",
+        sql: "ALTER TABLE tasks ADD COLUMN resume_from TEXT NOT NULL DEFAULT ''",
+    },
+];
+
+/// Check whether `table` already has a column named `column_name`.
+async fn has_table_column(
+    pool: &SqlitePool,
+    table: &str,
+    column_name: &str,
+) -> Result<bool, String> {
+    // Only allow known tables — PRAGMA table_name cannot be bound as a parameter.
+    let pragma = match table {
+        "settings" => "PRAGMA table_info(settings)",
+        "tasks" => "PRAGMA table_info(tasks)",
+        other => {
+            return Err(format!("migration targets unsupported table: {other}"));
+        }
+    };
     // PRAGMA table_info returns (cid, name, type, notnull, dflt_value, pk).
     // We only need the `name` column at index 1.
-    let rows = sqlx::query_as::<_, (i64, String, String, i64, Option<String>, i64)>(
-        "PRAGMA table_info(settings)",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("failed to read settings schema: {e}"))?;
+    let rows = sqlx::query_as::<_, (i64, String, String, i64, Option<String>, i64)>(pragma)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("failed to read {table} schema: {e}"))?;
     Ok(rows.into_iter().any(|row| row.1 == column_name))
 }
 

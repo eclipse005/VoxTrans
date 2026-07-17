@@ -2,13 +2,16 @@ import type { QueueItem, TranscribeStatus } from "./types";
 
 /**
  * Transcribe queue state machine:
- * pending -> queued -> processing -> (done | error)
+ * pending -> queued -> processing -> (review_source | review_target | done | error)
+ * review_* -> queued | processing | done | error
  * done/error -> queued (manual re-run)
  */
 const TRANSCRIBE_STATUS_TRANSITIONS = {
   pending: ["queued"],
   queued: ["processing"],
-  processing: ["done", "error"],
+  processing: ["review_source", "review_target", "done", "error"],
+  review_source: ["queued", "processing", "done", "error"],
+  review_target: ["queued", "processing", "done", "error"],
   done: ["queued"],
   error: ["queued"],
 } as const satisfies Record<TranscribeStatus, readonly TranscribeStatus[]>;
@@ -39,6 +42,18 @@ type QueueStatusPayloads = {
     QueueItem,
     | "taskProgress"
     | "transcribeError"
+  >;
+  review_source: Pick<
+    QueueItem,
+    | "taskProgress"
+    | "transcribeError"
+    | "subtitleSegmentsJson"
+  >;
+  review_target: Pick<
+    QueueItem,
+    | "taskProgress"
+    | "transcribeError"
+    | "subtitleSegmentsJson"
   >;
   done: Pick<
     QueueItem,

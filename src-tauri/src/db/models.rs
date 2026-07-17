@@ -38,6 +38,10 @@ pub struct SettingsRow {
     pub enable_vision_assist: bool,
     pub locale: String,
     pub models_dir: Option<String>,
+    #[sqlx(default)]
+    pub default_review_source: bool,
+    #[sqlx(default)]
+    pub default_review_target: bool,
     pub updated_at: i64,
 }
 
@@ -79,6 +83,15 @@ pub struct TaskRow {
     /// Per-task selected terminology group id ("" = none). The matching
     /// group's terms are frozen into `terminology_groups_json` at enqueue.
     pub terminology_group_id: String,
+    /// Effective source-review gate (seeded from settings on create).
+    #[sqlx(default)]
+    pub review_source: bool,
+    /// Effective target-review gate (seeded from settings on create).
+    #[sqlx(default)]
+    pub review_target: bool,
+    /// Mid-pipeline resume marker: "" | "translate".
+    #[sqlx(default)]
+    pub resume_from: String,
     /// 入队顺序，单调递增；只在 INSERT 时赋值，ON CONFLICT 不更新。
     /// `load_all_tasks` 按 `ORDER BY enqueue_seq ASC` 返回稳定顺序。
     pub enqueue_seq: i64,

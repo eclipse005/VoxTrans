@@ -26,6 +26,8 @@ function baseDefaults(): SavedSettings {
     enableSubtitleBeautify: true,
     enableClickSound: true,
     autoBurnHardSubtitle: false,
+    defaultReviewSource: false,
+    defaultReviewTarget: false,
     subtitleBurnMode: "bilingualSourceFirst",
     subtitleRenderStyle: {
       source: {

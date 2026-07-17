@@ -23,7 +23,10 @@
     "clear": "Clear",
     "translate": "Translate",
     "transcribe": "Transcribe",
-    "delete": "Delete"
+    "delete": "Delete",
+    "continueTranslation": "Continue translation",
+    "finalize": "Finalize",
+    "startTranslation": "Start translation"
   },
   "confirm": {
     "clearTitle": "Clear task list?",

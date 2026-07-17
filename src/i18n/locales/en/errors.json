@@ -28,6 +28,8 @@
     "summarizing": "Summarizing",
     "terminology": "Extracting terminology",
     "translating": "Translating",
+    "subtitleLayout": "Laying out subtitles",
+    "burning": "Burning subtitles",
     "finalCheck": "Final local check"
   }
 }

@@ -21,6 +21,7 @@ import { saveAppSettings } from "./api/settings";
 import { type AppAction, appReducer, initialAppState, type AppState } from "./state/appReducer";
 import { SettingsFormContext } from "./contexts/SettingsFormContext";
 import type { SavedSettings } from "../features/media/types";
+import { buildSubtitleSegmentsFromCues } from "../features/media/subtitleSegments";
 
 const SUBTITLE_EXPORT_ITEMS_KEY = "voxtrans.subtitleExportItems.v1";
 const ALL_EXPORT_ITEMS: ExportSrtItem[] = [
@@ -119,6 +120,8 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     dispatch,
   });
 
+  const reviewFlushRef = useRef<(taskId: string) => string | undefined>(() => undefined);
+
   const {
     queueCount,
     queueBusy,
@@ -140,6 +143,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     dispatch,
     pushToast,
     activeTerminologyGroupId: settings.activeTerminologyGroupId,
+    getReviewFlushJson: (taskId) => reviewFlushRef.current(taskId),
   });
 
   const {
@@ -163,6 +167,12 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     dispatch,
     pushToast,
   });
+
+  // Advance-from-review flushes the open editor SoT for that task (click-time).
+  reviewFlushRef.current = (taskId: string) => {
+    if (taskId !== subtitleTaskId || subtitleCues.length === 0) return undefined;
+    return JSON.stringify(buildSubtitleSegmentsFromCues(subtitleCues));
+  };
 
   const activeQueueItem = useMemo(
     () => queue.find((item) => item.id === activeId) ?? null,

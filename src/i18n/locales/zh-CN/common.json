@@ -15,6 +15,8 @@
     "pending": "待处理",
     "queued": "排队中",
     "processing": "处理中",
+    "reviewSource": "待审源稿",
+    "reviewTarget": "待审译稿",
     "done": "已完成",
     "failed": "失败"
   },

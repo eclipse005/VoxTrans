@@ -10,6 +10,13 @@
     "subtitle": "字幕",
     "models": "模型"
   },
+  "review": {
+    "defaultSource": "默认源稿审核",
+    "defaultSourceDesc": "转译时，识别后、翻译前暂停改原文",
+    "defaultTarget": "默认译稿审核",
+    "defaultTargetDesc": "转译时，翻译后暂停改译文",
+    "defaultsFootnote": "仅对新任务生效；可在字幕编辑器中按任务单独开关。"
+  },
   "transcribe": {
     "params": "转录参数",
     "device": "执行设备",
@@ -51,7 +58,7 @@
     "flatSrtBilingualSourceFirst": "双语（原文上）",
     "flatSrtBilingualTargetFirst": "双语（译文上）",
     "autoBurn": "自动压制",
-    "autoBurnDesc": "仅视频任务生效",
+    "autoBurnDesc": "任务定稿时将字幕烧录到视频。若启用了译稿审核，将在确认译稿后再压制。",
     "beautify": "美化字幕",
     "beautifyDesc": "去首尾标点与观感优化",
     "burnMode": "字幕类型",

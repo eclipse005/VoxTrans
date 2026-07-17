@@ -459,7 +459,7 @@ export default function MediaList({
                   ) : primaryStatus === "processing" ? (
                     <span className="task-status status-processing">{t("tasks:stage.preparing")}</span>
                   ) : (
-                    <span className={`task-status status-${primaryStatus}`}>
+                    <span className={`task-status status-${String(primaryStatus).replace(/_/g, "-")}`}>
                       {t(statusLabel(primaryStatus))}
                     </span>
                   )}
@@ -582,11 +582,25 @@ export default function MediaList({
                     </div>
                   </div>
                   <div className="file-actions">
+                    {(() => {
+                      const translateLabel = item.transcribeStatus === "review_source"
+                        ? (kind === "subtitle"
+                          ? t("tasks:action.startTranslation")
+                          : t("tasks:action.continueTranslation"))
+                        : item.transcribeStatus === "review_target"
+                          ? t("tasks:action.finalize")
+                          : t("tasks:action.translate");
+                      const transcribeLabel = item.transcribeStatus === "review_source"
+                        || item.transcribeStatus === "review_target"
+                        ? t("tasks:action.finalize")
+                        : t("tasks:action.transcribe");
+                      return (
+                        <>
                     <button
                       className="file-action-btn"
-                      title={t("tasks:action.translate")}
-                      aria-label={t("tasks:action.translate")}
-                      disabled={item.transcribeStatus === "processing"}
+                      title={translateLabel}
+                      aria-label={translateLabel}
+                      disabled={item.transcribeStatus === "processing" || item.transcribeStatus === "queued"}
                       onClick={(event) => { event.stopPropagation(); void onProcessSingleTranscribeTranslate(item); }}
                     >
                       <TranslateIcon />
@@ -594,14 +608,17 @@ export default function MediaList({
                     {kind === "subtitle" ? null : (
                       <button
                         className="file-action-btn"
-                        title={t("tasks:action.transcribe")}
-                        aria-label={t("tasks:action.transcribe")}
-                        disabled={item.transcribeStatus === "processing"}
+                        title={transcribeLabel}
+                        aria-label={transcribeLabel}
+                        disabled={item.transcribeStatus === "processing" || item.transcribeStatus === "queued"}
                         onClick={(event) => { event.stopPropagation(); void onProcessSingle(item); }}
                       >
                         <MicIcon />
                       </button>
                     )}
+                        </>
+                      );
+                    })()}
                     <button
                       className="file-action-btn delete"
                       title={t("tasks:action.delete")}

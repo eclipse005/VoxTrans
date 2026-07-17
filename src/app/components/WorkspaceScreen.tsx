@@ -1,7 +1,10 @@
+import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import type { AppAction } from "../state/appReducer";
 import type { QueueItem, SubtitleCue } from "../../features/media/types";
 import type { QueueBatchMode } from "../hooks/queue/useQueueScheduler";
+import { updateTaskReviewFlags } from "../api/workspace";
+import { reportError, toUserErrorMessage } from "../utils/errors";
 import MediaList from "./MediaList";
 import SubtitleEditorModal from "./SubtitleEditorModal";
 import UploadPanel from "./UploadPanel";
@@ -91,7 +94,7 @@ export function WorkspaceScreen({
   onOpenSubtitleExport,
   onOpenLogs,
 }: WorkspaceScreenProps) {
-  const { t } = useTranslation(["tasks"]);
+  const { t } = useTranslation(["tasks", "subtitles", "toasts"]);
   // Single source of truth for editor status strings, derived from task
   // state. Keeps the editor components presentational (they just render
   // these) instead of each guessing wording from a boolean.
@@ -106,6 +109,49 @@ export function WorkspaceScreen({
     : isProcessing
       ? t("tasks:editor.emptyProcessing")
       : t("tasks:editor.emptyDone");
+  const reviewBanner = activeItem?.transcribeStatus === "review_source"
+    ? t("subtitles:review.bannerSource")
+    : activeItem?.transcribeStatus === "review_target"
+      ? t("subtitles:review.bannerTarget")
+      : "";
+
+  const onToggleReviewSource = useCallback(async (value: boolean) => {
+    if (!activeItem) return;
+    try {
+      const updated = await updateTaskReviewFlags({ taskId: activeItem.id, reviewSource: value });
+      dispatch({
+        type: "patch_queue_item",
+        id: activeItem.id,
+        updater: (item) => ({
+          ...item,
+          reviewSource: updated.reviewSource ?? value,
+          reviewTarget: updated.reviewTarget ?? item.reviewTarget,
+        }),
+      });
+    } catch (error) {
+      reportError(error, "updateTaskReviewFlags");
+      pushToast(toUserErrorMessage(error, t("toasts:queue.enqueueFailed")), "error");
+    }
+  }, [activeItem, dispatch, pushToast, t]);
+
+  const onToggleReviewTarget = useCallback(async (value: boolean) => {
+    if (!activeItem) return;
+    try {
+      const updated = await updateTaskReviewFlags({ taskId: activeItem.id, reviewTarget: value });
+      dispatch({
+        type: "patch_queue_item",
+        id: activeItem.id,
+        updater: (item) => ({
+          ...item,
+          reviewSource: updated.reviewSource ?? item.reviewSource,
+          reviewTarget: updated.reviewTarget ?? value,
+        }),
+      });
+    } catch (error) {
+      reportError(error, "updateTaskReviewFlags");
+      pushToast(toUserErrorMessage(error, t("toasts:queue.enqueueFailed")), "error");
+    }
+  }, [activeItem, dispatch, pushToast, t]);
 
   return (
     <main className="apple-container apple-section">
@@ -156,6 +202,11 @@ export function WorkspaceScreen({
             taskName={subtitleTaskName}
             cues={subtitleCues}
             cueWarningsById={subtitleCueWarnings}
+            reviewSource={Boolean(activeItem?.reviewSource)}
+            reviewTarget={Boolean(activeItem?.reviewTarget)}
+            reviewBanner={reviewBanner}
+            onToggleReviewSource={activeItem ? onToggleReviewSource : undefined}
+            onToggleReviewTarget={activeItem ? onToggleReviewTarget : undefined}
             onUpdateCue={onUpdateCue}
             onAddCueAfter={onAddCueAfter}
             onMergeSelected={onMergeSelected}

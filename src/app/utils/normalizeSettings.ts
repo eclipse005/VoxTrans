@@ -73,6 +73,8 @@ export function normalizeSettings(raw: SavedSettings, defaults: SavedSettings): 
     enableSubtitleBeautify: raw.enableSubtitleBeautify ?? true,
     enableClickSound: raw.enableClickSound ?? true,
     autoBurnHardSubtitle: Boolean(raw.autoBurnHardSubtitle),
+    defaultReviewSource: Boolean(raw.defaultReviewSource),
+    defaultReviewTarget: Boolean(raw.defaultReviewTarget),
     subtitleBurnMode: pickEnum(raw.subtitleBurnMode, SUBTITLE_BURN_MODES, defaults.subtitleBurnMode),
     subtitleRenderStyle: normalizeSubtitleRenderStyle(raw.subtitleRenderStyle, defaults.subtitleRenderStyle),
     flatSrtOutput: Boolean(raw.flatSrtOutput),

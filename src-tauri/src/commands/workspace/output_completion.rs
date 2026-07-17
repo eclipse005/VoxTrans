@@ -2,13 +2,8 @@ use std::path::Path;
 
 use tauri::{AppHandle, Manager};
 
-use crate::commands::translate_types::BuildTranslationSegmentCommand;
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
-use crate::domain::task::adapters::{
-    workspace_subtitle_segments_from_step2_segments,
-    workspace_subtitle_segments_from_translation_segments,
-};
 use crate::services::preferences::load_saved_settings_from_default_path;
 use crate::services::subtitle_render::{BurnHardSubtitleRequest, burn_hard_subtitle};
 use crate::services::task_log::TaskLogger;
@@ -26,7 +21,7 @@ fn parse_segments(
     serde_json::from_str(json).unwrap_or_default()
 }
 
-async fn persist_segments_to_db(
+pub(super) async fn persist_workspace_segments(
     app: &AppHandle,
     task_id: &str,
     subtitle_segments_json: &str,
@@ -39,110 +34,39 @@ async fn persist_segments_to_db(
         .map_err(|e| WorkspaceError::TaskFailed(format!("persist segments {task_id}: {e}")))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn finish_transcribe_only(
+/// Deliver formal SRT (+ optional hardsub) from current SoT segments and mark done.
+pub(super) async fn deliver_from_sot(
     app: &AppHandle,
     task_id: &str,
     media_path: &str,
     media_kind: &str,
-    step2_segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
-    step2_srt: String,
-    source_text: String,
-    enable_subtitle_beautify: bool,
-    subtitle_length_preset: &str,
-    target_lang: &str,
+    segments: &[WorkspaceSubtitleSegment],
+    include_translation_variants: bool,
+    source_text: &str,
 ) -> WorkspaceResult<()> {
-    let mut workspace_segments = workspace_subtitle_segments_from_step2_segments(step2_segments);
-    // Centralized beautify: SRT files, DB rows, and the in-app subtitle
-    // editor all consume the same beautified segments. Doing it here
-    // (instead of inside the SRT writer) keeps editor output and
-    // exported SRTs consistent.
-    if enable_subtitle_beautify {
-        crate::services::subtitle_beautify::beautify_workspace_segments(
-            &mut workspace_segments,
-            subtitle_length_preset,
-            target_lang,
-        );
-    }
-    let subtitle_segments_json = serialize_segments(&workspace_segments);
+    let subtitle_segments_json = serialize_segments(segments);
     let store = app.state::<TaskStore>().inner();
     write_completion_srts(
         store,
         task_id,
         media_path,
         media_kind,
-        &workspace_segments,
-        false,
+        segments,
+        include_translation_variants,
     )?;
-
-    // Write segments to DB BEFORE marking the task done. If segments
-    // fail, the task stays in its previous status and the next restart
-    // will recover it as orphan-processing -> error rather than seeing
-    // a "done" task with an empty segments table.
-    persist_segments_to_db(app, task_id, &subtitle_segments_json).await?;
-
-    // Auto burn-in is a live setting (user-toggleable), gated to video
-    // tasks. It runs after the segments are persisted but before marking
-    // done so the "burning" stage is visible. Failures never fail the task
-    // — subtitles/SRT are already complete; burning is an add-on.
-    maybe_burn_hard_subtitle(app, task_id, media_path, media_kind, &workspace_segments).await;
+    persist_workspace_segments(app, task_id, &subtitle_segments_json).await?;
+    maybe_burn_hard_subtitle(app, task_id, media_path, media_kind, segments).await;
 
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_status = "done".to_string();
         task.item.task_progress = done_task_progress_state();
         task.item.transcribe_error = String::new();
-        task.item.result_text = source_text.clone();
-        task.item.result_srt = step2_srt.clone();
-        task.item.subtitle_segments_json = subtitle_segments_json.clone();
-    })
-    .await?;
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn finish_translate_with_step5(
-    app: &AppHandle,
-    task_id: &str,
-    media_path: &str,
-    media_kind: &str,
-    segments: &[BuildTranslationSegmentCommand],
-    source_text: String,
-    enable_subtitle_beautify: bool,
-    subtitle_length_preset: &str,
-    target_lang: &str,
-) -> WorkspaceResult<()> {
-    let mut workspace_segments = workspace_subtitle_segments_from_translation_segments(segments);
-    // See finish_transcribe_only for the centralized beautify rationale.
-    if enable_subtitle_beautify {
-        crate::services::subtitle_beautify::beautify_workspace_segments(
-            &mut workspace_segments,
-            subtitle_length_preset,
-            target_lang,
-        );
-    }
-    let subtitle_segments_json = serialize_segments(&workspace_segments);
-    let store = app.state::<TaskStore>().inner();
-    write_completion_srts(
-        store,
-        task_id,
-        media_path,
-        media_kind,
-        &workspace_segments,
-        true,
-    )?;
-
-    // See `finish_transcribe_only` for the ordering rationale.
-    persist_segments_to_db(app, task_id, &subtitle_segments_json).await?;
-
-    // See finish_transcribe_only for the burn rationale and ordering.
-    maybe_burn_hard_subtitle(app, task_id, media_path, media_kind, &workspace_segments).await;
-
-    patch_task_item(app, task_id, |task| {
-        task.item.transcribe_status = "done".to_string();
-        task.item.task_progress = done_task_progress_state();
-        task.item.transcribe_error = String::new();
-        task.item.result_text = source_text.clone();
-        task.item.result_srt = String::new();
+        task.item.result_text = source_text.to_string();
+        // Bilingual deliver clears legacy single-file result_srt; source-only
+        // leaves any pre-set result_srt (e.g. step2 srt on transcribe path).
+        if include_translation_variants {
+            task.item.result_srt = String::new();
+        }
         task.item.subtitle_segments_json = subtitle_segments_json.clone();
     })
     .await?;
@@ -220,9 +144,8 @@ fn write_completion_srts(
     include_translation_variants: bool,
 ) -> Result<(), String> {
     // NB: `segments` is already beautified by the caller when
-    // enable_subtitle_beautify is on (see finish_transcribe_only /
-    // finish_translate_with_step5). Do not beautify again here -- doing
-    // so would double-apply trim/merge and cost a redundant pass.
+    // enable_subtitle_beautify is on (see materialize_* / deliver callers).
+    // Do not beautify again here.
     let srt_segments = segments
         .iter()
         .map(

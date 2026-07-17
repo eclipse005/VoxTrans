@@ -72,6 +72,8 @@ fn main() {
             commands::workspace::enqueue_task_run,
             commands::workspace::update_task_languages,
             commands::workspace::update_task_terminology,
+            commands::workspace::update_task_review_flags,
+            commands::workspace::resume_task_after_review,
             commands::workspace::save_subtitle_editor,
             commands::workspace::execute_task_run,
             commands::workspace::execute_task_batch,

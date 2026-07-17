@@ -58,6 +58,8 @@ export type SettingsForm = {
   enableSubtitleBeautify: boolean;
   enableClickSound: boolean;
   autoBurnHardSubtitle: boolean;
+  defaultReviewSource: boolean;
+  defaultReviewTarget: boolean;
   subtitleBurnMode: SubtitleBurnMode;
   subtitleRenderStyle: SubtitleRenderStyle;
   flatSrtOutput: boolean;
@@ -89,6 +91,8 @@ function settingsToForm(settings: SavedSettings): SettingsForm {
     enableSubtitleBeautify: settings.enableSubtitleBeautify,
     enableClickSound: settings.enableClickSound,
     autoBurnHardSubtitle: settings.autoBurnHardSubtitle,
+    defaultReviewSource: settings.defaultReviewSource,
+    defaultReviewTarget: settings.defaultReviewTarget,
     subtitleBurnMode: settings.subtitleBurnMode,
     subtitleRenderStyle: settings.subtitleRenderStyle,
     flatSrtOutput: settings.flatSrtOutput,
@@ -212,6 +216,8 @@ export function useSettingsController({
       enableSubtitleBeautify: form.enableSubtitleBeautify,
       enableClickSound: form.enableClickSound,
       autoBurnHardSubtitle: form.autoBurnHardSubtitle,
+      defaultReviewSource: form.defaultReviewSource,
+      defaultReviewTarget: form.defaultReviewTarget,
       subtitleBurnMode: form.subtitleBurnMode,
       subtitleRenderStyle: form.subtitleRenderStyle,
       flatSrtOutput: form.flatSrtOutput,

@@ -39,6 +39,8 @@ pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
         enable_subtitle_beautify: row.enable_subtitle_beautify,
         enable_click_sound: row.enable_click_sound,
         auto_burn_hard_subtitle: row.auto_burn_hard_subtitle,
+        default_review_source: row.default_review_source,
+        default_review_target: row.default_review_target,
         subtitle_burn_mode: SubtitleBurnMode::parse(&row.subtitle_burn_mode),
         subtitle_render_style: row.subtitle_render_style,
         flat_srt_output: row.flat_srt_output,
@@ -71,6 +73,8 @@ pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
         enable_click_sound: settings.enable_click_sound,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
+        default_review_source: settings.default_review_source,
+        default_review_target: settings.default_review_target,
         subtitle_burn_mode: settings.subtitle_burn_mode.as_str().to_string(),
         subtitle_render_style: settings.subtitle_render_style.clone(),
         flat_srt_output: settings.flat_srt_output,
@@ -173,6 +177,9 @@ pub fn task_from_row(row: TaskRow) -> (WorkspaceQueueItem, TaskMetaExtras) {
         subtitle_segments_json: String::new(), // filled by meta.rs during hydrate or by callers directly
         llm_total_tokens: row.llm_total_tokens,
         terminology_group_id: row.terminology_group_id,
+        review_source: row.review_source,
+        review_target: row.review_target,
+        resume_from: row.resume_from,
     };
     let extras = TaskMetaExtras {
         intent: row.intent,
@@ -211,6 +218,9 @@ pub fn row_from_task(item: &WorkspaceQueueItem, extras: &TaskMetaExtras) -> Task
         enable_subtitle_beautify: extras.enable_subtitle_beautify,
         terminology_groups_json: extras.terminology_groups_json.clone(),
         terminology_group_id: item.terminology_group_id.clone(),
+        review_source: item.review_source,
+        review_target: item.review_target,
+        resume_from: item.resume_from.clone(),
         enqueue_seq: extras.enqueue_seq,
         updated_at: now_ms(),
     }
@@ -252,6 +262,8 @@ mod tests {
             enable_subtitle_beautify: true,
             enable_click_sound: true,
             auto_burn_hard_subtitle: false,
+            default_review_source: false,
+            default_review_target: false,
             subtitle_burn_mode: SubtitleBurnMode::BilingualSourceFirst,
             subtitle_render_style: SubtitleRenderStyle::default(),
             flat_srt_output: false,
@@ -333,6 +345,9 @@ mod tests {
             subtitle_segments_json: "[]".into(),
             llm_total_tokens: 42,
             terminology_group_id: "g1".into(),
+            review_source: true,
+            review_target: false,
+            resume_from: String::new(),
         };
         let extras = TaskMetaExtras {
             intent: "TRANSCRIBE_TRANSLATE".into(),
@@ -356,6 +371,8 @@ mod tests {
         assert_eq!(restored_item.task_progress.stage.total, original.task_progress.stage.total);
         assert_eq!(restored_item.llm_total_tokens, original.llm_total_tokens);
         assert_eq!(restored_item.terminology_group_id, original.terminology_group_id);
+        assert_eq!(restored_item.review_source, original.review_source);
+        assert_eq!(restored_item.review_target, original.review_target);
 
         assert_eq!(restored_item.subtitle_segments_json, String::new());
 

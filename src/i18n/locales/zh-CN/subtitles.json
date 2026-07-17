@@ -31,6 +31,12 @@
     "openLogs": "打开任务日志",
     "logs": "日志"
   },
+  "review": {
+    "source": "源稿审核（转译）",
+    "target": "译稿审核（转译）",
+    "bannerSource": "转译·源稿待审核 · 改完后点「继续翻译」",
+    "bannerTarget": "转译·译稿待审核 · 确认后点「完成定稿」"
+  },
   "cue": {
     "warningCount": "该字幕存在 {{count}} 条格式问题",
     "collapseEdit": "收起编辑",

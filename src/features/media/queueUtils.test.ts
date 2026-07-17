@@ -104,6 +104,8 @@ describe("mergeTaskStateChanged", () => {
       resultText: "",
       resultSrt: "",
       subtitleSegmentsJson: "[]",
+      reviewSource: true,
+      reviewTarget: true,
     };
 
     const payload = {
@@ -114,12 +116,14 @@ describe("mergeTaskStateChanged", () => {
       sizeBytes: 1024,
       sourceLang: "en",
       targetLang: "ja",
-      transcribeStatus: "done",
-      taskProgress: createTaskProgress({ code: "finalCheck", current: 1, total: 1 }),
+      transcribeStatus: "review_source",
+      taskProgress: createTaskProgress({ code: "translating", current: 0, total: 0 }),
       transcribeError: "",
       resultText: "hello",
       resultSrt: "1\n00:00:00,000 --> 00:00:01,000\nhello",
       subtitleSegmentsJson: "[]",
+      reviewSource: true,
+      reviewTarget: true,
     };
 
     const merged = mergeTaskStateChanged(current, payload);
@@ -129,8 +133,48 @@ describe("mergeTaskStateChanged", () => {
     expect(merged.sizeBytes).toBe(1024);
     expect(merged.sourceLang).toBe("en");
     expect(merged.targetLang).toBe("ja");
-    expect(merged.transcribeStatus).toBe("done");
+    expect(merged.transcribeStatus).toBe("review_source");
     expect(merged.resultText).toBe("hello");
+    expect(merged.reviewSource).toBe(true);
+    expect(merged.reviewTarget).toBe(true);
+  });
+
+  it("keeps review flags when payload omits them", () => {
+    const current = {
+      id: "1",
+      path: "/a",
+      name: "A",
+      mediaKind: "video" as const,
+      sizeBytes: 1,
+      sourceLang: "en" as const,
+      targetLang: "zh-CN" as const,
+      transcribeStatus: "processing" as const,
+      taskProgress: createEmptyTaskProgress(),
+      transcribeError: "",
+      resultText: "",
+      resultSrt: "",
+      subtitleSegmentsJson: "[]",
+      reviewSource: true,
+      reviewTarget: false,
+    };
+    const payload = {
+      id: "1",
+      path: "/a",
+      name: "A",
+      mediaKind: "video",
+      sizeBytes: 1,
+      sourceLang: "en",
+      targetLang: "zh-CN",
+      transcribeStatus: "review_source",
+      taskProgress: createEmptyTaskProgress(),
+      transcribeError: "",
+      resultText: "x",
+      resultSrt: "",
+      subtitleSegmentsJson: "[]",
+    };
+    const merged = mergeTaskStateChanged(current, payload);
+    expect(merged.reviewSource).toBe(true);
+    expect(merged.reviewTarget).toBe(false);
   });
 });
 

@@ -22,7 +22,7 @@ export type SubtitleStylePreset = {
 export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   {
     id: "classic-cinema",
-    labelKey: "settings:subtitle.stylePresetclassicCinema",
+    labelKey: "settings:subtitle.stylePresetClassicCinema",
     style: {
       source: {
         fontFamily: "Arial",
@@ -55,7 +55,7 @@ export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   },
   {
     id: "modern-streaming",
-    labelKey: "settings:subtitle.stylePresetmodernStreaming",
+    labelKey: "settings:subtitle.stylePresetModernStreaming",
     style: {
       source: {
         fontFamily: "Helvetica",
@@ -88,7 +88,7 @@ export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   },
   {
     id: "documentary-gold",
-    labelKey: "settings:subtitle.stylePresetdocumentaryGold",
+    labelKey: "settings:subtitle.stylePresetDocumentaryGold",
     style: {
       source: {
         fontFamily: "Arial",
@@ -121,7 +121,7 @@ export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   },
   {
     id: "vibrant-variety",
-    labelKey: "settings:subtitle.stylePresetvibrantVariety",
+    labelKey: "settings:subtitle.stylePresetVibrantVariety",
     style: {
       source: {
         fontFamily: "Arial",
@@ -154,7 +154,7 @@ export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   },
   {
     id: "midnight-soft",
-    labelKey: "settings:subtitle.stylePresetmidnightSoft",
+    labelKey: "settings:subtitle.stylePresetMidnightSoft",
     style: {
       source: {
         fontFamily: "Helvetica",
@@ -187,7 +187,7 @@ export const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   },
   {
     id: "executive-news",
-    labelKey: "settings:subtitle.stylePresetexecutiveNews",
+    labelKey: "settings:subtitle.stylePresetExecutiveNews",
     style: {
       source: {
         fontFamily: "Arial",

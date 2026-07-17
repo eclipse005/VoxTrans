@@ -9,19 +9,18 @@ use crate::services::pipeline::StepContext;
 use crate::services::preferences_types::{AlignModel, AsrModel};
 use crate::services::task_log::{TaskLogger, event};
 
-use crate::domain::task::adapters::{
-    source_text_from_step2_segments, step2_segments_to_srt,
-    workspace_subtitle_segments_from_step2_segments,
-};
 use crate::domain::task::runtime_settings::resolve_runtime_settings;
 
 use super::pipeline_steps::block_on_runtime_worker;
 
-use super::output_completion::finish_transcribe_only;
+use super::output_completion::deliver_from_sot;
 use super::pipeline_runner::execute_workspace_step;
 use super::pipeline_steps::{Step1AsrPipelineStep, Step2SegmentsPipelineStep};
 use super::preview::update_subtitle_preview;
 use super::progress::{mark_task_failed, report_task_stage};
+use super::review_flow::{
+    enter_review_source, materialize_source_sot, read_task_review_flags,
+};
 use super::translation_flow::execute_translate_steps;
 use super::{
     TaskStage, WorkspaceTaskRecord, get_task_record, normalize_intent, normalize_task_target_lang,
@@ -29,6 +28,16 @@ use super::{
 };
 
 pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
+    // Reject *before* the mark-failed wrapper so a parked review gate is never
+    // torn down into `error` by an accidental full execute.
+    let record = get_task_record(task_id)?;
+    super::review_flow::reject_full_run_if_awaiting_review(&record.item.transcribe_status)?;
+
+    // Mid-pipeline resume shares this entry with full runs (single-flight queue).
+    if record.item.resume_from.trim() == super::review_flow::RESUME_FROM_TRANSLATE {
+        return super::review_flow::execute_resume_translate_from_sot(app, task_id).await;
+    }
+
     let result = execute_single_task_inner(app, task_id).await;
     mark_task_failed_after_execution_error(result, |err| {
         let err_string = err.to_string();
@@ -40,7 +49,15 @@ pub(super) async fn execute_single_task(app: &AppHandle, task_id: &str) -> Works
 }
 
 async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
+    // Caller already rejected `review_*` (must not mark those tasks failed).
     let record = get_task_record(task_id)?;
+    // Full pipeline must not carry a stale resume marker.
+    if !record.item.resume_from.trim().is_empty() {
+        patch_task_item(app, task_id, |task| {
+            task.item.resume_from = String::new();
+        })
+        .await?;
+    }
     let intent = normalize_intent(&record.intent).to_string();
     let is_srt_translate =
         intent == "TRANSLATE_SRT" || record.item.media_kind.trim() == "subtitle";
@@ -120,11 +137,11 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
     );
 
     report_task_stage(app, task_id, TaskStage::Preparing, "", 1, 1).await?;
+    // Do NOT clear subtitle SoT here. Full re-queue (`enqueue` → apply_enqueue_request)
+    // is the only place that wipes generated cues for a deliberate re-run. Execute only
+    // clears the error flag so a clean stage report can start.
     patch_task_item(app, task_id, |task| {
         task.item.transcribe_error = String::new();
-        task.item.result_text = String::new();
-        task.item.result_srt = String::new();
-        task.item.subtitle_segments_json = "[]".to_string();
     })
     .await?;
 
@@ -187,46 +204,62 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
     )
     .await?;
     let step2_segments = step2_exec.output;
-    let source_text = source_text_from_step2_segments(&step2_segments);
-    let step2_srt = step2_segments_to_srt(&step2_segments);
-    update_subtitle_preview(
+
+    // Materialize source SoT (beautify once). Publishes JSON + DB; no second preview emit.
+    let (source_sot, source_text, step2_srt) = materialize_source_sot(
         app,
         task_id,
-        &source_text,
-        workspace_subtitle_segments_from_step2_segments(&step2_segments),
+        &step2_segments,
+        record.frozen.enable_subtitle_beautify,
+        record.frozen.subtitle_length_preset.as_str(),
+        &target_lang,
     )
     .await?;
 
-    let run_result: WorkspaceResult<()> = if intent == "TRANSCRIBE_TRANSLATE" {
-        execute_translate_steps(
-            app,
-            task_id,
-            &record,
-            runtime,
-            source_lang,
-            target_lang,
-            &step2_segments,
-            source_text,
-            store,
-        )
-        .await
-    } else {
-        finish_transcribe_only(
+    // Pure transcription: no review gates — deliver and mark done so the
+    // subtitle editor is immediately editable. Source/target review only
+    // apply to translate pipelines (TRANSCRIBE_TRANSLATE / TRANSLATE_SRT).
+    if intent != "TRANSCRIBE_TRANSLATE" {
+        deliver_from_sot(
             app,
             task_id,
             &record.item.path,
             &record.item.media_kind,
-            &step2_segments,
-            step2_srt,
-            source_text,
-            record.frozen.enable_subtitle_beautify,
-            record.frozen.subtitle_length_preset.as_str(),
-            &target_lang,
+            &source_sot,
+            false,
+            &source_text,
         )
-        .await
-    };
-    run_result?;
-    Ok(())
+        .await?;
+        patch_task_item(app, task_id, |task| {
+            task.item.result_srt = step2_srt;
+        })
+        .await?;
+        return Ok(());
+    }
+
+    // Checkpoint S (translate flow only): pause before terminology when
+    // task.review_source is on so the user can fix source cues first.
+    let (review_source, _) = read_task_review_flags(task_id).await?;
+    if review_source {
+        enter_review_source(app, task_id).await?;
+        return Ok(());
+    }
+
+    // Translate the same SoT the editor/preview shows (not raw pre-beautify step2).
+    let translate_step2 =
+        crate::services::subtitle_import::workspace_segments_to_step2(&source_sot);
+    execute_translate_steps(
+        app,
+        task_id,
+        &record,
+        runtime,
+        source_lang,
+        target_lang,
+        &translate_step2,
+        source_text,
+        store,
+    )
+    .await
 }
 
 /// Translate an imported SRT task: skip ASR / Step2 segmentation entirely.
@@ -291,7 +324,22 @@ async fn execute_srt_translate_task(
         .collect();
     let source_text =
         crate::services::subtitle_import::source_text_from_workspace_segments(&source_only);
-    update_subtitle_preview(app, task_id, &source_text, source_only).await?;
+    update_subtitle_preview(app, task_id, &source_text, source_only.clone()).await?;
+
+    // Persist source SoT so source review can edit before terminology.
+    let source_json = crate::services::workspace_subtitle::serialize_segments(&source_only);
+    super::output_completion::persist_workspace_segments(app, task_id, &source_json).await?;
+    patch_task_item(app, task_id, |task| {
+        task.item.subtitle_segments_json = source_json;
+        task.item.result_text = source_text.clone();
+    })
+    .await?;
+
+    let (review_source, _) = read_task_review_flags(task_id).await?;
+    if review_source {
+        enter_review_source(app, task_id).await?;
+        return Ok(());
+    }
 
     let step2_segments =
         crate::services::subtitle_import::workspace_segments_to_step2(&workspace_segments);

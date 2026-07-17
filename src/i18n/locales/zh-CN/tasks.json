@@ -23,7 +23,10 @@
     "clear": "清空",
     "translate": "转译",
     "transcribe": "转录",
-    "delete": "删除"
+    "delete": "删除",
+    "continueTranslation": "继续翻译",
+    "finalize": "完成定稿",
+    "startTranslation": "开始翻译"
   },
   "confirm": {
     "clearTitle": "确认清空任务列表？",

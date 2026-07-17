@@ -10,6 +10,13 @@
     "subtitle": "Subtitle",
     "models": "Models"
   },
+  "review": {
+    "defaultSource": "Default source review",
+    "defaultSourceDesc": "On translate: pause after recognition to edit source",
+    "defaultTarget": "Default translation review",
+    "defaultTargetDesc": "On translate: pause after translation to edit target",
+    "defaultsFootnote": "Applies to new tasks only; override per task in the subtitle editor."
+  },
   "transcribe": {
     "params": "Transcription parameters",
     "device": "Execution device",
@@ -51,7 +58,7 @@
     "flatSrtBilingualSourceFirst": "Bilingual (source on top)",
     "flatSrtBilingualTargetFirst": "Bilingual (target on top)",
     "autoBurn": "Auto burn-in",
-    "autoBurnDesc": "Applies to video tasks only",
+    "autoBurnDesc": "Burns subtitles into the video when a task is finalized. If translation review is enabled, burn-in waits until you confirm the translation.",
     "beautify": "Beautify subtitles",
     "beautifyDesc": "Trim leading/trailing punctuation and visual polish",
     "burnMode": "Subtitle type",

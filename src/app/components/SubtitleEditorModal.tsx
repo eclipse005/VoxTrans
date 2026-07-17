@@ -30,6 +30,11 @@ type SubtitleEditorModalProps = {
   onExportSrt: () => void | Promise<void>;
   onOpenLogs: () => void | Promise<void>;
   onClose: () => void | Promise<void>;
+  reviewSource?: boolean;
+  reviewTarget?: boolean;
+  reviewBanner?: string;
+  onToggleReviewSource?: (value: boolean) => void;
+  onToggleReviewTarget?: (value: boolean) => void;
 };
 
 export default function SubtitleEditorModal({
@@ -51,6 +56,11 @@ export default function SubtitleEditorModal({
   onExportSrt,
   onOpenLogs,
   onClose,
+  reviewSource = false,
+  reviewTarget = false,
+  reviewBanner = "",
+  onToggleReviewSource,
+  onToggleReviewTarget,
 }: SubtitleEditorModalProps) {
   const { t } = useTranslation(["subtitles", "common"]);
   const [editingCueId, setEditingCueId] = useState<string>("");
@@ -123,6 +133,11 @@ export default function SubtitleEditorModal({
         readOnlyReason={readOnlyReason}
         cueCount={cues.length}
         taskName={taskName}
+        reviewSource={reviewSource}
+        reviewTarget={reviewTarget}
+        reviewBanner={reviewBanner}
+        onToggleReviewSource={onToggleReviewSource}
+        onToggleReviewTarget={onToggleReviewTarget}
         onOpenSrtDir={onOpenSrtDir}
         onExportSrt={onExportSrt}
         onOpenLogs={onOpenLogs}

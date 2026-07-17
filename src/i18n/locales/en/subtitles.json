@@ -31,6 +31,12 @@
     "openLogs": "Open task logs",
     "logs": "Logs"
   },
+  "review": {
+    "source": "Source review (translate)",
+    "target": "Translation review (translate)",
+    "bannerSource": "Translate · source review — edit, then Continue translation",
+    "bannerTarget": "Translate · translation review — confirm, then Finalize"
+  },
   "cue": {
     "warningCount": "This subtitle has {{count}} formatting issue(s)",
     "collapseEdit": "Collapse editing",

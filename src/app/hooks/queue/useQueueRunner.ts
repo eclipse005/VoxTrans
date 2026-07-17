@@ -80,6 +80,9 @@ export function useQueueRunner({
       resultText: string;
       resultSrt: string;
       subtitleSegmentsJson: string;
+      reviewSource?: boolean;
+      reviewTarget?: boolean;
+      resumeFrom?: string;
     }>("task-state-changed", (event) => {
       const payload = event.payload;
       if (!payload?.id) return;

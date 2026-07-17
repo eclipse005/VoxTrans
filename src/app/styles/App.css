@@ -330,6 +330,13 @@
   color: #1976d2;
 }
 
+/* Awaiting human review — same chip shape as other task-status badges */
+.status-review-source,
+.status-review-target {
+  background-color: #eef2ff;
+  color: #4338ca;
+}
+
 .status-done {
   background-color: #e8f5e9;
   color: #2e7d32;

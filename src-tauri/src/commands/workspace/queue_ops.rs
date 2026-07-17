@@ -90,6 +90,11 @@ pub(super) async fn register_task_upload_internal(
         .await?;
     } else {
         let enqueue_seq = db_store.next_enqueue_seq().await?;
+        let review_defaults = db_store
+            .load_settings()
+            .await
+            .map(|s| (s.default_review_source, s.default_review_target))
+            .unwrap_or((false, false));
         let mut item = new_workspace_queue_item(
             id,
             &resolved_path,
@@ -98,6 +103,8 @@ pub(super) async fn register_task_upload_internal(
             size_bytes,
             "pending",
         );
+        item.review_source = review_defaults.0;
+        item.review_target = review_defaults.1;
         if is_srt {
             item.subtitle_segments_json = segments_json;
             item.result_text = result_text;
@@ -213,6 +220,15 @@ pub(super) async fn enqueue_task_run_internal(
             .any(|entry| entry.item.id == id)
     };
     let queued_item = if existing {
+        // Full re-queue clears non-SRT SoT — never allowed while awaiting review.
+        {
+            let store = lock_workspace_store()?;
+            if let Some(task) = store.tasks().iter().find(|entry| entry.item.id == id) {
+                super::review_flow::reject_full_run_if_awaiting_review(
+                    &task.item.transcribe_status,
+                )?;
+            }
+        }
         let terminology_group_id = request
             .terminology_group_id
             .as_deref()
@@ -288,6 +304,13 @@ pub(super) async fn enqueue_task_run_internal(
         item.source_lang = source_lang.clone();
         item.target_lang = target_lang.clone();
         item.terminology_group_id = terminology_group_id.clone();
+        let review_defaults = db_store
+            .load_settings()
+            .await
+            .map(|s| (s.default_review_source, s.default_review_target))
+            .unwrap_or((false, false));
+        item.review_source = review_defaults.0;
+        item.review_target = review_defaults.1;
         let mut frozen = freeze_current_settings(db_store, &terminology_group_id)?;
         if is_srt {
             frozen.enable_subtitle_beautify = false;
@@ -583,6 +606,9 @@ fn new_workspace_queue_item(
         subtitle_segments_json: "[]".to_string(),
         llm_total_tokens: 0,
         terminology_group_id: String::new(),
+        review_source: false,
+        review_target: false,
+        resume_from: String::new(),
     }
 }
 
@@ -599,6 +625,8 @@ fn apply_upload_fields(
     item.size_bytes = size_bytes;
 }
 
+/// Explicit start / redo: may clear generated outputs for non-SRT media.
+/// Must not be called for `review_*` (caller rejects first).
 fn apply_enqueue_request(
     record: &mut WorkspaceTaskRecord,
     request: EnqueueTaskRunCommandRequest,
@@ -608,7 +636,8 @@ fn apply_enqueue_request(
     let media_kind = normalize_media_kind(&request.media_kind).to_string();
     let is_srt_task = intent == "TRANSLATE_SRT" || media_kind == "subtitle";
 
-    // Keep imported source cues for SRT translate; only clear translations.
+    // Sole intentional wipe of media-task SoT before a full re-run.
+    // SRT translate keeps source cues and only clears translations.
     let preserved_segments = if is_srt_task {
         clear_translations_in_segments_json(&record.item.subtitle_segments_json)
     } else {
@@ -645,6 +674,8 @@ fn apply_enqueue_request(
     record.item.result_srt = preserved_result_srt;
     record.item.subtitle_segments_json = preserved_segments;
     record.item.llm_total_tokens = 0;
+    // Full re-run always starts from the top of the pipeline.
+    record.item.resume_from = String::new();
 
     record.intent = if is_srt_task {
         "TRANSLATE_SRT".to_string()

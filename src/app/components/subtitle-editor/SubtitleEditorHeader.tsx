@@ -6,6 +6,11 @@ type SubtitleEditorHeaderProps = {
   readOnlyReason?: string;
   cueCount: number;
   taskName: string;
+  reviewSource?: boolean;
+  reviewTarget?: boolean;
+  reviewBanner?: string;
+  onToggleReviewSource?: (value: boolean) => void;
+  onToggleReviewTarget?: (value: boolean) => void;
   onOpenSrtDir: () => void | Promise<void>;
   onExportSrt: () => void | Promise<void>;
   onOpenLogs: () => void | Promise<void>;
@@ -16,6 +21,11 @@ export default function SubtitleEditorHeader({
   readOnlyReason = "",
   cueCount,
   taskName,
+  reviewSource = false,
+  reviewTarget = false,
+  reviewBanner = "",
+  onToggleReviewSource,
+  onToggleReviewTarget,
   onOpenSrtDir,
   onExportSrt,
   onOpenLogs,
@@ -44,6 +54,31 @@ export default function SubtitleEditorHeader({
               <span title={taskName || "--"}>{taskName || "--"}</span>
             </button>
           </div>
+          {onToggleReviewSource || onToggleReviewTarget ? (
+            <div className="subtitle-meta-row subtitle-review-toggles">
+              <label className="subtitle-review-toggle">
+                <input
+                  type="checkbox"
+                  checked={reviewSource}
+                  onChange={(e) => onToggleReviewSource?.(e.target.checked)}
+                />
+                <span>{t("subtitles:review.source")}</span>
+              </label>
+              <label className="subtitle-review-toggle">
+                <input
+                  type="checkbox"
+                  checked={reviewTarget}
+                  onChange={(e) => onToggleReviewTarget?.(e.target.checked)}
+                />
+                <span>{t("subtitles:review.target")}</span>
+              </label>
+            </div>
+          ) : null}
+          {reviewBanner ? (
+            <div className="subtitle-meta-row subtitle-review-banner">
+              <span>{reviewBanner}</span>
+            </div>
+          ) : null}
           {!canEdit && readOnlyReason ? (
             <div className="subtitle-meta-row">
               <span className="subtitle-meta-label">{t("subtitles:header.statusLabel")}</span>

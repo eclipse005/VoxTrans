@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { deleteTasks, enqueueTaskRun } from "../../api/workspace";
+import { deleteTasks, enqueueTaskRun, resumeTaskAfterReview } from "../../api/workspace";
 import {
   createEmptyTaskProgress,
   type QueueItem,
@@ -10,6 +10,7 @@ import {
   toEnqueuePayload,
   type QueueRunMode,
 } from "../../../features/media/queueUtils";
+import { holdsPipelineSlot, isBusyStatus } from "../../../features/media/taskStatus";
 import type { AppAction } from "../../state/appReducer";
 import {
   clearQueueItems,
@@ -27,6 +28,8 @@ type UseQueueSchedulerArgs = {
   dispatch: DispatchState;
   pushToast: PushToast;
   runQueuedByTaskIds: (taskIds: string[]) => Promise<void>;
+  /** When advancing from review, optional latest SoT JSON for the task (editor flush). */
+  getReviewFlushJson?: (taskId: string) => string | undefined;
 };
 
 export type QueueBatchMode = "transcribe" | "transcribe_translate";
@@ -36,6 +39,7 @@ export function useQueueScheduler({
   dispatch,
   pushToast,
   runQueuedByTaskIds,
+  getReviewFlushJson,
 }: UseQueueSchedulerArgs) {
   const { t } = useTranslation(["toasts", "tasks"]);
   const isYoutubePlaceholder = useCallback(
@@ -44,11 +48,12 @@ export function useQueueScheduler({
   );
   const runBatchInFlightRef = useRef(false);
   const [scheduleTick, setScheduleTick] = useState(0);
-  const hasProcessingTask = useMemo(
+  /** Current job is processing OR parked in human review — do not start others. */
+  const hasPipelineHold = useMemo(
     () =>
       queue.some(
         (item) =>
-          item.transcribeStatus === "processing" && !isYoutubePlaceholder(item),
+          holdsPipelineSlot(item.transcribeStatus) && !isYoutubePlaceholder(item),
       ),
     [isYoutubePlaceholder, queue],
   );
@@ -60,7 +65,8 @@ export function useQueueScheduler({
       ),
     [isYoutubePlaceholder, queue],
   );
-  const queueBusy = hasProcessingTask || hasQueuedTask;
+  // "Busy" for bulk/clear UX: machine queue or active pipeline hold (incl. review).
+  const queueBusy = hasPipelineHold || hasQueuedTask;
 
   const enqueueForMode = useCallback(
     async (item: QueueItem, mode: QueueRunMode): Promise<boolean> => {
@@ -89,12 +95,20 @@ export function useQueueScheduler({
   );
 
   useEffect(() => {
-    if (hasProcessingTask) return;
+    // Review is a pause of the *current* task: other queued jobs must wait.
+    if (hasPipelineHold) return;
     if (runBatchInFlightRef.current) return;
-    const queuedItems = queue.filter(
-      (item) =>
-        item.transcribeStatus === "queued" && !isYoutubePlaceholder(item),
-    );
+    const queuedItems = queue
+      .filter(
+        (item) =>
+          item.transcribeStatus === "queued" && !isYoutubePlaceholder(item),
+      )
+      // Head-of-line: continue-after-source-review stays the current job.
+      .sort((a, b) => {
+        const ap = a.resumeFrom === "translate" ? 0 : 1;
+        const bp = b.resumeFrom === "translate" ? 0 : 1;
+        return ap - bp;
+      });
     if (queuedItems.length === 0) return;
     runBatchInFlightRef.current = true;
     void runQueuedByTaskIds(queuedItems.map((item) => item.id))
@@ -106,7 +120,7 @@ export function useQueueScheduler({
         setScheduleTick((value) => value + 1);
       });
   }, [
-    hasProcessingTask,
+    hasPipelineHold,
     isYoutubePlaceholder,
     queue,
     runQueuedByTaskIds,
@@ -172,14 +186,56 @@ export function useQueueScheduler({
     [enqueueForMode, isYoutubePlaceholder, pushToast, queue],
   );
 
+  const advanceFromReview = useCallback(
+    async (
+      item: QueueItem,
+      action: "continue" | "finalize" | "finalize_source_only",
+    ) => {
+      // Continue is allowed while *this* task is in review. Block only if
+      // another task already holds the pipeline (should be rare under single-hold).
+      if (action === "continue") {
+        const otherHold = queue.some(
+          (q) =>
+            q.id !== item.id
+            && !isYoutubePlaceholder(q)
+            && holdsPipelineSlot(q.transcribeStatus),
+        );
+        if (otherHold) {
+          pushToast(t("toasts:queue.clearWhileBusy"), "error");
+          return;
+        }
+      }
+      try {
+        // Short prepare for continue (queued + resume_from); worker runs translate.
+        // Finalize remains inline (deliver/burn).
+        const subtitleSegmentsJson = getReviewFlushJson?.(item.id);
+        await resumeTaskAfterReview({
+          taskId: item.id,
+          action,
+          subtitleSegmentsJson,
+        });
+        pushToast(t("toasts:queue.started", { name: item.name }), "info");
+      } catch (error) {
+        reportError(error, "resumeTaskAfterReview");
+        pushToast(toUserErrorMessage(error, t("toasts:queue.enqueueFailed")), "error");
+      }
+    },
+    [getReviewFlushJson, isYoutubePlaceholder, pushToast, queue, t],
+  );
+
   const processSingle = useCallback(
     async (item: QueueItem) => {
       if (isYoutubePlaceholder(item)) return;
-      if (
-        item.transcribeStatus === "processing" ||
-        item.transcribeStatus === "queued"
-      )
+      if (isBusyStatus(item.transcribeStatus)) return;
+      // Mic: abandon at source gate or finalize after translation review.
+      if (item.transcribeStatus === "review_source") {
+        await advanceFromReview(item, "finalize_source_only");
         return;
+      }
+      if (item.transcribeStatus === "review_target") {
+        await advanceFromReview(item, "finalize");
+        return;
+      }
       if (isSubtitleQueueItem(item)) {
         pushToast(t("toasts:queue.srtUseTranslateOnly"), "info");
         return;
@@ -194,17 +250,22 @@ export function useQueueScheduler({
         "info",
       );
     },
-    [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy, t],
+    [advanceFromReview, enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy, t],
   );
 
   const processSingleTranscribeTranslate = useCallback(
     async (item: QueueItem) => {
       if (isYoutubePlaceholder(item)) return;
-      if (
-        item.transcribeStatus === "processing" ||
-        item.transcribeStatus === "queued"
-      )
+      if (isBusyStatus(item.transcribeStatus)) return;
+      // Translate: continue from source gate; finalize at target gate.
+      if (item.transcribeStatus === "review_source") {
+        await advanceFromReview(item, "continue");
         return;
+      }
+      if (item.transcribeStatus === "review_target") {
+        await advanceFromReview(item, "finalize");
+        return;
+      }
       // SRT items always map to TRANSLATE_SRT inside enqueueForMode.
       const mode: QueueRunMode = "transcribe_translate";
       const ok = await enqueueForMode(item, mode);
@@ -216,7 +277,7 @@ export function useQueueScheduler({
         "info",
       );
     },
-    [enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy, t],
+    [advanceFromReview, enqueueForMode, isYoutubePlaceholder, pushToast, queueBusy, t],
   );
 
   const clearQueue = useCallback(async (): Promise<boolean> => {

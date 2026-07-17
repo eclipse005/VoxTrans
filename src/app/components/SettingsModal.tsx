@@ -542,6 +542,35 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       <span className="toggle-switch" />
                     </label>
                   </div>
+                  <div className="subtitle-toggle-row">
+                    <label className="setting-toggle" htmlFor="default-review-source">
+                      <input
+                        id="default-review-source"
+                        type="checkbox"
+                        checked={ctx.form.defaultReviewSource}
+                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, defaultReviewSource: e.target.checked }))}
+                      />
+                      <div className="toggle-label">
+                        <span className="toggle-title">{t("settings:review.defaultSource")}</span>
+                        <span className="toggle-desc">{t("settings:review.defaultSourceDesc")}</span>
+                      </div>
+                      <span className="toggle-switch" />
+                    </label>
+                    <label className="setting-toggle" htmlFor="default-review-target">
+                      <input
+                        id="default-review-target"
+                        type="checkbox"
+                        checked={ctx.form.defaultReviewTarget}
+                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, defaultReviewTarget: e.target.checked }))}
+                      />
+                      <div className="toggle-label">
+                        <span className="toggle-title">{t("settings:review.defaultTarget")}</span>
+                        <span className="toggle-desc">{t("settings:review.defaultTargetDesc")}</span>
+                      </div>
+                      <span className="toggle-switch" />
+                    </label>
+                  </div>
+                  <p className="settings-hint">{t("settings:review.defaultsFootnote")}</p>
                   <div className="form-row">
                     <div className="form-group">
                       <label>{t("settings:subtitle.burnMode")}</label>

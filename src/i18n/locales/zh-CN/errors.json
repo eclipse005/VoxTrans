@@ -28,6 +28,8 @@
     "summarizing": "总结中",
     "terminology": "术语提取中",
     "translating": "翻译中",
+    "subtitleLayout": "字幕排版中",
+    "burning": "烧录中",
     "finalCheck": "本地最终检查中"
   }
 }

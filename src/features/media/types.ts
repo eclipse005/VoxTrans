@@ -22,7 +22,14 @@ export type { LanguageTag };
 
 // Runtime constants (not types) stay here.
 export type ModelTarget = "asr" | "align" | "demucs";
-export type QueueStatus = "pending" | "queued" | "processing" | "done" | "error";
+export type QueueStatus =
+  | "pending"
+  | "queued"
+  | "processing"
+  | "review_source"
+  | "review_target"
+  | "done"
+  | "error";
 export type TranscribeStatus = QueueStatus;
 export type TargetLanguage =
   | "zh-CN"
@@ -110,6 +117,12 @@ export type QueueItem = {
   // because the backend sends it with #[serde(default)]; runtime always
   // normalizes it (useWorkspacePersistence / useQueueInput). UI guards `?? ""`.
   terminologyGroupId?: string;
+  /** Task-effective: pause after source cues (before terminology). */
+  reviewSource?: boolean;
+  /** Task-effective: pause after translation (before deliver). */
+  reviewTarget?: boolean;
+  /** Worker mid-pipeline resume: "" | "translate". */
+  resumeFrom?: string;
 };
 
 const TASK_STAGE_SET = new Set<TaskStageCode>([

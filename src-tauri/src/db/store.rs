@@ -47,7 +47,8 @@ impl TaskStore {
              llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
-             enable_vision_assist, locale, models_dir, updated_at \
+             enable_vision_assist, locale, models_dir, default_review_source, \
+             default_review_target, updated_at \
              FROM settings WHERE id = 1",
         )
         .fetch_optional(&self.pool)
@@ -89,8 +90,9 @@ impl TaskStore {
              llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
-             enable_vision_assist, locale, models_dir, updated_at) \
-             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             enable_vision_assist, locale, models_dir, default_review_source, \
+             default_review_target, updated_at) \
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(id) DO UPDATE SET \
              provider=excluded.provider, chunk_target_seconds=excluded.chunk_target_seconds, \
              subtitle_length_preset=excluded.subtitle_length_preset, asr_model=excluded.asr_model, \
@@ -112,6 +114,8 @@ impl TaskStore {
              enable_vision_assist=excluded.enable_vision_assist, \
              locale=excluded.locale, \
              models_dir=excluded.models_dir, \
+             default_review_source=excluded.default_review_source, \
+             default_review_target=excluded.default_review_target, \
              updated_at=excluded.updated_at",
         )
         .bind(&row.provider)
@@ -137,6 +141,8 @@ impl TaskStore {
         .bind(row.enable_vision_assist)
         .bind(&row.locale)
         .bind(&row.models_dir)
+        .bind(row.default_review_source)
+        .bind(row.default_review_target)
         .bind(row.updated_at)
         .execute(&mut *tx)
         .await
@@ -361,7 +367,7 @@ impl TaskStore {
              task_progress_total, transcribe_error, result_text, result_srt, llm_total_tokens, \
              intent, max_retries, subtitle_length_preset, \
              enable_subtitle_beautify, terminology_groups_json, terminology_group_id, \
-             enqueue_seq, updated_at \
+             review_source, review_target, resume_from, enqueue_seq, updated_at \
              FROM tasks ORDER BY enqueue_seq ASC",
         )
         .fetch_all(&self.pool)
@@ -388,8 +394,8 @@ impl TaskStore {
              task_progress_current, task_progress_total, transcribe_error, result_text, \
              result_srt, llm_total_tokens, intent, max_retries, subtitle_length_preset, \
              enable_subtitle_beautify, terminology_groups_json, terminology_group_id, \
-             enqueue_seq, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
+             review_source, review_target, resume_from, enqueue_seq, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
+             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
              media_path=excluded.media_path, name=excluded.name, media_kind=excluded.media_kind, \
              size_bytes=excluded.size_bytes, source_lang=excluded.source_lang, \
              target_lang=excluded.target_lang, transcribe_status=excluded.transcribe_status, \
@@ -406,6 +412,9 @@ impl TaskStore {
              enable_subtitle_beautify=excluded.enable_subtitle_beautify, \
              terminology_groups_json=excluded.terminology_groups_json, \
              terminology_group_id=excluded.terminology_group_id, \
+             review_source=excluded.review_source, \
+             review_target=excluded.review_target, \
+             resume_from=excluded.resume_from, \
              updated_at=excluded.updated_at",
         )
         .bind(&row.id)
@@ -432,11 +441,32 @@ impl TaskStore {
         .bind(row.enable_subtitle_beautify)
         .bind(&row.terminology_groups_json)
         .bind(&row.terminology_group_id)
+        .bind(row.review_source)
+        .bind(row.review_target)
+        .bind(&row.resume_from)
         .bind(row.enqueue_seq)
         .bind(row.updated_at)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("upsert task: {e}"))?;
+        Ok(())
+    }
+
+    /// Move a task to the head of the run order (smaller `enqueue_seq` first).
+    /// Used when a review-paused task continues translation and must stay current.
+    pub async fn prioritize_task_enqueue(&self, task_id: &str) -> Result<(), String> {
+        let min_seq: Option<i64> = sqlx::query_scalar("SELECT MIN(enqueue_seq) FROM tasks")
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| format!("min enqueue seq: {e}"))?;
+        let head = min_seq.unwrap_or(0) - 1;
+        sqlx::query("UPDATE tasks SET enqueue_seq = ?, updated_at = ? WHERE id = ?")
+            .bind(head)
+            .bind(now_ms())
+            .bind(task_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("prioritize task enqueue: {e}"))?;
         Ok(())
     }
 
@@ -550,6 +580,27 @@ impl TaskStore {
         .execute(&self.pool)
         .await
         .map_err(|e| format!("save artifact: {e}"))?;
+        Ok(())
+    }
+
+    /// Remove one pipeline step artifact (e.g. after source review edits).
+    pub async fn delete_artifact(&self, task_id: &str, step_name: &str) -> Result<(), String> {
+        sqlx::query("DELETE FROM task_artifacts WHERE task_id = ? AND step_name = ?")
+            .bind(task_id)
+            .bind(step_name)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("delete artifact: {e}"))?;
+        Ok(())
+    }
+
+    /// Clear all translation batch unit results for a task.
+    pub async fn delete_translation_batches(&self, task_id: &str) -> Result<(), String> {
+        sqlx::query("DELETE FROM translation_batch_results WHERE task_id = ?")
+            .bind(task_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("delete translation batches: {e}"))?;
         Ok(())
     }
 
@@ -869,6 +920,8 @@ mod tests {
             enable_subtitle_beautify: true,
             enable_click_sound: true,
             auto_burn_hard_subtitle: false,
+            default_review_source: false,
+            default_review_target: false,
             subtitle_burn_mode: crate::services::preferences_types::SubtitleBurnMode::BilingualSourceFirst,
             subtitle_render_style: SubtitleRenderStyle::default(),
             flat_srt_output: false,
@@ -1010,6 +1063,9 @@ mod tests {
             subtitle_segments_json: "[]".into(),
             llm_total_tokens: 0,
             terminology_group_id: "".into(),
+            review_source: false,
+            review_target: false,
+            resume_from: String::new(),
         }
     }
 

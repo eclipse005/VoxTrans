@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS settings (
     enable_vision_assist INTEGER NOT NULL DEFAULT 0,
     locale TEXT NOT NULL DEFAULT 'zh-CN',
     models_dir TEXT,
+    -- Defaults applied only when adding a new task (not live policy).
+    default_review_source INTEGER NOT NULL DEFAULT 0,
+    default_review_target INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL
 );
 
@@ -81,6 +84,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     enable_subtitle_beautify INTEGER NOT NULL DEFAULT 1,
     terminology_groups_json TEXT NOT NULL DEFAULT '[]',
     terminology_group_id TEXT NOT NULL DEFAULT '',
+    -- Per-task review gates (effective flags; seeded from settings on create).
+    review_source INTEGER NOT NULL DEFAULT 0,
+    review_target INTEGER NOT NULL DEFAULT 0,
+    -- Non-empty = worker should resume mid-pipeline (e.g. "translate" after source review).
+    resume_from TEXT NOT NULL DEFAULT '',
     -- 入队顺序，单调递增；一旦写入永不更新。ORDER BY 用它，updated_at 不再参与排序。
     enqueue_seq INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL

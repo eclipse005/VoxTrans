@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import type { QueueItem, SubtitleCue } from "../../features/media/types";
+import { isSubtitleEditMode, resolveSubtitleEditorMode } from "../../features/media/subtitleEditorMode";
 import { buildSubtitleSegmentsFromCues, subtitleSegmentsToSrt } from "../../features/media/subtitleSegments";
 import type { ExportSrtItem } from "../api/transcribe";
 import { getTaskRunQueueItem } from "../api/workspace";
@@ -35,6 +36,19 @@ type UseSubtitleWorkflowArgs = {
   pushToast: PushToast;
 };
 
+/**
+ * Owns subtitle editor binding to the active queue task.
+ *
+ * Design (two modes — see `subtitleEditorMode.ts`):
+ * - **preview**: cues track `item.subtitleSegmentsJson` every version tick
+ *   (streaming translation / recognition). Dirty is always false.
+ * - **edit**: cues are a local draft for review/done; dirty blocks remote
+ *   overwrites until the user advances or reloads.
+ *
+ * Mode is derived only from `transcribeStatus`. Transitions do not need
+ * special-case dirty clearing patches — switching to preview simply
+ * re-projects from queue JSON.
+ */
 export function useSubtitleWorkflow({
   queue,
   activeId,
@@ -67,7 +81,7 @@ export function useSubtitleWorkflow({
   }, [queue]);
 
   const canEditTask = useCallback((taskId: string) => {
-    return queue.some((item) => item.id === taskId && item.transcribeStatus === "done");
+    return queue.some((item) => item.id === taskId && isSubtitleEditMode(item.transcribeStatus));
   }, [queue]);
 
   const persistSubtitleToTask = useCallback(async (
@@ -94,10 +108,10 @@ export function useSubtitleWorkflow({
       }
       pushToast(message, "error");
     }
-  }, [pushToast]);
+  }, [pushToast, t]);
 
-  const loadSubtitleEditor = useCallback(
-    async (item: QueueItem) => {
+  const applyCuesFromItem = useCallback(
+    async (item: QueueItem, mode: "preview" | "edit") => {
       const seq = ++loadSeqRef.current;
       const taskId = item.id;
       const isStaleRequest = () => (
@@ -106,12 +120,8 @@ export function useSubtitleWorkflow({
         || !existingTaskIdsRef.current.has(taskId)
       );
 
-      if (item.transcribeStatus !== "done") {
-        // Processing: show a read-only preview as soon as segments exist.
-        // Visibility is decoupled from editability — segments are parsed
-        // locally from subtitleSegmentsJson (zero IPC), so the editor fills
-        // in incrementally as transcription/translation streams them in.
-        // Editability stays gated on `done` (see canEditSubtitle below).
+      if (mode === "preview") {
+        // Zero-IPC projection of the live stream snapshot on the queue item.
         const { hydratedCues } = await loadSubtitleEditorData(item);
         if (isStaleRequest()) return;
         dispatch({
@@ -123,6 +133,7 @@ export function useSubtitleWorkflow({
             subtitleSrtPath: "",
             subtitleCues: hydratedCues,
             subtitleCueWarnings: buildCueWarningsById(hydratedCues, []),
+            // Preview never owns a draft.
             subtitleDirty: false,
           },
         });
@@ -130,6 +141,7 @@ export function useSubtitleWorkflow({
         return;
       }
 
+      // Edit mode: snapshot authoritative task detail + segments into a draft.
       try {
         const taskDetail = await getTaskRunQueueItem(taskId);
         if (isStaleRequest()) return;
@@ -179,11 +191,15 @@ export function useSubtitleWorkflow({
         loadedSubtitleVersionRef.current = buildSubtitleVersion(item);
       }
     },
-    [dispatch, pushToast],
+    [dispatch, pushToast, t],
   );
 
   const markSubtitleEdited = useCallback(
     (nextCues: SubtitleCue[]) => {
+      // Edits only exist in edit mode; preview ignores mutations.
+      if (!subtitleTaskId || !canEditTask(subtitleTaskId)) {
+        return;
+      }
       dispatch({
         type: "set_subtitle",
         payload: {
@@ -192,28 +208,23 @@ export function useSubtitleWorkflow({
           subtitleDirty: true,
         },
       });
-      if (subtitleTaskId) {
-        if (!canEditTask(subtitleTaskId)) {
-          return;
-        }
-        const taskStillExists = queue.some((item) => item.id === subtitleTaskId);
-        if (!taskStillExists) {
-          return;
-        }
-        const segments = buildSubtitleSegmentsFromCues(nextCues);
-        const resultSrt = subtitleSegmentsToSrt(segments);
-        const subtitleSegmentsJson = JSON.stringify(segments);
-        dispatch({
-          type: "patch_queue_item",
-          id: subtitleTaskId,
-          updater: (item) => ({
-            ...item,
-            resultSrt,
-            subtitleSegmentsJson,
-          }),
-        });
-        void persistSubtitleToTask(subtitleTaskId, nextCues);
+      const taskStillExists = queue.some((item) => item.id === subtitleTaskId);
+      if (!taskStillExists) {
+        return;
       }
+      const segments = buildSubtitleSegmentsFromCues(nextCues);
+      const resultSrt = subtitleSegmentsToSrt(segments);
+      const subtitleSegmentsJson = JSON.stringify(segments);
+      dispatch({
+        type: "patch_queue_item",
+        id: subtitleTaskId,
+        updater: (item) => ({
+          ...item,
+          resultSrt,
+          subtitleSegmentsJson,
+        }),
+      });
+      void persistSubtitleToTask(subtitleTaskId, nextCues);
     },
     [canEditTask, dispatch, persistSubtitleToTask, queue, subtitleTaskId],
   );
@@ -310,8 +321,9 @@ export function useSubtitleWorkflow({
       reportError(error, "exportSubtitleSrt");
       pushToast(toUserErrorMessage(error, t("toasts:workflow.exportFailed")), "error");
     }
-  }, [pushToast, subtitleTaskId, subtitleTaskName]);
+  }, [pushToast, subtitleTaskId, subtitleTaskName, t]);
 
+  // Bind editor to active task according to mode (preview vs edit).
   useEffect(() => {
     const activeItem = queue.find((item) => item.id === activeId);
     if (!activeItem) {
@@ -332,19 +344,29 @@ export function useSubtitleWorkflow({
       return;
     }
 
+    const mode = resolveSubtitleEditorMode(activeItem.transcribeStatus);
+
     if (subtitleTaskId !== activeItem.id) {
-      void loadSubtitleEditor(activeItem);
+      void applyCuesFromItem(activeItem, mode);
       return;
     }
 
-    if (subtitleDirty) return;
+    // Edit mode: protect local draft while dirty.
+    if (mode === "edit" && subtitleDirty) {
+      return;
+    }
+
+    // Preview mode: always follow stream version ticks (dirty is irrelevant).
+    // Edit mode (clean): refresh when backend version changes (e.g. re-open).
     const currentVersion = buildSubtitleVersion(activeItem);
-    if (loadedSubtitleVersionRef.current === currentVersion) return;
-    void loadSubtitleEditor(activeItem);
-  }, [activeId, dispatch, loadSubtitleEditor, queue, subtitleDirty, subtitleTaskId]);
+    if (loadedSubtitleVersionRef.current === currentVersion) {
+      return;
+    }
+    void applyCuesFromItem(activeItem, mode);
+  }, [activeId, applyCuesFromItem, dispatch, queue, subtitleDirty, subtitleTaskId]);
 
   const activeItem = queue.find((item) => item.id === activeId) ?? null;
-  const canEditSubtitle = activeItem?.transcribeStatus === "done";
+  const canEditSubtitle = activeItem != null && isSubtitleEditMode(activeItem.transcribeStatus);
 
   return {
     activeItem,
