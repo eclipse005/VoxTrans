@@ -221,15 +221,10 @@ where
             // Check if this segment's ASR was precomputed
             if let Some(cached_text) = precomputed_asr_map.get(&segment.index) {
                 if !cached_text.is_empty() {
-                    let segment_samples = &prepared.mono_samples[start_index..end_index];
-                    let wav_started_at = Instant::now();
-                    let wav = TemporaryWav::write(segment_samples)
-                        .map_err(|err| format!("failed to write temporary wav: {err}"))?;
-                    timing.temp_wav_write_sec += wav_started_at.elapsed().as_secs_f64();
                     transcripts.push(SegmentTranscript {
                         start_sec: segment.start_sec,
                         segment_index: segment.index,
-                        wav,
+                        sample_range: (start_index, end_index),
                         text: cached_text.clone(),
                     });
                 }
@@ -237,10 +232,6 @@ where
             }
 
             let segment_samples = &prepared.mono_samples[start_index..end_index];
-            let wav_started_at = Instant::now();
-            let wav = TemporaryWav::write(segment_samples)
-                .map_err(|err| format!("failed to write temporary wav: {err}"))?;
-            timing.temp_wav_write_sec += wav_started_at.elapsed().as_secs_f64();
             let transcribe_started_at = Instant::now();
             let text = engine.transcribe(segment_samples, &language)?;
             timing.asr_transcribe_sec += transcribe_started_at.elapsed().as_secs_f64();
@@ -260,7 +251,7 @@ where
             transcripts.push(SegmentTranscript {
                 start_sec: segment.start_sec,
                 segment_index: segment.index,
-                wav,
+                sample_range: (start_index, end_index),
                 text,
             });
         }
@@ -283,8 +274,10 @@ where
             &aligner,
             lang_tag,
             &segment_transcripts.transcripts,
+            &prepared.mono_samples,
             precomputed_alignment_map,
             &mut on_progress,
+            &mut timing.temp_wav_write_sec,
         )?;
         timing.align_sec = align_started_at.elapsed().as_secs_f64();
         let segment_starts = segment_transcripts
@@ -329,7 +322,10 @@ where
 struct SegmentTranscript {
     start_sec: f64,
     segment_index: usize,
-    wav: TemporaryWav,
+    /// Sample range into the prepared mono samples. The temporary WAV for
+    /// alignment is written lazily at align time (and only when the
+    /// segment's alignment is not already cached), not during ASR.
+    sample_range: (usize, usize),
     text: String,
 }
 
@@ -371,8 +367,10 @@ fn align_segments(
     aligner: &AlignEngine,
     source_lang: LanguageTag,
     segment_transcripts: &[SegmentTranscript],
+    mono_samples: &[f32],
     precomputed_alignment: std::collections::HashMap<usize, Vec<AlignedSpan>>,
     on_progress: &mut impl FnMut(TranscribeProgressStage, usize, usize, Option<FreshSegmentResult>),
+    temp_wav_write_sec: &mut f64,
 ) -> Result<Vec<Vec<AlignedSpan>>, String> {
     let total = segment_transcripts.len();
     let mut results = Vec::with_capacity(total);
@@ -384,8 +382,15 @@ fn align_segments(
             results.push(cached.clone());
             continue;
         }
+        // Alignment cache miss: only now is the segment WAV actually needed,
+        // so write it here instead of upfront during ASR.
+        let (range_start, range_end) = segment.sample_range;
+        let wav_started_at = Instant::now();
+        let wav = TemporaryWav::write(&mono_samples[range_start..range_end])
+            .map_err(|err| format!("failed to write temporary wav: {err}"))?;
+        *temp_wav_write_sec += wav_started_at.elapsed().as_secs_f64();
         let items = aligner
-            .align_segment(&segment.wav.path, &segment.text, source_lang)
+            .align_segment(&wav.path, &segment.text, source_lang)
             .map_err(|err| format!("failed align request {current}: {err}"))?;
         on_progress(
             TranscribeProgressStage::Align,

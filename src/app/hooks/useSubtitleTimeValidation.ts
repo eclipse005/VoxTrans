@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SubtitleCue } from "../../features/media/types";
 import { parseSrtTime } from "../../features/media/srt";
@@ -11,7 +11,7 @@ export function useSubtitleTimeValidation({ onUpdateCue }: UseSubtitleTimeValida
   const { t } = useTranslation(["subtitles"]);
   const [timeErrorByCue, setTimeErrorByCue] = useState<Record<string, string>>({});
 
-  const applyStart = (cue: SubtitleCue, value: string) => {
+  const applyStart = useCallback((cue: SubtitleCue, value: string) => {
     const parsed = parseSrtTime(value);
     if (parsed == null) {
       setTimeErrorByCue((old) => ({ ...old, [cue.id]: t("subtitles:timeValidation.startInvalid") }));
@@ -19,9 +19,9 @@ export function useSubtitleTimeValidation({ onUpdateCue }: UseSubtitleTimeValida
     }
     onUpdateCue(cue.id, { startMs: parsed, endMs: Math.max(parsed, cue.endMs) });
     setTimeErrorByCue((old) => ({ ...old, [cue.id]: "" }));
-  };
+  }, [onUpdateCue, t]);
 
-  const applyEnd = (cue: SubtitleCue, value: string) => {
+  const applyEnd = useCallback((cue: SubtitleCue, value: string) => {
     const parsed = parseSrtTime(value);
     if (parsed == null) {
       setTimeErrorByCue((old) => ({ ...old, [cue.id]: t("subtitles:timeValidation.endInvalid") }));
@@ -29,7 +29,7 @@ export function useSubtitleTimeValidation({ onUpdateCue }: UseSubtitleTimeValida
     }
     onUpdateCue(cue.id, { endMs: Math.max(parsed, cue.startMs) });
     setTimeErrorByCue((old) => ({ ...old, [cue.id]: "" }));
-  };
+  }, [onUpdateCue, t]);
 
   return {
     timeErrorByCue,

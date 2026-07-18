@@ -167,7 +167,7 @@ where
     let words = normalize_word_tokens(output.words);
 
     let response = TranscribeResponse {
-        words: words.iter().map(word_to_dto).collect(),
+        words: words.into_iter().map(word_to_dto).collect(),
         text,
         aligned_text,
         segment_total: output.segment_summaries.len(),
@@ -225,11 +225,11 @@ fn normalize_align_model(raw: &str) -> String {
     }
 }
 
-fn word_to_dto(word: &WordToken) -> WordTokenDto {
+fn word_to_dto(word: WordToken) -> WordTokenDto {
     WordTokenDto {
         start: word.start,
         end: word.end,
-        word: word.word.clone(),
+        word: word.word,
     }
 }
 

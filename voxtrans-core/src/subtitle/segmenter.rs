@@ -45,7 +45,7 @@ fn is_standalone_punctuation_token(token: &str) -> bool {
         .all(|c| !c.is_alphanumeric() && !c.is_whitespace())
 }
 
-fn merge_compound_abbreviation_tokens(words: Vec<WordToken>) -> Vec<WordToken> {
+fn merge_compound_abbreviation_tokens(mut words: Vec<WordToken>) -> Vec<WordToken> {
     if words.len() < 2 {
         return words;
     }
@@ -67,7 +67,13 @@ fn merge_compound_abbreviation_tokens(words: Vec<WordToken>) -> Vec<WordToken> {
             }
         }
 
-        out.push(words[idx].clone());
+        // Move the token out instead of cloning its String; `words` is
+        // consumed by this pass and idx only advances forward.
+        out.push(WordToken {
+            start: words[idx].start,
+            end: words[idx].end,
+            word: std::mem::take(&mut words[idx].word),
+        });
         idx += 1;
     }
 
@@ -85,7 +91,7 @@ fn merge_compound_numeric_tokens(words: Vec<WordToken>) -> Vec<WordToken> {
     }
 }
 
-fn merge_prefixed_numeric_tokens(words: Vec<WordToken>) -> Vec<WordToken> {
+fn merge_prefixed_numeric_tokens(mut words: Vec<WordToken>) -> Vec<WordToken> {
     if words.len() < 2 {
         return words;
     }
@@ -107,14 +113,20 @@ fn merge_prefixed_numeric_tokens(words: Vec<WordToken>) -> Vec<WordToken> {
             }
         }
 
-        out.push(words[idx].clone());
+        // Move the token out instead of cloning its String; `words` is
+        // consumed by this pass and idx only advances forward.
+        out.push(WordToken {
+            start: words[idx].start,
+            end: words[idx].end,
+            word: std::mem::take(&mut words[idx].word),
+        });
         idx += 1;
     }
 
     out
 }
 
-fn merge_numeric_unit_suffix_tokens(words: Vec<WordToken>) -> Vec<WordToken> {
+fn merge_numeric_unit_suffix_tokens(mut words: Vec<WordToken>) -> Vec<WordToken> {
     if words.len() < 2 {
         return words;
     }
@@ -136,14 +148,20 @@ fn merge_numeric_unit_suffix_tokens(words: Vec<WordToken>) -> Vec<WordToken> {
             }
         }
 
-        out.push(words[idx].clone());
+        // Move the token out instead of cloning its String; `words` is
+        // consumed by this pass and idx only advances forward.
+        out.push(WordToken {
+            start: words[idx].start,
+            end: words[idx].end,
+            word: std::mem::take(&mut words[idx].word),
+        });
         idx += 1;
     }
 
     out
 }
 
-fn merge_compound_numeric_tokens_once(words: Vec<WordToken>) -> (Vec<WordToken>, bool) {
+fn merge_compound_numeric_tokens_once(mut words: Vec<WordToken>) -> (Vec<WordToken>, bool) {
     if words.len() < 2 {
         return (words, false);
     }
@@ -167,7 +185,13 @@ fn merge_compound_numeric_tokens_once(words: Vec<WordToken>) -> (Vec<WordToken>,
             }
         }
 
-        out.push(words[idx].clone());
+        // Move the token out instead of cloning its String; `words` is
+        // consumed by this pass and idx only advances forward.
+        out.push(WordToken {
+            start: words[idx].start,
+            end: words[idx].end,
+            word: std::mem::take(&mut words[idx].word),
+        });
         idx += 1;
     }
 

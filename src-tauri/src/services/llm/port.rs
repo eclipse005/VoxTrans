@@ -47,7 +47,7 @@ pub struct LlmCallContext {
 pub struct LlmJsonTask {
     pub id: usize,
     pub request_id: String,
-    pub user_prompt: String,
+    pub user_prompt: Arc<str>,
     /// base64 data URLs for vision-assisted calls. Empty = text-only request.
     pub images: Arc<[String]>,
     pub response_validator: Option<JsonResponseValidator>,

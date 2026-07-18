@@ -104,7 +104,7 @@ pub(super) fn build_batch_windows(
             batch_id: batch_index,
             local_ids: (1..=current.len()).collect(),
             local_to_global: current.iter().map(|segment| segment.segment_id).collect(),
-            prompt,
+            prompt: Arc::from(prompt),
             frames,
             frame_names,
         });

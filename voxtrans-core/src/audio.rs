@@ -69,25 +69,28 @@ fn load_wav_as_16k_mono_f32(audio_path: &Path) -> Result<Vec<f32>, Box<dyn std::
 
     let mono_samples = match spec.sample_format {
         hound::SampleFormat::Float => {
-            let samples = reader.samples::<f32>().collect::<Result<Vec<_>, _>>()?;
-            downmix_to_mono(&samples, channels)
+            let mut samples = Vec::with_capacity(reader.duration() as usize);
+            for sample in reader.samples::<f32>() {
+                samples.push(sample?);
+            }
+            downmix_to_mono(samples, channels)
         }
         hound::SampleFormat::Int => {
             let bits = spec.bits_per_sample.clamp(1, 32);
             if bits <= 16 {
                 let max = (1_i64 << (bits - 1)) as f32;
-                let samples = reader
-                    .samples::<i16>()
-                    .map(|sample| sample.map(|value| value as f32 / max))
-                    .collect::<Result<Vec<_>, _>>()?;
-                downmix_to_mono(&samples, channels)
+                let mut samples = Vec::with_capacity(reader.duration() as usize);
+                for sample in reader.samples::<i16>() {
+                    samples.push(sample.map(|value| value as f32 / max)?);
+                }
+                downmix_to_mono(samples, channels)
             } else {
                 let max = (1_i64 << (bits - 1)) as f32;
-                let samples = reader
-                    .samples::<i32>()
-                    .map(|sample| sample.map(|value| value as f32 / max))
-                    .collect::<Result<Vec<_>, _>>()?;
-                downmix_to_mono(&samples, channels)
+                let mut samples = Vec::with_capacity(reader.duration() as usize);
+                for sample in reader.samples::<i32>() {
+                    samples.push(sample.map(|value| value as f32 / max)?);
+                }
+                downmix_to_mono(samples, channels)
             }
         }
     };
@@ -131,9 +134,10 @@ fn extract_audio_to_wav(
     Err(format!("ffmpeg failed to extract audio: {stderr}").into())
 }
 
-fn downmix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
+fn downmix_to_mono(samples: Vec<f32>, channels: usize) -> Vec<f32> {
     if channels == 1 {
-        return samples.to_vec();
+        // Already mono: hand the buffer back without copying it.
+        return samples;
     }
     samples
         .chunks_exact(channels)

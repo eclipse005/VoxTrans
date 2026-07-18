@@ -55,7 +55,7 @@ pub fn workspace_subtitle_segments_from_translation_segments(
 /// service-layer output type, used to build incremental previews during
 /// translation. Untranslated segments arrive with an empty `translation`.
 pub fn workspace_subtitle_segments_from_translation_outputs(
-    segments: &[TranslationSegmentOutput],
+    segments: &[std::sync::Arc<TranslationSegmentOutput>],
 ) -> Vec<WorkspaceSubtitleSegment> {
     segments
         .iter()

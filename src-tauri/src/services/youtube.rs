@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
 
 use super::binary::{configure_background_command, resolve_bundled_or_path};
@@ -256,20 +256,18 @@ fn run_ytdlp_download(
     let (tx, rx) = mpsc::channel::<String>();
     let stdout_reader = spawn_line_reader(stdout, tx.clone());
     let stderr_reader = spawn_line_reader(stderr, tx);
-    let mut recent_lines = VecDeque::<String>::new();
-    let mut final_path: Option<PathBuf> = None;
+    let mut line_state = YtdlpLineState {
+        final_path: None,
+        recent_lines: VecDeque::new(),
+        // Start "due" so the first download-progress line emits immediately.
+        last_download_emit: Instant::now()
+            .checked_sub(Duration::from_millis(300))
+            .unwrap_or_else(Instant::now),
+    };
 
     loop {
         while let Ok(line) = rx.try_recv() {
-            handle_ytdlp_line(
-                app,
-                task_id,
-                output_dir,
-                &line,
-                snapshot,
-                &mut final_path,
-                &mut recent_lines,
-            );
+            handle_ytdlp_line(app, task_id, output_dir, &line, snapshot, &mut line_state);
         }
 
         if cancel.load(Ordering::SeqCst) {
@@ -285,19 +283,12 @@ fn run_ytdlp_download(
             let _ = stdout_reader.join();
             let _ = stderr_reader.join();
             while let Ok(line) = rx.try_recv() {
-                handle_ytdlp_line(
-                    app,
-                    task_id,
-                    output_dir,
-                    &line,
-                    snapshot,
-                    &mut final_path,
-                    &mut recent_lines,
-                );
+                handle_ytdlp_line(app, task_id, output_dir, &line, snapshot, &mut line_state);
             }
 
             if !status.success() {
-                let message = recent_output_message(&recent_lines, "YouTube download failed");
+                let message =
+                    recent_output_message(&line_state.recent_lines, "YouTube download failed");
                 snapshot.phase = "failed".to_string();
                 snapshot.message = message.clone();
                 set_progress(app, snapshot.clone());
@@ -309,7 +300,8 @@ fn run_ytdlp_download(
         thread::sleep(Duration::from_millis(100));
     }
 
-    let downloaded_path = final_path
+    let downloaded_path = line_state
+        .final_path
         .filter(|path| path.is_file())
         .or_else(|| find_downloaded_media(output_dir))
         .ok_or_else(|| "YouTube download finished but no media file was found".to_string())?;
@@ -437,24 +429,31 @@ fn spawn_line_reader(
     })
 }
 
+/// Mutable state threaded through yt-dlp stdout/stderr line handling.
+struct YtdlpLineState {
+    final_path: Option<PathBuf>,
+    recent_lines: VecDeque<String>,
+    /// Last time a download-percent progress event was emitted (throttle).
+    last_download_emit: Instant,
+}
+
 fn handle_ytdlp_line(
     app: &tauri::AppHandle,
     _task_id: &str,
     output_dir: &Path,
     line: &str,
     snapshot: &mut YoutubeDownloadProgressResponse,
-    final_path: &mut Option<PathBuf>,
-    recent_lines: &mut VecDeque<String>,
+    state: &mut YtdlpLineState,
 ) {
     let line = line.trim();
     if line.is_empty() {
         return;
     }
-    remember_line(recent_lines, line);
+    remember_line(&mut state.recent_lines, line);
 
     if let Some(path) = extract_path_from_line(line, output_dir)
         && path.extension().is_some() {
-            *final_path = Some(path.clone());
+            state.final_path = Some(path.clone());
             let title = media_name(&path);
             if !title.is_empty() {
                 snapshot.title = title;
@@ -479,7 +478,13 @@ fn handle_ytdlp_line(
         snapshot.eta =
             parse_after_marker(line, " ETA ", &[]).unwrap_or_else(|| snapshot.eta.clone());
         snapshot.message = "downloading".to_string();
-        set_progress(app, snapshot.clone());
+        // Throttle the per-line progress events (yt-dlp prints many per
+        // second); completion (100%) always goes through, and the snapshot
+        // state above is updated regardless so nothing is lost.
+        if percent >= 100.0 || state.last_download_emit.elapsed() >= Duration::from_millis(300) {
+            state.last_download_emit = Instant::now();
+            set_progress(app, snapshot.clone());
+        }
         return;
     }
 

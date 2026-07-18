@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "../../i18n";
 import {
@@ -26,11 +27,11 @@ import type { AlignModel } from "../../generated/bindings/AlignModel";
 import type { SourceLanguageOption } from "../../generated/bindings/SourceLanguageOption";
 import { AudioFileIcon, BookIcon, ChevronDownIcon, MicIcon, SubtitleFileIcon, TranslateIcon, TrashIcon, VideoFileIcon } from "./Icons";
 
-function findSourceLanguageOption(
+function resolveSourceLanguageOption(
   tag: string,
-  dynamicOptions: SourceLanguageOption[],
+  dynamicByTag: Map<string, SourceLanguageOption>,
 ): SourceLanguageOption {
-  const dynamic = dynamicOptions.find((option) => option.tag === tag);
+  const dynamic = dynamicByTag.get(tag);
   if (dynamic) return dynamic;
   const staticOption = SOURCE_LANGUAGE_OPTIONS.find((option) => option.id === tag);
   if (staticOption) {
@@ -167,6 +168,282 @@ function resolveStageLabel(code: QueueItem["taskProgress"]["stage"]["code"]): st
   return i18n.t(`errors:stage.${code}`);
 }
 
+type QueueItemRowProps = {
+  item: QueueItem;
+  isActive: boolean;
+  languageMenuOpen: boolean;
+  terminologyMenuOpen: boolean;
+  languageMenuRef: RefObject<HTMLDivElement | null>;
+  terminologyMenuRef: RefObject<HTMLDivElement | null>;
+  sourceLanguageOptions: SourceLanguageOption[];
+  sourceLanguagesLoading: boolean;
+  sourceLanguageOptionByTag: Map<string, SourceLanguageOption>;
+  terminologyGroups: TerminologyGroup[];
+  setLanguageMenuTaskId: Dispatch<SetStateAction<string>>;
+  setTerminologyMenuTaskId: Dispatch<SetStateAction<string>>;
+  onSetActiveId: (id: string) => void;
+  onUpdateTaskLanguages: (
+    item: QueueItem,
+    sourceLang: LanguageTag,
+    targetLang: TargetLanguage,
+  ) => void | Promise<void>;
+  onUpdateTaskTerminology: (
+    item: QueueItem,
+    terminologyGroupId: string,
+  ) => void | Promise<void>;
+  onProcessSingle: (item: QueueItem) => void | Promise<void>;
+  onProcessSingleTranscribeTranslate: (item: QueueItem) => void | Promise<void>;
+  onRemoveItem: (id: string) => void;
+};
+
+const QueueItemRow = memo(function QueueItemRow({
+  item,
+  isActive,
+  languageMenuOpen,
+  terminologyMenuOpen,
+  languageMenuRef,
+  terminologyMenuRef,
+  sourceLanguageOptions,
+  sourceLanguagesLoading,
+  sourceLanguageOptionByTag,
+  terminologyGroups,
+  setLanguageMenuTaskId,
+  setTerminologyMenuTaskId,
+  onSetActiveId,
+  onUpdateTaskLanguages,
+  onUpdateTaskTerminology,
+  onProcessSingle,
+  onProcessSingleTranscribeTranslate,
+  onRemoveItem,
+}: QueueItemRowProps) {
+  const { t } = useTranslation(["tasks", "common", "toasts"]);
+  const primaryStatus = resolvePrimaryStatus(item);
+  const transcribeProcessing =
+    item.transcribeStatus === "processing"
+    && (
+      item.taskProgress.stage.code !== ""
+      || item.taskProgress.stage.detail.trim().length > 0
+      || item.taskProgress.stage.current > 0
+      || item.taskProgress.stage.total > 0
+    );
+  const transcribeProgressText = transcribeProcessing ? getTranscribeProcessingText(item) : "";
+  const sourceOption = resolveSourceLanguageOption(item.sourceLang, sourceLanguageOptionByTag);
+  const targetOption = targetLanguageOption(item.targetLang);
+  const languageBusy = item.transcribeStatus === "processing" || item.transcribeStatus === "queued";
+  const terminologyGroupId = item.terminologyGroupId ?? "";
+  const terminologySelectedGroup =
+    terminologyGroups.find((group) => group.id === terminologyGroupId) ?? null;
+
+  const kind = inferMediaKind(item);
+  const cueCount = useMemo(() => cueCountFromItem(item), [item]);
+  const metaParts = [formatBytes(item.sizeBytes)];
+  if (cueCount != null) {
+    metaParts.push(t("tasks:cueCount", { count: cueCount }));
+  }
+
+  return (
+    <div className={`file-item ${isActive ? "active" : ""}`} onClick={() => onSetActiveId(item.id)}>
+      {/* Row 1: inline media tag + title (no truncation). */}
+      <div className="file-title-row">
+        <span className="file-type-tag" aria-hidden="true">
+          {kind === "subtitle" ? (
+            <SubtitleFileIcon />
+          ) : kind === "video" ? (
+            <VideoFileIcon />
+          ) : (
+            <AudioFileIcon />
+          )}
+        </span>
+        <span className="file-name" title={item.name}>
+          {item.name}
+        </span>
+      </div>
+
+      {/* Row 2: file size (left) + status/progress badge (right). */}
+      <div className="file-status-row">
+        <span className="file-meta">{metaParts.join(" · ")}</span>
+        {transcribeProcessing ? (
+          <span className="task-step task-step-progress">
+            {transcribeProgressText}
+          </span>
+        ) : primaryStatus === "processing" ? (
+          <span className="task-status status-processing">{t("tasks:stage.preparing")}</span>
+        ) : (
+          <span className={`task-status status-${String(primaryStatus).replace(/_/g, "-")}`}>
+            {t(statusLabel(primaryStatus))}
+          </span>
+        )}
+      </div>
+
+      {/* Row 3: language (and later terminology) chips (left) + action buttons (right). */}
+      <div className="file-actions-row">
+        <div className="file-chips">
+          <div
+            className="task-language-menu"
+            ref={languageMenuOpen ? languageMenuRef : undefined}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              className="task-language-chip"
+              disabled={languageBusy}
+              title={`${sourceOption.label} -> ${targetOption.label}`}
+              aria-label={t("tasks:language.itemAria", { source: sourceOption.label, target: targetOption.label })}
+              onClick={() => setLanguageMenuTaskId((current) => (
+                current === item.id ? "" : item.id
+              ))}
+            >
+              {sourceOption.short} -&gt; {targetOption.short}
+            </button>
+            {languageMenuOpen ? (
+              <div className="task-language-popover">
+                <label className="task-language-field">
+                  <span>{kind === "subtitle" ? t("tasks:language.source") : t("tasks:language.audio")}</span>
+                  <select
+                    className="task-language-select"
+                    value={normalizeSourceLanguage(item.sourceLang)}
+                    disabled={sourceLanguagesLoading && kind !== "subtitle"}
+                    onChange={(event) => {
+                      void onUpdateTaskLanguages(
+                        item,
+                        normalizeSourceLanguage(event.currentTarget.value),
+                        normalizeTargetLanguage(item.targetLang),
+                      );
+                    }}
+                  >
+                    {(kind === "subtitle"
+                      ? SOURCE_LANGUAGE_OPTIONS.map(({ id, short, label }) => ({
+                          tag: id,
+                          short,
+                          label,
+                        }))
+                      : sourceLanguageOptions
+                    ).map((option) => (
+                      <option key={option.tag} value={option.tag}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="task-language-field">
+                  <span>{t("tasks:language.translate")}</span>
+                  <select
+                    className="task-language-select"
+                    value={normalizeTargetLanguage(item.targetLang)}
+                    onChange={(event) => {
+                      void onUpdateTaskLanguages(
+                        item,
+                        normalizeSourceLanguage(item.sourceLang),
+                        normalizeTargetLanguage(event.currentTarget.value),
+                      );
+                    }}
+                  >
+                    {TARGET_LANGUAGE_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : null}
+          </div>
+          <div
+            className="task-terminology-menu"
+            ref={terminologyMenuOpen ? terminologyMenuRef : undefined}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              className={`task-terminology-chip ${terminologySelectedGroup ? "has-group" : "no-group"}`}
+              disabled={languageBusy}
+              title={terminologySelectedGroup ? terminologySelectedGroup.name : t("tasks:terminology.unused")}
+              aria-label={terminologySelectedGroup ? t("tasks:terminology.groupLabel", { name: terminologySelectedGroup.name }) : t("tasks:terminology.unused")}
+              onClick={() => setTerminologyMenuTaskId((current) => (
+                current === item.id ? "" : item.id
+              ))}
+            >
+              <BookIcon />
+              {terminologySelectedGroup ? terminologySelectedGroup.name : t("tasks:terminology.notSet")}
+            </button>
+            {terminologyMenuOpen ? (
+              <div className="task-terminology-popover">
+                <label className="task-language-field">
+                  <span>{t("tasks:terminology.group")}</span>
+                  <select
+                    className="task-language-select"
+                    value={terminologyGroupId}
+                    onChange={(event) => {
+                      setTerminologyMenuTaskId("");
+                      void onUpdateTaskTerminology(item, event.currentTarget.value);
+                    }}
+                  >
+                    <option value="">{t("tasks:terminology.none")}</option>
+                    {terminologyGroups.length === 0 ? (
+                      <option value="" disabled>{t("tasks:terminology.notConfigured")}</option>
+                    ) : null}
+                    {terminologyGroups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div className="file-actions">
+          {(() => {
+            const translateLabel = item.transcribeStatus === "review_source"
+              ? (kind === "subtitle"
+                ? t("tasks:action.startTranslation")
+                : t("tasks:action.continueTranslation"))
+              : item.transcribeStatus === "review_target"
+                ? t("tasks:action.finalize")
+                : t("tasks:action.translate");
+            const transcribeLabel = item.transcribeStatus === "review_source"
+              || item.transcribeStatus === "review_target"
+              ? t("tasks:action.finalize")
+              : t("tasks:action.transcribe");
+            return (
+              <>
+          <button
+            className="file-action-btn"
+            title={translateLabel}
+            aria-label={translateLabel}
+            disabled={item.transcribeStatus === "processing" || item.transcribeStatus === "queued"}
+            onClick={(event) => { event.stopPropagation(); void onProcessSingleTranscribeTranslate(item); }}
+          >
+            <TranslateIcon />
+          </button>
+          {kind === "subtitle" ? null : (
+            <button
+              className="file-action-btn"
+              title={transcribeLabel}
+              aria-label={transcribeLabel}
+              disabled={item.transcribeStatus === "processing" || item.transcribeStatus === "queued"}
+              onClick={(event) => { event.stopPropagation(); void onProcessSingle(item); }}
+            >
+              <MicIcon />
+            </button>
+          )}
+              </>
+            );
+          })()}
+          <button
+            className="file-action-btn delete"
+            title={t("tasks:action.delete")}
+            aria-label={t("tasks:action.delete")}
+            disabled={!canDeleteQueueItem(item)}
+            onClick={(event) => { event.stopPropagation(); onRemoveItem(item.id); }}
+          >
+            <TrashIcon />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export default function MediaList({
   queue,
   queueCount,
@@ -212,9 +489,19 @@ export default function MediaList({
     error: sourceLanguagesError,
   } = useSourceLanguages(asrModel, alignModel);
 
-  const sourceLanguageOptions: SourceLanguageOption[] = sourceLanguagesError
-    ? SOURCE_LANGUAGE_OPTIONS.map(({ id, short, label }) => ({ tag: id, short, label }))
-    : rawSourceLanguageOptions;
+  const sourceLanguageOptions: SourceLanguageOption[] = useMemo(
+    () => (sourceLanguagesError
+      ? SOURCE_LANGUAGE_OPTIONS.map(({ id, short, label }) => ({ tag: id, short, label }))
+      : rawSourceLanguageOptions),
+    [sourceLanguagesError, rawSourceLanguageOptions],
+  );
+  const sourceLanguageOptionByTag = useMemo(() => {
+    const map = new Map<string, SourceLanguageOption>();
+    for (const option of rawSourceLanguageOptions) {
+      map.set(option.tag, option);
+    }
+    return map;
+  }, [rawSourceLanguageOptions]);
 
   const sourceLanguagesErrorShown = useRef(false);
   useEffect(() => {
@@ -257,9 +544,9 @@ export default function MediaList({
     : t("tasks:batch.translate");
   const batchSourceLang = commonSourceLanguage(queue);
   const batchTargetLang = commonTargetLanguage(queue);
-  const batchSourceOption = findSourceLanguageOption(
+  const batchSourceOption = resolveSourceLanguageOption(
     batchSourceLang ?? DEFAULT_SOURCE_LANGUAGE,
-    rawSourceLanguageOptions,
+    sourceLanguageOptionByTag,
   );
   const batchTargetOption = targetLanguageOption(batchTargetLang ?? DEFAULT_TARGET_LANGUAGE);
   const batchLanguageMenuOpen = languageMenuTaskId === BATCH_LANGUAGE_MENU_ID;
@@ -404,235 +691,29 @@ export default function MediaList({
         {queue.length === 0 ? (
           <div className="file-item file-item-empty" />
         ) : (
-          queue.map((item) => {
-            const primaryStatus = resolvePrimaryStatus(item);
-            const transcribeProcessing =
-              item.transcribeStatus === "processing"
-              && (
-                item.taskProgress.stage.code !== ""
-                || item.taskProgress.stage.detail.trim().length > 0
-                || item.taskProgress.stage.current > 0
-                || item.taskProgress.stage.total > 0
-              );
-            const transcribeProgressText = transcribeProcessing ? getTranscribeProcessingText(item) : "";
-            const sourceOption = findSourceLanguageOption(item.sourceLang, rawSourceLanguageOptions);
-            const targetOption = targetLanguageOption(item.targetLang);
-            const languageBusy = item.transcribeStatus === "processing" || item.transcribeStatus === "queued";
-            const languageMenuOpen = languageMenuTaskId === item.id;
-            const terminologyMenuOpen = terminologyMenuTaskId === item.id;
-            const terminologyGroupId = item.terminologyGroupId ?? "";
-            const terminologySelectedGroup =
-              terminologyGroups.find((group) => group.id === terminologyGroupId) ?? null;
-
-            const kind = inferMediaKind(item);
-            const cueCount = cueCountFromItem(item);
-            const metaParts = [formatBytes(item.sizeBytes)];
-            if (cueCount != null) {
-              metaParts.push(t("tasks:cueCount", { count: cueCount }));
-            }
-
-            return (
-              <div key={item.id} className={`file-item ${item.id === activeId ? "active" : ""}`} onClick={() => onSetActiveId(item.id)}>
-                {/* Row 1: inline media tag + title (no truncation). */}
-                <div className="file-title-row">
-                  <span className="file-type-tag" aria-hidden="true">
-                    {kind === "subtitle" ? (
-                      <SubtitleFileIcon />
-                    ) : kind === "video" ? (
-                      <VideoFileIcon />
-                    ) : (
-                      <AudioFileIcon />
-                    )}
-                  </span>
-                  <span className="file-name" title={item.name}>
-                    {item.name}
-                  </span>
-                </div>
-
-                {/* Row 2: file size (left) + status/progress badge (right). */}
-                <div className="file-status-row">
-                  <span className="file-meta">{metaParts.join(" · ")}</span>
-                  {transcribeProcessing ? (
-                    <span className="task-step task-step-progress">
-                      {transcribeProgressText}
-                    </span>
-                  ) : primaryStatus === "processing" ? (
-                    <span className="task-status status-processing">{t("tasks:stage.preparing")}</span>
-                  ) : (
-                    <span className={`task-status status-${String(primaryStatus).replace(/_/g, "-")}`}>
-                      {t(statusLabel(primaryStatus))}
-                    </span>
-                  )}
-                </div>
-
-                {/* Row 3: language (and later terminology) chips (left) + action buttons (right). */}
-                <div className="file-actions-row">
-                  <div className="file-chips">
-                    <div
-                      className="task-language-menu"
-                      ref={languageMenuOpen ? languageMenuRef : undefined}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <button
-                        className="task-language-chip"
-                        disabled={languageBusy}
-                        title={`${sourceOption.label} -> ${targetOption.label}`}
-                        aria-label={t("tasks:language.itemAria", { source: sourceOption.label, target: targetOption.label })}
-                        onClick={() => setLanguageMenuTaskId((current) => (
-                          current === item.id ? "" : item.id
-                        ))}
-                      >
-                        {sourceOption.short} -&gt; {targetOption.short}
-                      </button>
-                      {languageMenuOpen ? (
-                        <div className="task-language-popover">
-                          <label className="task-language-field">
-                            <span>{kind === "subtitle" ? t("tasks:language.source") : t("tasks:language.audio")}</span>
-                            <select
-                              className="task-language-select"
-                              value={normalizeSourceLanguage(item.sourceLang)}
-                              disabled={sourceLanguagesLoading && kind !== "subtitle"}
-                              onChange={(event) => {
-                                void onUpdateTaskLanguages(
-                                  item,
-                                  normalizeSourceLanguage(event.currentTarget.value),
-                                  normalizeTargetLanguage(item.targetLang),
-                                );
-                              }}
-                            >
-                              {(kind === "subtitle"
-                                ? SOURCE_LANGUAGE_OPTIONS.map(({ id, short, label }) => ({
-                                    tag: id,
-                                    short,
-                                    label,
-                                  }))
-                                : sourceLanguageOptions
-                              ).map((option) => (
-                                <option key={option.tag} value={option.tag}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="task-language-field">
-                            <span>{t("tasks:language.translate")}</span>
-                            <select
-                              className="task-language-select"
-                              value={normalizeTargetLanguage(item.targetLang)}
-                              onChange={(event) => {
-                                void onUpdateTaskLanguages(
-                                  item,
-                                  normalizeSourceLanguage(item.sourceLang),
-                                  normalizeTargetLanguage(event.currentTarget.value),
-                                );
-                              }}
-                            >
-                              {TARGET_LANGUAGE_OPTIONS.map((option) => (
-                                <option key={option.id} value={option.id}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        </div>
-                      ) : null}
-                    </div>
-                    <div
-                      className="task-terminology-menu"
-                      ref={terminologyMenuOpen ? terminologyMenuRef : undefined}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <button
-                        className={`task-terminology-chip ${terminologySelectedGroup ? "has-group" : "no-group"}`}
-                        disabled={languageBusy}
-                        title={terminologySelectedGroup ? terminologySelectedGroup.name : t("tasks:terminology.unused")}
-                        aria-label={terminologySelectedGroup ? t("tasks:terminology.groupLabel", { name: terminologySelectedGroup.name }) : t("tasks:terminology.unused")}
-                        onClick={() => setTerminologyMenuTaskId((current) => (
-                          current === item.id ? "" : item.id
-                        ))}
-                      >
-                        <BookIcon />
-                        {terminologySelectedGroup ? terminologySelectedGroup.name : t("tasks:terminology.notSet")}
-                      </button>
-                      {terminologyMenuOpen ? (
-                        <div className="task-terminology-popover">
-                          <label className="task-language-field">
-                            <span>{t("tasks:terminology.group")}</span>
-                            <select
-                              className="task-language-select"
-                              value={terminologyGroupId}
-                              onChange={(event) => {
-                                setTerminologyMenuTaskId("");
-                                void onUpdateTaskTerminology(item, event.currentTarget.value);
-                              }}
-                            >
-                              <option value="">{t("tasks:terminology.none")}</option>
-                              {terminologyGroups.length === 0 ? (
-                                <option value="" disabled>{t("tasks:terminology.notConfigured")}</option>
-                              ) : null}
-                              {terminologyGroups.map((group) => (
-                                <option key={group.id} value={group.id}>
-                                  {group.name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="file-actions">
-                    {(() => {
-                      const translateLabel = item.transcribeStatus === "review_source"
-                        ? (kind === "subtitle"
-                          ? t("tasks:action.startTranslation")
-                          : t("tasks:action.continueTranslation"))
-                        : item.transcribeStatus === "review_target"
-                          ? t("tasks:action.finalize")
-                          : t("tasks:action.translate");
-                      const transcribeLabel = item.transcribeStatus === "review_source"
-                        || item.transcribeStatus === "review_target"
-                        ? t("tasks:action.finalize")
-                        : t("tasks:action.transcribe");
-                      return (
-                        <>
-                    <button
-                      className="file-action-btn"
-                      title={translateLabel}
-                      aria-label={translateLabel}
-                      disabled={item.transcribeStatus === "processing" || item.transcribeStatus === "queued"}
-                      onClick={(event) => { event.stopPropagation(); void onProcessSingleTranscribeTranslate(item); }}
-                    >
-                      <TranslateIcon />
-                    </button>
-                    {kind === "subtitle" ? null : (
-                      <button
-                        className="file-action-btn"
-                        title={transcribeLabel}
-                        aria-label={transcribeLabel}
-                        disabled={item.transcribeStatus === "processing" || item.transcribeStatus === "queued"}
-                        onClick={(event) => { event.stopPropagation(); void onProcessSingle(item); }}
-                      >
-                        <MicIcon />
-                      </button>
-                    )}
-                        </>
-                      );
-                    })()}
-                    <button
-                      className="file-action-btn delete"
-                      title={t("tasks:action.delete")}
-                      aria-label={t("tasks:action.delete")}
-                      disabled={!canDeleteQueueItem(item)}
-                      onClick={(event) => { event.stopPropagation(); onRemoveItem(item.id); }}
-                    >
-                      <TrashIcon />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })
+          queue.map((item) => (
+            <QueueItemRow
+              key={item.id}
+              item={item}
+              isActive={item.id === activeId}
+              languageMenuOpen={languageMenuTaskId === item.id}
+              terminologyMenuOpen={terminologyMenuTaskId === item.id}
+              languageMenuRef={languageMenuRef}
+              terminologyMenuRef={terminologyMenuRef}
+              sourceLanguageOptions={sourceLanguageOptions}
+              sourceLanguagesLoading={sourceLanguagesLoading}
+              sourceLanguageOptionByTag={sourceLanguageOptionByTag}
+              terminologyGroups={terminologyGroups}
+              setLanguageMenuTaskId={setLanguageMenuTaskId}
+              setTerminologyMenuTaskId={setTerminologyMenuTaskId}
+              onSetActiveId={onSetActiveId}
+              onUpdateTaskLanguages={onUpdateTaskLanguages}
+              onUpdateTaskTerminology={onUpdateTaskTerminology}
+              onProcessSingle={onProcessSingle}
+              onProcessSingleTranscribeTranslate={onProcessSingleTranscribeTranslate}
+              onRemoveItem={onRemoveItem}
+            />
+          ))
         )}
       </div>
 

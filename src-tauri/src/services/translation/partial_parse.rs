@@ -45,9 +45,14 @@ pub(super) fn extract_partial_translations(raw: &str) -> HashMap<usize, String> 
 
 fn find_translations_array_body(raw: &str) -> Option<&str> {
     // ASCII key — find() returns a char boundary.
-    let lower = raw.to_ascii_lowercase();
+    // Fast path: the key is emitted in exact lowercase in the common case,
+    // so try an exact match first and only pay for a lowercased copy of the
+    // whole buffer when a case-variant key is actually present.
     let key = "\"translations\"";
-    let idx = lower.find(key)?;
+    let idx = match raw.find(key) {
+        Some(idx) => idx,
+        None => raw.to_ascii_lowercase().find(key)?,
+    };
     let after_key = &raw[idx + key.len()..];
     let bracket = after_key.find('[')?;
     let start = idx + key.len() + bracket + 1;

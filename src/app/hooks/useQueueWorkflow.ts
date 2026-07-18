@@ -28,7 +28,7 @@ type UseQueueWorkflowArgs = {
   dispatch: DispatchState;
   pushToast: PushToast;
   activeTerminologyGroupId: string;
-  getReviewFlushJson?: (taskId: string) => string | undefined;
+  getReviewFlushJson?: (taskId: string) => string | undefined | Promise<string | undefined>;
 };
 
 export function useQueueWorkflow({

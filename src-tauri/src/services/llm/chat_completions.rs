@@ -253,13 +253,15 @@ pub(super) async fn call_chat_completion_stream(
         })?;
         line_buf.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(nl) = line_buf.find('\n') {
-            let mut line = line_buf[..nl].to_string();
-            line_buf = line_buf[nl + 1..].to_string();
-            if line.ends_with('\r') {
-                line.pop();
-            }
-            apply_sse_line(&line, &mut acc, &mut usage, &mut on_delta)?;
-            if matches!(parse_sse_data_line(&line), Some(SseData::Done)) {
+            // Borrow the completed line, then drop it from the buffer with
+            // drain instead of re-allocating the remaining tail each time.
+            let line = line_buf[..nl]
+                .strip_suffix('\r')
+                .unwrap_or(&line_buf[..nl]);
+            apply_sse_line(line, &mut acc, &mut usage, &mut on_delta)?;
+            let is_done = matches!(parse_sse_data_line(line), Some(SseData::Done));
+            line_buf.drain(..nl + 1);
+            if is_done {
                 return finish_stream(acc, usage, on_delta);
             }
         }

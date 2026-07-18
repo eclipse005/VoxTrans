@@ -1,4 +1,4 @@
-import { type MouseEvent, useMemo, useRef, useState } from "react";
+import { memo, type MouseEvent, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SubtitleCue } from "../../features/media/types";
 import { useSubtitleBatchAnimations } from "../hooks/useSubtitleBatchAnimations";
@@ -37,7 +37,7 @@ type SubtitleEditorModalProps = {
   onToggleReviewTarget?: (value: boolean) => void;
 };
 
-export default function SubtitleEditorModal({
+function SubtitleEditorModal({
   visible,
   embedded = false,
   canEdit,
@@ -118,6 +118,10 @@ export default function SubtitleEditorModal({
     cueIds,
     onSelectedCueChanged: moveCursorToCue,
   });
+  const handleToggleEdit = useCallback((cueId: string) => {
+    selectForEdit(cueId);
+    setEditingCueId((old) => (old === cueId ? "" : cueId));
+  }, [selectForEdit]);
   if (!visible) return null;
 
   const content = (
@@ -182,10 +186,7 @@ export default function SubtitleEditorModal({
         renderHighlightedText={renderHighlightedText}
         onClearSelection={clearSelection}
         onCueClick={handleCueClick}
-        onToggleEdit={(cueId) => {
-          selectForEdit(cueId);
-          setEditingCueId((old) => (old === cueId ? "" : cueId));
-        }}
+        onToggleEdit={handleToggleEdit}
         onDeleteCue={onDeleteCue}
         onApplyStart={applyStart}
         onApplyEnd={applyEnd}
@@ -223,4 +224,6 @@ export default function SubtitleEditorModal({
     </div>
   );
 }
+
+export default memo(SubtitleEditorModal);
 

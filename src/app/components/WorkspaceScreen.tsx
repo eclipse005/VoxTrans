@@ -9,6 +9,10 @@ import MediaList from "./MediaList";
 import SubtitleEditorModal from "./SubtitleEditorModal";
 import UploadPanel from "./UploadPanel";
 
+// Embedded editor never closes; a shared noop keeps the prop referentially
+// stable so the memoized editor does not re-render on every parent render.
+function noop() {}
+
 type WorkspaceScreenProps = {
   queue: QueueItem[];
   queueCount: number;
@@ -115,13 +119,14 @@ export function WorkspaceScreen({
       ? t("subtitles:review.bannerTarget")
       : "";
 
+  const activeItemId = activeItem?.id ?? "";
   const onToggleReviewSource = useCallback(async (value: boolean) => {
-    if (!activeItem) return;
+    if (!activeItemId) return;
     try {
-      const updated = await updateTaskReviewFlags({ taskId: activeItem.id, reviewSource: value });
+      const updated = await updateTaskReviewFlags({ taskId: activeItemId, reviewSource: value });
       dispatch({
         type: "patch_queue_item",
-        id: activeItem.id,
+        id: activeItemId,
         updater: (item) => ({
           ...item,
           reviewSource: updated.reviewSource ?? value,
@@ -132,15 +137,15 @@ export function WorkspaceScreen({
       reportError(error, "updateTaskReviewFlags");
       pushToast(toUserErrorMessage(error, t("toasts:queue.enqueueFailed")), "error");
     }
-  }, [activeItem, dispatch, pushToast, t]);
+  }, [activeItemId, dispatch, pushToast, t]);
 
   const onToggleReviewTarget = useCallback(async (value: boolean) => {
-    if (!activeItem) return;
+    if (!activeItemId) return;
     try {
-      const updated = await updateTaskReviewFlags({ taskId: activeItem.id, reviewTarget: value });
+      const updated = await updateTaskReviewFlags({ taskId: activeItemId, reviewTarget: value });
       dispatch({
         type: "patch_queue_item",
-        id: activeItem.id,
+        id: activeItemId,
         updater: (item) => ({
           ...item,
           reviewSource: updated.reviewSource ?? item.reviewSource,
@@ -151,7 +156,11 @@ export function WorkspaceScreen({
       reportError(error, "updateTaskReviewFlags");
       pushToast(toUserErrorMessage(error, t("toasts:queue.enqueueFailed")), "error");
     }
-  }, [activeItem, dispatch, pushToast, t]);
+  }, [activeItemId, dispatch, pushToast, t]);
+
+  const handleSetActiveId = useCallback((id: string) => {
+    dispatch({ type: "set_ui", payload: { activeId: activeId === id ? "" : id } });
+  }, [activeId, dispatch]);
 
   return (
     <main className="apple-container apple-section">
@@ -178,7 +187,7 @@ export function WorkspaceScreen({
           asrModel={asrModel}
           alignModel={alignModel}
           pushToast={pushToast}
-          onSetActiveId={(id) => dispatch({ type: "set_ui", payload: { activeId: activeId === id ? "" : id } })}
+          onSetActiveId={handleSetActiveId}
           onProcessQueue={onProcessQueue}
           onClearQueue={onClearQueue}
           onProcessSingle={onProcessSingle}
@@ -216,7 +225,7 @@ export function WorkspaceScreen({
             onOpenSrtDir={onOpenSubtitleDir}
             onExportSrt={onOpenSubtitleExport}
             onOpenLogs={onOpenLogs}
-            onClose={() => {}}
+            onClose={noop}
           />
         </div>
         <div className={`subtitle-panel-layer subtitle-panel-layer-empty ${activeItem ? "is-hidden" : "is-visible"}`}>

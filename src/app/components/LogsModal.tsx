@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MutableRefObject, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronLeftIcon, ChevronRightIcon, FolderIcon, RefreshIcon, TrashIcon } from "./Icons";
@@ -33,7 +33,7 @@ export default function LogsModal({
 }: LogsModalProps) {
   const { t } = useTranslation(["tasks", "common"]);
   const dialogRef = useDialogA11y(visible, onClose);
-  const entries = parseLogEntries(content);
+  const entries = useMemo(() => parseLogEntries(content), [content]);
   const [collapsedMap, setCollapsedMap] = useState<Record<string, boolean>>({});
   const [isMaximized, setIsMaximized] = useState(false);
   const [searchText, setSearchText] = useState("");
@@ -42,7 +42,10 @@ export default function LogsModal({
   const matchRefs = useRef<Array<HTMLElement | null>>([]);
 
   const normalizedQuery = searchText.trim().toLowerCase();
-  const viewEntries = buildViewEntries(entries, normalizedQuery);
+  const viewEntries = useMemo(
+    () => buildViewEntries(entries, normalizedQuery),
+    [entries, normalizedQuery],
+  );
   const matchCount = viewEntries.reduce(
     (sum, entry) => sum + entry.timestampRanges.length + entry.eventRanges.length + entry.contentRanges.length,
     0,

@@ -21,8 +21,6 @@ import { saveAppSettings } from "./api/settings";
 import { type AppAction, appReducer, initialAppState, type AppState } from "./state/appReducer";
 import { SettingsFormContext } from "./contexts/SettingsFormContext";
 import type { SavedSettings } from "../features/media/types";
-import { buildSubtitleSegmentsFromCues } from "../features/media/subtitleSegments";
-
 const SUBTITLE_EXPORT_ITEMS_KEY = "voxtrans.subtitleExportItems.v1";
 const ALL_EXPORT_ITEMS: ExportSrtItem[] = [
   "source",
@@ -120,7 +118,9 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     dispatch,
   });
 
-  const reviewFlushRef = useRef<(taskId: string) => string | undefined>(() => undefined);
+  const reviewFlushRef = useRef<(taskId: string) => Promise<string | undefined>>(
+    async () => undefined,
+  );
 
   const {
     queueCount,
@@ -156,6 +156,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     replaceTextInCues,
     removeCue,
     exportSubtitleSrt,
+    prepareReviewFlushJson,
   } = useSubtitleWorkflow({
     queue,
     activeId,
@@ -168,11 +169,8 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     pushToast,
   });
 
-  // Advance-from-review flushes the open editor SoT for that task (click-time).
-  reviewFlushRef.current = (taskId: string) => {
-    if (taskId !== subtitleTaskId || subtitleCues.length === 0) return undefined;
-    return JSON.stringify(buildSubtitleSegmentsFromCues(subtitleCues));
-  };
+  // Advance-from-review: durability barrier + JSON from the live editor ref.
+  reviewFlushRef.current = (taskId: string) => prepareReviewFlushJson(taskId);
 
   const activeQueueItem = useMemo(
     () => queue.find((item) => item.id === activeId) ?? null,
@@ -286,6 +284,18 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     }
   }, [subtitleTaskId, subtitleMediaPath, pushToast]);
 
+  const openSubtitleExport = useCallback(() => {
+    setShowSubtitleExportModal(true);
+  }, []);
+
+  const handleYoutubeDownload = useCallback(() => {
+    void downloadYoutube(youtubeUrl);
+  }, [downloadYoutube, youtubeUrl]);
+
+  const handleUpdateYtDlp = useCallback(() => {
+    void updateYtDlpBinary();
+  }, [updateYtDlpBinary]);
+
   const handleOpenTerminology = useCallback(() => {
     prepareTerminologyForm();
     setShowTerminologyModal(true);
@@ -341,12 +351,8 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
         pushToast={pushToast}
         dispatch={dispatch}
         onPickFiles={pickFiles}
-        onYoutubeDownload={() => {
-          void downloadYoutube(youtubeUrl);
-        }}
-        onUpdateYtDlp={() => {
-          void updateYtDlpBinary();
-        }}
+        onYoutubeDownload={handleYoutubeDownload}
+        onUpdateYtDlp={handleUpdateYtDlp}
         onProcessQueue={processQueue}
         onClearQueue={clearQueue}
         onProcessSingle={processSingle}
@@ -363,7 +369,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
         onReplaceText={replaceTextInCues}
         onDeleteCue={removeCue}
         onOpenSubtitleDir={openSubtitleDir}
-        onOpenSubtitleExport={() => setShowSubtitleExportModal(true)}
+        onOpenSubtitleExport={openSubtitleExport}
         onOpenLogs={openLogs}
       />
 

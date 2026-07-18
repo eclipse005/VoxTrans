@@ -160,6 +160,9 @@ pub async fn build_translation_layer_with_progress(
         store: request.unit_store.as_ref().map(|us| us.store().clone()),
     };
 
+    // Share the batch windows across worker tasks via Arc instead of
+    // deep-cloning the whole Vec (prompts + frame payloads) per task.
+    let windows = Arc::new(windows);
     let windows_for_worker = windows.clone();
     let progress_callback = on_progress.clone();
 
@@ -170,7 +173,12 @@ pub async fn build_translation_layer_with_progress(
     // on the shared closure.
     let partial_map: Arc<Mutex<HashMap<usize, String>>> =
         Arc::new(Mutex::new(precomputed_translations(&precomputed)));
-    let normalized_for_progress = normalized_segments.clone();
+    // Incremental snapshot cache for progress emits: entries are rebuilt
+    // only when a segment's translation actually changed; emits clone Arc
+    // pointers instead of every source/tokens payload each time.
+    let partial_snapshot_cache: Arc<Mutex<Vec<Option<Arc<TranslationSegmentOutput>>>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let normalized_for_progress = Arc::new(normalized_segments.clone());
 
     let on_item_done = {
         let store = persist_store.clone();
@@ -203,6 +211,7 @@ pub async fn build_translation_layer_with_progress(
             let progress_for_stream = progress_callback.clone();
             let segments_for_stream = normalized_for_progress.clone();
             let completed_batches = completed_batches.clone();
+            let partial_snapshot_cache_for_stream = partial_snapshot_cache.clone();
             move |task| {
                 let llm_client = llm_client.clone();
                 let context = context.clone();
@@ -211,6 +220,7 @@ pub async fn build_translation_layer_with_progress(
                 let progress_callback = progress_for_stream.clone();
                 let segments = segments_for_stream.clone();
                 let completed_batches = completed_batches.clone();
+                let partial_snapshot_cache = partial_snapshot_cache_for_stream.clone();
                 async move {
                     let Some(window) = windows.get(task.id) else {
                         return Err(format!("missing batch window for index {}", task.id));
@@ -247,7 +257,11 @@ pub async fn build_translation_layer_with_progress(
                         let throttle = throttle.clone();
                         let local_to_global = local_to_global.clone();
                         let completed_batches = completed_batches.clone();
+                        let partial_snapshot_cache = partial_snapshot_cache.clone();
                         move |raw: String| {
+                            // Always merge into partial_map so concurrent batch
+                            // joins see the latest streamed text. Throttle only
+                            // the expensive rebuild + UI progress callback.
                             let extracted = partial_parse::extract_partial_translations(&raw);
                             if extracted.is_empty() {
                                 return;
@@ -285,8 +299,11 @@ pub async fn build_translation_layer_with_progress(
                                 return;
                             }
                             if let Some(callback) = progress_callback.as_ref() {
-                                let partial_outputs =
-                                    rebuild_partial_outputs(&segments, &partial_map);
+                                let partial_outputs = rebuild_partial_outputs(
+                                    &segments,
+                                    &partial_map,
+                                    &partial_snapshot_cache,
+                                );
                                 let done = completed_batches.load(Ordering::Relaxed);
                                 callback(TranslationProgress {
                                     done,
@@ -333,6 +350,7 @@ pub async fn build_translation_layer_with_progress(
             let partial_map = partial_map.clone();
             let segments = normalized_for_progress.clone();
             let progress_callback = progress_callback.clone();
+            let partial_snapshot_cache = partial_snapshot_cache.clone();
             {
                 let completed_batches = completed_batches.clone();
                 move |done: usize, total: usize, result: Option<&(usize, HashMap<usize, String>)>| {
@@ -357,7 +375,8 @@ pub async fn build_translation_layer_with_progress(
                         }
                     }
                     if let Some(callback) = progress_callback.as_ref() {
-                        let partial_outputs = rebuild_partial_outputs(&segments, &partial_map);
+                        let partial_outputs =
+                            rebuild_partial_outputs(&segments, &partial_map, &partial_snapshot_cache);
                         callback(TranslationProgress {
                             done,
                             total,
@@ -430,10 +449,16 @@ impl StreamThrottle {
         }
     }
 
+    /// Shared gate for `should_emit` only. Never use this to skip merging into
+    /// `partial_map` — concurrent batches need map freshness even when UI emit
+    /// is throttled.
+    fn would_emit(&self, acc_len: usize) -> bool {
+        self.last_emit.elapsed() >= STREAM_PREVIEW_MIN_INTERVAL
+            || acc_len.saturating_sub(self.last_len) >= STREAM_PREVIEW_MIN_CHARS
+    }
+
     fn should_emit(&mut self, acc_len: usize) -> bool {
-        let elapsed = self.last_emit.elapsed() >= STREAM_PREVIEW_MIN_INTERVAL;
-        let chars = acc_len.saturating_sub(self.last_len) >= STREAM_PREVIEW_MIN_CHARS;
-        if elapsed || chars {
+        if self.would_emit(acc_len) {
             self.last_emit = Instant::now();
             self.last_len = acc_len;
             true
@@ -461,25 +486,54 @@ fn precomputed_translations(
 /// Rebuild a full segment snapshot from the normalized inputs plus the
 /// cumulative translations collected so far. Translated segments carry
 /// their text; the rest carry only the source (translation empty).
+///
+/// Entries are cached in `snapshot_cache`: only segments whose translation
+/// changed since the previous emit are rebuilt, so an emit clones Arc
+/// pointers for untouched segments instead of their full payloads. The
+/// serialized snapshot content is unchanged.
 fn rebuild_partial_outputs(
     segments: &[types::NormalizedSegment],
     partial_map: &Arc<Mutex<HashMap<usize, String>>>,
-) -> Vec<TranslationSegmentOutput> {
+    snapshot_cache: &Arc<Mutex<Vec<Option<Arc<TranslationSegmentOutput>>>>>,
+) -> Vec<Arc<TranslationSegmentOutput>> {
     let map = match partial_map.lock() {
         Ok(map) => map,
         Err(_) => return Vec::new(),
     };
-    segments
-        .iter()
-        .map(|segment| TranslationSegmentOutput {
-            segment_id: segment.segment_id,
-            start: segment.start,
-            end: segment.end,
-            source: segment.source.clone(),
-            translation: map.get(&segment.segment_id).cloned().unwrap_or_default(),
-            tokens: segment.tokens.clone(),
-        })
-        .collect()
+    let mut cache = match snapshot_cache.lock() {
+        Ok(cache) => cache,
+        Err(_) => return Vec::new(),
+    };
+    if cache.len() != segments.len() {
+        cache.clear();
+        cache.resize_with(segments.len(), || None);
+    }
+    let mut out = Vec::with_capacity(segments.len());
+    for (index, segment) in segments.iter().enumerate() {
+        let translation = map
+            .get(&segment.segment_id)
+            .cloned()
+            .unwrap_or_default();
+        let stale = match cache[index].as_ref() {
+            Some(existing) => existing.translation != translation,
+            None => true,
+        };
+        if stale {
+            cache[index] = Some(Arc::new(TranslationSegmentOutput {
+                segment_id: segment.segment_id,
+                start: segment.start,
+                end: segment.end,
+                source: segment.source.clone(),
+                translation,
+                tokens: segment.tokens.clone(),
+            }));
+        }
+        let Some(entry) = cache[index].as_ref() else {
+            continue;
+        };
+        out.push(entry.clone());
+    }
+    out
 }
 
 fn validate_request(request: &BuildTranslationLayerRequest) -> Result<(), String> {

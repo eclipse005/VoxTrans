@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SubtitleCue } from "../../features/media/types";
 import { formatSrtTime } from "../../features/media/srt";
@@ -78,7 +78,9 @@ export function useSubtitleFindReplace({
     return findStatus;
   }, [findKeyword, findStatus, matchCueIndexes.length]);
 
-  const renderHighlightedText = (text: string, fallback: string, cueId: string): ReactNode => {
+  const currentMatchCueId = currentMatch?.cueId ?? null;
+
+  const renderHighlightedText = useCallback((text: string, fallback: string, cueId: string): ReactNode => {
     if (!text) return fallback;
     if (!findKeyword) return text;
 
@@ -97,7 +99,7 @@ export function useSubtitleFindReplace({
       parts.push(
         <mark
           key={`${cueId}-${partIndex}`}
-          className={`subtitle-inline-hit ${currentMatch?.cueId === cueId ? "current" : ""}`}
+          className={`subtitle-inline-hit ${currentMatchCueId === cueId ? "current" : ""}`}
         >
           {match}
         </mark>,
@@ -111,7 +113,7 @@ export function useSubtitleFindReplace({
       parts.push(text.slice(cursor));
     }
     return parts;
-  };
+  }, [currentMatchCueId, findKeyword]);
 
   const onFindTextChange = (value: string) => {
     setFindText(value);
@@ -192,12 +194,17 @@ export function useSubtitleFindReplace({
     setFindStatus("");
   };
 
-  const moveCursorToCue = (cueId: string) => {
-    const cursor = matchCueIdToCursor.get(cueId);
+  const matchCueIdToCursorRef = useRef(matchCueIdToCursor);
+  useEffect(() => {
+    matchCueIdToCursorRef.current = matchCueIdToCursor;
+  }, [matchCueIdToCursor]);
+
+  const moveCursorToCue = useCallback((cueId: string) => {
+    const cursor = matchCueIdToCursorRef.current.get(cueId);
     if (cursor != null) {
       setFindCursor(cursor);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (!isReplaceMenuOpen) return;

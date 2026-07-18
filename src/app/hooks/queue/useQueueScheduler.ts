@@ -28,8 +28,11 @@ type UseQueueSchedulerArgs = {
   dispatch: DispatchState;
   pushToast: PushToast;
   runQueuedByTaskIds: (taskIds: string[]) => Promise<void>;
-  /** When advancing from review, optional latest SoT JSON for the task (editor flush). */
-  getReviewFlushJson?: (taskId: string) => string | undefined;
+  /**
+   * When advancing from review, optional latest SoT JSON for the task.
+   * May be async when the editor needs a durability flush first.
+   */
+  getReviewFlushJson?: (taskId: string) => string | undefined | Promise<string | undefined>;
 };
 
 export type QueueBatchMode = "transcribe" | "transcribe_translate";
@@ -208,7 +211,13 @@ export function useQueueScheduler({
       try {
         // Short prepare for continue (queued + resume_from); worker runs translate.
         // Finalize remains inline (deliver/burn).
-        const subtitleSegmentsJson = getReviewFlushJson?.(item.id);
+        // Persist barrier may reject (already toasted); abort without double-toast.
+        let subtitleSegmentsJson: string | undefined;
+        try {
+          subtitleSegmentsJson = await Promise.resolve(getReviewFlushJson?.(item.id));
+        } catch {
+          return;
+        }
         await resumeTaskAfterReview({
           taskId: item.id,
           action,

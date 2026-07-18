@@ -174,11 +174,11 @@ impl PipelineStep for Step1AsrPipelineStep {
 
         let words = transcribe_response
             .words
-            .iter()
+            .into_iter()
             .map(|word| crate::commands::transcription::WordTokenCommandDto {
                 start: word.start,
                 end: word.end,
-                word: word.word.clone(),
+                word: word.word,
             })
             .collect::<Vec<_>>();
         Ok(Step1AsrArtifact {

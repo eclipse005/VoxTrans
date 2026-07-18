@@ -35,3 +35,8 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.gemm]
 opt-level = 3
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

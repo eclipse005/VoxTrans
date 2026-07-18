@@ -71,7 +71,7 @@ pub struct BuildTranslationLayerResponse {
 pub struct TranslationProgress {
     pub done: usize,
     pub total: usize,
-    pub partial_outputs: Vec<TranslationSegmentOutput>,
+    pub partial_outputs: Vec<Arc<TranslationSegmentOutput>>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +88,7 @@ pub(super) struct BatchWindow {
     pub(super) batch_id: usize,
     pub(super) local_ids: Vec<usize>,
     pub(super) local_to_global: Vec<usize>,
-    pub(super) prompt: String,
+    pub(super) prompt: Arc<str>,
     /// base64 data URLs of sampled video frames for this batch's time range.
     /// Empty when vision assist is disabled or no frames could be extracted.
     pub(super) frames: Arc<[String]>,
