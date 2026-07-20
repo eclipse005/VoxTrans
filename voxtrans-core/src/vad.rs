@@ -3,6 +3,12 @@ use std::time::Instant;
 
 use fireredvad::{Vad, VadConfig};
 
+/// Tail shorter than this is absorbed into the previous segment so we avoid
+/// tiny ASR/align windows (e.g. 1–5s remainder after ~chunk_target splits).
+/// Applies to all engines (Qwen/Cohere chunk 30–180, MOSS fixed 180): max
+/// merged length is chunk_target + just under 15s (e.g. MOSS ≈ 195s).
+const MIN_TAIL_SEGMENT_SEC: f64 = 15.0;
+
 #[derive(Debug, Clone)]
 pub(crate) struct AudioSegment {
     pub index: usize,
@@ -102,7 +108,27 @@ pub(crate) fn build_segments_from_vad(
             end_sec: effective_total_duration,
         });
     }
+    merge_short_tail_segment(&mut segments);
     Ok((segments, vad_elapsed_sec, speech_ranges))
+}
+
+/// If the last segment is shorter than [`MIN_TAIL_SEGMENT_SEC`], fold it into
+/// the previous one. Same rule for every ASR engine / chunk_target.
+fn merge_short_tail_segment(segments: &mut Vec<AudioSegment>) {
+    if segments.len() < 2 {
+        return;
+    }
+    let last_duration = segments[segments.len() - 1].duration_sec();
+    if last_duration >= MIN_TAIL_SEGMENT_SEC {
+        return;
+    }
+    let last = segments.pop().expect("len >= 2");
+    if let Some(prev) = segments.last_mut() {
+        prev.end_sec = last.end_sec;
+    }
+    for (idx, seg) in segments.iter_mut().enumerate() {
+        seg.index = idx;
+    }
 }
 
 fn normalize_ranges(ranges: &[(f32, f32)], total_duration_sec: f64) -> Vec<(f64, f64)> {
@@ -154,4 +180,64 @@ fn silence_midpoints_from_vad(speech_ranges: &[(f64, f64)], total_duration_sec: 
     }
 
     midpoints
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seg(index: usize, start: f64, end: f64) -> AudioSegment {
+        AudioSegment {
+            index,
+            start_sec: start,
+            end_sec: end,
+        }
+    }
+
+    #[test]
+    fn short_tail_under_15s_merges_into_previous() {
+        // ~60 + ~60 + 5 → merge last into prev → ~60 + ~65
+        let mut segments = vec![
+            seg(0, 0.0, 60.0),
+            seg(1, 60.0, 120.0),
+            seg(2, 120.0, 125.0),
+        ];
+        merge_short_tail_segment(&mut segments);
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].start_sec, 0.0);
+        assert_eq!(segments[0].end_sec, 60.0);
+        assert_eq!(segments[1].start_sec, 60.0);
+        assert_eq!(segments[1].end_sec, 125.0);
+        assert!((segments[1].duration_sec() - 65.0).abs() < 1e-9);
+        assert_eq!(segments[1].index, 1);
+    }
+
+    #[test]
+    fn tail_at_least_15s_stays_separate() {
+        let mut segments = vec![seg(0, 0.0, 60.0), seg(1, 60.0, 75.0)];
+        merge_short_tail_segment(&mut segments);
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[1].end_sec, 75.0);
+        assert!((segments[1].duration_sec() - 15.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn moss_style_180s_chunk_short_tail_merges_to_under_195s() {
+        // chunk_target=180, remainder 14.9s → merged max just under 195s
+        let mut segments = vec![seg(0, 0.0, 180.0), seg(1, 180.0, 194.9)];
+        merge_short_tail_segment(&mut segments);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start_sec, 0.0);
+        assert_eq!(segments[0].end_sec, 194.9);
+        assert!(segments[0].duration_sec() < 195.0);
+        assert!(segments[0].duration_sec() > 194.0);
+    }
+
+    #[test]
+    fn single_segment_unchanged() {
+        let mut segments = vec![seg(0, 0.0, 8.0)];
+        merge_short_tail_segment(&mut segments);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].end_sec, 8.0);
+    }
 }
