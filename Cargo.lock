@@ -4522,7 +4522,7 @@ dependencies = [
 [[package]]
 name = "qwen3-asr"
 version = "0.2.2"
-source = "git+https://github.com/eclipse005/qwen3-asr-rs.git?rev=b468cb92613fcec913749431e56380399138dfb8#b468cb92613fcec913749431e56380399138dfb8"
+source = "git+https://github.com/eclipse005/qwen3-asr-rs.git?rev=c6c98e2eb69d9892c43e650ebda297b1472443c7#c6c98e2eb69d9892c43e650ebda297b1472443c7"
 dependencies = [
  "anyhow",
  "bytes",
@@ -7516,7 +7516,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
