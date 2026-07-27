@@ -1,4 +1,4 @@
-import { memo, type MouseEvent, useCallback, useMemo, useRef, useState } from "react";
+import { memo, type MouseEvent, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { SubtitleCue } from "../../features/media/types";
 import { useSubtitleBatchAnimations } from "../hooks/useSubtitleBatchAnimations";
@@ -63,7 +63,6 @@ function SubtitleEditorModal({
   onToggleReviewTarget,
 }: SubtitleEditorModalProps) {
   const { t } = useTranslation(["subtitles", "common"]);
-  const [editingCueId, setEditingCueId] = useState<string>("");
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
 
@@ -77,6 +76,7 @@ function SubtitleEditorModal({
     isReplaceMenuOpen,
     replaceMenuRef,
     currentMatch,
+    matchedCueIds,
     matchCount,
     onFindTextChange,
     onReplaceTextChange,
@@ -86,7 +86,6 @@ function SubtitleEditorModal({
     onPrevMatch,
     onNextMatch,
     moveCursorToCue,
-    renderHighlightedText,
   } = useSubtitleFindReplace({
     cues,
     onReplaceText,
@@ -112,16 +111,12 @@ function SubtitleEditorModal({
     primarySelectedCueId,
     orderedSelectedCueIds,
     clearSelection,
-    selectForEdit,
+    ensureSelected,
     handleCueClick,
   } = useSubtitleSelection({
     cueIds,
     onSelectedCueChanged: moveCursorToCue,
   });
-  const handleToggleEdit = useCallback((cueId: string) => {
-    selectForEdit(cueId);
-    setEditingCueId((old) => (old === cueId ? "" : cueId));
-  }, [selectForEdit]);
   if (!visible) return null;
 
   const content = (
@@ -178,15 +173,15 @@ function SubtitleEditorModal({
         cues={cues}
         cueWarningsById={cueWarningsById}
         emptyText={emptyText ?? (canEdit ? t("subtitles:editor.emptyEditable") : t("subtitles:editor.emptyReadOnly"))}
-        editingCueId={editingCueId}
         selectedCueIds={validSelectedCueIds}
+        matchedCueIds={matchedCueIds}
+        currentMatchCueId={currentMatch?.cueId ?? null}
         timeErrorByCue={timeErrorByCue}
         listContainerRef={listContainerRef}
         cardRefs={cardRefs}
-        renderHighlightedText={renderHighlightedText}
         onClearSelection={clearSelection}
         onCueClick={handleCueClick}
-        onToggleEdit={handleToggleEdit}
+        onEnsureSelected={ensureSelected}
         onDeleteCue={onDeleteCue}
         onApplyStart={applyStart}
         onApplyEnd={applyEnd}

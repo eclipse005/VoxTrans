@@ -27,6 +27,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: auto;
   border: 1px solid var(--apple-border-light);
   border-radius: 14px;
   background-color: #fff;
@@ -44,17 +45,31 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  cursor: pointer;
-  transition: all var(--apple-transition-fast);
+  cursor: default;
+  transition: border-color var(--apple-transition-fast), background var(--apple-transition-fast), box-shadow var(--apple-transition-fast);
 }
 
 .subtitle-row-card:hover {
-  border-color: rgba(0, 113, 227, 0.5);
+  border-color: rgba(0, 113, 227, 0.4);
 }
 
 .subtitle-row-card.selected {
   border-color: rgba(0, 113, 227, 0.85);
   background: rgba(0, 113, 227, 0.03);
+}
+
+.subtitle-row-card.has-find-hit {
+  box-shadow: inset 3px 0 0 #fbbf24;
+}
+
+.subtitle-row-card.is-find-current {
+  border-color: rgba(217, 119, 6, 0.75);
+  box-shadow: inset 3px 0 0 #f59e0b;
+  background: rgba(255, 251, 235, 0.55);
+}
+
+.subtitle-row-card.selected.is-find-current {
+  background: rgba(255, 251, 235, 0.75);
 }
 
 
@@ -77,18 +92,83 @@
 .subtitle-row-head-main {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   min-width: 0;
 }
 
+/* Quiet select handle — selection is shown on the card, not the index. */
 .subtitle-row-index {
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 2px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--apple-text-tertiary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--apple-transition-fast);
+}
+
+.subtitle-row-index:hover {
   color: var(--apple-text-secondary);
 }
 
-.subtitle-row-time {
+.subtitle-row-index:focus-visible {
+  color: var(--apple-blue);
+  outline: none;
+}
+
+/* HH:MM:SS,mmm = 12 glyphs; ch is too tight for monospace + padding. */
+.subtitle-time-input {
+  flex: 0 0 auto;
+  width: 108px;
+  min-width: 108px;
+  height: 28px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--apple-text-secondary);
+  font-family: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0;
+  text-align: left;
+  outline: none;
+  transition: border-color var(--apple-transition-fast), background var(--apple-transition-fast), color var(--apple-transition-fast);
+}
+
+.subtitle-time-input:hover:not(:disabled) {
+  border-color: var(--apple-border-lighter);
+  background: #fff;
+  color: var(--apple-text-primary);
+}
+
+.subtitle-time-input:focus {
+  border-color: rgba(0, 113, 227, 0.7);
+  background: #fff;
+  color: var(--apple-text-primary);
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.12);
+}
+
+.subtitle-time-input:read-only {
+  opacity: 0.75;
+  cursor: default;
+}
+
+.subtitle-time-input:read-only:hover,
+.subtitle-time-input:read-only:focus {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
   color: var(--apple-text-secondary);
 }
 
@@ -295,58 +375,12 @@
 }
 
 
-.subtitle-row-summary {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  min-width: 0;
-}
-
 .subtitle-time-arrow {
+  flex: 0 0 auto;
   color: var(--apple-text-tertiary);
-}
-
-.subtitle-row-text-preview {
-  min-width: 0;
-  width: 100%;
-  display: block;
-  font-size: 14px;
-  line-height: 1.45;
-  color: var(--apple-text-primary);
-  border: 1px solid var(--apple-border-lighter);
-  border-radius: 10px;
-  padding: 8px 10px;
-  background: #fff;
-}
-
-.subtitle-row-text-preview-translation {
-  background: #f8fafc;
-}
-
-.subtitle-row-text-label {
-  color: var(--apple-text-secondary);
-  font-size: 11px;
-  line-height: 1.2;
-}
-
-
-.subtitle-inline-hit {
-  background: #fde68a;
-  color: #7c2d12;
-  border-radius: 4px;
-  padding: 0 1px;
-}
-
-.subtitle-inline-hit.current {
-  background: #fde68a;
-  color: #7c2d12;
-}
-.subtitle-row-text-value {
-  display: block;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  font-size: 12px;
+  line-height: 28px;
+  user-select: none;
 }
 
 .subtitle-editor-layout {
@@ -473,7 +507,7 @@
   background: #fff1f2;
   border: 1px solid #fecdd3;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 6px 10px;
 }
 
 .subtitle-editor-textarea {
@@ -495,12 +529,47 @@
 }
 
 .subtitle-row-textarea {
-  min-height: 96px;
+  min-height: 52px;
+  height: 52px;
+  resize: none;
+  overflow: hidden;
+  overflow-anchor: none;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border-color: var(--apple-border-lighter);
+  background: #fff;
+}
+
+.subtitle-row-textarea:hover:not(:read-only) {
+  border-color: rgba(0, 113, 227, 0.35);
+}
+
+.subtitle-row-textarea:focus {
+  border-color: rgba(0, 113, 227, 0.7);
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.1);
+}
+
+.subtitle-row-textarea:read-only {
+  opacity: 0.85;
+  cursor: default;
+  background: #f8fafc;
+}
+
+.subtitle-row-textarea:read-only:focus {
+  border-color: var(--apple-border-lighter);
+  box-shadow: none;
 }
 
 .subtitle-row-textarea-translation {
-  margin-top: 8px;
+  margin-top: 0;
   background: #f8fafc;
+}
+
+.subtitle-row-textarea-translation:focus:not(:read-only) {
+  background: #fff;
 }
 
 .subtitle-cue-empty {

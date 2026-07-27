@@ -39,15 +39,15 @@
   },
   "cue": {
     "warningCount": "This subtitle has {{count}} formatting issue(s)",
-    "collapseEdit": "Collapse editing",
-    "edit": "Edit subtitle",
+    "select": "Select this cue (Shift / Ctrl for multi-select)",
+    "selectAria": "Select subtitle cue {{n}}",
     "delete": "Delete subtitle segment",
-    "emptyText": "(empty text)",
-    "noTranslation": "(no translation yet)",
-    "startTime": "Start",
-    "endTime": "End",
-    "textPlaceholder": "Enter the text for this subtitle segment",
-    "translationPlaceholder": "Enter the translation for this subtitle segment (optional)"
+    "startTime": "Start time",
+    "endTime": "End time",
+    "textPlaceholder": "Source text",
+    "translationPlaceholder": "Translation (optional)",
+    "textAria": "Source text for cue {{n}}",
+    "translationAria": "Translation for cue {{n}}"
   },
   "editor": {
     "emptyEditable": "No subtitle segments yet. Click \"Add subtitle segment\" above to start editing.",

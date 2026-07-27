@@ -5,6 +5,14 @@ type UseSubtitleSelectionArgs = {
   onSelectedCueChanged?: (cueId: string) => void;
 };
 
+/**
+ * Selection model for the cue list.
+ *
+ * - Click / Shift / Ctrl on chrome or fields: exclusive, range, or toggle.
+ * - Focus into an editor on an already-selected cue: keep the multi-selection
+ *   (editing must not destroy merge/split selection).
+ * - Focus into a cue that is not selected: become the sole selection.
+ */
 export function useSubtitleSelection({
   cueIds,
   onSelectedCueChanged,
@@ -44,9 +52,26 @@ export function useSubtitleSelection({
     anchorCueIdRef.current = "";
   }, []);
 
-  const selectForEdit = useCallback((cueId: string) => {
+  /** Exclusive selection — used when the user deliberately picks one cue. */
+  const selectExclusive = useCallback((cueId: string) => {
     setSelectedCueIds([cueId]);
     anchorCueIdRef.current = cueId;
+    onSelectedCueChangedRef.current?.(cueId);
+  }, []);
+
+  /**
+   * Focus-path selection: preserve multi-select when the focused cue is already
+   * selected; otherwise make it the sole selection.
+   */
+  const ensureSelected = useCallback((cueId: string) => {
+    const current = selectedCueIdsRef.current;
+    if (current.includes(cueId)) {
+      onSelectedCueChangedRef.current?.(cueId);
+      return;
+    }
+    setSelectedCueIds([cueId]);
+    anchorCueIdRef.current = cueId;
+    onSelectedCueChangedRef.current?.(cueId);
   }, []);
 
   const handleCueClick = useCallback((cueId: string, event: MouseEvent<HTMLElement>) => {
@@ -92,7 +117,8 @@ export function useSubtitleSelection({
     primarySelectedCueId,
     orderedSelectedCueIds,
     clearSelection,
-    selectForEdit,
+    selectExclusive,
+    ensureSelected,
     handleCueClick,
   };
 }

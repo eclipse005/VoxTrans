@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SubtitleCue } from "../../features/media/types";
 import { formatSrtTime } from "../../features/media/srt";
@@ -78,42 +78,14 @@ export function useSubtitleFindReplace({
     return findStatus;
   }, [findKeyword, findStatus, matchCueIndexes.length]);
 
-  const currentMatchCueId = currentMatch?.cueId ?? null;
-
-  const renderHighlightedText = useCallback((text: string, fallback: string, cueId: string): ReactNode => {
-    if (!text) return fallback;
-    if (!findKeyword) return text;
-
-    const lower = text.toLowerCase();
-    const parts: ReactNode[] = [];
-    let cursor = 0;
-    let partIndex = 0;
-
-    while (cursor < text.length) {
-      const index = lower.indexOf(findKeyword, cursor);
-      if (index < 0) break;
-      if (index > cursor) {
-        parts.push(text.slice(cursor, index));
-      }
-      const match = text.slice(index, index + findKeyword.length);
-      parts.push(
-        <mark
-          key={`${cueId}-${partIndex}`}
-          className={`subtitle-inline-hit ${currentMatchCueId === cueId ? "current" : ""}`}
-        >
-          {match}
-        </mark>,
-      );
-      partIndex += 1;
-      cursor = index + findKeyword.length;
+  const matchedCueIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const idx of matchCueIndexes) {
+      const cue = cues[idx];
+      if (cue) ids.add(cue.id);
     }
-
-    if (parts.length === 0) return text;
-    if (cursor < text.length) {
-      parts.push(text.slice(cursor));
-    }
-    return parts;
-  }, [currentMatchCueId, findKeyword]);
+    return ids;
+  }, [cues, matchCueIndexes]);
 
   const onFindTextChange = (value: string) => {
     setFindText(value);
@@ -229,6 +201,7 @@ export function useSubtitleFindReplace({
     isReplaceMenuOpen,
     replaceMenuRef,
     currentMatch,
+    matchedCueIds,
     matchCount: matchCueIndexes.length,
     onFindTextChange,
     onReplaceTextChange: setReplaceText,
@@ -238,6 +211,5 @@ export function useSubtitleFindReplace({
     onPrevMatch,
     onNextMatch,
     moveCursorToCue,
-    renderHighlightedText,
   };
 }

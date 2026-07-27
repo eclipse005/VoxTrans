@@ -39,15 +39,15 @@
   },
   "cue": {
     "warningCount": "该字幕存在 {{count}} 条格式问题",
-    "collapseEdit": "收起编辑",
-    "edit": "编辑字幕",
+    "select": "选择该字幕段（可配合 Shift / Ctrl 多选）",
+    "selectAria": "选择第 {{n}} 条字幕",
     "delete": "删除字幕段",
-    "emptyText": "(空文本)",
-    "noTranslation": "(暂无译文)",
-    "startTime": "开始",
-    "endTime": "结束",
-    "textPlaceholder": "输入该字幕段文本",
-    "translationPlaceholder": "输入该字幕段译文（可选）"
+    "startTime": "开始时间",
+    "endTime": "结束时间",
+    "textPlaceholder": "原文",
+    "translationPlaceholder": "译文（可选）",
+    "textAria": "第 {{n}} 条原文",
+    "translationAria": "第 {{n}} 条译文"
   },
   "editor": {
     "emptyEditable": "暂无字幕段，点击上方\"新增字幕段\"开始编辑。",
