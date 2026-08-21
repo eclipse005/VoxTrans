@@ -101,8 +101,11 @@ function SubtitleEditorModal({
   });
   const {
     timeErrorByCue,
-    applyStart,
-    applyEnd,
+    commitStart,
+    commitEnd,
+    rejectStart,
+    rejectEnd,
+    clearTimeError,
   } = useSubtitleTimeValidation({
     onUpdateCue,
   });
@@ -183,8 +186,11 @@ function SubtitleEditorModal({
         onCueClick={handleCueClick}
         onEnsureSelected={ensureSelected}
         onDeleteCue={onDeleteCue}
-        onApplyStart={applyStart}
-        onApplyEnd={applyEnd}
+        onCommitStart={commitStart}
+        onCommitEnd={commitEnd}
+        onRejectStart={rejectStart}
+        onRejectEnd={rejectEnd}
+        onClearTimeError={clearTimeError}
         onUpdateCue={onUpdateCue}
       />
     </div>

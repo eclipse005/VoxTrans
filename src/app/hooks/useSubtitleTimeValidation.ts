@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SubtitleCue } from "../../features/media/types";
-import { parseSrtTime } from "../../features/media/srt";
 
 type UseSubtitleTimeValidationArgs = {
   onUpdateCue: (cueId: string, patch: Partial<SubtitleCue>) => void;
@@ -11,29 +10,37 @@ export function useSubtitleTimeValidation({ onUpdateCue }: UseSubtitleTimeValida
   const { t } = useTranslation(["subtitles"]);
   const [timeErrorByCue, setTimeErrorByCue] = useState<Record<string, string>>({});
 
-  const applyStart = useCallback((cue: SubtitleCue, value: string) => {
-    const parsed = parseSrtTime(value);
-    if (parsed == null) {
-      setTimeErrorByCue((old) => ({ ...old, [cue.id]: t("subtitles:timeValidation.startInvalid") }));
-      return;
-    }
-    onUpdateCue(cue.id, { startMs: parsed, endMs: Math.max(parsed, cue.endMs) });
-    setTimeErrorByCue((old) => ({ ...old, [cue.id]: "" }));
-  }, [onUpdateCue, t]);
+  const clearTimeError = useCallback((cueId: string) => {
+    setTimeErrorByCue((old) => {
+      if (!old[cueId]) return old;
+      return { ...old, [cueId]: "" };
+    });
+  }, []);
 
-  const applyEnd = useCallback((cue: SubtitleCue, value: string) => {
-    const parsed = parseSrtTime(value);
-    if (parsed == null) {
-      setTimeErrorByCue((old) => ({ ...old, [cue.id]: t("subtitles:timeValidation.endInvalid") }));
-      return;
-    }
-    onUpdateCue(cue.id, { endMs: Math.max(parsed, cue.startMs) });
-    setTimeErrorByCue((old) => ({ ...old, [cue.id]: "" }));
-  }, [onUpdateCue, t]);
+  const commitStart = useCallback((cue: SubtitleCue, startMs: number) => {
+    onUpdateCue(cue.id, { startMs, endMs: Math.max(startMs, cue.endMs) });
+    clearTimeError(cue.id);
+  }, [clearTimeError, onUpdateCue]);
+
+  const commitEnd = useCallback((cue: SubtitleCue, endMs: number) => {
+    onUpdateCue(cue.id, { endMs: Math.max(endMs, cue.startMs) });
+    clearTimeError(cue.id);
+  }, [clearTimeError, onUpdateCue]);
+
+  const rejectStart = useCallback((cueId: string) => {
+    setTimeErrorByCue((old) => ({ ...old, [cueId]: t("subtitles:timeValidation.startInvalid") }));
+  }, [t]);
+
+  const rejectEnd = useCallback((cueId: string) => {
+    setTimeErrorByCue((old) => ({ ...old, [cueId]: t("subtitles:timeValidation.endInvalid") }));
+  }, [t]);
 
   return {
     timeErrorByCue,
-    applyStart,
-    applyEnd,
+    commitStart,
+    commitEnd,
+    rejectStart,
+    rejectEnd,
+    clearTimeError,
   };
 }

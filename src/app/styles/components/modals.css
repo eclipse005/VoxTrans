@@ -97,7 +97,6 @@
   min-width: 0;
 }
 
-/* Quiet select handle — selection is shown on the card, not the index. */
 .subtitle-row-index {
   flex: 0 0 auto;
   min-width: 0;
@@ -529,10 +528,12 @@
 }
 
 .subtitle-row-textarea {
+  field-sizing: content;
   min-height: 52px;
-  height: 52px;
+  height: auto;
   resize: none;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   overflow-anchor: none;
   font-family: inherit;
   font-size: 14px;

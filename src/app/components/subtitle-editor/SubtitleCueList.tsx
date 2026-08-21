@@ -1,21 +1,13 @@
 import {
   memo,
   useCallback,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ChangeEvent,
-  type FocusEvent,
-  type KeyboardEvent,
   type MouseEvent,
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { SubtitleCue } from "../../../features/media/types";
-import { formatSrtTime } from "../../../features/media/srt";
 import { AlertIcon, TrashIcon } from "../Icons";
-
-const TEXTAREA_MIN_HEIGHT_PX = 52;
+import { TimeField } from "./TimeField";
 
 type SubtitleCueListProps = {
   canEdit: boolean;
@@ -35,8 +27,11 @@ type SubtitleCueListProps = {
   /** Focus into a field: keep multi-select if cue already selected. */
   onEnsureSelected: (cueId: string) => void;
   onDeleteCue: (cueId: string) => void;
-  onApplyStart: (cue: SubtitleCue, value: string) => void;
-  onApplyEnd: (cue: SubtitleCue, value: string) => void;
+  onCommitStart: (cue: SubtitleCue, ms: number) => void;
+  onCommitEnd: (cue: SubtitleCue, ms: number) => void;
+  onRejectStart: (cueId: string) => void;
+  onRejectEnd: (cueId: string) => void;
+  onClearTimeError: (cueId: string) => void;
   onUpdateCue: (cueId: string, patch: Partial<SubtitleCue>) => void;
 };
 
@@ -54,135 +49,16 @@ type SubtitleCueRowProps = {
   onCueClick: (cueId: string, event: MouseEvent<HTMLElement>) => void;
   onEnsureSelected: (cueId: string) => void;
   onDeleteCue: (cueId: string) => void;
-  onApplyStart: (cue: SubtitleCue, value: string) => void;
-  onApplyEnd: (cue: SubtitleCue, value: string) => void;
+  onCommitStart: (cue: SubtitleCue, ms: number) => void;
+  onCommitEnd: (cue: SubtitleCue, ms: number) => void;
+  onRejectStart: (cueId: string) => void;
+  onRejectEnd: (cueId: string) => void;
+  onClearTimeError: (cueId: string) => void;
   onUpdateCue: (cueId: string, patch: Partial<SubtitleCue>) => void;
 };
 
-function resizeTextarea(el: HTMLTextAreaElement | null) {
-  if (!el) return;
-  el.style.height = "0px";
-  el.style.height = `${Math.max(el.scrollHeight, TEXTAREA_MIN_HEIGHT_PX)}px`;
-}
-
-/**
- * Shared pointer policy for inline fields:
- * - modifier click: multi-select (do not start a text caret gesture)
- * - plain click: stop bubbling so the card does not double-handle selection;
- *   focus path calls ensureSelected
- */
-function useInlineFieldPointer(cueId: string, onCueClick: SubtitleCueRowProps["onCueClick"]) {
-  const onMouseDown = useCallback(
-    (event: MouseEvent<HTMLElement>) => {
-      if (event.shiftKey || event.ctrlKey || event.metaKey) {
-        event.preventDefault();
-        event.stopPropagation();
-        onCueClick(cueId, event);
-      }
-    },
-    [cueId, onCueClick],
-  );
-
-  const onClick = useCallback((event: MouseEvent<HTMLElement>) => {
-    event.stopPropagation();
-  }, []);
-
-  return { onMouseDown, onClick };
-}
-
-/**
- * Edit-session time field.
- *
- * Canonical value is always `valueMs`. Display is `sessionDraft ?? committed`
- * so idle rows track props (including sibling endMs clamps) with no remount
- * and no sync effect. A session opens only on the first edit keystroke —
- * focus alone does not snapshot a stale value.
- */
-function TimeField({
-  valueMs,
-  label,
-  canEdit,
-  invalid,
-  describedBy,
-  onApply,
-  onMouseDown,
-  onClick,
-  onFocusCue,
-}: {
-  valueMs: number;
-  label: string;
-  canEdit: boolean;
-  invalid: boolean;
-  describedBy?: string;
-  onApply: (value: string) => void;
-  onMouseDown: (event: MouseEvent<HTMLElement>) => void;
-  onClick: (event: MouseEvent<HTMLElement>) => void;
-  onFocusCue: () => void;
-}) {
-  const committed = formatSrtTime(valueMs);
-  // null = idle (derive from props); string = user has edited this focus cycle
-  const [sessionDraft, setSessionDraft] = useState<string | null>(null);
-  const sessionDraftRef = useRef<string | null>(null);
-  const display = sessionDraft ?? committed;
-
-  const handleFocus = useCallback(
-    (event: FocusEvent<HTMLInputElement>) => {
-      onFocusCue();
-      if (canEdit) {
-        event.currentTarget.select();
-      }
-    },
-    [canEdit, onFocusCue],
-  );
-
-  const handleChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    const next = event.currentTarget.value;
-    sessionDraftRef.current = next;
-    setSessionDraft(next);
-  }, []);
-
-  const handleBlur = useCallback(() => {
-    const pending = sessionDraftRef.current;
-    sessionDraftRef.current = null;
-    setSessionDraft(null);
-    if (!canEdit || pending === null) return;
-    onApply(pending);
-  }, [canEdit, onApply]);
-
-  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      event.currentTarget.blur();
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      // Drop any in-progress edit; blur sees null session and does not apply.
-      sessionDraftRef.current = null;
-      setSessionDraft(null);
-      event.currentTarget.blur();
-    }
-  }, []);
-
-  return (
-    <input
-      type="text"
-      className="subtitle-time-input"
-      value={display}
-      aria-label={label}
-      title={label}
-      aria-invalid={invalid || undefined}
-      aria-describedby={describedBy}
-      spellCheck={false}
-      readOnly={!canEdit}
-      onMouseDown={onMouseDown}
-      onClick={onClick}
-      onFocus={handleFocus}
-      onChange={handleChange}
-      onBlur={handleBlur}
-      onKeyDown={handleKeyDown}
-    />
-  );
+function stopCardClick(event: MouseEvent<HTMLElement>) {
+  event.stopPropagation();
 }
 
 const SubtitleCueRow = memo(function SubtitleCueRow({
@@ -199,24 +75,16 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
   onCueClick,
   onEnsureSelected,
   onDeleteCue,
-  onApplyStart,
-  onApplyEnd,
+  onCommitStart,
+  onCommitEnd,
+  onRejectStart,
+  onRejectEnd,
+  onClearTimeError,
   onUpdateCue,
 }: SubtitleCueRowProps) {
   const { t } = useTranslation(["subtitles", "common"]);
-  const sourceRef = useRef<HTMLTextAreaElement | null>(null);
-  const translationRef = useRef<HTMLTextAreaElement | null>(null);
   const warningList = warnings ?? [];
   const timeErrorId = timeError ? `subtitle-time-error-${cue.id}` : undefined;
-  const fieldPointer = useInlineFieldPointer(cue.id, onCueClick);
-
-  useLayoutEffect(() => {
-    resizeTextarea(sourceRef.current);
-  }, [cue.text]);
-
-  useLayoutEffect(() => {
-    resizeTextarea(translationRef.current);
-  }, [cue.translatedText]);
 
   const handleCardRef = (node: HTMLElement | null) => {
     registerCardRef(cue.id, node);
@@ -226,18 +94,25 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
     onEnsureSelected(cue.id);
   }, [cue.id, onEnsureSelected]);
 
-  const handleApplyStart = useCallback(
-    (value: string) => {
-      onApplyStart(cue, value);
-    },
-    [cue, onApplyStart],
+  const handleStartCommit = useCallback(
+    (ms: number) => onCommitStart(cue, ms),
+    [cue, onCommitStart],
   );
-
-  const handleApplyEnd = useCallback(
-    (value: string) => {
-      onApplyEnd(cue, value);
-    },
-    [cue, onApplyEnd],
+  const handleEndCommit = useCallback(
+    (ms: number) => onCommitEnd(cue, ms),
+    [cue, onCommitEnd],
+  );
+  const handleRejectStart = useCallback(
+    () => onRejectStart(cue.id),
+    [cue.id, onRejectStart],
+  );
+  const handleRejectEnd = useCallback(
+    () => onRejectEnd(cue.id),
+    [cue.id, onRejectEnd],
+  );
+  const handleClearTimeError = useCallback(
+    () => onClearTimeError(cue.id),
+    [cue.id, onClearTimeError],
   );
 
   const cardClassName = [
@@ -277,9 +152,9 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
             canEdit={canEdit}
             invalid={Boolean(timeError)}
             describedBy={timeErrorId}
-            onApply={handleApplyStart}
-            onMouseDown={fieldPointer.onMouseDown}
-            onClick={fieldPointer.onClick}
+            onCommit={handleStartCommit}
+            onReject={handleRejectStart}
+            onCancel={handleClearTimeError}
             onFocusCue={handleFocusCue}
           />
           <span className="subtitle-time-arrow" aria-hidden="true">
@@ -291,9 +166,9 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
             canEdit={canEdit}
             invalid={Boolean(timeError)}
             describedBy={timeErrorId}
-            onApply={handleApplyEnd}
-            onMouseDown={fieldPointer.onMouseDown}
-            onClick={fieldPointer.onClick}
+            onCommit={handleEndCommit}
+            onReject={handleRejectEnd}
+            onCancel={handleClearTimeError}
             onFocusCue={handleFocusCue}
           />
         </div>
@@ -330,12 +205,10 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
       ) : null}
 
       <textarea
-        ref={sourceRef}
         className="subtitle-editor-textarea subtitle-row-textarea"
         value={cue.text}
         onChange={(e) => onUpdateCue(cue.id, { text: e.target.value })}
-        onMouseDown={fieldPointer.onMouseDown}
-        onClick={fieldPointer.onClick}
+        onClick={stopCardClick}
         onFocus={handleFocusCue}
         placeholder={t("subtitles:cue.textPlaceholder")}
         aria-label={t("subtitles:cue.textAria", { n: index + 1 })}
@@ -343,12 +216,10 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
         rows={2}
       />
       <textarea
-        ref={translationRef}
         className="subtitle-editor-textarea subtitle-row-textarea subtitle-row-textarea-translation"
         value={cue.translatedText}
         onChange={(e) => onUpdateCue(cue.id, { translatedText: e.target.value })}
-        onMouseDown={fieldPointer.onMouseDown}
-        onClick={fieldPointer.onClick}
+        onClick={stopCardClick}
         onFocus={handleFocusCue}
         placeholder={t("subtitles:cue.translationPlaceholder")}
         aria-label={t("subtitles:cue.translationAria", { n: index + 1 })}
@@ -374,8 +245,11 @@ function SubtitleCueList({
   onCueClick,
   onEnsureSelected,
   onDeleteCue,
-  onApplyStart,
-  onApplyEnd,
+  onCommitStart,
+  onCommitEnd,
+  onRejectStart,
+  onRejectEnd,
+  onClearTimeError,
   onUpdateCue,
 }: SubtitleCueListProps) {
   const registerCardRef = useCallback(
@@ -417,8 +291,11 @@ function SubtitleCueList({
             onCueClick={onCueClick}
             onEnsureSelected={onEnsureSelected}
             onDeleteCue={onDeleteCue}
-            onApplyStart={onApplyStart}
-            onApplyEnd={onApplyEnd}
+            onCommitStart={onCommitStart}
+            onCommitEnd={onCommitEnd}
+            onRejectStart={onRejectStart}
+            onRejectEnd={onRejectEnd}
+            onClearTimeError={onClearTimeError}
             onUpdateCue={onUpdateCue}
           />
         ))
