@@ -35,12 +35,12 @@ pub(super) fn is_watchability_fragment_issue(
     if has_terminal {
         return false;
     }
-    if ends_with_connector_like_fragment(&normalized)
+    if ends_with_connector_like_fragment(&normalized, target_lang)
         || ends_with_short_dangling_fragment(&normalized)
     {
         return true;
     }
-    let fragment_penalty = line_fragment_penalty(&normalized);
+    let fragment_penalty = line_fragment_penalty(&normalized, target_lang);
     let line_units = text_length_units(&normalized, target_lang);
     fragment_penalty >= 8 && line_units <= 14.0
 }

@@ -329,9 +329,8 @@ fn execute_ffmpeg_burn(
 
 /// Probe the source video stream bitrate via `ffmpeg -i` so the burn can
 /// target a comparable bitrate instead of a fixed CRF. We parse ffmpeg's own
-/// stderr stream listing (the project does not ship `ffprobe`), matching the
-/// convention in `frame_extract::probe_video_duration`. Returns `None` if the
-/// bitrate can't be determined (caller falls back to `-crf 23`).
+/// stderr stream listing (the project does not ship `ffprobe`). Returns `None`
+/// if the bitrate can't be determined (caller falls back to `-crf 23`).
 fn probe_source_video_bitrate_kbps(media_path: &Path) -> Option<u32> {
     let ffmpeg_bin = resolve_bundled_or_path("ffmpeg");
     let mut command = Command::new(&ffmpeg_bin);

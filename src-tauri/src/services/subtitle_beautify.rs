@@ -8,17 +8,19 @@ pub fn beautify_subtitle_srt_segments(
     subtitle_length_preset: &str,
     target_lang: &str,
 ) {
-    // Text beautify (comma/period trimming, CJK-ASCII spacing) only
-    // makes sense for CJK targets — it would mangle Latin punctuation
-    // in English/Spanish/etc. The watchability merge below is also CJK-
-    // oriented (length units, dangling-fragment detection), so skip the
-    // whole pass for non-CJK targets rather than beautify-only.
-    if !is_cjk_target(target_lang) {
-        return;
+    // Text beautify (comma/period trimming, CJK-ASCII spacing) only makes
+    // sense for CJK targets — it would mangle Latin punctuation in
+    // English/Spanish/etc.
+    if is_cjk_target(target_lang) {
+        for segment in &mut *segments {
+            segment.translated_text = beautify_subtitle_text(&segment.translated_text);
+        }
     }
-    for segment in &mut *segments {
-        segment.translated_text = beautify_subtitle_text(&segment.translated_text);
-    }
+    // Watchability merge (flash/orphan line re-joining) runs for EVERY
+    // supported target language: length accounting is language-aware
+    // (chars for zh/ja/ko/th, words for the rest) and the fragment tables
+    // cover both CJK and Latin/Germanic/Romance starters & connectors, so
+    // non-CJK targets get the same flash-line protection as CJK ones.
     crate::services::subtitle_step5::merge_watchability_subtitle_srt_segments(
         segments,
         subtitle_length_preset,
@@ -292,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn subtitle_beautify_srt_segments_skips_non_chinese() {
+    fn subtitle_beautify_srt_segments_keeps_latin_text_untouched() {
         let mut segments = vec![SubtitleSrtSegment {
             start_ms: 0,
             end_ms: 1000,
@@ -302,7 +304,8 @@ mod tests {
 
         beautify_subtitle_srt_segments(&mut segments, "standard", "en");
 
-        // Non-Chinese: text should be completely untouched.
+        // Non-CJK: the text beautify pass (comma/period trimming, CJK-ASCII
+        // spacing) is skipped, so translation text stays byte-identical.
         assert_eq!(segments[0].translated_text, "Hola, mundo.");
         assert_eq!(segments.len(), 1);
     }
@@ -338,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn subtitle_beautify_srt_segments_keeps_gap_over_half_second() {
+    fn subtitle_beautify_srt_segments_keeps_gap_over_watchability_threshold() {
         let mut segments = vec![
             SubtitleSrtSegment {
                 start_ms: 0,
@@ -347,8 +350,8 @@ mod tests {
                 translated_text: "如果你某周表现不佳，可能会怀疑这".to_string(),
             },
             SubtitleSrtSegment {
-                start_ms: 1501,
-                end_ms: 2500,
+                start_ms: 2000,
+                end_ms: 3000,
                 source_text: "exercise to rebuild belief in the system.".to_string(),
                 translated_text: "个系统是否还有效，重建系统信心".to_string(),
             },
@@ -385,6 +388,70 @@ mod tests {
         beautify_subtitle_srt_segments(&mut segments, "short", "en");
 
         assert_eq!(segments.len(), 2);
+    }
+
+    #[test]
+    fn subtitle_beautify_srt_segments_merges_latin_targets_with_space() {
+        let mut segments = vec![
+            SubtitleSrtSegment {
+                start_ms: 0,
+                end_ms: 2000,
+                source_text: "I told him that we should go to the market now".to_string(),
+                // Ends with a connector word → watchability fragment issue,
+                // so it qualifies as the mergeable left side.
+                translated_text: "we had to stop and".to_string(),
+            },
+            SubtitleSrtSegment {
+                start_ms: 2000,
+                end_ms: 3500,
+                source_text: "the plan works fine for everyone involved".to_string(),
+                // Starts with a continuation starter ("the").
+                translated_text: "the plan still works for everyone involved".to_string(),
+            },
+        ];
+
+        beautify_subtitle_srt_segments(&mut segments, "standard", "en");
+
+        assert_eq!(segments.len(), 1);
+        // Word-based targets join translations with a single space.
+        assert_eq!(
+            segments[0].translated_text,
+            "we had to stop and the plan still works for everyone involved"
+        );
+        assert_eq!(
+            segments[0].source_text,
+            "I told him that we should go to the market now the plan works fine for everyone involved"
+        );
+    }
+
+    #[test]
+    fn subtitle_beautify_does_not_merge_photo_as_to_connector() {
+        let mut segments = vec![
+            SubtitleSrtSegment {
+                start_ms: 0,
+                end_ms: 2500,
+                source_text: "I took a photo of the harbor at sunset yesterday".to_string(),
+                translated_text: "I took a photo".to_string(),
+            },
+            SubtitleSrtSegment {
+                start_ms: 2500,
+                end_ms: 5000,
+                source_text: "the sunset was nice over the water that evening".to_string(),
+                translated_text: "the sunset was nice".to_string(),
+            },
+        ];
+
+        beautify_subtitle_srt_segments(&mut segments, "standard", "en");
+
+        assert_eq!(
+            segments.len(),
+            2,
+            "photo must not count as a dangling 'to' connector: {:?}",
+            segments
+                .iter()
+                .map(|s| s.translated_text.as_str())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
