@@ -25,6 +25,9 @@ pub struct SourceSentenceStep2 {
     pub micro_chunks: Vec<MicroChunk>,
     pub boundaries: Vec<BoundaryDecision>,
     pub translation_sentences: Vec<SourceSentence>,
+    /// Word stream the spans index into (after digit-glue / beautify).
+    #[serde(default)]
+    pub words: Vec<WordTokenDto>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

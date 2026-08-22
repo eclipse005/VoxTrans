@@ -18,7 +18,6 @@ pub async fn build_source_sentences_with_progress(
     request: BuildSourceSentencesCommandRequest,
     on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> Result<BuildSourceSentencesCommandResponse, String> {
-    let original_words = request.words.clone();
     let step2 = crate::services::transcription::build_source_sentences_from_words_with_progress(
         crate::services::transcription::SentenceBoundaryRequest {
             task_id: request.task_id,
@@ -32,6 +31,17 @@ pub async fn build_source_sentences_with_progress(
     )
     .await?;
     let srt = crate::services::transcription::source_sentences_to_srt(&step2);
+    // Spans index the post-glue word stream. Grouping must use that same
+    // stream or timings and token slices drift (digit-glue, beautify).
+    let grouped_words: Vec<WordTokenCommandDto> = step2
+        .words
+        .into_iter()
+        .map(|word| WordTokenCommandDto {
+            start: word.start,
+            end: word.end,
+            word: word.word,
+        })
+        .collect();
     let translation_sentences = step2
         .translation_sentences
         .into_iter()
@@ -46,7 +56,7 @@ pub async fn build_source_sentences_with_progress(
             chunk_end: sentence.chunk_end,
         })
         .collect::<Vec<_>>();
-    let segments = build_grouped_sentence_segments(&original_words, &translation_sentences);
+    let segments = build_grouped_sentence_segments(&grouped_words, &translation_sentences);
     Ok(BuildSourceSentencesCommandResponse {
         micro_chunk_total: step2.micro_chunk_total,
         boundary_total: step2.boundary_total,

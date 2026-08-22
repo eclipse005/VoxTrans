@@ -1,6 +1,7 @@
 use crate::services::transcribe::WordTokenDto;
 use voxtrans_core::subtitle::text_rules::{ends_with_terminal_punctuation, strip_trailing_closers};
 
+use super::boundary_rules::{is_ja_turn_start_after, is_japanese_spoken_end};
 use super::language::LanguageProfile;
 use super::punkt_map::map_sentence_boundaries_to_word_indices;
 use super::text::join_words;
@@ -176,13 +177,28 @@ fn build_split_points_with_rules(
     let mut out = Vec::<(usize, SplitReason)>::new();
     let abbrs = profile.abbreviations();
     for index in 0..words.len() {
-        if !is_terminal_end(&words[index].word, abbrs) {
+        let punct_end = is_terminal_end(&words[index].word, abbrs);
+        let spoken_end = words.get(index + 1).is_some_and(|next| {
+            let next2 = words.get(index + 2).map(|w| w.word.as_str()).unwrap_or("");
+            let prev = if index == 0 {
+                ""
+            } else {
+                words[index - 1].word.as_str()
+            };
+            is_japanese_spoken_end(prev, &words[index].word, &next.word, next2)
+        });
+        // はい / 皆さん start a new move even when the current line is short.
+        let turn_before = words.get(index + 1).is_some_and(|next| {
+            let next2 = words.get(index + 2).map(|w| w.word.as_str()).unwrap_or("");
+            is_ja_turn_start_after(&words[index].word, &next.word, next2)
+        });
+        if !punct_end && !spoken_end && !turn_before {
             continue;
         }
         // Single-letter dotted token (B./A./J.): only suppress the split when
         // it forms an initial chain with the next token. An isolated single-
         // letter token is a real sentence end (e.g. "step one B.").
-        if is_single_letter_dotted(&words[index].word) {
+        if punct_end && is_single_letter_dotted(&words[index].word) {
             let continues = words
                 .get(index + 1)
                 .map(|next| is_single_letter_dotted(&next.word))
