@@ -6,10 +6,38 @@ use crate::services::llm::client::LlmSemanticValidationError;
 
 use super::text::normalize_inline_text;
 
+pub(super) struct TranslationValidationContext<'a> {
+    pub expected_ids: &'a [usize],
+    pub source_lang: &'a str,
+    pub target_lang: &'a str,
+    pub current_sources: &'a [String],
+    pub prev_sources: &'a [String],
+    pub next_sources: &'a [String],
+}
+
+#[cfg(test)]
 pub(super) fn validate_batch_translation_response(
     value: Value,
     expected_ids: &[usize],
 ) -> Result<HashMap<usize, String>, LlmSemanticValidationError> {
+    validate_batch_translation_response_with_context(
+        value,
+        &TranslationValidationContext {
+            expected_ids,
+            source_lang: "",
+            target_lang: "",
+            current_sources: &[],
+            prev_sources: &[],
+            next_sources: &[],
+        },
+    )
+}
+
+pub(super) fn validate_batch_translation_response_with_context(
+    value: Value,
+    ctx: &TranslationValidationContext<'_>,
+) -> Result<HashMap<usize, String>, LlmSemanticValidationError> {
+    let expected_ids = ctx.expected_ids;
     let expected_set: HashSet<usize> = expected_ids.iter().copied().collect();
     let mut out = HashMap::<usize, String>::new();
     let mut seen_expected: HashSet<usize> = HashSet::new();
@@ -127,6 +155,35 @@ pub(super) fn validate_batch_translation_response(
         parts.push(format!("got ids {}", format_id_list(&got_ids)));
         parts.push(format!("expected {} items", expected_ids.len()));
 
+        return Err(LlmSemanticValidationError::retryable(parts.join("; ")));
+    }
+
+    let ordered: Vec<(usize, &str)> = expected_ids
+        .iter()
+        .filter_map(|id| out.get(id).map(|text| (*id, text.as_str())))
+        .collect();
+    let leak_ids =
+        super::guard::language_leak_ids(&ordered, ctx.source_lang, ctx.target_lang);
+    let copy_ids = super::guard::neighbor_copy_ids(
+        &ordered,
+        ctx.current_sources,
+        ctx.prev_sources,
+        ctx.next_sources,
+    );
+    if !leak_ids.is_empty() || !copy_ids.is_empty() {
+        let mut parts: Vec<String> = Vec::new();
+        if !leak_ids.is_empty() {
+            parts.push(format!(
+                "source-language leak on ids {}",
+                format_id_list(&leak_ids)
+            ));
+        }
+        if !copy_ids.is_empty() {
+            parts.push(format!(
+                "neighbor-copy on ids {}",
+                format_id_list(&copy_ids)
+            ));
+        }
         return Err(LlmSemanticValidationError::retryable(parts.join("; ")));
     }
 

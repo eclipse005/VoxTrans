@@ -114,7 +114,6 @@ pub fn default_settings() -> SavedSettings {
         subtitle_render_style: SubtitleRenderStyle::default(),
         flat_srt_output: false,
         flat_srt_items: vec![SubtitleBurnMode::Source, SubtitleBurnMode::Target],
-        enable_vision_assist: false,
         locale: Locale::default(),
         models_dir: None,
     }
@@ -160,7 +159,6 @@ pub fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings {
         subtitle_render_style: normalize_subtitle_render_style(settings.subtitle_render_style),
         flat_srt_output: settings.flat_srt_output,
         flat_srt_items: normalize_flat_srt_items(settings.flat_srt_items),
-        enable_vision_assist: settings.enable_vision_assist,
         locale: settings.locale,
         models_dir: settings.models_dir.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()),
     }

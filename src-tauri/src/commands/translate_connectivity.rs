@@ -2,14 +2,10 @@ use super::translate_types::{
     ListLlmModelsRequest, ListLlmModelsResponse, LlmModelInfoDto, TestTranslateLlmRequest,
     TestTranslateLlmResponse,
 };
-use base64::Engine;
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort, next_llm_request_id};
-use crate::services::prompts::connectivity::{
-    TRANSLATE_LLM_CONNECTIVITY_TEST, TRANSLATE_LLM_CONNECTIVITY_TEST_VISION,
-    VISION_PROBE_IMAGE_BYTES,
-};
+use crate::services::prompts::connectivity::TRANSLATE_LLM_CONNECTIVITY_TEST;
 use serde_json::Value;
 
 #[tauri::command]
@@ -44,40 +40,15 @@ pub async fn test_translate_llm(
     };
     let llm_id = next_llm_request_id();
 
-    // When vision assist is enabled in settings, probe with an attached image
-    // so we detect early whether the configured model actually supports image
-    // input. A text-only model will 4xx/5xx or return a non-JSON response,
-    // which surfaces as a clear error before the user commits to a full run.
-    let (prompt, images): (&str, Option<Vec<String>>) = if request.enable_vision_assist {
-        let b64 = base64::engine::general_purpose::STANDARD.encode(VISION_PROBE_IMAGE_BYTES);
-        let data_url = format!("data:image/jpeg;base64,{b64}");
-        (
-            TRANSLATE_LLM_CONNECTIVITY_TEST_VISION,
-            Some(vec![data_url]),
-        )
-    } else {
-        (TRANSLATE_LLM_CONNECTIVITY_TEST, None)
-    };
-
     let result = client
         .call_json(
             &context,
             &llm_id,
-            prompt,
-            images.as_deref(),
+            TRANSLATE_LLM_CONNECTIVITY_TEST,
             Some(&validator),
         )
         .await
-        .map_err(|err| {
-            if request.enable_vision_assist {
-                format!(
-                    "LLM connectivity test failed (vision assist enabled): {}. If the model does not support image input, turn off the vision assist toggle.",
-                    err.message
-                )
-            } else {
-                format!("LLM connectivity test failed: {}", err.message)
-            }
-        })?;
+        .map_err(|err| format!("LLM connectivity test failed: {}", err.message))?;
     let ok = result
         .json
         .get("ok")
@@ -112,7 +83,10 @@ pub async fn list_llm_models(
     request: ListLlmModelsRequest,
 ) -> Result<ListLlmModelsResponse, String> {
     let base = request.base_url.trim().trim_end_matches('/').to_string();
-    let api_key = request.api_key.trim();
+    let api_key = crate::services::llm::port::parse_api_keys(&request.api_key)
+        .first()
+        .cloned()
+        .unwrap_or_default();
     if api_key.is_empty() {
         return Err("translateApiKey is required".to_string());
     }

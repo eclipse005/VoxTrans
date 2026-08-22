@@ -60,11 +60,6 @@ pub struct PipelineRuntimeSettings {
     pub translate_model: String,
     pub llm_concurrency: u32,
     pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
-    /// Whether vision-assisted translation samples video frames. Read live
-    /// (like the other LLM connection settings) so the user can toggle it
-    /// mid-run; captured here once so the value logged at task start and the
-    /// value actually applied to translation stay identical.
-    pub enable_vision_assist: bool,
 }
 
 pub fn resolve_runtime_settings(
@@ -92,13 +87,13 @@ pub fn resolve_runtime_settings(
     let llm_concurrency = saved.llm_concurrency.clamp(1, 16);
 
     if require_translate_llm && translate_api_key.trim().is_empty() {
-        return Err("translateApiKey is required for step_03~step_05".to_string());
+        return Err("translateApiKey is required for translation".to_string());
     }
     if require_translate_llm && translate_base_url.trim().is_empty() {
-        return Err("translateBaseUrl is required for step_03~step_05".to_string());
+        return Err("translateBaseUrl is required for translation".to_string());
     }
     if require_translate_llm && translate_model.trim().is_empty() {
-        return Err("translateModel is required for step_03~step_05".to_string());
+        return Err("translateModel is required for translation".to_string());
     }
 
     // Frozen settings (subtitle_length_preset, enable_subtitle_beautify,
@@ -106,9 +101,6 @@ pub fn resolve_runtime_settings(
     // callers read them from the `frozen: &FrozenSettings` argument
     // directly, keeping a single source of truth and preventing the
     // "live vs frozen" drift bug where the two could disagree.
-    // Vision assist is a live setting (user-toggleable mid-run); read it
-    // once here so the logged value and the applied value are identical.
-    let enable_vision_assist = saved.enable_vision_assist;
 
     // Terminology is driven by the per-task frozen selection: terminology_groups
     // holds 0 or 1 group (0 == "none"/no terminology). Flatten whatever is there.
@@ -145,7 +137,6 @@ pub fn resolve_runtime_settings(
         translate_model,
         llm_concurrency,
         terminology_entries,
-        enable_vision_assist,
     })
 }
 

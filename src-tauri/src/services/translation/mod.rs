@@ -1,14 +1,15 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::services::llm::batch::run_indexed_concurrent_idempotent;
+use crate::services::llm::batch::run_indexed_chained_idempotent;
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
-use crate::services::task_log::TaskLogger;
 
 mod batches;
+mod guard;
+mod name_memory;
 mod partial_parse;
 mod responses;
 mod segments;
@@ -17,8 +18,11 @@ mod tests;
 mod text;
 mod types;
 
-use batches::{batch_index_ranges, build_batch_windows};
-use responses::validate_batch_translation_response;
+use batches::build_batch_windows;
+use name_memory::derive_name_memory;
+use responses::{
+    TranslationValidationContext, validate_batch_translation_response_with_context,
+};
 use segments::normalize_segments;
 pub use types::{
     BuildTranslationLayerRequest, BuildTranslationLayerResponse, TranslationProgress,
@@ -28,7 +32,7 @@ pub use types::{
 
 const DEFAULT_BATCH_SIZE: usize = 20;
 const MAX_BATCH_SIZE: usize = 40;
-const CONTEXT_LINE_LIMIT: usize = 6;
+const CONTEXT_LINE_LIMIT: usize = 8;
 const MAX_TERMS_PER_BATCH: usize = 16;
 /// Min interval between mid-stream subtitle preview patches (per batch worker).
 const STREAM_PREVIEW_MIN_INTERVAL: Duration = Duration::from_millis(100);
@@ -75,57 +79,11 @@ pub async fn build_translation_layer_with_progress(
     } else {
         (HashMap::new(), None)
     };
-
-    // Vision assist: when enabled, sample video frames per batch's time range
-    // and attach as base64 data URLs. Frames are cached on disk keyed by
-    // timestamp+media-identity so resume is free and source replacement
-    // invalidates safely. When disabled, all batches get empty frames and
-    // visual_context is None — prompt is byte-equal to pre-vision.
-    let (visual_context, frames_per_batch) = if request.enable_vision_assist {
-        // Compute batch time ranges mirroring build_batch_windows' slicing.
-        let batch_time_ranges: Vec<(f64, f64)> = batch_index_ranges(&normalized_segments, batch_size)
-            .into_iter()
-            .map(|(start, end)| (normalized_segments[start].start, normalized_segments[end - 1].end))
-            .collect();
-        // Skip batches whose translations are already persisted (resume).
-        let skip_batch_indices: HashSet<usize> = precomputed.keys().copied().collect();
-        let media_path = request.media_path.clone();
-        let task_id = request.task_id.clone();
-        let extract_result = tokio::task::spawn_blocking(move || {
-            crate::services::frame_extract::extract_frames_for_batches(
-                &media_path,
-                &task_id,
-                &batch_time_ranges,
-                &skip_batch_indices,
-            )
-        })
-        .await
-        .map_err(|e| format!("frame extraction task failed: {e}"))?;
-        match extract_result {
-            Ok(frames) => (
-                Some(
-                    "Sampled video frames are attached as auxiliary evidence for this batch.",
-                ),
-                frames,
-            ),
-            Err(err) => {
-                // Frame extraction is best-effort: never block translation on it.
-                // Log to the task's llm.log so the failure is observable, then
-                // fall back to text-only (no visual_context, empty frames).
-                let logger = crate::services::task_log::TaskLogger::llm_with_media(
-                    request.task_id.clone(),
-                    request.media_path.clone(),
-                );
-                logger.event(
-                    crate::services::task_log::event::VISION_BATCH_FAILED,
-                    Some(&serde_json::json!({ "error": err })),
-                );
-                (None, Vec::new())
-            }
-        }
-    } else {
-        (None, Vec::new())
-    };
+    // Translations already known before this run (resumed/checkpointed
+    // batches). Each batch's prompt is built after the predecessor commits
+    // so previousLines render as "source → translation".
+    let known_translations: Arc<Mutex<HashMap<usize, String>>> =
+        Arc::new(Mutex::new(precomputed_translations(&precomputed)));
 
     let windows = build_batch_windows(
         &normalized_segments,
@@ -134,21 +92,17 @@ pub async fn build_translation_layer_with_progress(
         &request.target_lang,
         &request.theme_summary,
         &request.terminology_entries,
-        visual_context,
-        &frames_per_batch,
     );
     if windows.is_empty() {
         return Err("failed to build translation batches".to_string());
     }
 
-    let concurrency = request.llm_concurrency.max(1) as usize;
     let tasks = windows
         .iter()
         .map(|window| LlmJsonTask {
             id: window.batch_id,
             request_id: next_llm_request_id(),
-            user_prompt: window.prompt.clone(),
-            images: window.frames.clone(),
+            user_prompt: Arc::from(""), // built lazily in the worker against live known translations
             response_validator: None,
         })
         .collect::<Vec<_>>();
@@ -164,6 +118,7 @@ pub async fn build_translation_layer_with_progress(
     // deep-cloning the whole Vec (prompts + frame payloads) per task.
     let windows = Arc::new(windows);
     let windows_for_worker = windows.clone();
+    let known_translations_for_worker = known_translations.clone();
     let progress_callback = on_progress.clone();
 
     // Cumulative segment_id -> translation map, seeded from precomputed
@@ -201,9 +156,10 @@ pub async fn build_translation_layer_with_progress(
 
     let batch_total_for_stream = windows.len();
     let completed_batches = Arc::new(AtomicUsize::new(precomputed.len()));
-    let results = run_indexed_concurrent_idempotent(
+    // Batches run in index order: batch N's prompt is built after batch N-1
+    // has published translations, so previousLines are actually bilingual.
+    let results = run_indexed_chained_idempotent(
         tasks,
-        concurrency,
         {
             let llm_client = llm_client.clone();
             let context = context.clone();
@@ -221,34 +177,49 @@ pub async fn build_translation_layer_with_progress(
                 let segments = segments_for_stream.clone();
                 let completed_batches = completed_batches.clone();
                 let partial_snapshot_cache = partial_snapshot_cache_for_stream.clone();
+                let known_translations = known_translations_for_worker.clone();
                 async move {
                     let Some(window) = windows.get(task.id) else {
                         return Err(format!("missing batch window for index {}", task.id));
                     };
                     let llm_id = task.request_id.clone();
 
-                    // When vision assist is on, record which frame files this
-                    // batch's translation is using, so llm.log can tie a
-                    // translation result back to the exact sampled frames.
-                    if !window.frame_names.is_empty()
-                        && let Some(media_path) = context.media_path.as_deref()
-                    {
-                        let logger = TaskLogger::llm_with_media(
-                            context.task_id.clone(),
-                            media_path.to_string(),
-                        );
-                        logger.event(
-                            crate::services::task_log::event::VISION_BATCH_FRAMES,
-                            Some(&serde_json::json!({
-                                "batchId": window.batch_id + 1,
-                                "llmId": llm_id,
-                                "frames": window.frame_names.as_ref(),
-                            })),
-                        );
-                    }
+                    // Build the prompt at call time so already-translated
+                    // context lines render as "source → translation" pairs
+                    // and name memory covers the current batch.
+                    let prompt = {
+                        let guard = known_translations
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        let current_text = window
+                            .current_lines
+                            .iter()
+                            .map(|line| line.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let memory = derive_name_memory(segments.as_slice(), &guard, &current_text);
+                        window.build_prompt(&guard, &memory.terms, &memory.examples)
+                    };
 
                     let local_to_global = window.local_to_global.clone();
                     let local_ids = window.local_ids.clone();
+                    let current_sources: Vec<String> = window
+                        .current_lines
+                        .iter()
+                        .map(|line| line.text.clone())
+                        .collect();
+                    let prev_sources: Vec<String> = window
+                        .prev_lines
+                        .iter()
+                        .map(|(_, source)| source.clone())
+                        .collect();
+                    let next_sources: Vec<String> = window
+                        .next_lines
+                        .iter()
+                        .map(|(_, source)| source.clone())
+                        .collect();
+                    let source_lang = window.source_lang.clone();
+                    let target_lang = window.target_lang.clone();
                     let throttle = Arc::new(Mutex::new(StreamThrottle::new()));
                     let on_partial: Arc<dyn Fn(String) + Send + Sync> = Arc::new({
                         let partial_map = partial_map.clone();
@@ -318,11 +289,22 @@ pub async fn build_translation_layer_with_progress(
                         .call_json_validated_streaming(
                             &context,
                             &llm_id,
-                            &task.user_prompt,
-                            Some(task.images.as_ref()),
+                            &prompt,
                             task.response_validator.as_ref(),
                             on_partial,
-                            |value| validate_batch_translation_response(value, &local_ids),
+                            |value| {
+                                validate_batch_translation_response_with_context(
+                                    value,
+                                    &TranslationValidationContext {
+                                        expected_ids: &local_ids,
+                                        source_lang: &source_lang,
+                                        target_lang: &target_lang,
+                                        current_sources: &current_sources,
+                                        prev_sources: &prev_sources,
+                                        next_sources: &next_sources,
+                                    },
+                                )
+                            },
                         )
                         .await
                         .map_err(|err| {
@@ -340,6 +322,15 @@ pub async fn build_translation_layer_with_progress(
                             continue;
                         };
                         translated_map.insert(global_id, translated);
+                    }
+                    // Publish into the shared map so batches that start later
+                    // see this batch's translations as bilingual context.
+                    if let Ok(mut known) = known_translations.lock() {
+                        for (global_id, text) in &translated_map {
+                            if !text.trim().is_empty() {
+                                known.insert(*global_id, text.clone());
+                            }
+                        }
                     }
                     Ok((window.batch_id, translated_map))
                 }

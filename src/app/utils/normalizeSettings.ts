@@ -79,7 +79,6 @@ export function normalizeSettings(raw: SavedSettings, defaults: SavedSettings): 
     subtitleRenderStyle: normalizeSubtitleRenderStyle(raw.subtitleRenderStyle, defaults.subtitleRenderStyle),
     flatSrtOutput: Boolean(raw.flatSrtOutput),
     flatSrtItems: dedupeFlatSrtItems(raw.flatSrtItems, defaults.flatSrtItems),
-    enableVisionAssist: Boolean(raw.enableVisionAssist),
     locale: pickEnum(raw.locale, LOCALES, defaults.locale),
     modelsDir: raw.modelsDir?.trim() || null,
   };

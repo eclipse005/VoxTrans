@@ -99,10 +99,6 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
         // Short secret: a prefix would reveal the whole thing, so mask fully.
         "••••".to_string()
     };
-    // `enable_vision_assist` comes from `runtime` (read once in
-    // resolve_runtime_settings) so the logged value matches the value that
-    // translation actually applies — no second live DB read that could race
-    // with a mid-run toggle.
     main_logger.event(
         event::TASK_STARTED,
         Some(&serde_json::json!({
@@ -125,7 +121,6 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
                 "llmConcurrency": runtime.llm_concurrency,
                 "subtitleLengthPreset": record.frozen.subtitle_length_preset,
                 "enableSubtitleBeautify": record.frozen.enable_subtitle_beautify,
-                "enableVisionAssist": runtime.enable_vision_assist,
                 "terminologyEntriesCount": runtime.terminology_entries.len(),
             },
             "frozen": {
@@ -237,7 +232,7 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
         return Ok(());
     }
 
-    // Checkpoint S (translate flow only): pause before terminology when
+    // Checkpoint S (translate flow only): pause before translation when
     // task.review_source is on so the user can fix source cues first.
     let (review_source, _) = read_task_review_flags(task_id).await?;
     if review_source {
@@ -278,9 +273,7 @@ async fn execute_srt_translate_task(
     }
 
     let store = app.state::<TaskStore>().inner();
-    let mut runtime = resolve_runtime_settings(store, &record.frozen, true)?;
-    // No video attached in MVP — never sample frames.
-    runtime.enable_vision_assist = false;
+    let runtime = resolve_runtime_settings(store, &record.frozen, true)?;
 
     let source_lang = record.source_lang.clone();
     let target_lang = normalize_task_target_lang(&record.target_lang);

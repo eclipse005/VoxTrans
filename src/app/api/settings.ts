@@ -19,7 +19,6 @@ type TestTranslateLlmRequest = {
   apiKey: string;
   baseUrl: string;
   model: string;
-  enableVisionAssist: boolean;
 };
 
 type TestTranslateLlmResponse = {

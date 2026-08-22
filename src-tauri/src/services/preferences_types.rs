@@ -379,8 +379,6 @@ pub struct SavedSettings {
     pub flat_srt_output: bool,
     #[serde(default = "default_flat_srt_items")]
     pub flat_srt_items: Vec<SubtitleBurnMode>,
-    #[serde(default)]
-    pub enable_vision_assist: bool,
     #[serde(default = "default_locale")]
     pub locale: Locale,
     /// Custom model storage directory. When `None` or empty, models are stored

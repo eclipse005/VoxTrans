@@ -370,9 +370,10 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                         type="password"
                         value={activeLlm.apiKey}
                         onChange={(e) => ctx.updateActiveLlmProfile({ apiKey: e.target.value })}
-                        placeholder={activeLlm.requiresKey === false ? "ollama" : "sk-..."}
+                        placeholder={activeLlm.requiresKey === false ? "ollama" : "sk-...  or  sk-aaa|sk-bbb"}
                         autoComplete="off"
                       />
+                      <span className="toggle-desc">{t("settings:translate.apiKeyHint")}</span>
                     </div>
                     <div className="form-group">
                       <label>{t("settings:translate.baseUrl")}</label>
@@ -383,6 +384,8 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                         placeholder="https://api.openai.com/v1"
                       />
                     </div>
+                  </div>
+                  <div className="form-row">
                     <div className="form-group llm-model-field">
                       <div className="llm-model-label-row">
                         <label>{t("settings:translate.modelName")}</label>
@@ -465,21 +468,6 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                         placeholder="1 - 16"
                       />
                     </div>
-                  </div>
-                  <div className="subtitle-toggle-row">
-                    <label className="setting-toggle" htmlFor="enable-vision-assist">
-                      <input
-                        id="enable-vision-assist"
-                        type="checkbox"
-                        checked={ctx.form.enableVisionAssist}
-                        onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableVisionAssist: e.target.checked }))}
-                      />
-                      <div className="toggle-label">
-                        <span className="toggle-title">{t("settings:translate.visionAssist")}</span>
-                        <span className="toggle-desc">{t("settings:translate.visionAssistDesc")}</span>
-                      </div>
-                      <span className="toggle-switch" />
-                    </label>
                   </div>
                 </div>
               </div>

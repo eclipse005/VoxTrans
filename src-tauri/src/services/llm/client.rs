@@ -61,7 +61,6 @@ impl OpenAiCompatLlmClient {
     async fn call_once(
         &self,
         user_prompt: &str,
-        images: Option<&[String]>,
         on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
         if let Some(cb) = on_partial {
@@ -72,7 +71,6 @@ impl OpenAiCompatLlmClient {
                 &self.http,
                 &self.config,
                 user_prompt,
-                images,
                 Some(&mut delta_cb),
             )
             .await
@@ -86,7 +84,7 @@ impl OpenAiCompatLlmClient {
                 }
             }
         }
-        call_chat_completion(&self.http, &self.config, user_prompt, images).await
+        call_chat_completion(&self.http, &self.config, user_prompt).await
     }
 
     pub async fn call_json_validated<T, F>(
@@ -94,7 +92,6 @@ impl OpenAiCompatLlmClient {
         context: &LlmCallContext,
         request_id: &str,
         user_prompt: &str,
-        images: Option<&[String]>,
         response_validator: Option<&JsonResponseValidator>,
         semantic_validate: F,
     ) -> Result<LlmValidatedJsonResult<T>, LlmError>
@@ -105,7 +102,6 @@ impl OpenAiCompatLlmClient {
             context,
             request_id,
             user_prompt,
-            images,
             response_validator,
             None,
             semantic_validate,
@@ -121,7 +117,6 @@ impl OpenAiCompatLlmClient {
         context: &LlmCallContext,
         request_id: &str,
         user_prompt: &str,
-        images: Option<&[String]>,
         response_validator: Option<&JsonResponseValidator>,
         on_partial: Arc<dyn Fn(String) + Send + Sync>,
         semantic_validate: F,
@@ -133,7 +128,6 @@ impl OpenAiCompatLlmClient {
             context,
             request_id,
             user_prompt,
-            images,
             response_validator,
             Some(on_partial),
             semantic_validate,
@@ -146,7 +140,6 @@ impl OpenAiCompatLlmClient {
         context: &LlmCallContext,
         request_id: &str,
         user_prompt: &str,
-        images: Option<&[String]>,
         response_validator: Option<&JsonResponseValidator>,
         on_partial: Option<Arc<dyn Fn(String) + Send + Sync>>,
         semantic_validate: F,
@@ -180,7 +173,7 @@ impl OpenAiCompatLlmClient {
 
             let partial_ref = on_partial.as_ref().map(|a| a.as_ref());
             match self
-                .call_once(&effective_user_prompt, images, partial_ref)
+                .call_once(&effective_user_prompt, partial_ref)
                 .await
             {
                 Ok((raw_text, usage)) => {
@@ -383,10 +376,7 @@ impl OpenAiCompatLlmClient {
             repair_requested_payload(failure.kind.as_str(), context, request_id),
         );
 
-        // Images are intentionally dropped on the repair retry: the repair
-        // prompt is about fixing JSON shape, not re-answering from visuals.
-        // Sending images again would only re-cost tokens for a syntactic fix.
-        let (repair_raw_text, _) = self.call_once(&repair_prompt, None, None).await?;
+        let (repair_raw_text, _) = self.call_once(&repair_prompt, None).await?;
         let repaired = extract_and_repair_json_with_outcome(&repair_raw_text)?;
         if let Some(validator) = response_validator {
             validator.validate(&repaired.value)?;
@@ -401,7 +391,6 @@ impl LlmPort for OpenAiCompatLlmClient {
         context: &LlmCallContext,
         request_id: &str,
         user_prompt: &str,
-        images: Option<&[String]>,
         response_validator: Option<&JsonResponseValidator>,
     ) -> Result<LlmJsonResult, LlmError> {
         let result = self
@@ -409,7 +398,6 @@ impl LlmPort for OpenAiCompatLlmClient {
                 context,
                 request_id,
                 user_prompt,
-                images,
                 response_validator,
                 Ok::<Value, LlmSemanticValidationError>,
             )

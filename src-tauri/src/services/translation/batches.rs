@@ -1,17 +1,12 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::services::frame_extract::Frame;
-use crate::services::prompts::translation::{
-    TranslationPromptLine, TranslationPromptTerm, build_batch_translate_prompt,
-};
+use crate::services::prompts::translation::{TranslationPromptLine, TranslationPromptTerm};
 
 use super::types::{BatchWindow, NormalizedSegment, TranslationTerminologyEntry};
 use super::{CONTEXT_LINE_LIMIT, MAX_TERMS_PER_BATCH};
 
-/// Compute the (start, end) index ranges for each batch. Kept as a standalone
-/// helper so the frame extraction code can derive the exact same time ranges
-/// without duplicating the slicing logic.
+/// Compute the (start, end) index ranges for each batch.
 pub(super) fn batch_index_ranges(
     segments: &[NormalizedSegment],
     batch_size: usize,
@@ -36,8 +31,6 @@ pub(super) fn build_batch_windows(
     target_lang: &str,
     theme_summary: &str,
     terminology_entries: &[TranslationTerminologyEntry],
-    visual_context: Option<&str>,
-    frames_per_batch: &[Vec<Frame>],
 ) -> Vec<BatchWindow> {
     if segments.is_empty() {
         return Vec::new();
@@ -54,9 +47,12 @@ pub(super) fn build_batch_windows(
         let next = &segments[batch_end..next_end];
 
         let terms = select_batch_terms(current, terminology_entries, MAX_TERMS_PER_BATCH);
+        // Keep (segment_id, source) pairs so the prompt can be rebuilt at call
+        // time with any translations that became known since window creation
+        // (resumed batches, or batches completed earlier in this run).
         let prev_lines = prev
             .iter()
-            .map(|segment| segment.source.clone())
+            .map(|segment| (segment.segment_id, segment.source.clone()))
             .collect::<Vec<_>>();
         let current_lines = current
             .iter()
@@ -68,7 +64,7 @@ pub(super) fn build_batch_windows(
             .collect::<Vec<_>>();
         let next_lines = next
             .iter()
-            .map(|segment| segment.source.clone())
+            .map(|segment| (segment.segment_id, segment.source.clone()))
             .collect::<Vec<_>>();
         let prompt_terms = terms
             .iter()
@@ -78,35 +74,20 @@ pub(super) fn build_batch_windows(
                 note: term.note.clone(),
             })
             .collect::<Vec<_>>();
-        let prompt = build_batch_translate_prompt(
-            source_lang,
-            target_lang,
-            theme_summary,
-            &prev_lines,
-            &current_lines,
-            &next_lines,
-            &prompt_terms,
-            visual_context,
-        );
 
         let batch_index = out.len();
-        let batch_frames = frames_per_batch.get(batch_index).cloned().unwrap_or_default();
-        let frames: Arc<[String]> = batch_frames
-            .iter()
-            .map(|f| f.data_url.clone())
-            .collect();
-        let frame_names: Arc<[String]> = batch_frames
-            .iter()
-            .map(|f| f.filename.clone())
-            .collect();
 
         out.push(BatchWindow {
             batch_id: batch_index,
             local_ids: (1..=current.len()).collect(),
             local_to_global: current.iter().map(|segment| segment.segment_id).collect(),
-            prompt: Arc::from(prompt),
-            frames,
-            frame_names,
+            current_lines: Arc::from(current_lines),
+            prev_lines: Arc::from(prev_lines),
+            next_lines: Arc::from(next_lines),
+            terms: Arc::from(prompt_terms),
+            theme_summary: theme_summary.to_string(),
+            source_lang: source_lang.to_string(),
+            target_lang: target_lang.to_string(),
         });
     }
 

@@ -39,14 +39,13 @@
     "resetPresetTitle": "将当前服务商的接口地址与模型恢复为预设（保留 Key，需点保存才生效）",
     "configured": "已配置",
     "apiKey": "接口密钥",
+    "apiKeyHint": "多个 Key 用 | 分隔，调用时轮流负载均衡",
     "baseUrl": "接口地址",
     "modelName": "模型名称",
     "fetchModels": "获取模型",
     "fetchingModels": "获取中…",
     "test": "测试",
-    "concurrency": "并发数",
-    "visionAssist": "视觉辅助翻译",
-    "visionAssistDesc": "适合画面信息密集的视频，需多模态模型"
+    "concurrency": "并发数"
   },
   "subtitle": {
     "length": "字幕长度",

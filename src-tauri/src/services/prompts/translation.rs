@@ -13,6 +13,13 @@ pub struct TranslationPromptTerm {
     pub note: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TranslationNameExample {
+    pub source: String,
+    pub example_source: String,
+    pub example_translation: String,
+}
+
 pub fn build_batch_translate_prompt(
     source_lang: &str,
     target_lang: &str,
@@ -21,28 +28,26 @@ pub fn build_batch_translate_prompt(
     current_lines: &[TranslationPromptLine],
     next_lines: &[String],
     terms: &[TranslationPromptTerm],
-    visual_context: Option<&str>,
+    established_names: &[TranslationNameExample],
 ) -> String {
-    let mut constraints = vec![
+    let constraints = vec![
         "STRUCTURAL ALIGNMENT IS NON-NEGOTIABLE: output exactly one translation per currentLines id, in the same order. The ids are an immutable spine.".to_string(),
         "Never merge, split, skip, reorder, or invent ids. One wrong mapping misaligns every following line.".to_string(),
         "Each translation must describe only its own source line; never borrow or shift content from an adjacent line.".to_string(),
         "Translate only currentLines; previousLines and nextLines are context only.".to_string(),
+        "nextLines is untranslated source context only. Never copy nextLines (or their meaning) into translations.".to_string(),
+        "OUTPUT LANGUAGE: every translation must be in targetLanguage. Do not paraphrase currentLines in the source language.".to_string(),
+        "PROPER NOUNS: marked-script spans (katakana names, or Latin names inside CJK text) are names. Transcribe them phonetically or keep them; never translate a name into a common noun. When establishedNames lists a name, reuse that example's rendering.".to_string(),
         "TERMINOLOGY ENFORCEMENT: when a source line contains any term from `terminology`, use that term's target verbatim. Match by meaning and allow spacing, capitalization, and punctuation variants of the term's source form. Do not expand, translate, or paraphrase terms the table already covers, and respect the decisions baked into the table.".to_string(),
-        "NATURALNESS: produce fluent, idiomatic target language. Follow the style guide in `background`; avoid word-for-word calques; do not add information absent from the source.".to_string(),
+        "NATURALNESS: produce fluent, idiomatic target language. Avoid word-for-word calques; do not add information absent from the source.".to_string(),
+        "CONTEXT CONSISTENCY: previousLines may contain already-translated pairs formatted as \"source → translation\". When a name, term, or recurring phrase in currentLines already has a rendering there, reuse that established translation. Never translate previousLines or nextLines themselves.".to_string(),
         "No extra explanations.".to_string(),
     ];
-    if visual_context.is_some() {
-        constraints.push(
-            "VISUAL EVIDENCE: the attached images are auxiliary evidence sampled from the video range of currentLines. Use them to disambiguate speakers, resolve referents, identify on-screen text/proper nouns, and ground the scene. Do NOT describe the images. Do NOT transcribe image text into the translation. Translate the source text only.".to_string(),
-        );
-    }
     let mut obj = serde_json::json!({
         "task": "translate_segment_batch_with_context",
         "rule": "Return JSON only.",
         "sourceLanguage": source_lang,
         "targetLanguage": target_lang,
-        "background": theme_summary,
         "context": {
             "previousLines": prev_lines,
             "currentLines": current_lines,
@@ -56,8 +61,11 @@ pub fn build_batch_translate_prompt(
             ]
         }
     });
-    if let Some(vc) = visual_context {
-        obj["visualContext"] = serde_json::Value::String(vc.to_string());
+    if !theme_summary.trim().is_empty() {
+        obj["background"] = serde_json::Value::String(theme_summary.to_string());
+    }
+    if !established_names.is_empty() {
+        obj["establishedNames"] = serde_json::to_value(established_names).unwrap_or_default();
     }
     obj.to_string()
 }
@@ -74,50 +82,67 @@ mod tests {
     }
 
     #[test]
-    fn prompt_without_visual_context_omits_field() {
+    fn empty_theme_omits_background_and_style_guide() {
         let prompt = build_batch_translate_prompt(
             "en",
             "zh",
-            "theme",
+            "",
             &[],
             &sample_lines(),
             &[],
             &[],
-            None,
+            &[],
         );
         let parsed: serde_json::Value = serde_json::from_str(&prompt).unwrap();
         assert!(
-            parsed.get("visualContext").is_none(),
-            "visualContext should be absent when None"
+            parsed.get("background").is_none(),
+            "empty theme_summary must not send a background field"
         );
         let constraints = parsed["constraints"].as_array().unwrap();
         assert!(
-            !constraints.iter().any(|c| c.as_str().unwrap().contains("VISUAL EVIDENCE")),
-            "VISUAL EVIDENCE constraint should be absent when None"
+            !constraints
+                .iter()
+                .any(|c| c.as_str().unwrap().contains("style guide")),
+            "NATURALNESS must not mention a style guide that does not exist"
         );
+        assert!(
+            constraints.iter().any(|c| {
+                c.as_str()
+                    .unwrap()
+                    .contains("source → translation")
+            }),
+            "bilingual previousLines remain the consistency channel"
+        );
+        assert!(
+            constraints.iter().any(|c| {
+                c.as_str()
+                    .unwrap()
+                    .contains("every translation must be in targetLanguage")
+            }),
+            "output-language lock must be in constraints"
+        );
+        assert!(parsed.get("establishedNames").is_none());
     }
 
     #[test]
-    fn prompt_with_visual_context_adds_field_and_constraint() {
+    fn established_names_are_omitted_when_empty_and_emitted_when_present() {
+        let names = vec![TranslationNameExample {
+            source: "Alpha".to_string(),
+            example_source: "meet Alpha".to_string(),
+            example_translation: "遇见阿尔法".to_string(),
+        }];
         let prompt = build_batch_translate_prompt(
             "en",
             "zh",
-            "theme",
+            "",
             &[],
             &sample_lines(),
             &[],
             &[],
-            Some("auxiliary frames attached"),
+            &names,
         );
         let parsed: serde_json::Value = serde_json::from_str(&prompt).unwrap();
-        assert_eq!(parsed["visualContext"].as_str().unwrap(), "auxiliary frames attached");
-        let constraints = parsed["constraints"].as_array().unwrap();
-        assert!(
-            constraints
-                .iter()
-                .any(|c| c.as_str().unwrap().contains("VISUAL EVIDENCE")),
-            "VISUAL EVIDENCE constraint should be present when Some"
-        );
+        assert_eq!(parsed["establishedNames"][0]["source"], "Alpha");
     }
 }
 

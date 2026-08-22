@@ -23,8 +23,6 @@ fn split_batches_respects_requested_size() {
         "zh-CN",
         "theme",
         &Vec::<TranslationTerminologyEntry>::new(),
-        None,
-        &[],
     );
     assert_eq!(windows.len(), 3);
     assert_eq!(windows[0].local_ids, vec![1, 2]);
@@ -35,6 +33,44 @@ fn split_batches_respects_requested_size() {
     assert_eq!(windows[2].local_to_global, vec![5]);
 }
 
+
+#[test]
+fn bilingual_context_renders_known_translations_in_prompt() {
+    use std::collections::HashMap;
+    let normalized = normalize_segments(&[seg("a"), seg("b"), seg("c"), seg("d"), seg("e")]);
+    let windows = build_batch_windows(
+        &normalized,
+        2,
+        "en",
+        "zh-CN",
+        "",
+        &Vec::<TranslationTerminologyEntry>::new(),
+    );
+    // Window 1 covers c,d (global ids 3,4); prev = a,b (ids 1,2); next = e (id 5).
+    let mut known = HashMap::<usize, String>::new();
+    known.insert(1, "甲".to_string());
+    known.insert(2, "乙".to_string());
+    let prompt = windows[1].build_prompt(&known, &[], &[]);
+    // Known translations render bilingually...
+    assert!(prompt.contains("a → 甲"), "prompt={prompt}");
+    assert!(prompt.contains("b → 乙"), "prompt={prompt}");
+    // ...unknown lines stay source-only, and current lines are plain text.
+    assert!(prompt.contains("\"e\""), "prompt={prompt}");
+    assert!(prompt.contains("\"c\""), "prompt={prompt}");
+    assert!(!prompt.contains("d → "), "prompt={prompt}");
+    // nextLines stay source-only even when a translation is already known
+    // (resume). They are context, not an answer key.
+    known.insert(5, "戊".to_string());
+    let resume_prompt = windows[1].build_prompt(&known, &[], &[]);
+    assert!(
+        !resume_prompt.contains("e → 戊"),
+        "nextLines must not be bilingual: {resume_prompt}"
+    );
+    assert!(resume_prompt.contains("\"e\""), "prompt={resume_prompt}");
+    // Without any known translation the context is raw source.
+    let empty_prompt = windows[2].build_prompt(&HashMap::new(), &[], &[]);
+    assert!(empty_prompt.contains("\"e\""), "empty prompt must keep raw context");
+}
 #[test]
 fn validate_batch_translation_response_rejects_missing_expected_id() {
     let value = json!({
@@ -164,4 +200,60 @@ fn validate_batch_translation_response_accepts_map_string_values() {
     let out = validate_batch_translation_response(value, &[1, 2]).expect("map strings ok");
     assert_eq!(out.get(&1).map(String::as_str), Some("first"));
     assert_eq!(out.get(&2).map(String::as_str), Some("second"));
+}
+
+#[test]
+fn validate_rejects_source_language_paraphrase() {
+    use super::responses::{
+        TranslationValidationContext, validate_batch_translation_response_with_context,
+    };
+    let value = json!({
+        "translations": [
+            { "id": 1, "text": "過去にはいろいろな悩みを抱えてきました" }
+        ]
+    });
+    let err = validate_batch_translation_response_with_context(
+        value,
+        &TranslationValidationContext {
+            expected_ids: &[1],
+            source_lang: "ja",
+            target_lang: "zh-CN",
+            current_sources: &["いろいろ悩みを抱えたことが多かったです".to_string()],
+            prev_sources: &[],
+            next_sources: &[],
+        },
+    )
+    .expect_err("source-language paraphrase must retry");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("source-language leak"), "msg={msg}");
+}
+
+#[test]
+fn validate_rejects_neighbor_copy() {
+    use super::responses::{
+        TranslationValidationContext, validate_batch_translation_response_with_context,
+    };
+    let value = json!({
+        "translations": [
+            { "id": 1, "text": "有个叫バロン的人" },
+            { "id": 2, "text": "在六本木开了店" }
+        ]
+    });
+    let err = validate_batch_translation_response_with_context(
+        value,
+        &TranslationValidationContext {
+            expected_ids: &[1, 2],
+            source_lang: "ja",
+            target_lang: "zh-CN",
+            current_sources: &[
+                "100戦連馬のMCも手に".to_string(),
+                "あるんだけどバロンっていう".to_string(),
+            ],
+            prev_sources: &[],
+            next_sources: &[],
+        },
+    )
+    .expect_err("copying バロン into the previous line must retry");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("neighbor-copy"), "msg={msg}");
 }

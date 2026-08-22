@@ -37,9 +37,6 @@ pub struct BuildTranslationLayerRequest {
     pub llm_concurrency: u32,
     pub batch_size: usize,
     pub unit_store: Option<crate::services::pipeline::UnitStore>,
-    /// When true, sample video frames per batch and send as vision evidence.
-    /// Live setting resolved from saved settings (not frozen at enqueue).
-    pub enable_vision_assist: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -88,12 +85,85 @@ pub(super) struct BatchWindow {
     pub(super) batch_id: usize,
     pub(super) local_ids: Vec<usize>,
     pub(super) local_to_global: Vec<usize>,
-    pub(super) prompt: Arc<str>,
-    /// base64 data URLs of sampled video frames for this batch's time range.
-    /// Empty when vision assist is disabled or no frames could be extracted.
-    pub(super) frames: Arc<[String]>,
-    /// Cache filenames of the frames in `frames` (same order), used for
-    /// logging which frames each batch's translation used. Empty iff `frames`
-    /// is empty.
-    pub(super) frame_names: Arc<[String]>,
+    /// Current-batch lines as the LLM sees them (1-based local ids).
+    pub(super) current_lines: Arc<[crate::services::prompts::translation::TranslationPromptLine]>,
+    /// (segment_id, source) for up to CONTEXT_LINE_LIMIT lines before the batch.
+    pub(super) prev_lines: Arc<[(usize, String)]>,
+    /// (segment_id, source) for up to CONTEXT_LINE_LIMIT lines after the batch.
+    pub(super) next_lines: Arc<[(usize, String)]>,
+    /// Terminology entries selected for this batch.
+    pub(super) terms: Arc<[crate::services::prompts::translation::TranslationPromptTerm]>,
+    pub(super) theme_summary: String,
+    pub(super) source_lang: String,
+    pub(super) target_lang: String,
 }
+
+impl BatchWindow {
+    /// Build this batch's translation prompt.
+    ///
+    /// previousLines become `"source → translation"` once the predecessor
+    /// batch has committed. nextLines stay source-only even on resume — the
+    /// future batch is context, not an answer key.
+    pub(super) fn build_prompt(
+        &self,
+        known_translations: &std::collections::HashMap<usize, String>,
+        extra_terms: &[crate::services::prompts::translation::TranslationPromptTerm],
+        established_names: &[crate::services::prompts::translation::TranslationNameExample],
+    ) -> String {
+        let prev_lines = self
+            .prev_lines
+            .iter()
+            .map(|(id, source)| match known_translations.get(id) {
+                Some(translation) => format!("{} → {}", source, translation),
+                None => source.clone(),
+            })
+            .collect::<Vec<_>>();
+        let next_lines = self
+            .next_lines
+            .iter()
+            .map(|(_, source)| source.clone())
+            .collect::<Vec<_>>();
+        let terms = merge_terms(&self.terms, extra_terms);
+        crate::services::prompts::translation::build_batch_translate_prompt(
+            &self.source_lang,
+            &self.target_lang,
+            &self.theme_summary,
+            &prev_lines,
+            &self.current_lines,
+            &next_lines,
+            &terms,
+            established_names,
+        )
+    }
+}
+
+fn merge_terms(
+    primary: &[crate::services::prompts::translation::TranslationPromptTerm],
+    extra: &[crate::services::prompts::translation::TranslationPromptTerm],
+) -> Vec<crate::services::prompts::translation::TranslationPromptTerm> {
+    let mut out = primary.to_vec();
+    let mut seen: std::collections::HashSet<String> = primary
+        .iter()
+        .map(|t| {
+            t.source
+                .to_lowercase()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect()
+        })
+        .collect();
+    for term in extra {
+        let key: String = term
+            .source
+            .to_lowercase()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        if key.is_empty() || !seen.insert(key) {
+            continue;
+        }
+        out.push(term.clone());
+    }
+    out
+}
+

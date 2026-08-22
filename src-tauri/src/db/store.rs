@@ -47,7 +47,7 @@ impl TaskStore {
              llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
-             enable_vision_assist, locale, models_dir, default_review_source, \
+             locale, models_dir, default_review_source, \
              default_review_target, updated_at \
              FROM settings WHERE id = 1",
         )
@@ -90,9 +90,9 @@ impl TaskStore {
              llm_concurrency, active_terminology_group_id, \
              enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
-             enable_vision_assist, locale, models_dir, default_review_source, \
+             locale, models_dir, default_review_source, \
              default_review_target, updated_at) \
-             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(id) DO UPDATE SET \
              provider=excluded.provider, chunk_target_seconds=excluded.chunk_target_seconds, \
              subtitle_length_preset=excluded.subtitle_length_preset, asr_model=excluded.asr_model, \
@@ -111,7 +111,6 @@ impl TaskStore {
              subtitle_burn_mode=excluded.subtitle_burn_mode, \
              subtitle_render_style_json=excluded.subtitle_render_style_json, \
              flat_srt_output=excluded.flat_srt_output, \
-             enable_vision_assist=excluded.enable_vision_assist, \
              locale=excluded.locale, \
              models_dir=excluded.models_dir, \
              default_review_source=excluded.default_review_source, \
@@ -138,7 +137,6 @@ impl TaskStore {
         .bind(&row.subtitle_burn_mode)
         .bind(&render_style_json)
         .bind(row.flat_srt_output)
-        .bind(row.enable_vision_assist)
         .bind(&row.locale)
         .bind(&row.models_dir)
         .bind(row.default_review_source)
@@ -926,7 +924,6 @@ mod tests {
             subtitle_render_style: SubtitleRenderStyle::default(),
             flat_srt_output: false,
             flat_srt_items: Vec::new(),
-            enable_vision_assist: false,
             locale: crate::services::preferences_types::Locale::ZhCn,
             models_dir: None,
         };

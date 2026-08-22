@@ -22,7 +22,7 @@ pub struct WorkspaceQueueItem {
     pub llm_total_tokens: u64,
     #[serde(default)]
     pub terminology_group_id: String,
-    /// Pause after source cues are ready (before terminology). Task-effective.
+    /// Pause after source cues are ready (before translation). Task-effective.
     #[serde(default)]
     pub review_source: bool,
     /// Pause after translation (before SRT/burn deliver). Task-effective.

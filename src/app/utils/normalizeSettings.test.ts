@@ -60,7 +60,6 @@ function baseDefaults(): SavedSettings {
     },
     flatSrtOutput: false,
     flatSrtItems: ["source", "target"],
-    enableVisionAssist: false,
     locale: "zh-CN",
     modelsDir: null,
   };

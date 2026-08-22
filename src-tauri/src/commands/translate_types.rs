@@ -34,39 +34,6 @@ pub struct SourceSegmentForTerminologyCommand {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BuildTerminologyLayerCommandRequest {
-    pub task_id: String,
-    pub media_path: String,
-    pub source_lang: String,
-    pub target_lang: String,
-    pub segments: Vec<SourceSegmentForTerminologyCommand>,
-    #[serde(default)]
-    pub translate_api_key: String,
-    #[serde(default)]
-    pub translate_base_url: String,
-    #[serde(default)]
-    pub translate_model: String,
-    #[serde(default = "default_llm_concurrency")]
-    pub llm_concurrency: u32,
-    #[serde(default)]
-    pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildTerminologyLayerCommandResponse {
-    pub task_id: String,
-    pub media_path: String,
-    pub source_lang: String,
-    pub target_lang: String,
-    pub source_segment_total: usize,
-    pub source_token_total: usize,
-    pub theme_summary: String,
-    pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct BuildTranslationLayerCommandRequest {
     pub task_id: String,
     pub media_path: String,
@@ -121,8 +88,6 @@ pub struct TestTranslateLlmRequest {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
-    #[serde(default)]
-    pub enable_vision_assist: bool,
 }
 
 #[derive(Debug, Serialize)]

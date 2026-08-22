@@ -349,10 +349,6 @@ async fn invalidate_translation_caches(app: &AppHandle, task_id: &str) -> Worksp
         .await
         .map_err(|e| WorkspaceError::TaskFailed(format!("invalidate translation batches: {e}")))?;
     store
-        .delete_artifact(task_id, "step_03_terminology")
-        .await
-        .map_err(|e| WorkspaceError::TaskFailed(format!("invalidate step3 artifact: {e}")))?;
-    store
         .delete_artifact(task_id, "step_04_translation")
         .await
         .map_err(|e| WorkspaceError::TaskFailed(format!("invalidate step4 artifact: {e}")))?;

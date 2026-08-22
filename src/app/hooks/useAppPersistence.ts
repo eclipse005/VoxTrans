@@ -68,7 +68,6 @@ const LAST_RESORT_DEFAULTS: SavedSettings = {
   },
   flatSrtOutput: false,
   flatSrtItems: ["source", "target"],
-  enableVisionAssist: false,
   locale: "zh-CN",
   modelsDir: null,
 };

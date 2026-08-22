@@ -2,7 +2,7 @@ mod recognition;
 mod translation;
 
 pub(super) use recognition::{Step1AsrPipelineStep, Step2SegmentsPipelineStep};
-pub(super) use translation::{Step3TerminologyPipelineStep, Step4TranslationPipelineStep};
+pub(super) use translation::Step4TranslationPipelineStep;
 
 /// Run a future from a sync callback that fires on a worker thread (e.g. the
 /// ASR/align progress callback, which runs on the LLM HTTP client thread or

@@ -35,7 +35,6 @@ pub struct SettingsRow {
     #[sqlx(json, rename = "subtitle_render_style_json")]
     pub subtitle_render_style: SubtitleRenderStyle,
     pub flat_srt_output: bool,
-    pub enable_vision_assist: bool,
     pub locale: String,
     pub models_dir: Option<String>,
     #[sqlx(default)]

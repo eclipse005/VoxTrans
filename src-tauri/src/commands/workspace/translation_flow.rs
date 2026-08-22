@@ -8,9 +8,7 @@ use crate::services::pipeline::{StepContext, StepSource};
 
 use super::output_completion::deliver_from_sot;
 use super::pipeline_runner::execute_workspace_step;
-use super::pipeline_steps::{
-    Step3TerminologyPipelineStep, Step4TranslationPipelineStep,
-};
+use super::pipeline_steps::Step4TranslationPipelineStep;
 use super::progress::report_task_stage;
 use super::review_flow::{
     enter_review_target, materialize_target_sot, read_task_review_flags,
@@ -30,42 +28,10 @@ pub(super) async fn execute_translate_steps(
     store: &TaskStore,
 ) -> WorkspaceResult<()> {
     let step_context = StepContext { task_id, store };
-    report_task_stage(app, task_id, TaskStage::Terminology, "", 0, 1).await?;
 
+    // Glossary is only the frozen user group. Cross-batch names/terms reuse
+    // bilingual previousLines committed by the predecessor batch.
     let terminology_segments = map_step2_segments_for_translate(step2_segments);
-    let step3_exec = execute_workspace_step(
-        &Step3TerminologyPipelineStep {
-            task_id: task_id.to_string(),
-            media_path: record.item.path.clone(),
-            source_lang: source_lang.clone(),
-            target_lang: target_lang.clone(),
-            segments: terminology_segments.clone(),
-            translate_api_key: runtime.translate_api_key.clone(),
-            translate_base_url: runtime.translate_base_url.clone(),
-            translate_model: runtime.translate_model.clone(),
-            llm_concurrency: runtime.llm_concurrency,
-            terminology_entries: runtime.terminology_entries.clone(),
-            app: app.clone(),
-        },
-        &step_context,
-        store,
-    )
-    .await?;
-    let step3_response = step3_exec.output;
-    report_task_stage(
-        app,
-        task_id,
-        TaskStage::Terminology,
-        if step3_exec.source == StepSource::Cache {
-            "step_cache_hit"
-        } else {
-            ""
-        },
-        1,
-        1,
-    )
-    .await?;
-
     let step4_exec = execute_workspace_step(
         &Step4TranslationPipelineStep {
             task_id: task_id.to_string(),
@@ -73,13 +39,12 @@ pub(super) async fn execute_translate_steps(
             source_lang: source_lang.clone(),
             target_lang: target_lang.clone(),
             segments: terminology_segments,
-            theme_summary: step3_response.theme_summary.clone(),
-            terminology_entries: step3_response.terminology_entries.clone(),
+            theme_summary: String::new(),
+            terminology_entries: runtime.terminology_entries.clone(),
             translate_api_key: runtime.translate_api_key.clone(),
             translate_base_url: runtime.translate_base_url.clone(),
             translate_model: runtime.translate_model.clone(),
             llm_concurrency: runtime.llm_concurrency,
-            enable_vision_assist: runtime.enable_vision_assist,
             app: app.clone(),
         },
         &step_context,
@@ -146,4 +111,3 @@ pub(super) async fn execute_translate_steps_from_step2(
     )
     .await
 }
-

@@ -39,14 +39,13 @@
     "resetPresetTitle": "Restore this provider's default URL and model (keeps the key; click Save to persist)",
     "configured": "Configured",
     "apiKey": "API key",
+    "apiKeyHint": "Separate multiple keys with | for round-robin load balancing",
     "baseUrl": "API URL",
     "modelName": "Model name",
     "fetchModels": "Fetch models",
     "fetchingModels": "Fetching…",
     "test": "Test",
-    "concurrency": "Concurrency",
-    "visionAssist": "Vision-assisted translation",
-    "visionAssistDesc": "Best for visually-dense videos (tutorials, screen recordings); requires a vision-capable model"
+    "concurrency": "Concurrency"
   },
   "subtitle": {
     "length": "Subtitle length",

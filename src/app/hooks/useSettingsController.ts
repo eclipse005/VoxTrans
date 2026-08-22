@@ -64,7 +64,6 @@ export type SettingsForm = {
   subtitleRenderStyle: SubtitleRenderStyle;
   flatSrtOutput: boolean;
   flatSrtItems: SubtitleBurnMode[];
-  enableVisionAssist: boolean;
   locale: SavedSettings["locale"];
   modelsDir: string;
 };
@@ -97,7 +96,6 @@ function settingsToForm(settings: SavedSettings): SettingsForm {
     subtitleRenderStyle: settings.subtitleRenderStyle,
     flatSrtOutput: settings.flatSrtOutput,
     flatSrtItems: settings.flatSrtItems,
-    enableVisionAssist: settings.enableVisionAssist,
     locale: settings.locale,
     modelsDir: settings.modelsDir ?? "",
   };
@@ -222,7 +220,6 @@ export function useSettingsController({
       subtitleRenderStyle: form.subtitleRenderStyle,
       flatSrtOutput: form.flatSrtOutput,
       flatSrtItems: form.flatSrtItems,
-      enableVisionAssist: form.enableVisionAssist,
       locale: form.locale,
       modelsDir: form.modelsDir.trim() || null,
     };
@@ -298,7 +295,6 @@ export function useSettingsController({
         apiKey,
         baseUrl,
         model: configuredModel,
-        enableVisionAssist: form.enableVisionAssist,
       });
       if (response.ok) {
         const modelName = response.model?.trim() || configuredModel;
@@ -310,7 +306,7 @@ export function useSettingsController({
       const message = error instanceof Error ? error.message : t("toasts:settings.testConnectFailed");
       pushToast(message, "error", { id: toastId, durationMs: 3000 });
     }
-  }, [form.llmProfiles, form.activeLlmProfileId, form.enableVisionAssist, pushToast, t]);
+  }, [form.llmProfiles, form.activeLlmProfileId, pushToast, t]);
 
   /**
    * Fetch OpenAI-compatible model list for the active profile.

@@ -44,7 +44,6 @@ pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
         subtitle_burn_mode: SubtitleBurnMode::parse(&row.subtitle_burn_mode),
         subtitle_render_style: row.subtitle_render_style,
         flat_srt_output: row.flat_srt_output,
-        enable_vision_assist: row.enable_vision_assist,
         locale: Locale::parse(&row.locale),
         // flat_srt_items is composed in store.rs from the flat_srt_items table.
         flat_srt_items: Vec::new(),
@@ -78,7 +77,6 @@ pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
         subtitle_burn_mode: settings.subtitle_burn_mode.as_str().to_string(),
         subtitle_render_style: settings.subtitle_render_style.clone(),
         flat_srt_output: settings.flat_srt_output,
-        enable_vision_assist: settings.enable_vision_assist,
         locale: settings.locale.as_str().to_string(),
         models_dir: settings.models_dir.clone(),
         updated_at: now_ms(),
@@ -268,7 +266,6 @@ mod tests {
             subtitle_render_style: SubtitleRenderStyle::default(),
             flat_srt_output: false,
             flat_srt_items: Vec::new(),
-            enable_vision_assist: false,
             locale: Locale::ZhCn,
             models_dir: None,
         }
