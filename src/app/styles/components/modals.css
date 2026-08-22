@@ -528,17 +528,22 @@
 }
 
 .subtitle-row-textarea {
+  /* 1 line by default; grow to 2 lines when wrapped; then scroll. */
+  --cue-pad-y: 6px;
+  --cue-border-y: 2px;
   field-sizing: content;
-  min-height: 52px;
+  min-height: calc(1lh + 2 * var(--cue-pad-y) + var(--cue-border-y));
+  max-height: calc(2lh + 2 * var(--cue-pad-y) + var(--cue-border-y));
   height: auto;
   resize: none;
   overflow-x: hidden;
   overflow-y: auto;
   overflow-anchor: none;
+  scrollbar-width: thin;
   font-family: inherit;
   font-size: 14px;
   line-height: 1.45;
-  padding: 8px 10px;
+  padding: var(--cue-pad-y) 10px;
   border-radius: 10px;
   border-color: var(--apple-border-lighter);
   background: #fff;

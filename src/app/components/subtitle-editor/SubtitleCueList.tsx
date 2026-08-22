@@ -213,7 +213,7 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
         placeholder={t("subtitles:cue.textPlaceholder")}
         aria-label={t("subtitles:cue.textAria", { n: index + 1 })}
         readOnly={!canEdit}
-        rows={2}
+        rows={1}
       />
       <textarea
         className="subtitle-editor-textarea subtitle-row-textarea subtitle-row-textarea-translation"
@@ -224,7 +224,7 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
         placeholder={t("subtitles:cue.translationPlaceholder")}
         aria-label={t("subtitles:cue.translationAria", { n: index + 1 })}
         readOnly={!canEdit}
-        rows={2}
+        rows={1}
       />
     </article>
   );
