@@ -26,6 +26,48 @@ pub fn beautify_subtitle_srt_segments(
         subtitle_length_preset,
         target_lang,
     );
+    pad_cue_hold_and_gaps(segments);
+}
+
+/// Minimum on-screen time when the following gap can absorb the extra hold.
+const MIN_HOLD_MS: u64 = 500;
+/// If the wait until the next cue is this small, hold until that cue starts
+/// so the viewer sees a cut, not a blank flash.
+const MAX_GAP_FILL_MS: u64 = 1000;
+
+fn pad_cue_hold_and_gaps(segments: &mut [SubtitleSrtSegment]) {
+    let len = segments.len();
+    for i in 0..len {
+        let start = segments[i].start_ms;
+        let mut end = segments[i].end_ms.max(start);
+        let next_start = if i + 1 < len {
+            Some(segments[i + 1].start_ms)
+        } else {
+            None
+        };
+
+        let hold_end = start.saturating_add(MIN_HOLD_MS);
+        let needs_min_hold = end < hold_end;
+        if needs_min_hold {
+            end = match next_start {
+                Some(next) if next <= start => end,
+                Some(next) => hold_end.min(next),
+                None => hold_end,
+            };
+        }
+
+        // Cues that only just reached the 0.5s floor stay there. Bridging
+        // through to the next cue is for lines that were already long enough.
+        if !needs_min_hold
+            && let Some(next) = next_start
+            && next > end
+            && next - end <= MAX_GAP_FILL_MS
+        {
+            end = next;
+        }
+
+        segments[i].end_ms = end;
+    }
 }
 
 /// Whether the target language is a CJK variant that should receive the
@@ -225,7 +267,8 @@ fn collapse_multiple_spaces(text: &str) -> String {
 mod tests {
     use super::{
         beautify_subtitle_srt_segments, beautify_subtitle_text, collapse_multiple_spaces,
-        is_ascii_word_char, is_cjk_char, need_cjk_ascii_space, trim_bounding_punctuation,
+        is_ascii_word_char, is_cjk_char, need_cjk_ascii_space, pad_cue_hold_and_gaps,
+        trim_bounding_punctuation,
     };
     use crate::services::subtitle_srt::SubtitleSrtSegment;
 
@@ -463,5 +506,50 @@ mod tests {
         assert_eq!(collapse_multiple_spaces("a   b"), "a b");
         // Commas are now also boundary punctuation.
         assert_eq!(trim_bounding_punctuation("，Hello，"), "Hello");
+    }
+
+    fn timed(start_ms: u64, end_ms: u64) -> SubtitleSrtSegment {
+        SubtitleSrtSegment {
+            start_ms,
+            end_ms,
+            source_text: "Right?".into(),
+            translated_text: String::new(),
+        }
+    }
+
+    #[test]
+    fn pads_sub_500ms_hold_when_following_gap_is_wide() {
+        let mut segments = vec![timed(0, 240), timed(4000, 5000)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].end_ms, 500);
+        assert_eq!(segments[1].start_ms, 4000);
+    }
+
+    #[test]
+    fn does_not_grow_past_the_next_cue() {
+        let mut segments = vec![timed(0, 240), timed(400, 900)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].end_ms, 400);
+    }
+
+    #[test]
+    fn fills_gap_of_at_most_1s_to_next_start() {
+        let mut segments = vec![timed(0, 600), timed(1400, 2000)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].end_ms, 1400);
+    }
+
+    #[test]
+    fn min_hold_cues_do_not_bridge_to_next_start() {
+        let mut segments = vec![timed(0, 240), timed(1000, 1600)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].end_ms, 500);
+    }
+
+    #[test]
+    fn does_not_fill_gap_wider_than_1s() {
+        let mut segments = vec![timed(0, 600), timed(2600, 3200)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].end_ms, 600);
     }
 }

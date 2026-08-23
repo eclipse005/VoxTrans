@@ -167,10 +167,114 @@ fn repair_common_json_issues(input: &str) -> String {
         .replace('\u{feff}', "")
         .replace(['“', '”'], "\"")
         .replace(['‘', '’'], "'");
+    out = escape_unescaped_json_strings(&out);
 
     while out.contains(",}") || out.contains(",]") {
         out = out.replace(",}", "}").replace(",]", "]");
     }
 
     out.trim().to_string()
+}
+
+/// Escape raw `"` / newlines inside JSON strings. Models often write
+/// `你要问自己："上周，"` without backslashes; the closer is the quote
+/// followed by `,` `}` `]` or `:`.
+fn escape_unescaped_json_strings(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len() + 8);
+    let mut i = 0usize;
+    let mut in_string = false;
+    while i < chars.len() {
+        let ch = chars[i];
+        if !in_string {
+            out.push(ch);
+            if ch == '"' {
+                in_string = true;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '\\' {
+            out.push(ch);
+            if i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if ch == '"' {
+            if is_json_string_terminator(&chars, i + 1) {
+                out.push('"');
+                in_string = false;
+            } else {
+                out.push('\\');
+                out.push('"');
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '\n' {
+            out.push_str("\\n");
+            i += 1;
+            continue;
+        }
+        if ch == '\r' {
+            out.push_str("\\r");
+            i += 1;
+            continue;
+        }
+        if ch == '\t' {
+            out.push_str("\\t");
+            i += 1;
+            continue;
+        }
+        out.push(ch);
+        i += 1;
+    }
+    out
+}
+
+fn is_json_string_terminator(chars: &[char], from: usize) -> bool {
+    let mut j = from;
+    while j < chars.len() && chars[j].is_whitespace() {
+        j += 1;
+    }
+    if j >= chars.len() {
+        return true;
+    }
+    matches!(chars[j], ',' | '}' | ']' | ':')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_and_repair_json_with_outcome, repair_common_json_issues};
+
+    #[test]
+    fn escapes_raw_quotes_inside_translation_text() {
+        let raw = r#"{
+  "translations": [
+    { "id": 17, "text": "然后标出以下内容。" },
+    { "id": 18, "text": "你要问自己："上周，" },
+    { "id": 19, "text": "也就是说，" },
+    { "id": 20, "text": "上一周的情况是怎样的？" }
+  ]
+}"#;
+        let value = extract_and_repair_json_with_outcome(raw)
+            .expect("unescaped quotes in text must be repaired locally")
+            .value;
+        let items = value["translations"].as_array().unwrap();
+        assert_eq!(items[1]["id"], 18);
+        assert_eq!(items[1]["text"], "你要问自己：\"上周，");
+        assert_eq!(items[3]["text"], "上一周的情况是怎样的？");
+    }
+
+    #[test]
+    fn leaves_already_valid_json_alone() {
+        let raw = r#"{"translations":[{"id":1,"text":"你好"}]}"#;
+        let repaired = repair_common_json_issues(raw);
+        let value: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(value["translations"][0]["text"], "你好");
+    }
 }
