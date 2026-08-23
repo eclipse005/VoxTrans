@@ -32,10 +32,12 @@
     "logs": "Logs"
   },
   "review": {
-    "source": "Source review (translate)",
-    "target": "Translation review (translate)",
-    "bannerSource": "Translate · source review — edit, then Continue translation",
-    "bannerTarget": "Translate · translation review — confirm, then Finalize"
+    "source": "Review source first",
+    "target": "Review translation first",
+    "sourceHint": "Pause after recognition so you can edit the source, then continue translation",
+    "targetHint": "Pause after translation so you can edit the translation, then finalize",
+    "bannerSource": "Edit the source, then tap Continue translation",
+    "bannerTarget": "Edit the translation, then tap Finalize"
   },
   "cue": {
     "warningCount": "This subtitle has {{count}} formatting issue(s)",

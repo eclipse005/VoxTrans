@@ -44,68 +44,20 @@ pub(super) fn validate_batch_translation_response_with_context(
     let mut empty_ids: Vec<usize> = Vec::new();
     let mut duplicate_ids: Vec<usize> = Vec::new();
     let mut unexpected_ids: Vec<usize> = Vec::new();
-    let mut structural_issues: Vec<String> = Vec::new();
 
-    if let Some(items) = translations_array(&value) {
-        for (index, item) in items.iter().enumerate() {
-            let Some(obj) = item.as_object() else {
-                structural_issues.push(format!("translations[{index}] must be object"));
-                continue;
-            };
-            let Some(id) = obj
-                .get("id")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as usize)
-            else {
-                structural_issues.push(format!("translations[{index}] missing numeric id"));
-                continue;
-            };
-            record_item(
-                id,
-                extract_text(obj.get("text"))
-                    .or_else(|| extract_text(obj.get("translation")))
-                    .or_else(|| extract_text(obj.get("translatedText")))
-                    .unwrap_or_default(),
-                &expected_set,
-                &mut out,
-                &mut seen_expected,
-                &mut empty_ids,
-                &mut duplicate_ids,
-                &mut unexpected_ids,
-            );
-        }
-    } else if let Some(obj) = value.as_object() {
-        for (key, item) in obj {
-            let Ok(id) = key.parse::<usize>() else {
-                // Ignore non-numeric top-level keys (commentary fields, etc.).
-                continue;
-            };
-            let text = if let Some(s) = item.as_str() {
-                normalize_inline_text(s)
-            } else if let Some(map) = item.as_object() {
-                extract_text(map.get("text"))
-                    .or_else(|| extract_text(map.get("translation")))
-                    .or_else(|| extract_text(map.get("translatedText")))
-                    .unwrap_or_default()
-            } else {
-                structural_issues.push(format!("id {id} value must be string or object"));
-                continue;
-            };
-            record_item(
-                id,
-                text,
-                &expected_set,
-                &mut out,
-                &mut seen_expected,
-                &mut empty_ids,
-                &mut duplicate_ids,
-                &mut unexpected_ids,
-            );
-        }
-    } else {
-        return Err(LlmSemanticValidationError::retryable(
-            "translation response root must be object",
-        ));
+    let mut collected = Vec::new();
+    collect_translation_pairs(&value, &mut collected);
+    for (id, text) in collected {
+        record_item(
+            id,
+            text,
+            &expected_set,
+            &mut out,
+            &mut seen_expected,
+            &mut empty_ids,
+            &mut duplicate_ids,
+            &mut unexpected_ids,
+        );
     }
 
     let mut missing_ids: Vec<usize> = expected_ids
@@ -125,8 +77,7 @@ pub(super) fn validate_batch_translation_response_with_context(
 
     let has_semantic_failure = !missing_ids.is_empty()
         || !empty_ids.is_empty()
-        || !duplicate_ids.is_empty()
-        || !structural_issues.is_empty();
+        || !duplicate_ids.is_empty();
 
     if has_semantic_failure {
         let mut got_ids: Vec<usize> = out.keys().copied().collect();
@@ -148,9 +99,6 @@ pub(super) fn validate_batch_translation_response_with_context(
                 "unexpected ids {}",
                 format_id_list(&unexpected_ids)
             ));
-        }
-        if !structural_issues.is_empty() {
-            parts.push(format!("structural: {}", structural_issues.join("; ")));
         }
         parts.push(format!("got ids {}", format_id_list(&got_ids)));
         parts.push(format!("expected {} items", expected_ids.len()));
@@ -190,11 +138,63 @@ pub(super) fn validate_batch_translation_response_with_context(
     Ok(out)
 }
 
-fn translations_array(value: &Value) -> Option<&Vec<Value>> {
+fn collect_translation_pairs(value: &Value, out: &mut Vec<(usize, String)>) {
+    if let Some(pair) = translation_item(value) {
+        out.push(pair);
+        return;
+    }
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_translation_pairs(item, out);
+            }
+        }
+        Value::Object(map) => {
+            for (key, child) in map {
+                if let Ok(id) = key.parse::<usize>() {
+                    if let Some(text) = map_entry_text(child) {
+                        out.push((id, text));
+                    }
+                    continue;
+                }
+                collect_translation_pairs(child, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn translation_item(value: &Value) -> Option<(usize, String)> {
+    let obj = value.as_object()?;
+    let id = json_id(obj.get("id")?)?;
+    if !obj.contains_key("text")
+        && !obj.contains_key("translation")
+        && !obj.contains_key("translatedText")
+    {
+        return None;
+    }
+    let text = extract_text(obj.get("text"))
+        .or_else(|| extract_text(obj.get("translation")))
+        .or_else(|| extract_text(obj.get("translatedText")))
+        .unwrap_or_default();
+    Some((id, text))
+}
+
+fn json_id(value: &Value) -> Option<usize> {
     value
-        .get("translations")
-        .or_else(|| value.get("output").and_then(|output| output.get("translations")))
-        .and_then(|v| v.as_array())
+        .as_u64()
+        .map(|n| n as usize)
+        .or_else(|| value.as_str()?.parse().ok())
+}
+
+fn map_entry_text(value: &Value) -> Option<String> {
+    if let Some(text) = extract_text(Some(value)) {
+        return Some(text);
+    }
+    let obj = value.as_object()?;
+    extract_text(obj.get("text"))
+        .or_else(|| extract_text(obj.get("translation")))
+        .or_else(|| extract_text(obj.get("translatedText")))
 }
 
 fn extract_text(value: Option<&Value>) -> Option<String> {

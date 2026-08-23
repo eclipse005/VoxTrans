@@ -212,17 +212,28 @@ fn validate_batch_translation_response_accepts_complete_non_empty_batch() {
 }
 
 #[test]
-fn validate_batch_translation_response_accepts_output_wrapped_translations() {
+fn validate_batch_translation_response_finds_ids_inside_any_envelope() {
     let value = json!({
-        "output": {
-            "translations": [
-                { "id": 1, "text": "第一句" },
-                { "id": 2, "text": "第二句" }
+        "data": {
+            "items": [
+                { "id": "1", "text": "第一句" },
+                { "id": 2, "translatedText": "第二句" }
             ]
         }
     });
     let out = validate_batch_translation_response(value, &[1, 2])
-        .expect("models copy the prompt envelope and nest translations under output");
+        .expect("id/text pairs must be found regardless of wrapper keys");
+    assert_eq!(out.get(&1).map(String::as_str), Some("第一句"));
+    assert_eq!(out.get(&2).map(String::as_str), Some("第二句"));
+}
+
+#[test]
+fn validate_batch_translation_response_accepts_root_array() {
+    let value = json!([
+        { "id": 1, "text": "第一句" },
+        { "id": 2, "text": "第二句" }
+    ]);
+    let out = validate_batch_translation_response(value, &[1, 2]).expect("root array");
     assert_eq!(out.get(&1).map(String::as_str), Some("第一句"));
     assert_eq!(out.get(&2).map(String::as_str), Some("第二句"));
 }

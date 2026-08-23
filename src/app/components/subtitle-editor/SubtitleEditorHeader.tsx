@@ -54,26 +54,6 @@ export default function SubtitleEditorHeader({
               <span title={taskName || "--"}>{taskName || "--"}</span>
             </button>
           </div>
-          {onToggleReviewSource || onToggleReviewTarget ? (
-            <div className="subtitle-meta-row subtitle-review-toggles">
-              <label className="subtitle-review-toggle">
-                <input
-                  type="checkbox"
-                  checked={reviewSource}
-                  onChange={(e) => onToggleReviewSource?.(e.target.checked)}
-                />
-                <span>{t("subtitles:review.source")}</span>
-              </label>
-              <label className="subtitle-review-toggle">
-                <input
-                  type="checkbox"
-                  checked={reviewTarget}
-                  onChange={(e) => onToggleReviewTarget?.(e.target.checked)}
-                />
-                <span>{t("subtitles:review.target")}</span>
-              </label>
-            </div>
-          ) : null}
           {reviewBanner ? (
             <div className="subtitle-meta-row subtitle-review-banner">
               <span>{reviewBanner}</span>
@@ -88,6 +68,32 @@ export default function SubtitleEditorHeader({
         </div>
       </div>
       <div className="subtitle-header-actions">
+        {onToggleReviewSource || onToggleReviewTarget ? (
+          <div className="subtitle-review-toggles">
+            <label
+              className="subtitle-review-toggle"
+              title={t("subtitles:review.sourceHint")}
+            >
+              <input
+                type="checkbox"
+                checked={reviewSource}
+                onChange={(e) => onToggleReviewSource?.(e.target.checked)}
+              />
+              <span>{t("subtitles:review.source")}</span>
+            </label>
+            <label
+              className="subtitle-review-toggle"
+              title={t("subtitles:review.targetHint")}
+            >
+              <input
+                type="checkbox"
+                checked={reviewTarget}
+                onChange={(e) => onToggleReviewTarget?.(e.target.checked)}
+              />
+              <span>{t("subtitles:review.target")}</span>
+            </label>
+          </div>
+        ) : null}
         <button
           type="button"
           className="subtitle-header-icon-btn"

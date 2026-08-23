@@ -32,10 +32,12 @@
     "logs": "日志"
   },
   "review": {
-    "source": "源稿审核（转译）",
-    "target": "译稿审核（转译）",
-    "bannerSource": "转译·源稿待审核 · 改完后点「继续翻译」",
-    "bannerTarget": "转译·译稿待审核 · 确认后点「完成定稿」"
+    "source": "翻译前审原文",
+    "target": "定稿前审译文",
+    "sourceHint": "勾选后：识别完成会先停住，你改完原文再继续翻译",
+    "targetHint": "勾选后：翻译完成会先停住，你改完译文再定稿",
+    "bannerSource": "请先改原文，改完后点「继续翻译」",
+    "bannerTarget": "请先改译文，确认后点「完成定稿」"
   },
   "cue": {
     "warningCount": "该字幕存在 {{count}} 条格式问题",

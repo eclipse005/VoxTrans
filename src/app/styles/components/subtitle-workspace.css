@@ -24,6 +24,32 @@
   gap: 8px;
 }
 
+.subtitle-review-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: 4px;
+}
+
+.subtitle-review-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--apple-text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.subtitle-review-toggle input {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+}
+
 .subtitle-header-icon-btn {
   min-width: 34px;
   height: 34px;
