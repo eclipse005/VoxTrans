@@ -87,9 +87,9 @@ pub(super) struct BatchWindow {
     pub(super) local_to_global: Vec<usize>,
     /// Current-batch lines as the LLM sees them (1-based local ids).
     pub(super) current_lines: Arc<[crate::services::prompts::translation::TranslationPromptLine]>,
-    /// (segment_id, source) for up to CONTEXT_LINE_LIMIT lines before the batch.
+    /// (segment_id, source) for up to PREV_CONTEXT_LINES before the batch.
     pub(super) prev_lines: Arc<[(usize, String)]>,
-    /// (segment_id, source) for up to CONTEXT_LINE_LIMIT lines after the batch.
+    /// (segment_id, source) for up to NEXT_CONTEXT_LINES after the batch.
     pub(super) next_lines: Arc<[(usize, String)]>,
     /// Terminology entries selected for this batch.
     pub(super) terms: Arc<[crate::services::prompts::translation::TranslationPromptTerm]>,

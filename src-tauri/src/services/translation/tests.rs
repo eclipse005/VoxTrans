@@ -33,6 +33,26 @@ fn split_batches_respects_requested_size() {
     assert_eq!(windows[2].local_to_global, vec![5]);
 }
 
+#[test]
+fn context_windows_are_prev_3_next_2() {
+    let inputs: Vec<_> = (0..10).map(|i| seg(&format!("L{i}"))).collect();
+    let normalized = normalize_segments(&inputs);
+    let windows = build_batch_windows(
+        &normalized,
+        2,
+        "en",
+        "zh-CN",
+        "",
+        &Vec::<TranslationTerminologyEntry>::new(),
+    );
+    let window = &windows[2];
+    assert_eq!(window.local_to_global, vec![5, 6]);
+    let prev: Vec<&str> = window.prev_lines.iter().map(|(_, t)| t.as_str()).collect();
+    let next: Vec<&str> = window.next_lines.iter().map(|(_, t)| t.as_str()).collect();
+    assert_eq!(prev, vec!["L1", "L2", "L3"]);
+    assert_eq!(next, vec!["L6", "L7"]);
+}
+
 
 #[test]
 fn bilingual_context_renders_known_translations_in_prompt() {
@@ -189,6 +209,22 @@ fn validate_batch_translation_response_accepts_complete_non_empty_batch() {
     let out = validate_batch_translation_response(value, &[1, 2]).expect("should parse full batch");
     assert_eq!(out.get(&1).map(String::as_str), Some("first"));
     assert_eq!(out.get(&2).map(String::as_str), Some("second"));
+}
+
+#[test]
+fn validate_batch_translation_response_accepts_output_wrapped_translations() {
+    let value = json!({
+        "output": {
+            "translations": [
+                { "id": 1, "text": "第一句" },
+                { "id": 2, "text": "第二句" }
+            ]
+        }
+    });
+    let out = validate_batch_translation_response(value, &[1, 2])
+        .expect("models copy the prompt envelope and nest translations under output");
+    assert_eq!(out.get(&1).map(String::as_str), Some("第一句"));
+    assert_eq!(out.get(&2).map(String::as_str), Some("第二句"));
 }
 
 #[test]

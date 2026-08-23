@@ -1,5 +1,6 @@
 use crate::services::prompts::llm::{
     build_json_repair_prompt as build_json_repair_prompt_text, build_retry_constrained_prompt,
+    build_semantic_reshape_prompt,
 };
 
 use super::error::{LlmError, LlmErrorKind};
@@ -92,6 +93,14 @@ pub(super) fn augment_user_prompt_with_retry_feedback(
     };
     if !feedback.retryable {
         return base_user_prompt.to_string();
+    }
+
+    if feedback.error_kind == LlmErrorKind::InvalidSemantic {
+        return build_semantic_reshape_prompt(
+            base_user_prompt,
+            hint,
+            feedback.previous_output.as_deref(),
+        );
     }
 
     build_retry_constrained_prompt(
@@ -257,22 +266,50 @@ mod tests {
     }
 
     #[test]
-    fn augment_prompt_attaches_previous_output_on_retry() {
+    fn semantic_retry_uses_reshape_prompt_not_full_translate_replay() {
+        let original = serde_json::json!({
+            "task": "translate_segment_batch_with_context",
+            "sourceLanguage": "en",
+            "targetLanguage": "zh-CN",
+            "context": {
+                "currentLines": [
+                    { "id": 1, "text": "Hello" },
+                    { "id": 2, "text": "World" }
+                ]
+            }
+        })
+        .to_string();
         let feedback = RetryFeedback {
             error_kind: LlmErrorKind::InvalidSemantic,
             retryable: true,
             retry_hint: Some("missing ids [2]".into()),
             detail: "missing ids [2]".into(),
-            previous_output: Some(r#"{"translations":[{"id":1,"text":"a"}]}"#.into()),
+            previous_output: Some(r#"{"output":{"translations":[{"id":1,"text":"你好"}]}}"#.into()),
         };
 
         let prompt =
-            augment_user_prompt_with_retry_feedback("BASE", 2, 4, Some(&feedback));
-        assert!(prompt.contains("BASE"));
+            augment_user_prompt_with_retry_feedback(&original, 2, 4, Some(&feedback));
         assert!(prompt.contains("missing ids [2]"));
-        assert!(prompt.contains("## Previous incomplete output"));
-        assert!(prompt.contains("\"id\":1"));
-        assert!(prompt.contains("FULL batch"));
+        assert!(prompt.contains("你好"));
+        assert!(prompt.contains("World"));
+        assert!(prompt.contains("Reuse existing texts"));
+        assert!(!prompt.contains("# Retry Constraint"));
+        assert!(!prompt.contains("translate_segment_batch_with_context"));
+    }
+
+    #[test]
+    fn http_retry_keeps_append_constraint_on_original_prompt() {
+        let feedback = RetryFeedback {
+            error_kind: LlmErrorKind::Http,
+            retryable: true,
+            retry_hint: Some("timeout".into()),
+            detail: "timeout".into(),
+            previous_output: None,
+        };
+        let prompt = augment_user_prompt_with_retry_feedback("BASE", 2, 4, Some(&feedback));
+        assert!(prompt.contains("BASE"));
+        assert!(prompt.contains("# Retry Constraint"));
+        assert!(prompt.contains("timeout"));
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::services::prompts::translation::{TranslationPromptLine, TranslationPromptTerm};
 
 use super::types::{BatchWindow, NormalizedSegment, TranslationTerminologyEntry};
-use super::{CONTEXT_LINE_LIMIT, MAX_TERMS_PER_BATCH};
+use super::{MAX_TERMS_PER_BATCH, NEXT_CONTEXT_LINES, PREV_CONTEXT_LINES};
 
 /// Compute the (start, end) index ranges for each batch.
 pub(super) fn batch_index_ranges(
@@ -40,10 +40,10 @@ pub(super) fn build_batch_windows(
     for (batch_start, batch_end) in batch_index_ranges(segments, batch_size) {
         let current = &segments[batch_start..batch_end];
 
-        let prev_start = batch_start.saturating_sub(CONTEXT_LINE_LIMIT);
+        let prev_start = batch_start.saturating_sub(PREV_CONTEXT_LINES);
         let prev = &segments[prev_start..batch_start];
 
-        let next_end = (batch_end + CONTEXT_LINE_LIMIT).min(segments.len());
+        let next_end = (batch_end + NEXT_CONTEXT_LINES).min(segments.len());
         let next = &segments[batch_end..next_end];
 
         let terms = select_batch_terms(current, terminology_entries, MAX_TERMS_PER_BATCH);

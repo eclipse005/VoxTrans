@@ -30,39 +30,30 @@ pub fn build_batch_translate_prompt(
     terms: &[TranslationPromptTerm],
     established_names: &[TranslationNameExample],
 ) -> String {
-    let constraints = vec![
-        "STRUCTURAL ALIGNMENT IS NON-NEGOTIABLE: output exactly one translation per currentLines id, in the same order. The ids are an immutable spine.".to_string(),
-        "Never merge, split, skip, reorder, or invent ids. One wrong mapping misaligns every following line.".to_string(),
-        "Each translation must describe only its own source line; never borrow or shift content from an adjacent line.".to_string(),
-        "Translate only currentLines; previousLines and nextLines are context only.".to_string(),
-        "nextLines is untranslated source context only. Never copy nextLines (or their meaning) into translations.".to_string(),
-        "OUTPUT LANGUAGE: every translation must be in targetLanguage. Do not paraphrase currentLines in the source language.".to_string(),
-        "PROPER NOUNS: marked-script spans (katakana names, or Latin names inside CJK text) are names. Transcribe them phonetically or keep them; never translate a name into a common noun. When establishedNames lists a name, reuse that example's rendering.".to_string(),
-        "TERMINOLOGY ENFORCEMENT: when a source line contains any term from `terminology`, use that term's target verbatim. Match by meaning and allow spacing, capitalization, and punctuation variants of the term's source form. Do not expand, translate, or paraphrase terms the table already covers, and respect the decisions baked into the table.".to_string(),
-        "NATURALNESS: produce fluent, idiomatic target language. Avoid word-for-word calques; do not add information absent from the source.".to_string(),
-        "CONTEXT CONSISTENCY: previousLines may contain already-translated pairs formatted as \"source → translation\". When a name, term, or recurring phrase in currentLines already has a rendering there, reuse that established translation. Never translate previousLines or nextLines themselves.".to_string(),
-        "No extra explanations.".to_string(),
-    ];
+    let mut instruction = String::from(
+        "Translate currentLines into targetLanguage. previousLines may be \"source → translation\" pairs and nextLines are upcoming source; both are context only. Return JSON only as {\"translations\":[{\"id\":1,\"text\":\"...\"}]} with every currentLines id in order.",
+    );
+    if !terms.is_empty() {
+        instruction.push_str(
+            " If a line contains a terminology source, use that target verbatim.",
+        );
+    }
+    if !established_names.is_empty() {
+        instruction.push_str(" Reuse establishedNames renderings for those names.");
+    }
     let mut obj = serde_json::json!({
-        "task": "translate_segment_batch_with_context",
-        "rule": "Return JSON only.",
         "sourceLanguage": source_lang,
         "targetLanguage": target_lang,
-        "context": {
-            "previousLines": prev_lines,
-            "currentLines": current_lines,
-            "nextLines": next_lines,
-        },
-        "terminology": terms,
-        "constraints": constraints,
-        "output": {
-            "translations": [
-                { "id": 1, "text": "translated text" }
-            ]
-        }
+        "previousLines": prev_lines,
+        "currentLines": current_lines,
+        "nextLines": next_lines,
+        "instruction": instruction,
     });
     if !theme_summary.trim().is_empty() {
         obj["background"] = serde_json::Value::String(theme_summary.to_string());
+    }
+    if !terms.is_empty() {
+        obj["terminology"] = serde_json::to_value(terms).unwrap_or_default();
     }
     if !established_names.is_empty() {
         obj["establishedNames"] = serde_json::to_value(established_names).unwrap_or_default();
@@ -98,30 +89,24 @@ mod tests {
             parsed.get("background").is_none(),
             "empty theme_summary must not send a background field"
         );
-        let constraints = parsed["constraints"].as_array().unwrap();
+        assert!(parsed.get("output").is_none(), "do not teach an output wrapper");
+        assert!(parsed.get("constraints").is_none());
+        assert!(parsed.get("terminology").is_none());
+        let instruction = parsed["instruction"].as_str().unwrap();
         assert!(
-            !constraints
-                .iter()
-                .any(|c| c.as_str().unwrap().contains("style guide")),
-            "NATURALNESS must not mention a style guide that does not exist"
+            !instruction.contains("style guide"),
+            "must not mention a style guide that does not exist"
         );
         assert!(
-            constraints.iter().any(|c| {
-                c.as_str()
-                    .unwrap()
-                    .contains("source → translation")
-            }),
+            instruction.contains("source → translation"),
             "bilingual previousLines remain the consistency channel"
         );
         assert!(
-            constraints.iter().any(|c| {
-                c.as_str()
-                    .unwrap()
-                    .contains("every translation must be in targetLanguage")
-            }),
-            "output-language lock must be in constraints"
+            instruction.contains("targetLanguage"),
+            "output-language lock must stay in the instruction"
         );
         assert!(parsed.get("establishedNames").is_none());
+        assert_eq!(parsed["currentLines"][0]["text"], "hello");
     }
 
     #[test]

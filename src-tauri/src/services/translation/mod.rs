@@ -32,7 +32,8 @@ pub use types::{
 
 const DEFAULT_BATCH_SIZE: usize = 20;
 const MAX_BATCH_SIZE: usize = 40;
-const CONTEXT_LINE_LIMIT: usize = 8;
+const PREV_CONTEXT_LINES: usize = 3;
+const NEXT_CONTEXT_LINES: usize = 2;
 const MAX_TERMS_PER_BATCH: usize = 16;
 /// Min interval between mid-stream subtitle preview patches (per batch worker).
 const STREAM_PREVIEW_MIN_INTERVAL: Duration = Duration::from_millis(100);

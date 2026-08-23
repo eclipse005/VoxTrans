@@ -46,7 +46,7 @@ pub(super) fn validate_batch_translation_response_with_context(
     let mut unexpected_ids: Vec<usize> = Vec::new();
     let mut structural_issues: Vec<String> = Vec::new();
 
-    if let Some(items) = value.get("translations").and_then(|v| v.as_array()) {
+    if let Some(items) = translations_array(&value) {
         for (index, item) in items.iter().enumerate() {
             let Some(obj) = item.as_object() else {
                 structural_issues.push(format!("translations[{index}] must be object"));
@@ -188,6 +188,13 @@ pub(super) fn validate_batch_translation_response_with_context(
     }
 
     Ok(out)
+}
+
+fn translations_array(value: &Value) -> Option<&Vec<Value>> {
+    value
+        .get("translations")
+        .or_else(|| value.get("output").and_then(|output| output.get("translations")))
+        .and_then(|v| v.as_array())
 }
 
 fn extract_text(value: Option<&Value>) -> Option<String> {
