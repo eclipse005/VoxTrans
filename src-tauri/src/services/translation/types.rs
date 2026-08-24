@@ -29,7 +29,7 @@ pub struct BuildTranslationLayerRequest {
     pub source_lang: String,
     pub target_lang: String,
     pub segments: Vec<TranslationSegmentInput>,
-    pub theme_summary: String,
+    pub style_guide: String,
     pub terminology_entries: Vec<TranslationTerminologyEntry>,
     pub translate_api_key: String,
     pub translate_base_url: String,
@@ -93,7 +93,7 @@ pub(super) struct BatchWindow {
     pub(super) next_lines: Arc<[(usize, String)]>,
     /// Terminology entries selected for this batch.
     pub(super) terms: Arc<[crate::services::prompts::translation::TranslationPromptTerm]>,
-    pub(super) theme_summary: String,
+    pub(super) style_guide: String,
     pub(super) source_lang: String,
     pub(super) target_lang: String,
 }
@@ -127,7 +127,7 @@ impl BatchWindow {
         crate::services::prompts::translation::build_batch_translate_prompt(
             &self.source_lang,
             &self.target_lang,
-            &self.theme_summary,
+            &self.style_guide,
             &prev_lines,
             &self.current_lines,
             &next_lines,

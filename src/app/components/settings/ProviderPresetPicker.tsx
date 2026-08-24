@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
+import { openExternalUrl } from "../../api/system";
 import {
   LLM_PROVIDER_PRESETS,
   getProviderById,
@@ -17,14 +17,6 @@ type ProviderPresetPickerProps = {
   /** Restore catalog baseUrl/model for the current slot only (keeps key). */
   onResetPreset?: () => void;
 };
-
-async function openExternalUrl(url: string) {
-  try {
-    await invoke("open_external_url", { url });
-  } catch (err) {
-    console.error("failed to open external url:", url, err);
-  }
-}
 
 export function ProviderPresetPicker({
   selectedId,

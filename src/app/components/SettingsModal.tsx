@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { SubtitleBurnMode } from "../../features/media/types";
 import { PROVIDER_OPTIONS } from "../../features/media/provider";
-import { listSystemFonts } from "../api/system";
+import { listSystemFonts, openExternalUrl } from "../api/system";
 import { CheckIcon, CpuIcon, GpuIcon, UpdateIcon } from "./Icons";
 import {
   MOSS_FIXED_CHUNK_SECONDS,
@@ -468,6 +468,50 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                         placeholder="1 - 16"
                       />
                     </div>
+                  </div>
+                  <div className="form-row terminology-agent-row">
+                    <div className="form-group">
+                      <label className="setting-toggle" htmlFor="enable-terminology-agent">
+                        <input
+                          id="enable-terminology-agent"
+                          type="checkbox"
+                          checked={ctx.form.enableTerminologyAgent}
+                          onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableTerminologyAgent: e.target.checked }))}
+                        />
+                        <div className="toggle-label">
+                          <span className="toggle-title">{t("settings:translate.terminologyAgent")}</span>
+                          <span className="toggle-desc">{t("settings:translate.terminologyAgentDesc")}</span>
+                        </div>
+                        <span className="toggle-switch" />
+                      </label>
+                    </div>
+                    {ctx.form.enableTerminologyAgent ? (
+                      <div className="form-group">
+                        <div className="llm-provider-picker-head">
+                          <label className="llm-provider-label">{t("settings:translate.anysearchApiKey")}</label>
+                          <div className="llm-provider-head-actions">
+                            <a
+                              href="https://anysearch.com"
+                              className="llm-provider-key-link"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                void openExternalUrl("https://anysearch.com");
+                              }}
+                            >
+                              {t("settings:translate.getKey", { name: "AnySearch" })}
+                            </a>
+                          </div>
+                        </div>
+                        <input
+                          className="apple-input"
+                          type="password"
+                          value={ctx.form.anysearchApiKey}
+                          onChange={(e) => ctx.setForm((prev) => ({ ...prev, anysearchApiKey: e.target.value }))}
+                          placeholder={t("settings:translate.anysearchApiKeyPlaceholder")}
+                          autoComplete="off"
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>

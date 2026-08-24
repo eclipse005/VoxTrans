@@ -121,11 +121,13 @@ async fn execute_single_task_inner(app: &AppHandle, task_id: &str) -> WorkspaceR
                 "llmConcurrency": runtime.llm_concurrency,
                 "subtitleLengthPreset": record.frozen.subtitle_length_preset,
                 "enableSubtitleBeautify": record.frozen.enable_subtitle_beautify,
+                "enableTerminologyAgent": record.frozen.enable_terminology_agent,
                 "terminologyEntriesCount": runtime.terminology_entries.len(),
             },
             "frozen": {
                 "subtitleLengthPreset": record.frozen.subtitle_length_preset,
                 "enableSubtitleBeautify": record.frozen.enable_subtitle_beautify,
+                "enableTerminologyAgent": record.frozen.enable_terminology_agent,
                 "terminologyGroupsCount": record.frozen.terminology_groups.len(),
             },
         })),

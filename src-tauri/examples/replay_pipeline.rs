@@ -179,7 +179,7 @@ async fn run() -> Result<(), String> {
             source_lang: settings.source_lang.clone(),
             target_lang: settings.target_lang.clone(),
             segments: translate_inputs,
-            theme_summary: String::new(),
+            style_guide: String::new(),
             terminology_entries: Vec::new(),
             translate_api_key: settings.translate_api_key.clone(),
             translate_base_url: settings.translate_base_url.clone(),

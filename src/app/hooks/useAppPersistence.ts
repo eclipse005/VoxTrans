@@ -36,6 +36,8 @@ const LAST_RESORT_DEFAULTS: SavedSettings = {
   terminologyGroups: [{ id: "group-default", name: "Default", terms: [] }],
   activeTerminologyGroupId: "",
   enableSubtitleBeautify: true,
+  enableTerminologyAgent: false,
+  anysearchApiKey: "",
   enableClickSound: true,
   autoBurnHardSubtitle: false,
   defaultReviewSource: false,

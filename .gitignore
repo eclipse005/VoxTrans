@@ -52,6 +52,13 @@ vendor/*/target/
 # Step2-repl fixtures (generated from DB, not checked in)
 src-tauri/fixtures/
 
+# Local replay/checkpoint scratch (not part of the project)
+.as1.json
+.as2.json
+.as3.json
+.replay-check.cjs
+.replay-setup.cjs
+
 # Large binary dependencies (download via scripts/download-binaries.ps1)
 src-tauri/bin/ffmpeg.exe
 src-tauri/bin/demucs.exe

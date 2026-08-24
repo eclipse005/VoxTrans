@@ -10,9 +10,9 @@ pub(super) struct TranslationValidationContext<'a> {
     pub expected_ids: &'a [usize],
     pub source_lang: &'a str,
     pub target_lang: &'a str,
-    pub current_sources: &'a [String],
-    pub prev_sources: &'a [String],
-    pub next_sources: &'a [String],
+    /// Terminology targets enforced verbatim on this batch; their source-script
+    /// characters are exempt from the leak check.
+    pub enforced_targets: &'a [String],
 }
 
 #[cfg(test)]
@@ -26,9 +26,7 @@ pub(super) fn validate_batch_translation_response(
             expected_ids,
             source_lang: "",
             target_lang: "",
-            current_sources: &[],
-            prev_sources: &[],
-            next_sources: &[],
+            enforced_targets: &[],
         },
     )
 }
@@ -110,29 +108,17 @@ pub(super) fn validate_batch_translation_response_with_context(
         .iter()
         .filter_map(|id| out.get(id).map(|text| (*id, text.as_str())))
         .collect();
-    let leak_ids =
-        super::guard::language_leak_ids(&ordered, ctx.source_lang, ctx.target_lang);
-    let copy_ids = super::guard::neighbor_copy_ids(
+    let leak_ids = super::guard::language_leak_ids(
         &ordered,
-        ctx.current_sources,
-        ctx.prev_sources,
-        ctx.next_sources,
+        ctx.source_lang,
+        ctx.target_lang,
+        ctx.enforced_targets,
     );
-    if !leak_ids.is_empty() || !copy_ids.is_empty() {
-        let mut parts: Vec<String> = Vec::new();
-        if !leak_ids.is_empty() {
-            parts.push(format!(
-                "source-language leak on ids {}",
-                format_id_list(&leak_ids)
-            ));
-        }
-        if !copy_ids.is_empty() {
-            parts.push(format!(
-                "neighbor-copy on ids {}",
-                format_id_list(&copy_ids)
-            ));
-        }
-        return Err(LlmSemanticValidationError::retryable(parts.join("; ")));
+    if !leak_ids.is_empty() {
+        return Err(LlmSemanticValidationError::retryable(format!(
+            "source-language leak on ids {}",
+            format_id_list(&leak_ids)
+        )));
     }
 
     Ok(out)

@@ -42,6 +42,7 @@ pub(super) async fn persist_task_meta(
         max_retries: record.max_retries,
         subtitle_length_preset: record.frozen.subtitle_length_preset.as_str().to_string(),
         enable_subtitle_beautify: record.frozen.enable_subtitle_beautify,
+        enable_terminology_agent: record.frozen.enable_terminology_agent,
         terminology_groups_json,
         enqueue_seq: record.enqueue_seq,
     };
@@ -79,6 +80,7 @@ async fn hydrate_workspace_from_db(store: &TaskStore) -> WorkspaceResult<()> {
         let frozen = FrozenSettings {
             subtitle_length_preset: crate::services::preferences_types::SubtitleLengthPreset::parse(&extras.subtitle_length_preset),
             enable_subtitle_beautify: extras.enable_subtitle_beautify,
+            enable_terminology_agent: extras.enable_terminology_agent,
             terminology_groups: serde_json::from_str(&extras.terminology_groups_json)
                 .unwrap_or_default(),
         };

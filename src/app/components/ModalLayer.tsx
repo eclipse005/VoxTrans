@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 import type { RefObject } from "react";
+import type { LogChannel } from "../api/logs";
 import type { ExportSrtItem } from "../api/transcribe";
 import type { UpdateCheckResult } from "../api/updater";
 import type { SettingsForm } from "../hooks/useSettingsController";
@@ -25,8 +26,6 @@ function useMountedOnceVisible(visible: boolean): boolean {
   }
   return mounted || visible;
 }
-
-type LogChannel = "main" | "llm";
 
 type ModalLayerProps = {
   showSettings: boolean;

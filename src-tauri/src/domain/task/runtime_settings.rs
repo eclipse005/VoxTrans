@@ -15,6 +15,7 @@ use crate::services::preferences_types::{Provider, SubtitleLengthPreset, Termino
 pub struct FrozenSettings {
     pub subtitle_length_preset: SubtitleLengthPreset,
     pub enable_subtitle_beautify: bool,
+    pub enable_terminology_agent: bool,
     pub terminology_groups: Vec<TerminologyGroup>,
 }
 
@@ -42,6 +43,7 @@ impl FrozenSettings {
         Self {
             subtitle_length_preset: saved.subtitle_length_preset,
             enable_subtitle_beautify: saved.enable_subtitle_beautify,
+            enable_terminology_agent: saved.enable_terminology_agent,
             terminology_groups,
         }
     }
@@ -58,6 +60,8 @@ pub struct PipelineRuntimeSettings {
     pub translate_api_key: String,
     pub translate_base_url: String,
     pub translate_model: String,
+    /// AnySearch key (settings UI). Empty = free Parallel fallback.
+    pub anysearch_api_key: String,
     pub llm_concurrency: u32,
     pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
 }
@@ -84,6 +88,7 @@ pub fn resolve_runtime_settings(
     let translate_api_key = saved.translate_api_key.clone();
     let translate_base_url = saved.translate_base_url.clone();
     let translate_model = saved.translate_model.clone();
+    let anysearch_api_key = saved.anysearch_api_key.clone();
     let llm_concurrency = saved.llm_concurrency.clamp(1, 16);
 
     if require_translate_llm && translate_api_key.trim().is_empty() {
@@ -97,7 +102,8 @@ pub fn resolve_runtime_settings(
     }
 
     // Frozen settings (subtitle_length_preset, enable_subtitle_beautify,
-    // terminology_groups) are NOT copied into PipelineRuntimeSettings —
+    // enable_terminology_agent, terminology_groups) are NOT copied into
+    // PipelineRuntimeSettings —
     // callers read them from the `frozen: &FrozenSettings` argument
     // directly, keeping a single source of truth and preventing the
     // "live vs frozen" drift bug where the two could disagree.
@@ -135,6 +141,7 @@ pub fn resolve_runtime_settings(
         translate_api_key,
         translate_base_url,
         translate_model,
+        anysearch_api_key,
         llm_concurrency,
         terminology_entries,
     })
@@ -155,6 +162,7 @@ mod tests {
         let frozen = FrozenSettings {
             subtitle_length_preset: SubtitleLengthPreset::Loose,
             enable_subtitle_beautify: false,
+            enable_terminology_agent: false,
             terminology_groups: Vec::new(),
         };
         let settings = resolve_runtime_settings(&dummy_store(), &frozen, false)
@@ -164,6 +172,7 @@ mod tests {
         // runtime settings no longer carry a duplicate.
         assert_eq!(frozen.subtitle_length_preset, SubtitleLengthPreset::Loose);
         assert!(!frozen.enable_subtitle_beautify);
+        assert!(!frozen.enable_terminology_agent);
         assert!(settings.terminology_entries.is_empty());
     }
 
@@ -172,6 +181,7 @@ mod tests {
         let frozen = FrozenSettings {
             subtitle_length_preset: SubtitleLengthPreset::Standard,
             enable_subtitle_beautify: true,
+            enable_terminology_agent: false,
             terminology_groups: vec![TerminologyGroup {
                 id: "g1".to_string(),
                 name: "Default".to_string(),

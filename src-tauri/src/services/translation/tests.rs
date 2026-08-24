@@ -265,42 +265,54 @@ fn validate_rejects_source_language_paraphrase() {
             expected_ids: &[1],
             source_lang: "ja",
             target_lang: "zh-CN",
-            current_sources: &["いろいろ悩みを抱えたことが多かったです".to_string()],
-            prev_sources: &[],
-            next_sources: &[],
+            enforced_targets: &[],
         },
     )
-    .expect_err("source-language paraphrase must retry");
+    .expect_err("source-language paraphrase must fail");
     let msg = format!("{err:?}");
     assert!(msg.contains("source-language leak"), "msg={msg}");
 }
 
 #[test]
-fn validate_rejects_neighbor_copy() {
+fn validate_accepts_enforced_target_with_source_script() {
     use super::responses::{
         TranslationValidationContext, validate_batch_translation_response_with_context,
     };
+    // The term target is enforced verbatim; its kana must not count as a leak.
     let value = json!({
         "translations": [
-            { "id": 1, "text": "有个叫バロン的人" },
-            { "id": 2, "text": "在六本木开了店" }
+            { "id": 1, "text": "只能去Last Call（ラストコール）了啊，去Last Call（ラストコール）吧" }
         ]
     });
-    let err = validate_batch_translation_response_with_context(
+    let out = validate_batch_translation_response_with_context(
         value,
         &TranslationValidationContext {
-            expected_ids: &[1, 2],
+            expected_ids: &[1],
             source_lang: "ja",
             target_lang: "zh-CN",
-            current_sources: &[
-                "100戦連馬のMCも手に".to_string(),
-                "あるんだけどバロンっていう".to_string(),
-            ],
-            prev_sources: &[],
-            next_sources: &[],
+            enforced_targets: &["Last Call（ラストコール）".to_string()],
         },
     )
-    .expect_err("copying バロン into the previous line must retry");
-    let msg = format!("{err:?}");
-    assert!(msg.contains("neighbor-copy"), "msg={msg}");
+    .expect("enforced kana-bearing target must not trip the leak guard");
+    assert_eq!(out.len(), 1);
+}
+
+#[test]
+fn merge_local_to_global_ignores_zero_and_out_of_range_ids() {
+    use super::merge_local_to_global;
+    let local_to_global = vec![10, 11, 12];
+    let mut skipped = Vec::new();
+    let merged = merge_local_to_global(
+        &local_to_global,
+        vec![
+            (0, "zero".to_string()),
+            (1, "first".to_string()),
+            (4, "past".to_string()),
+        ],
+        &mut |id| skipped.push(id),
+    );
+    // id 0 previously aliased the first line (saturating_sub); id 4 the last.
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged.get(&10).map(String::as_str), Some("first"));
+    assert_eq!(skipped, vec![0, 4]);
 }

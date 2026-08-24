@@ -719,6 +719,17 @@
   cursor: pointer;
 }
 
+/* Terminology agent row: stretch the toggle card to fill the left cell so
+   it aligns with the web-search key field on the right. */
+.terminology-agent-row {
+  align-items: stretch;
+}
+
+.terminology-agent-row .setting-toggle {
+  height: 100%;
+  box-sizing: border-box;
+}
+
 .setting-toggle input[type="checkbox"] {
   display: none;
 }

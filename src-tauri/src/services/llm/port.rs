@@ -29,6 +29,13 @@ impl LlmConfig {
         }
     }
 
+    /// Override the retry budget. Connectivity probes pass `0` so a failed
+    /// test returns immediately instead of waiting out retries.
+    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+
     /// Next key in round-robin order. Concurrent calls share the cursor so
     /// `aaa|bbb|ccc` is spread across in-flight requests, not pinned to the
     /// first key.

@@ -1,6 +1,6 @@
 use crate::db::store::TaskStore;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LlmTokenUsage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,

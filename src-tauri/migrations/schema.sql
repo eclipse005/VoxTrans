@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS settings (
     llm_concurrency INTEGER NOT NULL,
     active_terminology_group_id TEXT NOT NULL DEFAULT '',
     enable_subtitle_beautify INTEGER NOT NULL,
+    enable_terminology_agent INTEGER NOT NULL DEFAULT 0,
+    anysearch_api_key TEXT NOT NULL DEFAULT '',
     enable_click_sound INTEGER NOT NULL,
     auto_burn_hard_subtitle INTEGER NOT NULL,
     subtitle_burn_mode TEXT NOT NULL,
@@ -82,6 +84,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- frozen per-task settings（见 migration 20260610000001）
     subtitle_length_preset TEXT NOT NULL DEFAULT '',
     enable_subtitle_beautify INTEGER NOT NULL DEFAULT 1,
+    enable_terminology_agent INTEGER NOT NULL DEFAULT 0,
     terminology_groups_json TEXT NOT NULL DEFAULT '[]',
     terminology_group_id TEXT NOT NULL DEFAULT '',
     -- Per-task review gates (effective flags; seeded from settings on create).

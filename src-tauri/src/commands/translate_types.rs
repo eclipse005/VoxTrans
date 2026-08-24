@@ -40,8 +40,8 @@ pub struct BuildTranslationLayerCommandRequest {
     pub source_lang: String,
     pub target_lang: String,
     pub segments: Vec<SourceSegmentForTerminologyCommand>,
-    #[serde(default)]
-    pub theme_summary: String,
+    #[serde(default, alias = "themeSummary")]
+    pub style_guide: String,
     #[serde(default)]
     pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
     #[serde(default)]
@@ -77,7 +77,8 @@ pub struct BuildTranslationLayerCommandResponse {
     pub batch_size: usize,
     pub batch_total: usize,
     pub segment_total: usize,
-    pub theme_summary: String,
+    #[serde(alias = "themeSummary")]
+    pub style_guide: String,
     pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
     pub segments: Vec<BuildTranslationSegmentCommand>,
 }

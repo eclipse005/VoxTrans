@@ -25,6 +25,7 @@ pub mod subtitle_step5;
 pub mod system;
 pub mod task_log;
 pub mod task_path;
+pub mod terminology_agent;
 pub mod task_usage;
 pub mod time_utils;
 pub mod transcribe;

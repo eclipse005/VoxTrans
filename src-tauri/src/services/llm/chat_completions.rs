@@ -402,6 +402,261 @@ pub(super) fn extract_text_content(content: &serde_json::Value) -> Option<String
     }
 }
 
+// ── Tool-calling (terminology agent). Translation still uses the string-only
+// request above. Kept separate so providers that reject `tools` do not affect
+// the batched translation path.
+
+const AGENT_TEMPERATURE: f64 = 0.3;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+}
+
+impl ChatMessage {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system".to_string(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
+    }
+
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
+    }
+
+    pub fn assistant_text(content: impl Into<String>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
+    }
+
+    pub fn assistant_tools(
+        content: Option<String>,
+        tool_calls: Vec<ToolCall>,
+        reasoning_content: Option<String>,
+    ) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: content.filter(|s| !s.trim().is_empty()),
+            tool_calls: Some(tool_calls),
+            tool_call_id: None,
+            reasoning_content,
+        }
+    }
+
+    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.into()),
+            reasoning_content: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub function: ToolCallFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallFunction {
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssistantTurn {
+    pub content: String,
+    pub tool_calls: Vec<ToolCall>,
+    pub reasoning_content: Option<String>,
+    pub usage: LlmTokenUsage,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatCompletionsToolsRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    temperature: f64,
+    stream: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<String>,
+}
+
+pub(super) async fn call_chat_completion_tools(
+    http: &reqwest::Client,
+    config: &LlmConfig,
+    messages: &[ChatMessage],
+    tools: &[serde_json::Value],
+    temperature: Option<f64>,
+) -> Result<AssistantTurn, LlmError> {
+    let request = ChatCompletionsToolsRequest {
+        model: config.model.clone(),
+        messages: messages.to_vec(),
+        temperature: temperature.unwrap_or(AGENT_TEMPERATURE),
+        stream: false,
+        tools: tools.to_vec(),
+        tool_choice: if tools.is_empty() {
+            None
+        } else {
+            Some("auto".to_string())
+        },
+    };
+    let endpoint = chat_completions_endpoint(&config.base_url);
+    let response = http
+        .post(&endpoint)
+        .bearer_auth(config.next_api_key())
+        .json(&request)
+        .send()
+        .await
+        .map_err(|err| LlmError::new(LlmErrorKind::Http, format!("http request failed: {err}")))?;
+    let status = response.status();
+    let text = response.text().await.map_err(|err| {
+        LlmError::new(
+            LlmErrorKind::Http,
+            format!("http response read failed: {err}"),
+        )
+    })?;
+    if !status.is_success() {
+        return Err(LlmError::new(
+            LlmErrorKind::Http,
+            format!("http status {}: {}", status.as_u16(), text),
+        ));
+    }
+    let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|err| {
+        LlmError::new(
+            LlmErrorKind::Http,
+            format!("chat completion decode failed: {err}; raw={text}"),
+        )
+    })?;
+    parse_assistant_turn(&parsed)
+}
+
+pub(super) fn parse_assistant_turn(parsed: &serde_json::Value) -> Result<AssistantTurn, LlmError> {
+    let choice = parsed
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .ok_or_else(|| {
+            LlmError::new(LlmErrorKind::Http, "response missing choices[0]")
+        })?;
+    let message = choice.get("message").unwrap_or(choice);
+    let content = message
+        .get("content")
+        .and_then(extract_text_content)
+        .unwrap_or_default();
+    let reasoning = message
+        .get("reasoning_content")
+        .and_then(|v| v.as_str())
+        .or_else(|| message.get("reasoning").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let mut tool_calls = parse_tool_calls(message.get("tool_calls"));
+    if tool_calls.is_empty() {
+        if let Some(legacy) = message.get("function_call") {
+            if let Some(tc) = tool_call_from_function(legacy, "call_legacy") {
+                tool_calls.push(tc);
+            }
+        }
+    }
+    if content.trim().is_empty() && tool_calls.is_empty() {
+        return Err(LlmError::new(
+            LlmErrorKind::Http,
+            "response missing assistant text and tool_calls",
+        ));
+    }
+    let usage = parsed.get("usage").map(usage_from_value).unwrap_or_default();
+    Ok(AssistantTurn {
+        content,
+        tool_calls,
+        reasoning_content: reasoning,
+        usage,
+    })
+}
+
+fn parse_tool_calls(value: Option<&serde_json::Value>) -> Vec<ToolCall> {
+    let Some(arr) = value.and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (i, item) in arr.iter().enumerate() {
+        let id = item
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("call_{i}"));
+        let fn_obj = item.get("function").unwrap_or(item);
+        if let Some(tc) = tool_call_from_function(fn_obj, &id) {
+            out.push(tc);
+        }
+    }
+    out
+}
+
+fn tool_call_from_function(fn_obj: &serde_json::Value, id: &str) -> Option<ToolCall> {
+    let name = fn_obj.get("name").and_then(|v| v.as_str())?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let arguments = match fn_obj.get("arguments") {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => "{}".to_string(),
+    };
+    Some(ToolCall {
+        id: id.to_string(),
+        type_: "function".to_string(),
+        function: ToolCallFunction {
+            name: name.to_string(),
+            arguments,
+        },
+    })
+}
+
+fn usage_from_value(usage: &serde_json::Value) -> LlmTokenUsage {
+    let prompt_tokens = json_u64(usage.get("prompt_tokens")).unwrap_or(0);
+    let completion_tokens = json_u64(usage.get("completion_tokens")).unwrap_or(0);
+    let mut total_tokens = json_u64(usage.get("total_tokens")).unwrap_or(0);
+    if total_tokens == 0 {
+        total_tokens = prompt_tokens.saturating_add(completion_tokens);
+    }
+    LlmTokenUsage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,6 +762,74 @@ mod tests {
         };
         let v2 = serde_json::to_value(&non_stream).unwrap();
         assert!(v2.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn assistant_tools_omits_empty_content() {
+        let msg = ChatMessage::assistant_tools(
+            None,
+            vec![ToolCall {
+                id: "c1".into(),
+                type_: "function".into(),
+                function: ToolCallFunction {
+                    name: "search_transcript".into(),
+                    arguments: "{}".into(),
+                },
+            }],
+            None,
+        );
+        let v = serde_json::to_value(&msg).unwrap();
+        assert!(v.get("content").is_none());
+        assert_eq!(v["role"], "assistant");
+        assert_eq!(v["tool_calls"][0]["id"], "c1");
+
+        let blank = ChatMessage::assistant_tools(Some("  ".into()), vec![], None);
+        let v2 = serde_json::to_value(&blank).unwrap();
+        assert!(v2.get("content").is_none());
+    }
+
+    #[test]
+    fn parse_assistant_turn_reads_tool_calls_and_string_arguments() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{
+              "choices":[{
+                "message":{
+                  "role":"assistant",
+                  "content":null,
+                  "tool_calls":[{
+                    "id":"call_1",
+                    "type":"function",
+                    "function":{"name":"search_transcript","arguments":"{\"pattern\":\"foo\"}"}
+                  }]
+                }
+              }],
+              "usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}
+            }"#,
+        )
+        .unwrap();
+        let turn = parse_assistant_turn(&v).unwrap();
+        assert_eq!(turn.tool_calls.len(), 1);
+        assert_eq!(turn.tool_calls[0].function.name, "search_transcript");
+        assert!(turn.tool_calls[0].function.arguments.contains("foo"));
+        assert_eq!(turn.usage.total_tokens, 14);
+    }
+
+    #[test]
+    fn parse_assistant_turn_accepts_object_arguments_and_legacy_function_call() {
+        let obj_args: serde_json::Value = serde_json::from_str(
+            r#"{"choices":[{"message":{"tool_calls":[{"function":{"name":"count_transcript","arguments":{"terms":["a"]}}}]}}]}"#,
+        )
+        .unwrap();
+        let turn = parse_assistant_turn(&obj_args).unwrap();
+        assert_eq!(turn.tool_calls[0].function.name, "count_transcript");
+        assert!(turn.tool_calls[0].function.arguments.contains("terms"));
+
+        let legacy: serde_json::Value = serde_json::from_str(
+            r#"{"choices":[{"message":{"content":"","function_call":{"name":"submit_result","arguments":"{}"}}}]}"#,
+        )
+        .unwrap();
+        let turn2 = parse_assistant_turn(&legacy).unwrap();
+        assert_eq!(turn2.tool_calls[0].function.name, "submit_result");
     }
 }
 

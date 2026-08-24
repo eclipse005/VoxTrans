@@ -29,6 +29,10 @@ pub struct SettingsRow {
     pub llm_concurrency: u32,
     pub active_terminology_group_id: String,
     pub enable_subtitle_beautify: bool,
+    #[sqlx(default)]
+    pub enable_terminology_agent: bool,
+    #[sqlx(default)]
+    pub anysearch_api_key: String,
     pub enable_click_sound: bool,
     pub auto_burn_hard_subtitle: bool,
     pub subtitle_burn_mode: String,
@@ -71,6 +75,9 @@ pub struct TaskRow {
     // Frozen-at-enqueue settings (see migration 20260610000001):
     pub subtitle_length_preset: String,
     pub enable_subtitle_beautify: bool,
+    /// Frozen-at-enqueue: run the terminology Agent before translation.
+    #[sqlx(default)]
+    pub enable_terminology_agent: bool,
     /// JSON-serialized `Vec<TerminologyGroup>` snapshot taken at enqueue
     /// time. This is the FROZEN copy that the pipeline reads during
     /// execution -- editing the global terminology library (the

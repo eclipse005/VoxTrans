@@ -28,3 +28,11 @@ export async function openModelDir(target: ModelTarget, model: AsrModel | AlignM
 export async function listSystemFonts(): Promise<string[]> {
   return invoke<string[]>("list_system_fonts");
 }
+
+export async function openExternalUrl(url: string): Promise<void> {
+  try {
+    await invoke("open_external_url", { url });
+  } catch (err) {
+    console.error("failed to open external url:", url, err);
+  }
+}

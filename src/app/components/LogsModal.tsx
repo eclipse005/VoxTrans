@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MutableRefObject, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronLeftIcon, ChevronRightIcon, FolderIcon, RefreshIcon, TrashIcon } from "./Icons";
+import { LOG_CHANNELS, channelLabel, type LogChannel } from "../api/logs";
 import { useDialogA11y } from "./useDialogA11y";
 
 type LogsModalProps = {
@@ -10,8 +11,8 @@ type LogsModalProps = {
   totalTokens: number;
   taskName: string;
   content: string;
-  channel: "main" | "llm";
-  onChannelChange: (channel: "main" | "llm") => void;
+  channel: LogChannel;
+  onChannelChange: (channel: LogChannel) => void;
   onClose: () => void;
   onRefresh: () => void | Promise<void>;
   onClear: () => void | Promise<void>;
@@ -101,20 +102,16 @@ export default function LogsModal({
             <div className="logs-title-row">
               <h3 id="logs-modal-title" className="apple-heading-small">{t("tasks:logs.title")}</h3>
               <div className="logs-channel-toggle" role="tablist" aria-label={t("tasks:logs.channelToggle")}>
-                <button
-                  type="button"
-                  className={`logs-channel-btn ${channel === "main" ? "active" : ""}`}
-                  onClick={() => onChannelChange("main")}
-                >
-                  MAIN
-                </button>
-                <button
-                  type="button"
-                  className={`logs-channel-btn ${channel === "llm" ? "active" : ""}`}
-                  onClick={() => onChannelChange("llm")}
-                >
-                  LLM
-                </button>
+                {LOG_CHANNELS.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    className={`logs-channel-btn ${channel === item ? "active" : ""}`}
+                    onClick={() => onChannelChange(item)}
+                  >
+                    {t(`tasks:logs.channel${channelLabel(item)}`)}
+                  </button>
+                ))}
               </div>
               <div className="logs-actions">
                 <button

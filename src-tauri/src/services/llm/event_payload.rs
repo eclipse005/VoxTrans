@@ -73,13 +73,15 @@ pub(super) fn attempt_event_payload(base_payload: &Value, mut payload: Value) ->
     payload
 }
 
-pub(super) fn repair_failed_attempt_payload(
+pub(super) fn failed_attempt_payload(
     base_payload: &Value,
     status: &str,
     error: &str,
     error_kind: &str,
+    retryable: bool,
     retry_hint: Option<&str>,
-    raw_text: &str,
+    raw_text: Option<&str>,
+    backoff_ms: Option<u64>,
 ) -> Value {
     attempt_event_payload(
         base_payload,
@@ -87,17 +89,16 @@ pub(super) fn repair_failed_attempt_payload(
             "status": status,
             "error": error,
             "errorKind": error_kind,
-            "retryable": false,
+            "retryable": retryable,
             "retryHint": retry_hint,
-            "repairMode": "llm_json_repair",
             "response": { "text": raw_text },
+            "backoffMs": backoff_ms,
         }),
     )
 }
 
 pub(super) fn success_attempt_payload(
     base_payload: &Value,
-    validation_failures: u32,
     local_repair_source: &str,
     raw_text: &str,
     elapsed_ms: u128,
@@ -106,9 +107,7 @@ pub(super) fn success_attempt_payload(
     attempt_event_payload(
         base_payload,
         json!({
-            "status": if validation_failures > 0 { "ok_after_repair" } else { "ok" },
-            "repairMode": if validation_failures > 0 { Some("llm_json_repair") } else { None::<&str> },
-            "validationFailures": validation_failures,
+            "status": "ok",
             "localRepairSource": local_repair_source,
             "response": { "text": raw_text },
             "elapsedMs": elapsed_ms,
@@ -165,16 +164,4 @@ pub(super) fn http_error_attempt_payload(
     )
 }
 
-pub(super) fn repair_requested_payload(
-    error_kind: &str,
-    context: &LlmCallContext,
-    request_id: &str,
-) -> Value {
-    json!({
-        "status": "repair_requested",
-        "repairMode": "llm_json_repair",
-        "errorKind": error_kind,
-        "phase": &context.phase,
-        "llmId": request_id,
-    })
-}
+

@@ -120,6 +120,10 @@ pub(super) async fn register_task_upload_internal(
             source_lang: default_task_source_lang(),
             target_lang: default_task_target_lang(),
             max_retries: 0,
+            // Placeholder only: the real snapshot happens in
+            // `freeze_current_settings` when the task is enqueued. Execution
+            // must always go through enqueue — never execute an
+            // upload-only task directly, or it would run with defaults.
             frozen: FrozenSettings::default(),
             enqueue_seq,
         };

@@ -1,9 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export const LOG_CHANNELS = ["main", "agent", "llm"] as const;
+export type LogChannel = (typeof LOG_CHANNELS)[number];
+
+/** Key suffix for `tasks:logs.channel${...}` translations (Main/Agent/Llm). */
+export function channelLabel(channel: LogChannel): string {
+  return channel.charAt(0).toUpperCase() + channel.slice(1);
+}
+
 type TaskLogRequest = {
   taskId: string;
   mediaPath?: string;
-  channel: "main" | "llm";
+  channel: LogChannel;
 };
 
 export async function readTaskLog(request: TaskLogRequest): Promise<string> {

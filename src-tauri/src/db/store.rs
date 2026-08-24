@@ -45,7 +45,7 @@ impl TaskStore {
              align_model, demucs_model, enable_vocal_separation, translate_api_key, \
              translate_base_url, translate_model, llm_profiles_json, active_llm_profile_id, \
              llm_concurrency, active_terminology_group_id, \
-             enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
+             enable_subtitle_beautify, enable_terminology_agent, anysearch_api_key, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
              locale, models_dir, default_review_source, \
              default_review_target, updated_at \
@@ -88,11 +88,11 @@ impl TaskStore {
              asr_model, align_model, demucs_model, enable_vocal_separation, translate_api_key, \
              translate_base_url, translate_model, llm_profiles_json, active_llm_profile_id, \
              llm_concurrency, active_terminology_group_id, \
-             enable_subtitle_beautify, enable_click_sound, auto_burn_hard_subtitle, \
+             enable_subtitle_beautify, enable_terminology_agent, anysearch_api_key, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
              locale, models_dir, default_review_source, \
              default_review_target, updated_at) \
-             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(id) DO UPDATE SET \
              provider=excluded.provider, chunk_target_seconds=excluded.chunk_target_seconds, \
              subtitle_length_preset=excluded.subtitle_length_preset, asr_model=excluded.asr_model, \
@@ -106,6 +106,8 @@ impl TaskStore {
              llm_concurrency=excluded.llm_concurrency, \
              active_terminology_group_id=excluded.active_terminology_group_id, \
              enable_subtitle_beautify=excluded.enable_subtitle_beautify, \
+             enable_terminology_agent=excluded.enable_terminology_agent, \
+             anysearch_api_key=excluded.anysearch_api_key, \
              enable_click_sound=excluded.enable_click_sound, \
              auto_burn_hard_subtitle=excluded.auto_burn_hard_subtitle, \
              subtitle_burn_mode=excluded.subtitle_burn_mode, \
@@ -132,6 +134,8 @@ impl TaskStore {
         .bind(row.llm_concurrency)
         .bind(&row.active_terminology_group_id)
         .bind(row.enable_subtitle_beautify)
+        .bind(row.enable_terminology_agent)
+        .bind(&row.anysearch_api_key)
         .bind(row.enable_click_sound)
         .bind(row.auto_burn_hard_subtitle)
         .bind(&row.subtitle_burn_mode)
@@ -364,7 +368,7 @@ impl TaskStore {
              task_progress_stage_order, task_progress_detail, task_progress_current, \
              task_progress_total, transcribe_error, result_text, result_srt, llm_total_tokens, \
              intent, max_retries, subtitle_length_preset, \
-             enable_subtitle_beautify, terminology_groups_json, terminology_group_id, \
+             enable_subtitle_beautify, enable_terminology_agent, terminology_groups_json, terminology_group_id, \
              review_source, review_target, resume_from, enqueue_seq, updated_at \
              FROM tasks ORDER BY enqueue_seq ASC",
         )
@@ -391,9 +395,9 @@ impl TaskStore {
              task_progress_stage_label, task_progress_stage_order, task_progress_detail, \
              task_progress_current, task_progress_total, transcribe_error, result_text, \
              result_srt, llm_total_tokens, intent, max_retries, subtitle_length_preset, \
-             enable_subtitle_beautify, terminology_groups_json, terminology_group_id, \
+             enable_subtitle_beautify, enable_terminology_agent, terminology_groups_json, terminology_group_id, \
              review_source, review_target, resume_from, enqueue_seq, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
+             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET \
              media_path=excluded.media_path, name=excluded.name, media_kind=excluded.media_kind, \
              size_bytes=excluded.size_bytes, source_lang=excluded.source_lang, \
              target_lang=excluded.target_lang, transcribe_status=excluded.transcribe_status, \
@@ -408,6 +412,7 @@ impl TaskStore {
              intent=excluded.intent, max_retries=excluded.max_retries, \
              subtitle_length_preset=excluded.subtitle_length_preset, \
              enable_subtitle_beautify=excluded.enable_subtitle_beautify, \
+             enable_terminology_agent=excluded.enable_terminology_agent, \
              terminology_groups_json=excluded.terminology_groups_json, \
              terminology_group_id=excluded.terminology_group_id, \
              review_source=excluded.review_source, \
@@ -437,6 +442,7 @@ impl TaskStore {
         .bind(row.max_retries)
         .bind(&row.subtitle_length_preset)
         .bind(row.enable_subtitle_beautify)
+        .bind(row.enable_terminology_agent)
         .bind(&row.terminology_groups_json)
         .bind(&row.terminology_group_id)
         .bind(row.review_source)
@@ -589,6 +595,26 @@ impl TaskStore {
             .execute(&self.pool)
             .await
             .map_err(|e| format!("delete artifact: {e}"))?;
+        Ok(())
+    }
+
+    /// Remove every artifact whose step_name starts with `prefix`.
+    /// Used when a source change invalidates a family of checkpoints
+    /// (`step_03_terminology` plus `step_03_terminology_w{i}`).
+    pub async fn delete_artifacts_with_prefix(
+        &self,
+        task_id: &str,
+        prefix: &str,
+    ) -> Result<(), String> {
+        if prefix.is_empty() {
+            return Err("artifact prefix is required".to_string());
+        }
+        sqlx::query("DELETE FROM task_artifacts WHERE task_id = ? AND step_name LIKE ?")
+            .bind(task_id)
+            .bind(format!("{prefix}%"))
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("delete artifacts with prefix: {e}"))?;
         Ok(())
     }
 
@@ -916,6 +942,8 @@ mod tests {
             terminology_groups: Vec::new(),
             active_terminology_group_id: String::new(),
             enable_subtitle_beautify: true,
+            enable_terminology_agent: false,
+            anysearch_api_key: String::new(),
             enable_click_sound: true,
             auto_burn_hard_subtitle: false,
             default_review_source: false,
@@ -1075,6 +1103,7 @@ mod tests {
             max_retries: 2,
             subtitle_length_preset: "long".to_string(),
             enable_subtitle_beautify: false,
+            enable_terminology_agent: false,
             terminology_groups_json: r#"[{"id":"g","name":"x","terms":[]}]"#.to_string(),
             enqueue_seq: 0,
         };
@@ -1094,6 +1123,42 @@ mod tests {
             extras.terminology_groups_json,
             r#"[{"id":"g","name":"x","terms":[]}]"#
         );
+    }
+
+    #[tokio::test]
+    async fn delete_artifacts_with_prefix_drops_family_keeps_others() {
+        let s = store().await;
+        s.upsert_task(&sample_task("t"), &TaskMetaExtras::default())
+            .await
+            .unwrap();
+        s.save_artifact("t", "step_03_terminology", "{}")
+            .await
+            .unwrap();
+        s.save_artifact("t", "step_03_terminology_w0", "{}")
+            .await
+            .unwrap();
+        s.save_artifact("t", "step_03_terminology_w1", "{}")
+            .await
+            .unwrap();
+        s.save_artifact("t", "step_04_translation", "{}")
+            .await
+            .unwrap();
+
+        s.delete_artifacts_with_prefix("t", "step_03_terminology")
+            .await
+            .unwrap();
+
+        assert!(s.load_artifact("t", "step_03_terminology").await.unwrap().is_none());
+        assert!(s
+            .load_artifact("t", "step_03_terminology_w0")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(s
+            .load_artifact("t", "step_04_translation")
+            .await
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]
@@ -1290,6 +1355,7 @@ mod tests {
             max_retries: 0,
             subtitle_length_preset: "default".into(),
             enable_subtitle_beautify: true,
+            enable_terminology_agent: false,
             terminology_groups_json:
                 r#"[{"id":"frozen-grp","name":"frozen-name","terms":[]}]"#.into(),
             enqueue_seq: 0,

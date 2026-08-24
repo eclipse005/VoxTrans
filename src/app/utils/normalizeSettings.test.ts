@@ -24,6 +24,8 @@ function baseDefaults(): SavedSettings {
     terminologyGroups: [DEFAULT_GROUP],
     activeTerminologyGroupId: "",
     enableSubtitleBeautify: true,
+    enableTerminologyAgent: false,
+    anysearchApiKey: "",
     enableClickSound: true,
     autoBurnHardSubtitle: false,
     defaultReviewSource: false,
@@ -79,6 +81,27 @@ describe("normalizeSettings", () => {
     };
     const result = normalizeSettings(input, defaults);
     expect(result).toEqual(input);
+  });
+
+  it("normalizes anysearchApiKey (trims, missing/null → empty, non-string → string)", () => {
+    const defaults = baseDefaults();
+    const trimmed = normalizeSettings({ ...defaults, anysearchApiKey: "  sk-abc  " }, defaults);
+    expect(trimmed.anysearchApiKey).toBe("sk-abc");
+    const missing = normalizeSettings(
+      { ...defaults, anysearchApiKey: undefined } as unknown as SavedSettings,
+      defaults,
+    );
+    expect(missing.anysearchApiKey).toBe("");
+    const nulled = normalizeSettings(
+      { ...defaults, anysearchApiKey: null } as unknown as SavedSettings,
+      defaults,
+    );
+    expect(nulled.anysearchApiKey).toBe("");
+    const numeric = normalizeSettings(
+      { ...defaults, anysearchApiKey: 123 } as unknown as SavedSettings,
+      defaults,
+    );
+    expect(numeric.anysearchApiKey).toBe("123");
   });
 
   it("clamps chunkTargetSeconds to [30, 180]", () => {
@@ -424,6 +447,16 @@ describe("normalizeSettings", () => {
     );
     expect(result.enableSubtitleBeautify).toBe(false);
     expect(result.enableClickSound).toBe(false);
+  });
+
+  it("defaults enableTerminologyAgent to false when missing", () => {
+    const defaults = baseDefaults();
+    const partial = {
+      ...defaults,
+      enableTerminologyAgent: undefined,
+    } as unknown as SavedSettings;
+    const result = normalizeSettings(partial, defaults);
+    expect(result.enableTerminologyAgent).toBe(false);
   });
 
   it("falls back to default subtitleRenderStyle when missing or non-object", () => {

@@ -23,7 +23,7 @@ pub struct TranslationNameExample {
 pub fn build_batch_translate_prompt(
     source_lang: &str,
     target_lang: &str,
-    theme_summary: &str,
+    style_guide: &str,
     prev_lines: &[String],
     current_lines: &[TranslationPromptLine],
     next_lines: &[String],
@@ -41,6 +41,9 @@ pub fn build_batch_translate_prompt(
     if !established_names.is_empty() {
         instruction.push_str(" Reuse establishedNames renderings for those names.");
     }
+    if !style_guide.trim().is_empty() {
+        instruction.push_str(" Follow styleGuide for tone, register, and how to treat names.");
+    }
     let mut obj = serde_json::json!({
         "sourceLanguage": source_lang,
         "targetLanguage": target_lang,
@@ -49,8 +52,8 @@ pub fn build_batch_translate_prompt(
         "nextLines": next_lines,
         "instruction": instruction,
     });
-    if !theme_summary.trim().is_empty() {
-        obj["background"] = serde_json::Value::String(theme_summary.to_string());
+    if !style_guide.trim().is_empty() {
+        obj["styleGuide"] = serde_json::Value::String(style_guide.to_string());
     }
     if !terms.is_empty() {
         obj["terminology"] = serde_json::to_value(terms).unwrap_or_default();
@@ -73,7 +76,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_theme_omits_background_and_style_guide() {
+    fn empty_style_guide_omits_field_and_instruction() {
         let prompt = build_batch_translate_prompt(
             "en",
             "zh",
@@ -86,9 +89,10 @@ mod tests {
         );
         let parsed: serde_json::Value = serde_json::from_str(&prompt).unwrap();
         assert!(
-            parsed.get("background").is_none(),
-            "empty theme_summary must not send a background field"
+            parsed.get("styleGuide").is_none(),
+            "empty style_guide must not send a styleGuide field"
         );
+        assert!(parsed.get("background").is_none());
         assert!(parsed.get("output").is_none(), "do not teach an output wrapper");
         assert!(parsed.get("constraints").is_none());
         assert!(parsed.get("terminology").is_none());
@@ -107,6 +111,27 @@ mod tests {
         );
         assert!(parsed.get("establishedNames").is_none());
         assert_eq!(parsed["currentLines"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn style_guide_is_named_and_instructed() {
+        let prompt = build_batch_translate_prompt(
+            "en",
+            "zh",
+            "Keep English names. Informal spoken register.",
+            &[],
+            &sample_lines(),
+            &[],
+            &[],
+            &[],
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&prompt).unwrap();
+        assert_eq!(
+            parsed["styleGuide"],
+            "Keep English names. Informal spoken register."
+        );
+        let instruction = parsed["instruction"].as_str().unwrap();
+        assert!(instruction.contains("styleGuide"));
     }
 
     #[test]

@@ -37,6 +37,8 @@ pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
         terminology_groups: Vec::new(),
         active_terminology_group_id: row.active_terminology_group_id,
         enable_subtitle_beautify: row.enable_subtitle_beautify,
+        enable_terminology_agent: row.enable_terminology_agent,
+        anysearch_api_key: row.anysearch_api_key,
         enable_click_sound: row.enable_click_sound,
         auto_burn_hard_subtitle: row.auto_burn_hard_subtitle,
         default_review_source: row.default_review_source,
@@ -70,6 +72,8 @@ pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
         llm_concurrency: settings.llm_concurrency,
         active_terminology_group_id: settings.active_terminology_group_id.clone(),
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
+        enable_terminology_agent: settings.enable_terminology_agent,
+        anysearch_api_key: settings.anysearch_api_key.clone(),
         enable_click_sound: settings.enable_click_sound,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         default_review_source: settings.default_review_source,
@@ -130,6 +134,7 @@ pub struct TaskMetaExtras {
     pub max_retries: u32,
     pub subtitle_length_preset: String,
     pub enable_subtitle_beautify: bool,
+    pub enable_terminology_agent: bool,
     /// JSON-serialized `Vec<TerminologyGroup>` (frozen at enqueue time).
     pub terminology_groups_json: String,
     /// 入队顺序号；INSERT 时由 `next_enqueue_seq` 取号写入，UPDATE 不变。
@@ -143,6 +148,7 @@ impl Default for TaskMetaExtras {
             max_retries: 0,
             subtitle_length_preset: String::new(),
             enable_subtitle_beautify: true,
+            enable_terminology_agent: false,
             terminology_groups_json: "[]".to_string(),
             enqueue_seq: 0,
         }
@@ -184,6 +190,7 @@ pub fn task_from_row(row: TaskRow) -> (WorkspaceQueueItem, TaskMetaExtras) {
         max_retries: row.max_retries,
         subtitle_length_preset: row.subtitle_length_preset,
         enable_subtitle_beautify: row.enable_subtitle_beautify,
+        enable_terminology_agent: row.enable_terminology_agent,
         terminology_groups_json: row.terminology_groups_json,
         enqueue_seq: row.enqueue_seq,
     };
@@ -214,6 +221,7 @@ pub fn row_from_task(item: &WorkspaceQueueItem, extras: &TaskMetaExtras) -> Task
         max_retries: extras.max_retries,
         subtitle_length_preset: extras.subtitle_length_preset.clone(),
         enable_subtitle_beautify: extras.enable_subtitle_beautify,
+        enable_terminology_agent: extras.enable_terminology_agent,
         terminology_groups_json: extras.terminology_groups_json.clone(),
         terminology_group_id: item.terminology_group_id.clone(),
         review_source: item.review_source,
@@ -258,6 +266,8 @@ mod tests {
             terminology_groups: Vec::new(),
             active_terminology_group_id: String::new(),
             enable_subtitle_beautify: true,
+            enable_terminology_agent: false,
+            anysearch_api_key: String::new(),
             enable_click_sound: true,
             auto_burn_hard_subtitle: false,
             default_review_source: false,
@@ -292,6 +302,7 @@ mod tests {
         assert_eq!(restored.llm_concurrency, original.llm_concurrency);
         assert_eq!(restored.active_terminology_group_id, original.active_terminology_group_id);
         assert_eq!(restored.enable_subtitle_beautify, original.enable_subtitle_beautify);
+        assert_eq!(restored.enable_terminology_agent, original.enable_terminology_agent);
         assert_eq!(restored.enable_click_sound, original.enable_click_sound);
         assert_eq!(restored.auto_burn_hard_subtitle, original.auto_burn_hard_subtitle);
         assert_eq!(restored.subtitle_burn_mode, original.subtitle_burn_mode);
@@ -351,6 +362,7 @@ mod tests {
             max_retries: 3,
             subtitle_length_preset: "long".into(),
             enable_subtitle_beautify: false,
+            enable_terminology_agent: true,
             terminology_groups_json: r#"[{"id":"g","name":"x","terms":[]}]"#.into(),
             enqueue_seq: 0,
         };
@@ -378,6 +390,7 @@ mod tests {
         assert_eq!(restored_extras.max_retries, 3);
         assert_eq!(restored_extras.subtitle_length_preset, "long");
         assert!(!restored_extras.enable_subtitle_beautify);
+        assert!(restored_extras.enable_terminology_agent);
         assert_eq!(
             restored_extras.terminology_groups_json,
             r#"[{"id":"g","name":"x","terms":[]}]"#

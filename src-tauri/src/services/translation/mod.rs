@@ -1,11 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use serde_json::json;
+
 use crate::services::llm::batch::run_indexed_chained_idempotent;
 use crate::services::llm::client::OpenAiCompatLlmClient;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
+use crate::services::task_log::TaskLogger;
 
 mod batches;
 mod guard;
@@ -18,11 +21,12 @@ mod tests;
 mod text;
 mod types;
 
-use batches::build_batch_windows;
+use batches::{build_batch_windows, matched_term_targets, split_chunk_size, split_window};
 use name_memory::derive_name_memory;
 use responses::{
     TranslationValidationContext, validate_batch_translation_response_with_context,
 };
+use types::BatchWindow;
 use segments::normalize_segments;
 pub use types::{
     BuildTranslationLayerRequest, BuildTranslationLayerResponse, TranslationProgress,
@@ -51,12 +55,13 @@ pub async fn build_translation_layer_with_progress(
         return Err("segments contain no translatable text".to_string());
     }
 
+    // HTTP retries live on the client. JSON/semantic failures return here and
+    // split currentLines (20→10→5→1) with the same translate prompt.
     let llm_client = OpenAiCompatLlmClient::new(LlmConfig::new(
         request.translate_base_url.clone(),
         request.translate_api_key.clone(),
         request.translate_model.clone(),
-    ))
-    ?;
+    ))?;
 
     let batch_size = if request.batch_size == 0 {
         DEFAULT_BATCH_SIZE
@@ -91,7 +96,7 @@ pub async fn build_translation_layer_with_progress(
         batch_size,
         &request.source_lang,
         &request.target_lang,
-        &request.theme_summary,
+        &request.style_guide,
         &request.terminology_entries,
     );
     if windows.is_empty() {
@@ -155,185 +160,34 @@ pub async fn build_translation_layer_with_progress(
         }
     };
 
-    let batch_total_for_stream = windows.len();
     let completed_batches = Arc::new(AtomicUsize::new(precomputed.len()));
+    let translate_call = TranslateCall {
+        llm_client,
+        context: context.clone(),
+        segments: normalized_for_progress.clone(),
+        known_translations: known_translations_for_worker.clone(),
+        partial_map: partial_map.clone(),
+        progress_callback: progress_callback.clone(),
+        completed_batches: completed_batches.clone(),
+        partial_snapshot_cache: partial_snapshot_cache.clone(),
+        batch_total: windows.len(),
+    };
     // Batches run in index order: batch N's prompt is built after batch N-1
     // has published translations, so previousLines are actually bilingual.
     let results = run_indexed_chained_idempotent(
         tasks,
         {
-            let llm_client = llm_client.clone();
-            let context = context.clone();
-            let partial_map_for_stream = partial_map.clone();
-            let progress_for_stream = progress_callback.clone();
-            let segments_for_stream = normalized_for_progress.clone();
-            let completed_batches = completed_batches.clone();
-            let partial_snapshot_cache_for_stream = partial_snapshot_cache.clone();
             move |task| {
-                let llm_client = llm_client.clone();
-                let context = context.clone();
+                let call = translate_call.clone();
                 let windows = windows_for_worker.clone();
-                let partial_map = partial_map_for_stream.clone();
-                let progress_callback = progress_for_stream.clone();
-                let segments = segments_for_stream.clone();
-                let completed_batches = completed_batches.clone();
-                let partial_snapshot_cache = partial_snapshot_cache_for_stream.clone();
-                let known_translations = known_translations_for_worker.clone();
                 async move {
-                    let Some(window) = windows.get(task.id) else {
+                    let Some(window) = windows.get(task.id).cloned() else {
                         return Err(format!("missing batch window for index {}", task.id));
                     };
-                    let llm_id = task.request_id.clone();
-
-                    // Build the prompt at call time so already-translated
-                    // context lines render as "source → translation" pairs
-                    // and name memory covers the current batch.
-                    let prompt = {
-                        let guard = known_translations
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        let current_text = window
-                            .current_lines
-                            .iter()
-                            .map(|line| line.text.as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        let memory = derive_name_memory(segments.as_slice(), &guard, &current_text);
-                        window.build_prompt(&guard, &memory.terms, &memory.examples)
-                    };
-
-                    let local_to_global = window.local_to_global.clone();
-                    let local_ids = window.local_ids.clone();
-                    let current_sources: Vec<String> = window
-                        .current_lines
-                        .iter()
-                        .map(|line| line.text.clone())
-                        .collect();
-                    let prev_sources: Vec<String> = window
-                        .prev_lines
-                        .iter()
-                        .map(|(_, source)| source.clone())
-                        .collect();
-                    let next_sources: Vec<String> = window
-                        .next_lines
-                        .iter()
-                        .map(|(_, source)| source.clone())
-                        .collect();
-                    let source_lang = window.source_lang.clone();
-                    let target_lang = window.target_lang.clone();
-                    let throttle = Arc::new(Mutex::new(StreamThrottle::new()));
-                    let on_partial: Arc<dyn Fn(String) + Send + Sync> = Arc::new({
-                        let partial_map = partial_map.clone();
-                        let progress_callback = progress_callback.clone();
-                        let segments = segments.clone();
-                        let throttle = throttle.clone();
-                        let local_to_global = local_to_global.clone();
-                        let completed_batches = completed_batches.clone();
-                        let partial_snapshot_cache = partial_snapshot_cache.clone();
-                        move |raw: String| {
-                            // Always merge into partial_map so concurrent batch
-                            // joins see the latest streamed text. Throttle only
-                            // the expensive rebuild + UI progress callback.
-                            let extracted = partial_parse::extract_partial_translations(&raw);
-                            if extracted.is_empty() {
-                                return;
-                            }
-                            let mut changed = false;
-                            if let Ok(mut map) = partial_map.lock() {
-                                for (local_id, text) in extracted {
-                                    if text.is_empty() {
-                                        continue;
-                                    }
-                                    let idx = local_id.saturating_sub(1);
-                                    let Some(global_id) = local_to_global.get(idx).copied() else {
-                                        continue;
-                                    };
-                                    let entry = map.entry(global_id).or_default();
-                                    // Keep longer (growing) text; allow replacement if model rewrote.
-                                    if text.len() >= entry.len() || entry.is_empty() {
-                                        if text != *entry {
-                                            *entry = text;
-                                            changed = true;
-                                        }
-                                    }
-                                }
-                            } else {
-                                return;
-                            }
-                            if !changed {
-                                return;
-                            }
-                            let should_emit = match throttle.lock() {
-                                Ok(mut t) => t.should_emit(raw.len()),
-                                Err(_) => true,
-                            };
-                            if !should_emit {
-                                return;
-                            }
-                            if let Some(callback) = progress_callback.as_ref() {
-                                let partial_outputs = rebuild_partial_outputs(
-                                    &segments,
-                                    &partial_map,
-                                    &partial_snapshot_cache,
-                                );
-                                let done = completed_batches.load(Ordering::Relaxed);
-                                callback(TranslationProgress {
-                                    done,
-                                    total: batch_total_for_stream,
-                                    partial_outputs,
-                                });
-                            }
-                        }
-                    });
-
-                    let call = llm_client
-                        .call_json_validated_streaming(
-                            &context,
-                            &llm_id,
-                            &prompt,
-                            task.response_validator.as_ref(),
-                            on_partial,
-                            |value| {
-                                validate_batch_translation_response_with_context(
-                                    value,
-                                    &TranslationValidationContext {
-                                        expected_ids: &local_ids,
-                                        source_lang: &source_lang,
-                                        target_lang: &target_lang,
-                                        current_sources: &current_sources,
-                                        prev_sources: &prev_sources,
-                                        next_sources: &next_sources,
-                                    },
-                                )
-                            },
-                        )
-                        .await
-                        .map_err(|err| {
-                            format!(
-                                "step4 translate batch {} failed (llmId={}): {}",
-                                window.batch_id + 1,
-                                llm_id,
-                                err.message
-                            )
-                        })?;
-                    let mut translated_map = HashMap::<usize, String>::new();
-                    for (local_id, translated) in call.value {
-                        let idx = local_id.saturating_sub(1);
-                        let Some(global_id) = local_to_global.get(idx).copied() else {
-                            continue;
-                        };
-                        translated_map.insert(global_id, translated);
-                    }
-                    // Publish into the shared map so batches that start later
-                    // see this batch's translations as bilingual context.
-                    if let Ok(mut known) = known_translations.lock() {
-                        for (global_id, text) in &translated_map {
-                            if !text.trim().is_empty() {
-                                known.insert(*global_id, text.clone());
-                            }
-                        }
-                    }
-                    Ok((window.batch_id, translated_map))
+                    let batch_id = window.batch_id;
+                    let translated_map =
+                        translate_window_with_split(&call, window, task.request_id).await?;
+                    Ok((batch_id, translated_map))
                 }
             }
         },
@@ -424,6 +278,270 @@ pub async fn build_translation_layer_with_progress(
         segment_total: outputs.len(),
         segments: outputs,
     })
+}
+
+#[derive(Clone)]
+struct TranslateCall {
+    llm_client: OpenAiCompatLlmClient,
+    context: LlmCallContext,
+    segments: Arc<Vec<types::NormalizedSegment>>,
+    known_translations: Arc<Mutex<HashMap<usize, String>>>,
+    partial_map: Arc<Mutex<HashMap<usize, String>>>,
+    progress_callback: Option<Arc<dyn Fn(TranslationProgress) + Send + Sync>>,
+    completed_batches: Arc<AtomicUsize>,
+    partial_snapshot_cache: Arc<Mutex<Vec<Option<Arc<TranslationSegmentOutput>>>>>,
+    batch_total: usize,
+}
+
+async fn translate_window_with_split(
+    call: &TranslateCall,
+    window: BatchWindow,
+    request_id: String,
+) -> Result<HashMap<usize, String>, String> {
+    match translate_window_once(call, &window, &request_id).await {
+        Ok(map) => return Ok(map),
+        Err(err) => {
+            let Some(chunk) = split_chunk_size(window.local_to_global.len()) else {
+                return Err(err);
+            };
+            log_translate_split(&call.context, &window, chunk, &err);
+            let mut combined = HashMap::new();
+            let mut queue: VecDeque<BatchWindow> = split_window(&window, chunk).into();
+            while let Some(part) = queue.pop_front() {
+                let part_id = next_llm_request_id();
+                match translate_window_once(call, &part, &part_id).await {
+                    Ok(map) => combined.extend(map),
+                    Err(part_err) => {
+                        let Some(next_chunk) = split_chunk_size(part.local_to_global.len()) else {
+                            return Err(part_err);
+                        };
+                        log_translate_split(&call.context, &part, next_chunk, &part_err);
+                        let splits = split_window(&part, next_chunk);
+                        for (index, split) in splits.into_iter().enumerate() {
+                            queue.insert(index, split);
+                        }
+                    }
+                }
+            }
+            Ok(combined)
+        }
+    }
+}
+
+async fn translate_window_once(
+    call: &TranslateCall,
+    window: &BatchWindow,
+    request_id: &str,
+) -> Result<HashMap<usize, String>, String> {
+    let current_text = window
+        .current_lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prompt = {
+        let guard = call
+            .known_translations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let memory = derive_name_memory(
+            call.segments.as_slice(),
+            &guard,
+            &current_text,
+            &window.source_lang,
+            &window.target_lang,
+        );
+        window.build_prompt(&guard, &memory.terms, &memory.examples)
+    };
+    let local_to_global = window.local_to_global.clone();
+    let local_ids = window.local_ids.clone();
+    let source_lang = window.source_lang.clone();
+    let target_lang = window.target_lang.clone();
+    // Only terms whose source actually appears in this window are enforced
+    // verbatim in the output; backfilled terms are context for the LLM and
+    // must not blanket-exempt lines from the source-script leak guard.
+    let enforced_targets: Vec<String> = matched_term_targets(&current_text, window.terms.as_ref());
+    let on_partial = make_stream_partial(call, local_to_global.clone());
+
+    let result = call
+        .llm_client
+        .call_json_validated_streaming(
+            &call.context,
+            request_id,
+            &prompt,
+            None,
+            on_partial,
+            |value| {
+                validate_batch_translation_response_with_context(
+                    value,
+                    &TranslationValidationContext {
+                        expected_ids: &local_ids,
+                        source_lang: &source_lang,
+                        target_lang: &target_lang,
+                        enforced_targets: &enforced_targets,
+                    },
+                )
+            },
+        )
+        .await
+        .map_err(|err| {
+            format!(
+                "step4 translate batch {} ({} lines) failed (llmId={}): {}",
+                window.batch_id + 1,
+                window.local_to_global.len(),
+                request_id,
+                err.message
+            )
+        })?;
+
+    let mut skipped = |id: usize| {
+        eprintln!(
+            "[warn] translate: model returned out-of-range id {id} (expected 1..={}); ignoring",
+            local_to_global.len()
+        );
+    };
+    let translated_map = merge_local_to_global(&local_to_global, result.value, &mut skipped);
+
+    if let Ok(mut known) = call.known_translations.lock() {
+        for (global_id, text) in &translated_map {
+            if !text.trim().is_empty() {
+                known.insert(*global_id, text.clone());
+            }
+        }
+    }
+    if let Ok(mut map) = call.partial_map.lock() {
+        for (global_id, text) in &translated_map {
+            map.insert(*global_id, text.clone());
+        }
+    }
+    if let Some(callback) = call.progress_callback.as_ref() {
+        let partial_outputs = rebuild_partial_outputs(
+            call.segments.as_slice(),
+            &call.partial_map,
+            &call.partial_snapshot_cache,
+        );
+        callback(TranslationProgress {
+            done: call.completed_batches.load(Ordering::Relaxed),
+            total: call.batch_total,
+            partial_outputs,
+        });
+    }
+    Ok(translated_map)
+}
+
+/// Map model-local ids (1-based, per currentLines) to global segment ids.
+/// Ids outside `1..=local_to_global.len()` — a model emitting `0`, or an id
+/// past the window — previously aliased the first/last line via saturating
+/// arithmetic; now they are reported through `skipped` and dropped.
+fn merge_local_to_global(
+    local_to_global: &[usize],
+    pairs: impl IntoIterator<Item = (usize, String)>,
+    skipped: &mut dyn FnMut(usize),
+) -> HashMap<usize, String> {
+    let mut out = HashMap::<usize, String>::new();
+    for (local_id, translated) in pairs {
+        let Some(idx) = local_id.checked_sub(1) else {
+            skipped(local_id);
+            continue;
+        };
+        let Some(global_id) = local_to_global.get(idx).copied() else {
+            skipped(local_id);
+            continue;
+        };
+        out.insert(global_id, translated);
+    }
+    out
+}
+
+fn make_stream_partial(
+    call: &TranslateCall,
+    local_to_global: Vec<usize>,
+) -> Arc<dyn Fn(String) + Send + Sync> {
+    let partial_map = call.partial_map.clone();
+    let progress_callback = call.progress_callback.clone();
+    let segments = call.segments.clone();
+    let completed_batches = call.completed_batches.clone();
+    let partial_snapshot_cache = call.partial_snapshot_cache.clone();
+    let batch_total = call.batch_total;
+    let throttle = Arc::new(Mutex::new(StreamThrottle::new()));
+    Arc::new(move |raw: String| {
+        let extracted = partial_parse::extract_partial_translations(&raw);
+        if extracted.is_empty() {
+            return;
+        }
+        let mut changed = false;
+        if let Ok(mut map) = partial_map.lock() {
+            for (local_id, text) in extracted {
+                if text.is_empty() {
+                    continue;
+                }
+                // Per-token-block callback: silently drop out-of-range ids
+                // (the next block re-sends the full line, so previews
+                // self-correct).
+                let Some(idx) = local_id.checked_sub(1) else {
+                    continue;
+                };
+                let Some(global_id) = local_to_global.get(idx).copied() else {
+                    continue;
+                };
+                let entry = map.entry(global_id).or_default();
+                if text.len() >= entry.len() || entry.is_empty() {
+                    if text != *entry {
+                        *entry = text;
+                        changed = true;
+                    }
+                }
+            }
+        } else {
+            return;
+        }
+        if !changed {
+            return;
+        }
+        let should_emit = match throttle.lock() {
+            Ok(mut t) => t.should_emit(raw.len()),
+            Err(_) => true,
+        };
+        if !should_emit {
+            return;
+        }
+        if let Some(callback) = progress_callback.as_ref() {
+            let partial_outputs =
+                rebuild_partial_outputs(&segments, &partial_map, &partial_snapshot_cache);
+            let done = completed_batches.load(Ordering::Relaxed);
+            callback(TranslationProgress {
+                done,
+                total: batch_total,
+                partial_outputs,
+            });
+        }
+    })
+}
+
+fn log_translate_split(
+    context: &LlmCallContext,
+    window: &BatchWindow,
+    chunk: usize,
+    reason: &str,
+) {
+    let n = window.local_to_global.len();
+    let parts = if chunk == 0 { 0 } else { (n + chunk - 1) / chunk };
+    let logger = match context.media_path.as_deref() {
+        Some(path) if !path.trim().is_empty() => {
+            TaskLogger::llm_with_media(context.task_id.clone(), path)
+        }
+        _ => TaskLogger::llm(context.task_id.clone()),
+    };
+    logger.event(
+        "translate.split",
+        Some(&json!({
+            "batchId": window.batch_id + 1,
+            "fromLines": n,
+            "chunk": chunk,
+            "parts": parts,
+            "reason": reason,
+        })),
+    );
 }
 
 struct StreamThrottle {

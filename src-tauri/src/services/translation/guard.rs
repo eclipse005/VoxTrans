@@ -1,131 +1,57 @@
-//! Post-parse guards on a translation batch. Same LLM call retries; no extra
-//! model. Language-agnostic: leak uses the source language's distinctive
-//! script, neighbor-copy uses marked tokens (numbers, Latin, kana, hangul).
+//! Post-parse guards on a translation batch. Language-agnostic: leak uses
+//! the source language's distinctive script.
 
-use std::collections::HashSet;
+use super::batches::normalize_for_match;
 
 pub(super) fn language_leak_ids(
     translations: &[(usize, &str)],
     source_lang: &str,
     target_lang: &str,
+    enforced_targets: &[String],
 ) -> Vec<usize> {
     let Some(leak) = leak_script(source_lang, target_lang) else {
         return Vec::new();
     };
     let target = target_script(target_lang);
+    // Normalize once and strip longest targets first: a shorter target that is
+    // a prefix of a longer one (「ラストコール」 vs 「ラストコールショータイム」)
+    // would otherwise consume the shared head and leave the tail counted as
+    // leakage.
+    let mut normalized_targets: Vec<String> = enforced_targets
+        .iter()
+        .map(|target| normalize_for_match(target))
+        .filter(|normalized| !normalized.is_empty())
+        .collect();
+    normalized_targets.sort_by_key(|target| std::cmp::Reverse(target.chars().count()));
     translations
         .iter()
-        .filter(|(_, text)| line_leaks_source_script(text, leak, target))
+        .filter(|(_, text)| {
+            let scrubbed = strip_enforced_targets(text, &normalized_targets);
+            line_leaks_source_script(&scrubbed, leak, target)
+        })
         .map(|(id, _)| *id)
         .collect()
 }
 
-pub(super) fn neighbor_copy_ids(
-    translations: &[(usize, &str)],
-    current_sources: &[String],
-    prev_sources: &[String],
-    next_sources: &[String],
-) -> Vec<usize> {
-    if current_sources.is_empty() {
-        return Vec::new();
-    }
-    let mut stolen = Vec::new();
-    for (id, text) in translations {
-        let idx = id.saturating_sub(1);
-        let Some(self_src) = current_sources.get(idx) else {
-            continue;
-        };
-        let neighbors = neighbor_sources(idx, current_sources, prev_sources, next_sources);
-        if copied_neighbor_tokens(text, self_src, &neighbors) {
-            stolen.push(*id);
-        }
-    }
-    stolen
-}
-
-fn neighbor_sources<'a>(
-    idx: usize,
-    current: &'a [String],
-    prev: &'a [String],
-    next: &'a [String],
-) -> Vec<&'a str> {
-    let mut out = Vec::new();
-    if idx > 0 {
-        if let Some(s) = current.get(idx - 1) {
-            out.push(s.as_str());
-        }
-    } else if let Some(s) = prev.last() {
-        out.push(s.as_str());
-    }
-    if let Some(s) = current.get(idx + 1) {
-        out.push(s.as_str());
-    } else if idx + 1 >= current.len() {
-        if let Some(s) = next.first() {
-            out.push(s.as_str());
-        }
+/// Enforced terminology targets are mandated verbatim in the output; any
+/// source-script characters they contain (e.g. a kana annotation inside a
+/// zh-CN target) are not translator leakage. Strip their occurrences before
+/// counting scripts, or a compliant translation gets rejected.
+///
+/// The strip happens entirely on a normalized copy (case/spacing/fullwidth
+/// folded), so a configured "Last Call (ラストコール)" also covers the
+/// model's "LastCall（ラストコール）". The raw translation is never modified;
+/// script counting is unaffected by the folding.
+fn strip_enforced_targets(text: &str, normalized_targets: &[String]) -> String {
+    let mut out = normalize_for_match(text);
+    for target in normalized_targets {
+        out = out.replace(target.as_str(), "");
     }
     out
-}
-
-fn copied_neighbor_tokens(translation: &str, self_src: &str, neighbors: &[&str]) -> bool {
-    let trans_toks = distinctive_tokens(translation);
-    if trans_toks.is_empty() {
-        return false;
-    }
-    let self_toks = distinctive_tokens(self_src);
-    let self_hits = trans_toks.intersection(&self_toks).count();
-    let mut stolen: HashSet<String> = HashSet::new();
-    for neighbor in neighbors {
-        let n_toks = distinctive_tokens(neighbor);
-        for tok in trans_toks.intersection(&n_toks) {
-            if !self_toks.contains(tok) {
-                stolen.insert(tok.clone());
-            }
-        }
-    }
-    if stolen.is_empty() {
-        return false;
-    }
-    let strong = stolen.iter().any(|t| {
-        t.chars().count() >= 3 || (t.chars().all(|c| c.is_ascii_digit()) && t.len() >= 2)
-    });
-    (stolen.len() > self_hits && strong) || stolen.len() >= 2
-}
-
-pub(super) fn distinctive_tokens(text: &str) -> HashSet<String> {
-    let mut out = HashSet::new();
-    collect_script_runs(text, is_ascii_digit_or_fw, 2, &mut out);
-    collect_script_runs(text, is_latin, 2, &mut out);
-    collect_script_runs(text, is_katakana, 2, &mut out);
-    collect_script_runs(text, is_hangul, 2, &mut out);
-    out
-}
-
-fn collect_script_runs(
-    text: &str,
-    pred: fn(char) -> bool,
-    min: usize,
-    out: &mut HashSet<String>,
-) {
-    let mut current = String::new();
-    for ch in text.chars() {
-        if pred(ch) {
-            current.push(normalize_fw_digit(ch));
-            continue;
-        }
-        if current.chars().count() >= min {
-            out.insert(std::mem::take(&mut current));
-        } else {
-            current.clear();
-        }
-    }
-    if current.chars().count() >= min {
-        out.insert(current);
-    }
 }
 
 #[derive(Clone, Copy)]
-enum Script {
+pub(super) enum Script {
     Kana,
     Hangul,
     Han,
@@ -141,7 +67,7 @@ fn lang_key(lang: &str) -> String {
     trimmed[..end].to_ascii_lowercase()
 }
 
-fn leak_script(source_lang: &str, target_lang: &str) -> Option<Script> {
+pub(super) fn leak_script(source_lang: &str, target_lang: &str) -> Option<Script> {
     let s = lang_key(source_lang);
     let t = lang_key(target_lang);
     if s.is_empty() || t.is_empty() || s == t {
@@ -181,6 +107,13 @@ fn line_leaks_source_script(text: &str, leak: Script, target: Script) -> bool {
     leak_n >= 8 && leak_n > target_n
 }
 
+/// Does `text` contain any character of `script`? Shared with name memory:
+/// a "rendering" that stays in the source's distinctive script is not a
+/// translation and must not be propagated.
+pub(super) fn contains_script(text: &str, script: Script) -> bool {
+    count_script(text, script) > 0
+}
+
 fn count_script(text: &str, script: Script) -> usize {
     text.chars()
         .filter(|ch| match script {
@@ -199,32 +132,12 @@ fn is_kana(ch: char) -> bool {
     matches!(ch as u32, 0x3040..=0x30FF | 0xFF66..=0xFF9D)
 }
 
-fn is_katakana(ch: char) -> bool {
-    matches!(ch as u32, 0x30A0..=0x30FF | 0xFF66..=0xFF9D) && ch != '・'
-}
-
 fn is_hangul(ch: char) -> bool {
     matches!(ch as u32, 0x1100..=0x11FF | 0x3130..=0x318F | 0xAC00..=0xD7AF)
 }
 
 fn is_han(ch: char) -> bool {
     matches!(ch as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF)
-}
-
-fn is_latin(ch: char) -> bool {
-    ch.is_ascii_alphabetic()
-}
-
-fn is_ascii_digit_or_fw(ch: char) -> bool {
-    ch.is_ascii_digit() || ('０'..='９').contains(&ch)
-}
-
-fn normalize_fw_digit(ch: char) -> char {
-    if ('０'..='９').contains(&ch) {
-        char::from(b'0' + (ch as u32 - '０' as u32) as u8)
-    } else {
-        ch.to_ascii_lowercase()
-    }
 }
 
 #[cfg(test)]
@@ -237,6 +150,7 @@ mod tests {
             &[(1, "過去にはいろいろな悩みを抱えてきました")],
             "ja",
             "zh-CN",
+            &[],
         );
         assert_eq!(ids, vec![1]);
     }
@@ -247,49 +161,102 @@ mod tests {
             &[(1, "我也绝对不会坐那种看起来像ホスト的人的位置")],
             "ja",
             "zh-CN",
+            &[],
         );
         assert!(ids.is_empty(), "{ids:?}");
     }
 
     #[test]
-    fn skips_language_check_without_langs() {
-        let ids = language_leak_ids(&[(1, "過去にはいろいろな悩みを抱えてきました")], "", "");
-        assert!(ids.is_empty());
-    }
-
-    #[test]
-    fn detects_neighbor_name_copied_into_wrong_line() {
-        let current = vec![
-            "100戦連馬のMCも手に".to_string(),
-            "あるんだけどバロンっていう".to_string(),
-        ];
-        let ids = neighbor_copy_ids(
-            &[(1, "也有呢叫做バロン")],
-            &current,
-            &[],
+    fn exempts_enforced_target_with_source_script() {
+        // The term target is mandated verbatim; its kana is not leakage even
+        // when the line repeats the term and kana would otherwise dominate.
+        let ids = language_leak_ids(
+            &[(1, "只能去Last Call（ラストコール）了啊，去Last Call（ラストコール）吧")],
+            "ja",
+            "zh-CN",
+            &["Last Call（ラストコール）".to_string()],
+        );
+        assert!(ids.is_empty(), "{ids:?}");
+        // Same line WITHOUT the exemption is still caught.
+        let ids = language_leak_ids(
+            &[(1, "只能去Last Call（ラストコール）了啊，去Last Call（ラストコール）吧")],
+            "ja",
+            "zh-CN",
             &[],
         );
         assert_eq!(ids, vec![1]);
     }
 
     #[test]
-    fn allows_own_name_in_translation() {
-        let current = vec!["バロンという人が六本木に".to_string()];
-        let ids = neighbor_copy_ids(&[(1, "有个叫バロン的人在六本木")], &current, &[], &[]);
-        assert!(ids.is_empty(), "{ids:?}");
+    fn exemption_does_not_hide_real_leakage() {
+        // Stripping the enforced target must not launder an actual untranslated
+        // sentence that merely quotes the term once.
+        let ids = language_leak_ids(
+            &[(
+                1,
+                "Last Call（ラストコール）そして彼女は黙って立ち去ったのだった",
+            )],
+            "ja",
+            "zh-CN",
+            &["Last Call（ラストコール）".to_string()],
+        );
+        assert_eq!(ids, vec![1]);
     }
 
     #[test]
-    fn detects_copy_from_next_batch_context() {
-        let current = vec!["見た方がわかりやすいと思うんですけれどもあ、".to_string()];
-        let next = vec!["こんな感じだったんだそうなんです。へー。".to_string()];
-        // Distinctive overlap is weak here (no marked tokens) — should not false-positive.
-        let ids = neighbor_copy_ids(
-            &[(1, "原来是这种感觉啊")],
-            &current,
-            &[],
-            &next,
+    fn skips_language_check_without_langs() {
+        let ids =
+            language_leak_ids(&[(1, "過去にはいろいろな悩みを抱えてきました")], "", "", &[]);
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn exempts_enforced_target_fullwidth_and_spacing_variants() {
+        // The configured term uses halfwidth ASCII with a space while the
+        // model rendered it fullwidth without a space. The exemption must
+        // still apply — folding is part of the strip, not a literal match.
+        let ids = language_leak_ids(
+            &[(1, "只能去LastCall（ラストコール）了啊，去LastCall（ラストコール）吧")],
+            "ja",
+            "zh-CN",
+            &["Last Call (ラストコール)".to_string()],
         );
         assert!(ids.is_empty(), "{ids:?}");
+        // One extra kana line not covered by the term is still caught.
+        let ids = language_leak_ids(
+            &[
+                (1, "只能去LastCall（ラストコール）了啊"),
+                (2, "ラストコールショータイムが始まるよ"),
+            ],
+            "ja",
+            "zh-CN",
+            &["Last Call (ラストコール)".to_string()],
+        );
+        assert_eq!(ids, vec![2]);
+    }
+
+    #[test]
+    fn overlapping_targets_strip_longest_first() {
+        // 「ラストコールショータイム」 contains the shorter 「ラストコール」 as a
+        // prefix. Stripping the short one first would leave ショータイム×2
+        // counted as leakage; longest-first removes both terms entirely.
+        let ids = language_leak_ids(
+            &[(1, "ラストコールショータイムだよ、ラストコールショータイムだ")],
+            "ja",
+            "zh-CN",
+            &[
+                "ラストコール".to_string(),
+                "ラストコールショータイム".to_string(),
+            ],
+        );
+        assert!(ids.is_empty(), "{ids:?}");
+        // Without the longer term, the remaining ショータイム runs leak.
+        let ids = language_leak_ids(
+            &[(1, "ラストコールショータイムだよ、ラストコールショータイムだ")],
+            "ja",
+            "zh-CN",
+            &["ラストコール".to_string()],
+        );
+        assert_eq!(ids, vec![1]);
     }
 }

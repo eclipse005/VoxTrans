@@ -45,7 +45,11 @@
     "fetchModels": "Fetch models",
     "fetchingModels": "Fetching…",
     "test": "Test",
-    "concurrency": "Concurrency"
+    "concurrency": "Concurrency",
+    "terminologyAgent": "Terminology agent",
+    "terminologyAgentDesc": "Auto-extract this video's glossary before translation for consistent terms",
+    "anysearchApiKey": "Web Search",
+    "anysearchApiKeyPlaceholder": "as_sk-... · optional, empty = free endpoint"
   },
   "subtitle": {
     "length": "Subtitle length",

@@ -57,7 +57,7 @@ pub async fn build_translation_layer_with_progress_and_unit_store(
     request.llm_concurrency = request.llm_concurrency.max(1);
 
     let terminology_entries = normalize_command_terminology_entries(request.terminology_entries);
-    let theme_summary = request.theme_summary.trim().to_string();
+    let style_guide = request.style_guide.trim().to_string();
     let service_request = crate::services::translation::BuildTranslationLayerRequest {
         task_id: request.task_id.clone(),
         media_path: request.media_path.clone(),
@@ -83,7 +83,7 @@ pub async fn build_translation_layer_with_progress_and_unit_store(
                 },
             )
             .collect(),
-        theme_summary: theme_summary.clone(),
+        style_guide: style_guide.clone(),
         terminology_entries: terminology_entries
             .iter()
             .map(
@@ -116,7 +116,7 @@ pub async fn build_translation_layer_with_progress_and_unit_store(
         batch_size: service_response.batch_size,
         batch_total: service_response.batch_total,
         segment_total: service_response.segment_total,
-        theme_summary,
+        style_guide,
         terminology_entries,
         segments: service_response
             .segments

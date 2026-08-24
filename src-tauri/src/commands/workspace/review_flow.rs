@@ -4,6 +4,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
+use crate::services::terminology_agent::TERMINOLOGY_ARTIFACT_PREFIX;
 use crate::domain::task::adapters::{
     step2_segments_to_srt, workspace_subtitle_segments_from_step2_segments,
     workspace_subtitle_segments_from_translation_segments,
@@ -279,7 +280,7 @@ async fn continue_translation_from_source_review(
         ));
     }
 
-    invalidate_translation_caches(app, task_id).await?;
+    invalidate_source_derived_caches(app, task_id).await?;
 
     for seg in &mut workspace_segments {
         seg.translated_text.clear();
@@ -342,7 +343,9 @@ pub(super) async fn execute_resume_translate_from_sot(
     }
 }
 
-async fn invalidate_translation_caches(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
+/// Source SoT changed: drop every pipeline product derived from those cues
+/// (terminology briefing + windows, translation batches + step4).
+async fn invalidate_source_derived_caches(app: &AppHandle, task_id: &str) -> WorkspaceResult<()> {
     let store = app.state::<TaskStore>().inner();
     store
         .delete_translation_batches(task_id)
@@ -352,6 +355,10 @@ async fn invalidate_translation_caches(app: &AppHandle, task_id: &str) -> Worksp
         .delete_artifact(task_id, "step_04_translation")
         .await
         .map_err(|e| WorkspaceError::TaskFailed(format!("invalidate step4 artifact: {e}")))?;
+    store
+        .delete_artifacts_with_prefix(task_id, TERMINOLOGY_ARTIFACT_PREFIX)
+        .await
+        .map_err(|e| WorkspaceError::TaskFailed(format!("invalidate terminology artifacts: {e}")))?;
     Ok(())
 }
 

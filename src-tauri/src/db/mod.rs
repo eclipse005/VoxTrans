@@ -150,6 +150,21 @@ const MIGRATION_ALTERS: &[MigrationAlter] = &[
         column: "resume_from",
         sql: "ALTER TABLE tasks ADD COLUMN resume_from TEXT NOT NULL DEFAULT ''",
     },
+    MigrationAlter {
+        table: "settings",
+        column: "enable_terminology_agent",
+        sql: "ALTER TABLE settings ADD COLUMN enable_terminology_agent INTEGER NOT NULL DEFAULT 0",
+    },
+    MigrationAlter {
+        table: "tasks",
+        column: "enable_terminology_agent",
+        sql: "ALTER TABLE tasks ADD COLUMN enable_terminology_agent INTEGER NOT NULL DEFAULT 0",
+    },
+    MigrationAlter {
+        table: "settings",
+        column: "anysearch_api_key",
+        sql: "ALTER TABLE settings ADD COLUMN anysearch_api_key TEXT NOT NULL DEFAULT ''",
+    },
 ];
 
 /// Check whether `table` already has a column named `column_name`.

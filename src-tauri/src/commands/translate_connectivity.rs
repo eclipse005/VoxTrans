@@ -25,11 +25,16 @@ pub async fn test_translate_llm(
 
     cleanup_connectivity_test_artifacts();
 
-    let client = OpenAiCompatLlmClient::new(LlmConfig::new(
-        request.base_url.trim().to_string(),
-        request.api_key.trim().to_string(),
-        request.model.trim().to_string(),
-    ))?;
+    let client = OpenAiCompatLlmClient::new(
+        LlmConfig::new(
+            request.base_url.trim().to_string(),
+            request.api_key.trim().to_string(),
+            request.model.trim().to_string(),
+        )
+        // A connectivity probe must report failure immediately, not after
+        // up to 8s of retry backoff.
+        .with_max_retries(0),
+    )?;
 
     let validator = JsonResponseValidator::with_required_keys(&["ok", "message"]);
     let context = LlmCallContext {
