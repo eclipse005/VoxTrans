@@ -2,7 +2,6 @@
   "card": {
     "ready": "Ready",
     "notReady": "Not ready",
-    "versionLabel": "version",
     "openDir": "Open folder",
     "openDirAria": "Open {{target}} model folder",
     "cancelDownload": "Cancel download",
@@ -20,7 +19,6 @@
     "align": "Timeline alignment",
     "currentAlign": "Selected",
     "support": "Supporting models",
-    "alignRole": "Required · timestamps",
     "demucsRole": "Optional · vocals"
   },
   "names": {

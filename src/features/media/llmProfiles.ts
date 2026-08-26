@@ -18,6 +18,12 @@ import {
   type LlmProviderPreset,
 } from "./llmProviders";
 
+/**
+ * Non-empty stand-in stored for keyless slots (`requiresKey: false`); the
+ * transport ignores it. Mirrors the backend `KEYLESS_API_KEY_PLACEHOLDER`.
+ */
+export const KEYLESS_API_KEY_PLACEHOLDER = "keyless";
+
 export function createProfileFromPreset(preset: LlmProviderPreset, apiKey = ""): LlmProfile {
   return {
     id: preset.id,
@@ -46,7 +52,7 @@ export function getActiveProfile(
 
 export function effectiveApiKey(profile: LlmProfile): string {
   const key = profile.apiKey?.trim() ?? "";
-  if (!key && profile.requiresKey === false) return "ollama";
+  if (!key && profile.requiresKey === false) return KEYLESS_API_KEY_PLACEHOLDER;
   return key;
 }
 
@@ -117,7 +123,7 @@ export function ensureProfiles(
   legacy?: { apiKey?: string; baseUrl?: string; model?: string },
 ): { profiles: LlmProfile[]; activeLlmProfileId: string } {
   const wasEmpty = !profiles?.length;
-  let next = wasEmpty ? createDefaultProfiles() : profiles.map((p) => ({ ...p }));
+  const next = wasEmpty ? createDefaultProfiles() : profiles.map((p) => ({ ...p }));
   let seededActiveId: string | null = null;
 
   if (wasEmpty && legacy) {
@@ -155,20 +161,27 @@ export function ensureProfiles(
     }
   }
 
+  // Prune vendor slots removed from the preset catalog (legacy ghosts with
+  // no preset card). Free-form config lives on `custom` and always survives.
+  // The backend prunes at the persistence boundary too.
+  const kept = next.filter(
+    (p) => p.id === "custom" || LLM_PROVIDER_PRESETS.some((preset) => preset.id === p.id),
+  );
+
   const active = (activeId ?? "").trim();
   let activeLlmProfileId: string;
-  if (seededActiveId && next.some((p) => p.id === seededActiveId)) {
+  if (seededActiveId && kept.some((p) => p.id === seededActiveId)) {
     // Legacy migration: land on the slot that received the old key/url.
     activeLlmProfileId = seededActiveId;
-  } else if (active && next.some((p) => p.id === active)) {
+  } else if (active && kept.some((p) => p.id === active)) {
     activeLlmProfileId = active;
-  } else if (next.some((p) => p.id === DEFAULT_LLM_PROVIDER_ID)) {
+  } else if (kept.some((p) => p.id === DEFAULT_LLM_PROVIDER_ID)) {
     activeLlmProfileId = DEFAULT_LLM_PROVIDER_ID;
   } else {
-    activeLlmProfileId = next[0]?.id ?? DEFAULT_LLM_PROVIDER_ID;
+    activeLlmProfileId = kept[0]?.id ?? DEFAULT_LLM_PROVIDER_ID;
   }
 
-  return { profiles: next, activeLlmProfileId };
+  return { profiles: kept, activeLlmProfileId };
 }
 
 /** Models we briefly shipped as catalog defaults before aligning with Egg. */
@@ -240,20 +253,5 @@ export function flattenActiveToTranslateFields(
     translateApiKey: effectiveApiKey(active),
     translateBaseUrl: active.baseUrl.trim(),
     translateModel: active.model.trim(),
-  };
-}
-
-export function applyProfilesToSettings(
-  settings: SavedSettings,
-  profiles: LlmProfile[],
-  activeLlmProfileId: string,
-): SavedSettings {
-  const ensured = ensureProfiles(profiles, activeLlmProfileId);
-  const flat = flattenActiveToTranslateFields(ensured.profiles, ensured.activeLlmProfileId);
-  return {
-    ...settings,
-    llmProfiles: ensured.profiles,
-    activeLlmProfileId: ensured.activeLlmProfileId,
-    ...flat,
   };
 }

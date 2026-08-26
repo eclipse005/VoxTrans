@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Dispatch } from "react";
 import { useTranslation } from "react-i18next";
 import type { ExportSrtItem } from "./api/transcribe";
@@ -170,7 +170,11 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
   });
 
   // Advance-from-review: durability barrier + JSON from the live editor ref.
-  reviewFlushRef.current = (taskId: string) => prepareReviewFlushJson(taskId);
+  // Updated after commit (not during render) so the scheduler always reads
+  // the latest prepareReviewFlushJson when the user advances a review task.
+  useEffect(() => {
+    reviewFlushRef.current = (taskId: string) => prepareReviewFlushJson(taskId);
+  });
 
   const activeQueueItem = useMemo(
     () => queue.find((item) => item.id === activeId) ?? null,

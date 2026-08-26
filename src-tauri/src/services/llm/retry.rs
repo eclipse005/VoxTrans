@@ -3,6 +3,12 @@ use super::error::{LlmError, LlmErrorKind};
 const RETRY_HINT_MAX_CHARS: usize = 320;
 const SEMANTIC_RETRY_HINT_MAX_CHARS: usize = 900;
 
+/// HTTP statuses worth retrying with backoff. Client errors outside this set
+/// (400 bad request, 401/403 auth, 404 model) cannot succeed on retry, so
+/// they fail fast instead of burning the backoff budget (previously every
+/// Http error was retried).
+const RETRYABLE_HTTP_STATUSES: [u16; 8] = [408, 409, 429, 500, 502, 503, 504, 529];
+
 /// Base delay (ms) for exponential backoff between retry attempts.
 /// Actual delay = `BASE * 2^exp`, where exp is capped at 2, so the
 /// sequence is 2s, 4s, 8s, 8s, 8s, ... The client applies it to every
@@ -26,12 +32,34 @@ pub(super) fn retry_backoff_ms(attempt: u32, max_attempts: u32) -> Option<u64> {
     Some(RETRY_BACKOFF_BASE_MS.saturating_mul(1u64 << exp))
 }
 
+/// The plateau of the default sequence (`BASE * 2^MAX_EXP`, i.e. 8s).
+pub(super) const RETRY_BACKOFF_PLATEAU_MS: u64 =
+    RETRY_BACKOFF_BASE_MS * (1u64 << RETRY_BACKOFF_MAX_EXP);
+
+/// Effective wait between retry attempts. A server-advised `Retry-After`
+/// wins over the default step but is capped at the sequence's plateau, so a
+/// misbehaving gateway cannot stall a task past the normal backoff budget.
+pub(super) fn effective_backoff_ms(default_ms: u64, retry_after_ms: Option<u64>) -> u64 {
+    match retry_after_ms {
+        None => default_ms,
+        Some(server_ms) => server_ms.min(RETRY_BACKOFF_PLATEAU_MS),
+    }
+}
+
 pub(super) fn feedback_from_llm_error(err: &LlmError) -> RetryFeedback {
     // JSON/schema/semantic failures are retried in the client with the
     // failure hint appended to the prompt; config failures can never
     // succeed on retry. Every retryable failure shares the same
     // exponential-backoff sequence between attempts.
-    let retryable = !matches!(err.kind, LlmErrorKind::Config);
+    let retryable = match err.kind {
+        LlmErrorKind::Config => false,
+        LlmErrorKind::Http => match err.status {
+            // Transport-level failures without a response keep retrying.
+            None => true,
+            Some(status) => RETRYABLE_HTTP_STATUSES.contains(&status),
+        },
+        _ => true,
+    };
     let retry_hint = retry_hint_from_error(err.kind, &err.message);
     let detail = retry_hint
         .clone()
@@ -188,13 +216,15 @@ fn strip_prefix_case_insensitive<'a>(input: &'a str, prefix: &str) -> Option<&'a
 #[cfg(test)]
 mod tests {
     use super::{
-        RetryFeedback, SEMANTIC_RETRY_HINT_MAX_CHARS,
-        augment_user_prompt_with_retry_feedback, feedback_from_llm_error, retry_backoff_ms,
+        RETRY_BACKOFF_PLATEAU_MS, RetryFeedback, SEMANTIC_RETRY_HINT_MAX_CHARS,
+        augment_user_prompt_with_retry_feedback, effective_backoff_ms, feedback_from_llm_error,
+        retry_backoff_ms,
     };
     use crate::services::llm::error::{LlmError, LlmErrorKind};
 
     #[test]
     fn feedback_marks_all_but_config_failures_retryable() {
+        // Transport-level failure without a status stays retryable.
         let http = feedback_from_llm_error(&LlmError::new(LlmErrorKind::Http, "timeout"));
         assert!(http.retryable);
 
@@ -220,6 +250,27 @@ mod tests {
 
         let config = feedback_from_llm_error(&LlmError::new(LlmErrorKind::Config, "bad url"));
         assert!(!config.retryable);
+    }
+
+    #[test]
+    fn http_status_classification() {
+        let with_status = |status: u16| {
+            let mut err = LlmError::new(LlmErrorKind::Http, format!("http status {status}"));
+            err.status = Some(status);
+            err
+        };
+        for status in [408, 409, 429, 500, 502, 503, 504, 529] {
+            assert!(
+                feedback_from_llm_error(&with_status(status)).retryable,
+                "{status} should be retryable"
+            );
+        }
+        for status in [400, 401, 403, 404] {
+            assert!(
+                !feedback_from_llm_error(&with_status(status)).retryable,
+                "{status} should fail fast"
+            );
+        }
     }
 
     #[test]
@@ -298,5 +349,14 @@ mod tests {
     fn backoff_stops_on_last_attempt() {
         assert_eq!(retry_backoff_ms(1, 4), Some(2_000));
         assert_eq!(retry_backoff_ms(4, 4), None);
+    }
+
+    #[test]
+    fn effective_backoff_honors_retry_after_up_to_plateau() {
+        assert_eq!(effective_backoff_ms(2_000, None), 2_000);
+        // Server-advised wait below the plateau wins.
+        assert_eq!(effective_backoff_ms(8_000, Some(50)), 50);
+        // A bogus huge Retry-After cannot stall the task past the plateau.
+        assert_eq!(effective_backoff_ms(8_000, Some(86_400_000)), RETRY_BACKOFF_PLATEAU_MS);
     }
 }

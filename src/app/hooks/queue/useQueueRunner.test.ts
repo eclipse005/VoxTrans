@@ -1,45 +1,84 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { act, renderHook } from "@testing-library/react";
 
-import {
-  applyQueueFailures,
-  formatQueueFailureMessage,
-} from "./useQueueRunner";
+import { useQueueRunner } from "./useQueueRunner";
 import type { AppAction } from "../../state/appReducer";
 import type { QueueItem } from "../../../features/media/types";
 
-describe("formatQueueFailureMessage", () => {
-  it("normalizes structured backend errors in single task failure messages", () => {
-    const message = formatQueueFailureMessage(
-      "示例.mp4",
-      JSON.stringify({
-        code: "TASK_NOT_FOUND",
-        message: "task not found: task-1",
-      }),
-    );
+// The hook's only async entry point is runQueuedByTaskIds, which calls the
+// backend through executeTaskBatch (invoke) and subscribes to Tauri events.
+// Both are mocked here; these tests exercise the production path end-to-end
+// instead of importing the internal helpers directly.
+const mockInvoke = vi.hoisted(() => vi.fn());
+const mockListen = vi.hoisted(() => vi.fn());
 
-    expect(message).toBe("失败：示例.mp4，任务不存在，请刷新任务列表");
-  });
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: mockInvoke,
+}));
 
-  it("normalizes structured backend errors in batch failure messages", () => {
-    const message = formatQueueFailureMessage(
-      "task-1",
-      {
-        code: "TASK_BUSY",
-        message: "task is processing or queued",
-      },
-      "部分任务失败",
-    );
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: mockListen,
+}));
 
-    expect(message).toBe("部分任务失败：task-1，任务正在处理中，请稍后再试");
-  });
+beforeEach(() => {
+  mockInvoke.mockReset();
+  mockListen.mockReset().mockResolvedValue(() => {});
+});
 
-  it("marks failed queued tasks as error to stop scheduler retries", () => {
-    const actions: AppAction[] = [];
-    const dispatch = (action: AppAction) => actions.push(action);
+function renderRunner(overrides?: {
+  isTaskPresent?: (taskId: string) => boolean;
+}) {
+  const actions: AppAction[] = [];
+  const toasts: Array<{ message: string; tone?: "info" | "success" | "error" }> = [];
+  const dispatch = (action: AppAction) => actions.push(action);
+  const pushToast = (message: string, tone?: "info" | "success" | "error") => {
+    toasts.push({ message, tone });
+  };
 
-    applyQueueFailures(
+  const utils = renderHook(() =>
+    useQueueRunner({
       dispatch,
-      [
+      pushToast,
+      isTaskPresent: overrides?.isTaskPresent ?? (() => true),
+    }),
+  );
+
+  return { ...utils, actions, toasts };
+}
+
+describe("useQueueRunner", () => {
+  it("shows a normalized error toast when a batch task fails", async () => {
+    mockInvoke.mockResolvedValueOnce({
+      succeededTaskIds: [],
+      failed: [
+        {
+          taskId: "示例.mp4",
+          error: JSON.stringify({
+            code: "TASK_BUSY",
+            message: "task is processing or queued",
+          }),
+        },
+      ],
+    });
+
+    const { result, toasts } = renderRunner();
+
+    await act(async () => {
+      await result.current.runQueuedByTaskIds(["示例.mp4"]);
+    });
+
+    expect(toasts).toEqual([
+      {
+        message: "部分任务失败：示例.mp4，任务正在处理中，请稍后再试",
+        tone: "error",
+      },
+    ]);
+  });
+
+  it("marks failed queued tasks as error to stop scheduler retries", async () => {
+    mockInvoke.mockResolvedValueOnce({
+      succeededTaskIds: [],
+      failed: [
         {
           taskId: "task-1",
           error: JSON.stringify({
@@ -48,8 +87,15 @@ describe("formatQueueFailureMessage", () => {
           }),
         },
       ],
-      (taskId) => taskId === "task-1",
-    );
+    });
+
+    const { result, actions } = renderRunner({
+      isTaskPresent: (taskId) => taskId === "task-1",
+    });
+
+    await act(async () => {
+      await result.current.runQueuedByTaskIds(["task-1"]);
+    });
 
     expect(actions).toHaveLength(1);
     expect(actions[0]).toMatchObject({
@@ -66,6 +112,16 @@ describe("formatQueueFailureMessage", () => {
     expect(updated.transcribeStatus).toBe("error");
     expect(updated.transcribeError).toBe("文件读写失败，请检查磁盘空间");
     expect(updated.taskProgress.stage.code).toBe("");
+  });
+
+  it("skips blank and absent task ids without calling the backend", async () => {
+    const { result } = renderRunner({ isTaskPresent: () => false });
+
+    await act(async () => {
+      await result.current.runQueuedByTaskIds(["", "  ", "missing"]);
+    });
+
+    expect(mockInvoke).not.toHaveBeenCalled();
   });
 });
 

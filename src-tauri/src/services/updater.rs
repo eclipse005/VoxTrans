@@ -49,21 +49,14 @@ pub struct UpdateInfo {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateDownloadProgress {
+struct UpdateDownloadProgress {
     pub downloaded: u64,
     pub total: u64,
     pub percent: f64,
     pub speed: f64,
 }
 
-static UPDATE_PROGRESS_SNAPSHOTS: OnceLock<DashMap<String, UpdateDownloadProgress>> =
-    OnceLock::new();
-
 static UPDATE_CANCEL_FLAGS: OnceLock<DashMap<String, Arc<AtomicBool>>> = OnceLock::new();
-
-fn progress_snapshots() -> &'static DashMap<String, UpdateDownloadProgress> {
-    UPDATE_PROGRESS_SNAPSHOTS.get_or_init(DashMap::new)
-}
 
 fn cancel_flags() -> &'static DashMap<String, Arc<AtomicBool>> {
     UPDATE_CANCEL_FLAGS.get_or_init(DashMap::new)
@@ -194,7 +187,6 @@ pub fn download_and_install(
                 percent: pct,
                 speed: p.speed_bytes_per_sec as f64,
             };
-            progress_snapshots().insert(self.task_id.clone(), prog.clone());
             let _ = self
                 .app
                 .emit("update-download-progress", &(self.task_id.clone(), prog));

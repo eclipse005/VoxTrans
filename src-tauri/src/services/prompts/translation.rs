@@ -31,7 +31,7 @@ pub fn build_batch_translate_prompt(
     established_names: &[TranslationNameExample],
 ) -> String {
     let mut instruction = String::from(
-        "Translate currentLines into targetLanguage. previousLines may be \"source → translation\" pairs and nextLines are upcoming source; both are context only. Return JSON only as {\"translations\":[{\"id\":1,\"text\":\"...\"}]} with every currentLines id in order.",
+        "Translate currentLines into targetLanguage. previousLines may be \"source → translation\" pairs and nextLines are upcoming source; both are context only. Return JSON only as {\"translations\":[{\"id\":1,\"text\":\"...\"}]} with every currentLines id in order. Each currentLines id maps to exactly one translation: never merge, split, or drop lines — a sentence fragment stays a fragment.",
     );
     if !terms.is_empty() {
         instruction.push_str(

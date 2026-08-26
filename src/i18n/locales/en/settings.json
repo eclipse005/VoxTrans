@@ -114,13 +114,10 @@
     "alignmentRight": "Bottom right"
   },
   "models": {
-    "asrTitle": "ASR model",
     "asr06bDesc": "Default: good enough accuracy, multilingual, balanced speed, smaller download.",
     "asr17bDesc": "Pick for higher accuracy; language coverage similar to 0.6B, larger download.",
     "asrCohereDesc": "Strong accuracy and faster recognition; fixed 14 languages — good for EU / mixed speech.",
     "asrMossDesc": "Meetings / multi-speaker. Slower end-to-end; this app always uses ~180s chunks.",
-    "alignTitle": "Timeline alignment model",
-    "alignDesc": "Aligns recognized text to the audio timeline for subtitles (shared by all speech models).",
     "alignQwenDesc": "Optional. Source-language list becomes shorter (intersection with ASR, roughly a dozen).",
     "alignCtcDesc": "Default — smaller download; fine for typical subtitle timing. Keep this if unsure.",
     "demucsTitle": "Vocal separation model",

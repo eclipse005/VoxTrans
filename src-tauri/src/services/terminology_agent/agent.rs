@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::services::llm::client::OpenAiCompatLlmClient;
+use crate::services::llm::client::AnthropicLlmClient;
 use crate::services::llm::{ChatMessage, ToolCall};
 use crate::services::task_log::{event, TaskLogger};
 use crate::services::task_usage::{record_llm_usage_best_effort, LlmTokenUsage as TaskUsage};
@@ -97,6 +97,7 @@ Style guide rules:\n\
 - ONE plain string, 2–4 sentences, written to guide a {target_lang} translator.\n\
 - Cover tone/register, how to treat names/abbreviations, and any consistency traps for THIS video.\n\
 - Do not ask translators to keep source-script text inline in the output (e.g. 'keep the original in parentheses') — the translation must read as clean {target_lang}.\n\
+- Do not embed term mappings (\"X译为Y\") in style_guide: every term rendering belongs in a glossary row — the structured channel translators are instructed to apply verbatim. style_guide carries tone/register/treatment guidance only.\n\
 - State only what the transcript shows: never complete a partial fact from imagination (turning a surname into a full name) or assert affiliations/backstory that do not appear.\n\
 - No bullet keys, no domain templates.\n\n\
 Workflow (probe budget: {probe_budget} calls across {tools}; flag_pair and submit_result are free):\n\
@@ -170,7 +171,7 @@ pub struct WindowRun {
 }
 
 pub struct AgentRunConfig<'a> {
-    pub client: &'a OpenAiCompatLlmClient,
+    pub client: &'a AnthropicLlmClient,
     pub title: &'a str,
     pub source_lang: &'a str,
     pub target_lang: &'a str,

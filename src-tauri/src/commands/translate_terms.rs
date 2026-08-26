@@ -26,24 +26,6 @@ pub fn normalize_command_terminology_entries(
     out
 }
 
-pub fn load_terminology_entries_from_saved_settings(
-    store: &crate::db::store::TaskStore,
-) -> Result<Vec<TranslateTerminologyEntryCommand>, String> {
-    let settings = crate::services::preferences::load_saved_settings_from_default_path(store)?;
-
-    let terms = settings
-        .terminology_groups
-        .into_iter()
-        .flat_map(|group| group.terms.into_iter())
-        .map(|term| TranslateTerminologyEntryCommand {
-            source: term.origin,
-            target: term.target,
-            note: term.note,
-        })
-        .collect::<Vec<_>>();
-    Ok(normalize_command_terminology_entries(terms))
-}
-
 pub fn count_source_tokens(segments: &[SourceSegmentForTerminologyCommand]) -> usize {
     let mut total = 0usize;
     for segment in segments {

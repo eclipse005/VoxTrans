@@ -77,17 +77,6 @@ pub fn workspace_subtitle_segments_from_translation_outputs(
         .collect()
 }
 
-pub fn source_text_from_step2_segments(
-    segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
-) -> String {
-    segments
-        .iter()
-        .map(|segment| segment.segment.trim())
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 pub fn step2_segments_to_srt(
     segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],
 ) -> String {
@@ -153,50 +142,6 @@ mod tests {
         assert_eq!(format_srt_ms(1000), "00:00:01,000");
         assert_eq!(format_srt_ms(61_234), "00:01:01,234");
         assert_eq!(format_srt_ms(3_661_001), "01:01:01,001");
-    }
-
-    #[test]
-    fn source_text_from_step2_segments_joins_non_empty() {
-        let segments = vec![
-            crate::commands::transcription::GroupedSentenceSegmentCommandDto {
-                segment: "Hello".to_string(),
-                start: 0.0,
-                end: 1.0,
-                tokens: vec![],
-            },
-            crate::commands::transcription::GroupedSentenceSegmentCommandDto {
-                segment: "World".to_string(),
-                start: 1.0,
-                end: 2.0,
-                tokens: vec![],
-            },
-        ];
-        assert_eq!(source_text_from_step2_segments(&segments), "Hello\nWorld");
-    }
-
-    #[test]
-    fn source_text_from_step2_segments_skips_empty() {
-        let segments = vec![
-            crate::commands::transcription::GroupedSentenceSegmentCommandDto {
-                segment: "Hello".to_string(),
-                start: 0.0,
-                end: 1.0,
-                tokens: vec![],
-            },
-            crate::commands::transcription::GroupedSentenceSegmentCommandDto {
-                segment: "  ".to_string(),
-                start: 1.0,
-                end: 2.0,
-                tokens: vec![],
-            },
-            crate::commands::transcription::GroupedSentenceSegmentCommandDto {
-                segment: "World".to_string(),
-                start: 2.0,
-                end: 3.0,
-                tokens: vec![],
-            },
-        ];
-        assert_eq!(source_text_from_step2_segments(&segments), "Hello\nWorld");
     }
 
     #[test]

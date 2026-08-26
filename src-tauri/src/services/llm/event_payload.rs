@@ -5,8 +5,8 @@ use crate::services::task_log::TaskLogger;
 use super::base_url::normalize_base_url;
 use super::port::{LlmCallContext, LlmConfig, LlmTokenUsage};
 
-const LLM_PROVIDER: &str = "openai_compatible_http";
-const LLM_TRANSPORT: &str = "chat_completions";
+const LLM_PROVIDER: &str = "anthropic";
+const LLM_TRANSPORT: &str = "messages";
 const EPHEMERAL_PHASE_CONNECTIVITY_TEST: &str = "connectivity_test";
 const ATTEMPT_PAYLOAD_KEYS: &[&str] = &[
     "attempt",
@@ -115,6 +115,8 @@ pub(super) fn success_attempt_payload(
                 "promptTokens": usage.prompt_tokens,
                 "completionTokens": usage.completion_tokens,
                 "totalTokens": usage.total_tokens,
+                "cacheReadTokens": usage.cache_read_tokens,
+                "cacheCreationTokens": usage.cache_creation_tokens,
             }
         }),
     )

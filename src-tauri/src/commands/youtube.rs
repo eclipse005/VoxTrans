@@ -1,8 +1,6 @@
 use serde::Deserialize;
 
-use crate::services::youtube::{
-    DownloadYoutubeTaskResponse, UpdateYtDlpResponse, YoutubeDownloadProgressResponse,
-};
+use crate::services::youtube::{DownloadYoutubeTaskResponse, UpdateYtDlpResponse};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,18 +26,6 @@ pub async fn download_youtube_to_task_run(
     })
     .await
     .map_err(|err| format!("YouTube download task failed: {err}"))?
-}
-
-#[tauri::command]
-pub fn get_youtube_download_progress(
-    request: YoutubeDownloadProgressRequest,
-) -> Result<YoutubeDownloadProgressResponse, String> {
-    crate::services::youtube::get_download_progress(&request.task_id)
-}
-
-#[tauri::command]
-pub fn list_youtube_download_progress() -> Result<Vec<YoutubeDownloadProgressResponse>, String> {
-    crate::services::youtube::list_download_progress()
 }
 
 #[tauri::command]

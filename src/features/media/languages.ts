@@ -83,11 +83,6 @@ export function normalizeTargetLanguage(value: unknown): TargetLanguage {
   return DEFAULT_TARGET_LANGUAGE;
 }
 
-export function sourceLanguageOption(value: unknown): LanguageOption<LanguageTag> {
-  const normalized = normalizeSourceLanguage(value);
-  return SOURCE_LANGUAGE_OPTIONS.find((option) => option.id === normalized) ?? SOURCE_LANGUAGE_OPTIONS[0];
-}
-
 export function targetLanguageOption(value: unknown): LanguageOption<TargetLanguage> {
   const normalized = normalizeTargetLanguage(value);
   return TARGET_LANGUAGE_OPTIONS.find((option) => option.id === normalized) ?? TARGET_LANGUAGE_OPTIONS[0];

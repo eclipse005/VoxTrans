@@ -1,9 +1,4 @@
 import type { QueueItem } from "../../features/media/types";
-import {
-  transitionQueueItemStatus,
-  type QueueStatusTransitionPayload,
-  type QueueStatusTransitionTarget,
-} from "../../features/media/stateMachine";
 import type { AppAction } from "./appReducer";
 
 type DispatchState = (action: AppAction) => void;
@@ -38,14 +33,4 @@ export function patchQueueItem(
     id,
     updater,
   });
-}
-
-export function transitionQueueStatus<T extends QueueStatusTransitionTarget>(
-  dispatch: DispatchState,
-  id: string,
-  to: T,
-  payloadFactory: (item: QueueItem) => QueueStatusTransitionPayload<T>,
-): void {
-  patchQueueItem(dispatch, id, (item) =>
-    transitionQueueItemStatus(item, to, payloadFactory(item)));
 }

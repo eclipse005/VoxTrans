@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   holdsPipelineSlot,
-  isAwaitingReviewStatus,
   isBusyStatus,
-  isEditableStatus,
 } from "./taskStatus";
 import { normalizeTranscribeStatus } from "./stateMachine";
 
@@ -23,17 +21,6 @@ describe("taskStatus helpers", () => {
     expect(isBusyStatus("review_source")).toBe(false);
     expect(isBusyStatus("review_target")).toBe(false);
     expect(isBusyStatus("done")).toBe(false);
-  });
-
-  it("allows editing on review and done", () => {
-    expect(isEditableStatus("done")).toBe(true);
-    expect(isEditableStatus("review_source")).toBe(true);
-    expect(isEditableStatus("processing")).toBe(false);
-  });
-
-  it("detects awaiting review", () => {
-    expect(isAwaitingReviewStatus("review_source")).toBe(true);
-    expect(isAwaitingReviewStatus("processing")).toBe(false);
   });
 });
 

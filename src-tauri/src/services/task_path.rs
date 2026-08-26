@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-pub const ARTIFACTS_DIR_NAME: &str = "artifacts";
+const ARTIFACTS_DIR_NAME: &str = "artifacts";
 
 pub fn sanitize_filename_component(raw: &str) -> String {
     raw.chars()
@@ -42,11 +42,11 @@ pub fn task_output_dir_by_id(task_id: &str) -> PathBuf {
     crate::services::output::resolve_output_dir().join(safe_task_id)
 }
 
-pub fn task_artifacts_dir(task_id: &str, audio_path: &Path) -> PathBuf {
+fn task_artifacts_dir(task_id: &str, audio_path: &Path) -> PathBuf {
     task_output_dir(task_id, audio_path).join(ARTIFACTS_DIR_NAME)
 }
 
-pub fn task_artifacts_dir_by_id(task_id: &str) -> PathBuf {
+fn task_artifacts_dir_by_id(task_id: &str) -> PathBuf {
     task_output_dir_by_id(task_id).join(ARTIFACTS_DIR_NAME)
 }
 

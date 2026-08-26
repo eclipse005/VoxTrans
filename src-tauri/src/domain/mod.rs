@@ -1,5 +1,4 @@
 pub mod aligned;
-pub mod app_error;
 pub mod error;
 pub mod language;
 pub mod language_registry;

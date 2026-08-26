@@ -2,17 +2,18 @@ use super::translate_types::{
     ListLlmModelsRequest, ListLlmModelsResponse, LlmModelInfoDto, TestTranslateLlmRequest,
     TestTranslateLlmResponse,
 };
-use crate::services::llm::client::OpenAiCompatLlmClient;
+use crate::services::llm::client::AnthropicLlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
+use crate::services::llm::{ANTHROPIC_VERSION, add_auth_headers, models_endpoint};
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort, next_llm_request_id};
 use crate::services::prompts::connectivity::TRANSLATE_LLM_CONNECTIVITY_TEST;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 #[tauri::command]
 pub async fn test_translate_llm(
     request: TestTranslateLlmRequest,
 ) -> Result<TestTranslateLlmResponse, String> {
-    // Local providers (Ollama) may send a placeholder key.
+    // Keyless slots store a non-empty placeholder instead of a real key.
     if request.api_key.trim().is_empty() {
         return Err("translateApiKey is required".to_string());
     }
@@ -25,15 +26,18 @@ pub async fn test_translate_llm(
 
     cleanup_connectivity_test_artifacts();
 
-    let client = OpenAiCompatLlmClient::new(
+    let client = AnthropicLlmClient::new(
         LlmConfig::new(
             request.base_url.trim().to_string(),
             request.api_key.trim().to_string(),
             request.model.trim().to_string(),
         )
-        // A connectivity probe must report failure immediately, not after
-        // up to 8s of retry backoff.
-        .with_max_retries(0),
+        // The probe validates *configuration* (key/url/model). Free-tier
+        // models answer transient 429/529 congestion in well under a second,
+        // so two quick retries keep vendor load from reading as a config
+        // failure; hard errors still fail on the first attempt (no retries
+        // for non-retryable statuses). Worst case ≈6s of backoff.
+        .with_max_retries(2),
     )?;
 
     let validator = JsonResponseValidator::with_required_keys(&["ok", "message"]);
@@ -42,6 +46,15 @@ pub async fn test_translate_llm(
         media_path: None,
         phase: "connectivity_test".to_string(),
         store: None,
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "message": {"type": "string"}
+            },
+            "required": ["ok", "message"],
+            "additionalProperties": false
+        })),
     };
     let llm_id = next_llm_request_id();
 
@@ -82,7 +95,7 @@ fn cleanup_connectivity_test_artifacts() {
     }
 }
 
-/// GET `{baseUrl}/models` (OpenAI-compatible). Used by settings to populate the model picker.
+/// GET `{baseUrl}/v1/models` (Anthropic-compatible join rule). Used by settings to populate the model picker.
 #[tauri::command]
 pub async fn list_llm_models(
     request: ListLlmModelsRequest,
@@ -99,15 +112,18 @@ pub async fn list_llm_models(
         return Err("translateBaseUrl is required".to_string());
     }
 
-    let url = format!("{base}/models");
+    let url = models_endpoint(&base);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("http client: {e}"))?;
 
-    let response = client
-        .get(&url)
-        .bearer_auth(api_key)
+    // Same auth shape as the Messages call (shared helper).
+    let get = add_auth_headers(
+        client.get(&url).header("anthropic-version", ANTHROPIC_VERSION),
+        &api_key,
+    );
+    let response = get
         .send()
         .await
         .map_err(|e| format!("list models request failed: {e}"))?;

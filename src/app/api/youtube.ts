@@ -29,13 +29,6 @@ export type YoutubeDownloadProgressResponse = {
   message: string;
 };
 
-export type UpdateYtDlpResponse = {
-  fromVersion: string;
-  toVersion: string;
-  updated: boolean;
-  output: string;
-};
-
 export async function downloadYoutubeTask(
   request: DownloadYoutubeTaskRequest,
 ): Promise<DownloadYoutubeTaskResponse> {
@@ -53,6 +46,16 @@ export async function getYtDlpVersion(): Promise<string> {
   return invoke<string>("get_yt_dlp_version");
 }
 
-export async function updateYtDlp(): Promise<UpdateYtDlpResponse> {
-  return invoke<UpdateYtDlpResponse>("update_yt_dlp");
+export async function updateYtDlp(): Promise<{
+  fromVersion: string;
+  toVersion: string;
+  updated: boolean;
+  output: string;
+}> {
+  return invoke<{
+    fromVersion: string;
+    toVersion: string;
+    updated: boolean;
+    output: string;
+  }>("update_yt_dlp");
 }

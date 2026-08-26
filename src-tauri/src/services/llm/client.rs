@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -8,26 +9,25 @@ use crate::db::store::TaskStore;
 use crate::services::task_log::TaskLogger;
 use crate::services::task_usage::{LlmTokenUsage as TaskUsage, record_llm_usage_best_effort};
 
-use super::chat_completions::{
-    call_chat_completion, call_chat_completion_stream, call_chat_completion_tools, AssistantTurn,
-    ChatMessage,
+use super::anthropic::{
+    AssistantTurn, ChatMessage, call_message, call_message_stream, call_message_tools,
 };
+use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
 use super::event_payload::{
     attempt_base_payload, failed_attempt_payload, http_error_attempt_payload,
-    invalid_semantic_attempt_payload, log_llm_call, logger_for_context,
-    success_attempt_payload,
+    invalid_semantic_attempt_payload, log_llm_call, logger_for_context, success_attempt_payload,
 };
 use super::json_guard::{JsonResponseValidator, extract_and_repair_json_with_outcome};
 use super::port::{LlmCallContext, LlmConfig, LlmJsonResult, LlmPort, LlmTokenUsage};
 use super::retry::{
-    RetryFeedback, augment_user_prompt_with_retry_feedback, feedback_from_llm_error,
-    retry_backoff_ms,
+    RetryFeedback, augment_user_prompt_with_retry_feedback, effective_backoff_ms,
+    feedback_from_llm_error, retry_backoff_ms,
 };
 
-/// One raw chat-completion call without retries or JSON validation, plus
-/// the per-attempt hooks the retry loop delegates to. This is the seam
-/// unit tests use: production goes through [`HttpCallOnce`], tests script
+/// One raw Messages call without retries or JSON validation, plus the
+/// per-attempt hooks the retry loop delegates to. This is the seam unit
+/// tests use: production goes through [`HttpCallOnce`], tests script
 /// responses, backoff and usage recording through a fake.
 #[async_trait]
 trait LlmCallOnce: Send + Sync {
@@ -38,6 +38,7 @@ trait LlmCallOnce: Send + Sync {
         logger: Option<&TaskLogger>,
         user_prompt: &str,
         on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
+        output_schema: Option<&Value>,
     ) -> Result<(String, LlmTokenUsage), LlmError>;
 
     /// Delay (ms) before the next attempt, or `None` to proceed
@@ -60,25 +61,73 @@ trait LlmCallOnce: Send + Sync {
     }
 }
 
+/// Endpoints that already rejected `output_config` once — remembered per
+/// normalized base_url so later batches skip the schema instead of eating a
+/// 400 every round (project's existing global-mutex pattern).
+static STRUCTURED_OUTPUT_UNSUPPORTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn is_structured_output_unsupported(base_url: &str) -> bool {
+    let key = normalize_base_url(base_url);
+    STRUCTURED_OUTPUT_UNSUPPORTED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|set| set.contains(&key))
+        .unwrap_or(false)
+}
+
+fn mark_structured_output_unsupported(base_url: &str) {
+    let key = normalize_base_url(base_url);
+    if let Ok(mut set) = STRUCTURED_OUTPUT_UNSUPPORTED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+    {
+        set.insert(key);
+    }
+}
+
+/// Does this error mean "endpoint does not support `output_config.format`"?
+/// Only schema-related 400/422s trigger the fallback; unrelated bad requests
+/// keep failing loudly.
+fn is_structured_output_rejection(err: &LlmError) -> bool {
+    if !matches!(err.status, Some(400) | Some(422)) {
+        return false;
+    }
+    let message = err.message.to_ascii_lowercase();
+    let named = message.contains("output_config")
+        || message.contains("json_schema")
+        || message.contains("structured output")
+        // Constrained-decoding backends (vLLM/xgrammar family) surface schema
+        // trouble as grammar errors, e.g. SenseNova's `guided_grammar …
+        // compile_grammar_error: No module named 'xgrammar'`.
+        || message.contains("grammar")
+        || message.contains("guided");
+    let format_shaped = message.contains("format")
+        && ["unsupported", "not supported", "unknown", "unexpected", "invalid"]
+            .iter()
+            .any(|word| message.contains(word));
+    named || format_shaped
+}
+
 /// Production transport: streams when a callback is given, falls back to a
-/// plain completion when the provider rejects streaming.
+/// plain completion when the provider rejects streaming, and falls back to
+/// unstructured generation when it rejects `output_config`.
 struct HttpCallOnce;
 
-#[async_trait]
-impl LlmCallOnce for HttpCallOnce {
-    async fn call_once(
+impl HttpCallOnce {
+    async fn attempt(
         &self,
         http: &reqwest::Client,
         config: &LlmConfig,
         logger: Option<&TaskLogger>,
         user_prompt: &str,
         on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
+        output_schema: Option<&Value>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
         if let Some(cb) = on_partial {
             let mut delta_cb = |acc: &str| {
                 cb(acc.to_string());
             };
-            match call_chat_completion_stream(http, config, user_prompt, Some(&mut delta_cb))
+            match call_message_stream(http, config, user_prompt, output_schema, Some(&mut delta_cb))
                 .await
             {
                 Ok(result) => return Ok(result),
@@ -94,17 +143,63 @@ impl LlmCallOnce for HttpCallOnce {
                         }),
                     ),
                     None => eprintln!(
-                        "[warn] chat completion stream failed ({err}); falling back to non-stream"
+                        "[warn] anthropic stream failed ({err}); falling back to non-stream"
                     ),
                 },
             }
         }
-        call_chat_completion(http, config, user_prompt).await
+        call_message(http, config, user_prompt, output_schema).await
+    }
+}
+
+#[async_trait]
+impl LlmCallOnce for HttpCallOnce {
+    async fn call_once(
+        &self,
+        http: &reqwest::Client,
+        config: &LlmConfig,
+        logger: Option<&TaskLogger>,
+        user_prompt: &str,
+        on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
+        output_schema: Option<&Value>,
+    ) -> Result<(String, LlmTokenUsage), LlmError> {
+        let effective_schema = match output_schema {
+            Some(schema) if !is_structured_output_unsupported(&config.base_url) => Some(schema),
+            _ => None,
+        };
+        if let Some(schema) = effective_schema {
+            return match self
+                .attempt(http, config, logger, user_prompt, on_partial, Some(schema))
+                .await
+            {
+                Ok(result) => Ok(result),
+                Err(err) if is_structured_output_rejection(&err) => {
+                    mark_structured_output_unsupported(&config.base_url);
+                    match logger {
+                        Some(logger) => log_llm_call(
+                            Some(logger),
+                            json!({
+                                "status": "structured_output_fallback",
+                                "error": err.message,
+                            }),
+                        ),
+                        None => eprintln!(
+                            "[warn] endpoint rejected structured output ({err}); falling back to plain JSON"
+                        ),
+                    }
+                    self.attempt(http, config, logger, user_prompt, on_partial, None)
+                        .await
+                }
+                Err(err) => Err(err),
+            };
+        }
+        self.attempt(http, config, logger, user_prompt, on_partial, None)
+            .await
     }
 }
 
 #[derive(Clone)]
-pub struct OpenAiCompatLlmClient {
+pub struct AnthropicLlmClient {
     config: LlmConfig,
     http: reqwest::Client,
     transport: Arc<dyn LlmCallOnce>,
@@ -126,7 +221,7 @@ pub struct LlmValidatedJsonResult<T> {
     pub value: T,
 }
 
-impl OpenAiCompatLlmClient {
+impl AnthropicLlmClient {
     pub fn new(config: LlmConfig) -> Result<Self, LlmError> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
@@ -147,22 +242,30 @@ impl OpenAiCompatLlmClient {
     async fn call_once(
         &self,
         logger: Option<&TaskLogger>,
+        context: &LlmCallContext,
         user_prompt: &str,
         on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
         self.transport
-            .call_once(&self.http, &self.config, logger, user_prompt, on_partial)
+            .call_once(
+                &self.http,
+                &self.config,
+                logger,
+                user_prompt,
+                on_partial,
+                context.output_schema.as_ref(),
+            )
             .await
     }
 
-    /// OpenAI-compatible tool-calling turn for the terminology agent.
+    /// Anthropic tool-calling turn for the terminology agent.
     pub async fn call_tools(
         &self,
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
         temperature: Option<f64>,
     ) -> Result<AssistantTurn, LlmError> {
-        call_chat_completion_tools(&self.http, &self.config, messages, tools, temperature).await
+        call_message_tools(&self.http, &self.config, messages, tools, temperature).await
     }
 
     pub async fn call_json_validated<T, F>(
@@ -236,8 +339,9 @@ impl OpenAiCompatLlmClient {
         // JSON/schema/semantic failures retry with the compacted failure
         // hint appended to the prompt. Every retryable failure — HTTP and
         // JSON/schema/semantic alike — shares the same backoff sequence
-        // between attempts. Whatever fails on the final attempt exits the
-        // loop and is reported as `last_error` in the error below.
+        // between attempts, overridden by the server's Retry-After when it
+        // sent one. Whatever fails on the final attempt exits the loop and
+        // is reported as `last_error` in the error below.
         for attempt in 1..=max_attempts {
             attempts_made = attempt;
             let effective_user_prompt = augment_user_prompt_with_retry_feedback(
@@ -256,7 +360,7 @@ impl OpenAiCompatLlmClient {
 
             let partial_ref = on_partial.as_ref().map(|a| a.as_ref());
             match self
-                .call_once(logger.as_ref(), &effective_user_prompt, partial_ref)
+                .call_once(logger.as_ref(), context, &effective_user_prompt, partial_ref)
                 .await
             {
                 Ok((raw_text, usage)) => {
@@ -392,7 +496,11 @@ impl OpenAiCompatLlmClient {
                     last_error = feedback.detail.clone();
                     last_feedback = Some(feedback.clone());
                     let backoff_ms = if feedback.retryable {
-                        self.transport.backoff_ms(attempt, max_attempts)
+                        // Server-advised wait wins, capped at the sequence
+                        // plateau (policy lives in retry.rs).
+                        self.transport
+                            .backoff_ms(attempt, max_attempts)
+                            .map(|default| effective_backoff_ms(default, err.retry_after_ms))
                     } else {
                         None
                     };
@@ -437,7 +545,7 @@ impl OpenAiCompatLlmClient {
     }
 }
 
-impl LlmPort for OpenAiCompatLlmClient {
+impl LlmPort for AnthropicLlmClient {
     async fn call_json(
         &self,
         context: &LlmCallContext,
@@ -462,7 +570,6 @@ impl LlmPort for OpenAiCompatLlmClient {
 mod tests {
     use super::*;
     use std::collections::VecDeque;
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Instant;
 
@@ -509,6 +616,7 @@ mod tests {
             _logger: Option<&TaskLogger>,
             user_prompt: &str,
             _on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
+            _output_schema: Option<&Value>,
         ) -> Result<(String, LlmTokenUsage), LlmError> {
             self.prompts.lock().unwrap().push(user_prompt.to_string());
             self.script
@@ -545,15 +653,16 @@ mod tests {
                 prompt_tokens,
                 completion_tokens,
                 total_tokens: prompt_tokens + completion_tokens,
+                ..LlmTokenUsage::default()
             },
         ))
     }
 
-    fn test_client(transport: Arc<dyn LlmCallOnce>, max_retries: u32) -> OpenAiCompatLlmClient {
+    fn test_client(transport: Arc<dyn LlmCallOnce>, max_retries: u32) -> AnthropicLlmClient {
         let mut config =
             LlmConfig::new("http://test.local".into(), "test-key".into(), "test-model".into());
         config.max_retries = max_retries;
-        OpenAiCompatLlmClient {
+        AnthropicLlmClient {
             config,
             http: reqwest::Client::new(),
             transport,
@@ -568,6 +677,7 @@ mod tests {
             media_path: None,
             phase: "connectivity_test".to_string(),
             store: None,
+            output_schema: None,
         }
     }
 
@@ -690,7 +800,7 @@ mod tests {
         );
         assert!(
             err.message.contains("last_error=still wrong"),
-            "unexpected message: {}",
+            "{}",
             err.message
         );
     }
@@ -774,6 +884,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn non_retryable_http_status_fails_fast() {
+        let script = vec![Err(http_err(400, "invalid request"))];
+        let transport = Arc::new(
+            ScriptedTransport::new(script).with_backoff(|_, _| Some(3_000)),
+        );
+        let client = test_client(transport.clone(), 3);
+        let started = Instant::now();
+        client
+            .call_json_validated::<Value, _>(&test_context(), "req-6", "BASE", None, |v: Value| {
+                Ok(v)
+            })
+            .await
+            .expect_err("400 must fail");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed.as_millis() < 1_000,
+            "400 must not burn the backoff budget, took {elapsed:?}"
+        );
+        assert_eq!(transport.prompt_history().len(), 1, "no retries after 400");
+    }
+
+    #[tokio::test]
+    async fn server_retry_after_overrides_default_backoff() {
+        let script = vec![
+            {
+                let mut err = http_err(429, "rate limited");
+                err.retry_after_ms = Some(50);
+                Err(err)
+            },
+            ok_response(r#"{"id":1}"#, 10, 5),
+        ];
+        // Default schedule would wait 5s; the Retry-After (50ms) wins.
+        let transport =
+            Arc::new(ScriptedTransport::new(script).with_backoff(|_, _| Some(5_000)));
+        let client = test_client(transport.clone(), 1);
+        let started = Instant::now();
+        client
+            .call_json_validated::<Value, _>(&test_context(), "req-7", "BASE", None, |v: Value| {
+                Ok(v)
+            })
+            .await
+            .expect("second attempt must succeed after Retry-After wait");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed.as_millis() < 2_000,
+            "Retry-After (50ms) must override the 5s default, took {elapsed:?}"
+        );
+        assert_eq!(transport.prompt_history().len(), 2);
+    }
+
+    #[tokio::test]
     async fn semantic_failures_share_the_same_backoff() {
         let script = vec![
             ok_response(r#"{"nope":1}"#, 10, 5),
@@ -793,7 +954,7 @@ mod tests {
         let err = client
             .call_json_validated::<i64, _>(
                 &test_context(),
-                "req-6",
+                "req-8",
                 "BASE",
                 None,
                 |value: Value| {
@@ -816,5 +977,57 @@ mod tests {
             err.message
         );
         assert_eq!(transport.recorded_usage().len(), 2);
+    }
+
+    fn http_err(status: u16, detail: &str) -> LlmError {
+        let mut err = LlmError::new(LlmErrorKind::Http, format!("http status {status}: {detail}"));
+        err.status = Some(status);
+        err
+    }
+
+    #[test]
+    fn structured_output_rejection_detection() {
+        let rejection = |status: u16, msg: &str| {
+            let mut err = LlmError::new(LlmErrorKind::Http, msg.to_string());
+            err.status = Some(status);
+            err
+        };
+        assert!(is_structured_output_rejection(&rejection(
+            400,
+            "http status 400: output_config is not supported"
+        )));
+        assert!(is_structured_output_rejection(&rejection(
+            422,
+            "http status 422: json_schema format unknown"
+        )));
+        assert!(is_structured_output_rejection(&rejection(
+            400,
+            "http status 400: format unsupported by this model"
+        )));
+        // Grammar-constrained decoding failures (vLLM/xgrammar family).
+        assert!(is_structured_output_rejection(&rejection(
+            400,
+            "http status 400: guided_grammar '{\"type\":\"object\"}' has compile_grammar_error: No module named 'xgrammar'"
+        )));
+        // Unrelated 400s and non-4xx/422 statuses never trigger fallback.
+        assert!(!is_structured_output_rejection(&rejection(
+            400,
+            "http status 400: max_tokens too large"
+        )));
+        assert!(!is_structured_output_rejection(&rejection(
+            500,
+            "http status 500: output_config exploded"
+        )));
+    }
+
+    #[test]
+    fn structured_output_unsupported_memo_is_per_base_url() {
+        let probe = format!("http://memo-test.local/{}", line!());
+        assert!(!is_structured_output_unsupported(&probe));
+        mark_structured_output_unsupported(&probe);
+        assert!(is_structured_output_unsupported(&probe));
+        assert!(is_structured_output_unsupported(&format!("{probe}/")));
+        // Other endpoints are unaffected.
+        assert!(!is_structured_output_unsupported("http://other.local"));
     }
 }

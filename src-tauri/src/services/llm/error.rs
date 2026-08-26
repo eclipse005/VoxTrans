@@ -26,6 +26,10 @@ impl LlmErrorKind {
 pub struct LlmError {
     pub kind: LlmErrorKind,
     pub message: String,
+    /// HTTP status code when the failure came from a response.
+    pub status: Option<u16>,
+    /// Server-advised wait (`Retry-After`, ms) overriding default backoff.
+    pub retry_after_ms: Option<u64>,
 }
 
 impl LlmError {
@@ -33,6 +37,8 @@ impl LlmError {
         Self {
             kind,
             message: message.into(),
+            status: None,
+            retry_after_ms: None,
         }
     }
 }

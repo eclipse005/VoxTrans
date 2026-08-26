@@ -28,7 +28,19 @@ pub(crate) fn model_definition(
     target: ModelTarget,
     model: Option<&str>,
 ) -> Result<ModelDefinition, String> {
-    let model = normalize_model_name(target, model);
+    let fallback = match target {
+        ModelTarget::Asr => DEFAULT_ASR_MODEL,
+        ModelTarget::Align => DEFAULT_ALIGN_MODEL,
+        ModelTarget::Demucs => "htdemucs_ft",
+    };
+    let model = {
+        let value = model.unwrap_or(fallback).trim();
+        if value.is_empty() {
+            fallback.to_string()
+        } else {
+            value.to_string()
+        }
+    };
     match target {
         ModelTarget::Asr => {
             let files = asr_download_files(&model)?;
@@ -84,20 +96,6 @@ pub(crate) fn model_definition(
                 }],
             })
         }
-    }
-}
-
-pub(crate) fn normalize_model_name(target: ModelTarget, model: Option<&str>) -> String {
-    let fallback = match target {
-        ModelTarget::Asr => DEFAULT_ASR_MODEL,
-        ModelTarget::Align => DEFAULT_ALIGN_MODEL,
-        ModelTarget::Demucs => "htdemucs_ft",
-    };
-    let value = model.unwrap_or(fallback).trim();
-    if value.is_empty() {
-        fallback.to_string()
-    } else {
-        value.to_string()
     }
 }
 

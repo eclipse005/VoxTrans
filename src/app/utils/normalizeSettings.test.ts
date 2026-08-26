@@ -16,7 +16,7 @@ function baseDefaults(): SavedSettings {
     demucsModel: "htdemucs_ft",
     enableVocalSeparation: false,
     translateApiKey: "",
-    translateBaseUrl: "https://api.deepseek.com/v1",
+    translateBaseUrl: "https://api.deepseek.com/anthropic",
     translateModel: "deepseek-v4-flash",
     llmProfiles: createDefaultProfiles(),
     activeLlmProfileId: "deepseek",

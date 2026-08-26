@@ -186,7 +186,7 @@ export function useQueueInput({ dispatch, pushToast, activeTerminologyGroupId }:
       await appendPaths(paths);
     } catch (error) {
       reportError(error, "pickFiles");
-      pushToast(toUserErrorMessage(error, "toasts.queue.pickFilesFailed"), "error");
+      pushToast(toUserErrorMessage(error, "toasts:queue.pickFilesFailed"), "error");
     }
   }, [appendPaths, pushToast]);
 

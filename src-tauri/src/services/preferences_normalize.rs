@@ -8,12 +8,12 @@ use super::preferences_types::{
 };
 
 const DEFAULT_ACTIVE_LLM_PROFILE_ID: &str = "deepseek";
-const DEFAULT_TRANSLATE_BASE_URL: &str = "https://api.deepseek.com/v1";
-/// Keep in lockstep with EggTranslate `llmProviders.ts` (and FE `llmProviders.ts`).
+const DEFAULT_TRANSLATE_BASE_URL: &str = "https://api.deepseek.com/anthropic";
+/// Keep in lockstep with frontend `llmProviders.ts`.
 const DEFAULT_TRANSLATE_MODEL: &str = "deepseek-v4-flash";
 
-/// Built-in provider slots. Keep in sync with frontend `llmProviders.ts` /
-/// EggTranslate defaults (minus Agnes/Zhipu).
+/// Built-in provider slots — all Anthropic-Messages-compatible endpoints.
+/// Keep in sync with frontend `llmProviders.ts`.
 /// Adding a vendor: append here + frontend preset table + optional icon.
 pub fn default_llm_profiles() -> Vec<LlmProfile> {
     vec![
@@ -26,31 +26,38 @@ pub fn default_llm_profiles() -> Vec<LlmProfile> {
             true,
         ),
         profile(
-            "qwen",
-            "通义千问",
-            "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "qwen3.6-flash",
+            "moonshot",
+            "Moonshot/Kimi",
+            "https://api.moonshot.cn/anthropic",
+            "kimi-k3",
+            true,
+        ),
+        profile(
+            "sensenova",
+            "日日新 SenseNova",
+            "https://token.sensenova.cn/v1",
+            "sensenova-6.8-flash-lite",
+            true,
+        ),
+        profile(
+            "minimax",
+            "MiniMax",
+            "https://api.minimaxi.com/anthropic",
+            "MiniMax-M3",
             true,
         ),
         profile(
             "doubao",
             "豆包",
-            "https://ark.cn-beijing.volces.com/api/v3",
+            "https://ark.cn-beijing.volces.com/api/compatible",
             "doubao-seed-2-1-turbo-260628",
             true,
         ),
         profile(
-            "chatgpt",
-            "OpenAI",
-            "https://api.openai.com/v1",
-            "gpt-5-mini",
-            true,
-        ),
-        profile(
-            "gemini",
-            "Google Gemini",
-            "https://generativelanguage.googleapis.com/v1beta/openai",
-            "gemini-3.5-flash",
+            "hunyuan",
+            "混元 Hy3",
+            "https://tokenhub.tencentmaas.com/v1",
+            "hy3",
             true,
         ),
         profile(
@@ -59,13 +66,6 @@ pub fn default_llm_profiles() -> Vec<LlmProfile> {
             "https://openrouter.ai/api/v1",
             "google/gemini-3.5-flash",
             true,
-        ),
-        profile(
-            "ollama",
-            "Ollama",
-            "http://localhost:11434/v1",
-            "qwen3:8b",
-            false,
         ),
     ]
 }
@@ -171,7 +171,7 @@ pub fn normalize_saved_settings(settings: SavedSettings) -> SavedSettings {
 fn effective_api_key(profile: &LlmProfile) -> String {
     let key = profile.api_key.trim();
     if key.is_empty() && !profile.requires_key {
-        "ollama".to_string()
+        super::preferences_types::KEYLESS_API_KEY_PLACEHOLDER.to_string()
     } else {
         key.to_string()
     }
@@ -224,6 +224,10 @@ fn ensure_llm_profiles(
                 profiles.push(preset.clone());
             }
         }
+        // Prune vendor slots removed from the catalog (legacy ghosts): they
+        // have no preset card anymore and cannot speak Messages. Free-form
+        // config lives on the `custom` slot by contract and always survives.
+        profiles.retain(|p| p.id == "custom" || catalog.iter().any(|c| c.id == p.id));
     }
 
     // Shared post-process for empty and non-empty paths (trim / requiresKey / empty model).
@@ -243,7 +247,7 @@ fn ensure_llm_profiles(
             if p.name.is_empty() {
                 p.name = catalog_p.name.clone();
             }
-            // Known presets: requires_key is authoritative (e.g. ollama is keyless).
+            // Known presets: requires_key is authoritative (catalog wins).
             if p.id != "custom" {
                 p.requires_key = catalog_p.requires_key;
             }
@@ -509,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_archive_seeds_openai_url_onto_chatgpt_and_activates_it() {
+    fn empty_archive_seeds_openai_url_onto_custom_and_activates_it() {
         let mut settings = default_settings();
         settings.llm_profiles = Vec::new();
         settings.active_llm_profile_id = "deepseek".into();
@@ -518,12 +522,13 @@ mod tests {
         settings.translate_model = "gpt-5-mini".into();
 
         let normalized = normalize_saved_settings(settings);
-        assert_eq!(normalized.active_llm_profile_id, "chatgpt");
+        // OpenAI endpoints have no Anthropic slot — they land on custom.
+        assert_eq!(normalized.active_llm_profile_id, "custom");
         let slot = normalized
             .llm_profiles
             .iter()
-            .find(|p| p.id == "chatgpt")
-            .expect("chatgpt slot");
+            .find(|p| p.id == "custom")
+            .expect("custom slot");
         assert_eq!(slot.api_key, "openai-key");
         assert_eq!(normalized.translate_api_key, "openai-key");
         assert!(normalized.translate_base_url.contains("openai.com"));
@@ -581,5 +586,111 @@ mod tests {
         assert_eq!(normalized.translate_api_key, "new-key");
         assert_eq!(normalized.translate_base_url, "");
         assert_eq!(normalized.translate_model, "m");
+    }
+
+    // ---- frontend catalog lockstep -------------------------------------------
+
+    /// Extract `(id, name, baseURL, model)` tuples from the flat preset table
+    /// in `llmProviders.ts`. Entries are flat object literals without nested
+    /// braces, so a brace scan is enough — no TS parsing needed.
+    fn parse_frontend_presets(ts: &str) -> Vec<(String, String, String, String)> {
+        let start = ts.find("LLM_PROVIDER_PRESETS").expect("presets table");
+        let open = ts[start..].find("= [").expect("array literal") + start + 2;
+        let close = ts[open..].find("];").expect("array close") + open;
+        let body = &ts[open + 1..close];
+
+        let mut out = Vec::new();
+        let mut depth = 0usize;
+        let mut entry = String::new();
+        for ch in body.chars() {
+            match ch {
+                '{' => {
+                    depth += 1;
+                    entry.clear();
+                }
+                '}' => {
+                    depth -= 1;
+                    let grab = |key: &str| -> String {
+                        let marker = format!("{key}:");
+                        let Some(pos) = entry.find(&marker) else {
+                            return String::new();
+                        };
+                        let rest = entry[pos + marker.len()..].trim_start();
+                        let Some(quoted) = rest.strip_prefix('"') else {
+                            return String::new();
+                        };
+                        quoted.split('"').next().unwrap_or_default().to_string()
+                    };
+                    if depth == 0 {
+                        out.push((grab("id"), grab("name"), grab("baseURL"), grab("model")));
+                    }
+                }
+                _ => {
+                    if depth > 0 {
+                        entry.push(ch);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn vendor_slots_removed_from_catalog_get_pruned() {
+        let mut settings = default_settings();
+        // An archive saved by an older build whose catalog still had qwen.
+        settings.llm_profiles.push(profile(
+            "qwen",
+            "通义千问",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "qwen3.6-flash",
+            true,
+        ));
+        settings.active_llm_profile_id = "deepseek".into();
+
+        let normalized = normalize_saved_settings(settings);
+
+        assert!(normalized.llm_profiles.iter().all(|p| p.id != "qwen"));
+        assert_eq!(normalized.active_llm_profile_id, "deepseek");
+    }
+
+    #[test]
+    fn active_falls_back_when_it_points_at_a_pruned_slot() {
+        let mut settings = default_settings();
+        settings.llm_profiles.push(profile(
+            "ollama",
+            "Ollama",
+            "http://localhost:11434/v1",
+            "qwen3:8b",
+            false,
+        ));
+        settings.active_llm_profile_id = "ollama".into();
+
+        let normalized = normalize_saved_settings(settings);
+
+        assert!(normalized.llm_profiles.iter().all(|p| p.id != "ollama"));
+        assert_eq!(normalized.active_llm_profile_id, DEFAULT_ACTIVE_LLM_PROFILE_ID);
+    }
+
+    #[test]
+    fn frontend_provider_presets_match_backend_catalog() {
+        // Drift guard: the quick-fill preset table on the frontend must stay
+        // in lockstep with the backend seeding catalog (order/id/baseURL/model).
+        let ts = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../src/features/media/llmProviders.ts"
+        ));
+        let fe = parse_frontend_presets(ts);
+        let be = default_llm_profiles();
+
+        let fe_ids: Vec<_> = fe.iter().map(|(id, _, _, _)| id.as_str()).collect();
+        let be_ids: Vec<_> = be.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(fe_ids, be_ids, "preset ids/order must match the backend catalog");
+
+        for ((id, name, base_url, model), profile) in fe.iter().zip(be.iter()) {
+            assert_eq!(profile.name, *name, "name mismatch on {id}");
+            assert_eq!(profile.base_url, *base_url, "base_url mismatch on {id}");
+            assert_eq!(profile.model, *model, "model mismatch on {id}");
+        }
     }
 }

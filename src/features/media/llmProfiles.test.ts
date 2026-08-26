@@ -18,22 +18,29 @@ describe("llmProfiles", () => {
     expect(profiles.length).toBeGreaterThanOrEqual(8);
     expect(profiles.map((p) => p.id)).toContain("deepseek");
     expect(profiles.map((p) => p.id)).toContain("custom");
-    expect(profiles.map((p) => p.id)).not.toContain("agnes");
-    expect(profiles.map((p) => p.id)).not.toContain("zhipu");
+    expect(profiles.map((p) => p.id)).toContain("hunyuan");
+    expect(profiles.map((p) => p.id)).toContain("openrouter");
+    // Non-Messages vendors and the official Claude slot stay out of the
+    // domestic-first catalog; qwen was dropped (workspace-scoped gateway).
+    expect(profiles.map((p) => p.id)).not.toContain("qwen");
+    expect(profiles.map((p) => p.id)).not.toContain("chatgpt");
+    expect(profiles.map((p) => p.id)).not.toContain("gemini");
+    expect(profiles.map((p) => p.id)).not.toContain("ollama");
+    expect(profiles.map((p) => p.id)).not.toContain("anthropic");
     expect(profiles.every((p) => p.id === p.presetId)).toBe(true);
   });
 
   it("selectProvider switches active without wiping other keys", () => {
     let profiles = createDefaultProfiles();
     profiles = updateActiveProfile(profiles, "deepseek", { apiKey: "ds-key" });
-    const switched = selectProvider(profiles, "qwen");
+    const switched = selectProvider(profiles, "moonshot");
     profiles = updateActiveProfile(switched.profiles, switched.activeLlmProfileId, {
-      apiKey: "qwen-key",
+      apiKey: "kimi-key",
       baseUrl: "https://proxy.example/v1",
     });
 
-    expect(switched.activeLlmProfileId).toBe("qwen");
-    expect(getActiveProfile(profiles, "qwen").apiKey).toBe("qwen-key");
+    expect(switched.activeLlmProfileId).toBe("moonshot");
+    expect(getActiveProfile(profiles, "moonshot").apiKey).toBe("kimi-key");
 
     const back = selectProvider(profiles, "deepseek");
     expect(getActiveProfile(back.profiles, back.activeLlmProfileId).apiKey).toBe("ds-key");
@@ -54,17 +61,16 @@ describe("llmProfiles", () => {
       ],
       "missing",
     );
-    expect(fixed.profiles.length).toBeGreaterThanOrEqual(8);
+    expect(fixed.profiles.length).toBeGreaterThanOrEqual(7);
     expect(fixed.profiles.some((p) => p.id === "deepseek")).toBe(true);
     expect(fixed.profiles.find((p) => p.id === "custom")?.apiKey).toBe("k");
     expect(fixed.activeLlmProfileId).toBe("deepseek");
   });
 
-  it("ollama is configured without API key", () => {
+  it("vendor slots start unconfigured until a key is set", () => {
     const profiles = createDefaultProfiles();
-    const ollama = profiles.find((p) => p.id === "ollama")!;
-    expect(isProfileConfigured(ollama)).toBe(true);
     expect(isProfileConfigured(profiles.find((p) => p.id === "deepseek")!)).toBe(false);
+    expect(isProfileConfigured(profiles.find((p) => p.id === "hunyuan")!)).toBe(false);
   });
 
   it("seeds legacy triple into matching profile and sets active", () => {
@@ -85,9 +91,9 @@ describe("llmProfiles", () => {
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-5-mini",
     });
-    // Exact match lands on chatgpt slot (catalog baseURL equals OpenAI).
-    expect(fixed.activeLlmProfileId).toBe("chatgpt");
-    const slot = fixed.profiles.find((p) => p.id === "chatgpt")!;
+    // OpenAI endpoints have no Anthropic catalog slot — they land on custom.
+    expect(fixed.activeLlmProfileId).toBe("custom");
+    const slot = fixed.profiles.find((p) => p.id === "custom")!;
     expect(slot.apiKey).toBe("openai-key");
     const flat = flattenActiveToTranslateFields(fixed.profiles, fixed.activeLlmProfileId);
     expect(flat.translateApiKey).toBe("openai-key");
@@ -123,8 +129,8 @@ describe("llmProfiles", () => {
       baseUrl: "https://api.openai.com/v1/",
       model: "gpt-5-mini",
     });
-    expect(fixed.activeLlmProfileId).toBe("chatgpt");
-    expect(fixed.profiles.find((p) => p.id === "chatgpt")?.apiKey).toBe("k");
+    expect(fixed.activeLlmProfileId).toBe("custom");
+    expect(fixed.profiles.find((p) => p.id === "custom")?.apiKey).toBe("k");
   });
 
   it("resetProfileToPreset restores URL/model and keeps key", () => {

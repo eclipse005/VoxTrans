@@ -24,9 +24,6 @@ pub enum WorkspaceError {
 
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
-
-    #[error("serialization error: {0}")]
-    Serialization(String),
 }
 
 #[derive(Debug, Serialize)]
@@ -46,7 +43,6 @@ impl WorkspaceError {
             WorkspaceError::InvalidRequest(_) => "INVALID_REQUEST",
             WorkspaceError::TaskFailed(_) => "TASK_FAILED",
             WorkspaceError::Io(_) => "IO_ERROR",
-            WorkspaceError::Serialization(_) => "SERIALIZATION_ERROR",
         }
     }
 

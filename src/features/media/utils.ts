@@ -4,8 +4,6 @@ export function fileName(path: string): string {
   return path.replace(/\\/g, "/").split("/").pop() ?? path;
 }
 
-export type DetectedFileKind = "audio" | "video" | "subtitle";
-
 const VIDEO_EXTS = new Set(["mp4", "mkv", "mov", "avi", "webm", "m4v"]);
 const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "flac", "aac", "ogg", "opus"]);
 const SUBTITLE_EXTS = new Set(["srt"]);
@@ -14,7 +12,7 @@ export function fileExtension(path: string): string {
   return path.split(".").pop()?.toLowerCase() ?? "";
 }
 
-export function detectMediaKind(path: string): DetectedFileKind {
+export function detectMediaKind(path: string): "audio" | "video" | "subtitle" {
   const ext = fileExtension(path);
   if (SUBTITLE_EXTS.has(ext)) return "subtitle";
   if (VIDEO_EXTS.has(ext)) return "video";

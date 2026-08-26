@@ -23,14 +23,14 @@ pub mod event {
 }
 
 #[derive(Debug, Clone)]
-pub struct TaskLogTarget {
+struct TaskLogTarget {
     pub task_id: String,
     pub media_path: Option<String>,
     pub channel: String,
 }
 
 impl TaskLogTarget {
-    pub fn main(task_id: impl Into<String>) -> Self {
+    fn main(task_id: impl Into<String>) -> Self {
         Self {
             task_id: task_id.into(),
             media_path: None,
@@ -38,7 +38,7 @@ impl TaskLogTarget {
         }
     }
 
-    pub fn main_with_media(task_id: impl Into<String>, media_path: impl Into<String>) -> Self {
+    fn main_with_media(task_id: impl Into<String>, media_path: impl Into<String>) -> Self {
         Self {
             task_id: task_id.into(),
             media_path: Some(media_path.into()),
@@ -46,7 +46,7 @@ impl TaskLogTarget {
         }
     }
 
-    pub fn llm_with_media(task_id: impl Into<String>, media_path: impl Into<String>) -> Self {
+    fn llm_with_media(task_id: impl Into<String>, media_path: impl Into<String>) -> Self {
         Self {
             task_id: task_id.into(),
             media_path: Some(media_path.into()),
@@ -54,7 +54,7 @@ impl TaskLogTarget {
         }
     }
 
-    pub fn llm(task_id: impl Into<String>) -> Self {
+    fn llm(task_id: impl Into<String>) -> Self {
         Self {
             task_id: task_id.into(),
             media_path: None,
@@ -107,7 +107,7 @@ impl TaskLogger {
     }
 }
 
-pub fn append_event(
+fn append_event(
     target: &TaskLogTarget,
     event_type: &str,
     payload: Option<&Value>,
@@ -126,7 +126,7 @@ pub fn append_event(
     })
 }
 
-pub fn append_event_best_effort(target: &TaskLogTarget, event_type: &str, payload: Option<&Value>) {
+fn append_event_best_effort(target: &TaskLogTarget, event_type: &str, payload: Option<&Value>) {
     let _ = append_event(target, event_type, payload);
 }
 

@@ -30,7 +30,7 @@ type UseQueueRunnerArgs = {
 
 export type { QueueRunMode };
 
-export function formatQueueFailureMessage(
+function formatQueueFailureMessage(
   subject: string,
   error: unknown,
   prefix = i18n.t("common:status.failed"),
@@ -38,7 +38,7 @@ export function formatQueueFailureMessage(
   return `${prefix}：${subject}，${toUserErrorMessage(error)}`;
 }
 
-export function applyQueueFailures(
+function applyQueueFailures(
   dispatch: DispatchState,
   failed: QueueFailure[],
   isTaskPresent: (taskId: string) => boolean,

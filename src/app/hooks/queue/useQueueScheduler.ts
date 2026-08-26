@@ -303,7 +303,7 @@ export function useQueueScheduler({
       return true;
     } catch (error) {
       reportError(error, "clearQueue");
-      pushToast(toUserErrorMessage(error, "toasts.queue.clearFailed"), "error");
+      pushToast(toUserErrorMessage(error, "toasts:queue.clearFailed"), "error");
       return false;
     }
   }, [dispatch, pushToast, queueBusy, t]);
@@ -325,7 +325,7 @@ export function useQueueScheduler({
         );
       } catch (error) {
         reportError(error, "removeItem");
-        pushToast(toUserErrorMessage(error, "toasts.queue.deleteFailed"), "error");
+        pushToast(toUserErrorMessage(error, "toasts:queue.deleteFailed"), "error");
       }
     },
     [dispatch, pushToast, queue, t],

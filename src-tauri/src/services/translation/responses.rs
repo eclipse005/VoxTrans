@@ -13,6 +13,10 @@ pub(super) struct TranslationValidationContext<'a> {
     /// Terminology targets enforced verbatim on this batch; their source-script
     /// characters are exempt from the leak check.
     pub enforced_targets: &'a [String],
+    /// Source texts in the same order as `expected_ids`; used to exempt
+    /// genuinely repeated source lines from the adjacent-duplicate check.
+    /// Empty means "no source information" — duplicates are always suspect.
+    pub source_texts: &'a [String],
 }
 
 #[cfg(test)]
@@ -27,6 +31,7 @@ pub(super) fn validate_batch_translation_response(
             source_lang: "",
             target_lang: "",
             enforced_targets: &[],
+            source_texts: &[],
         },
     )
 }
@@ -121,7 +126,53 @@ pub(super) fn validate_batch_translation_response_with_context(
         )));
     }
 
+    // Merge/shift signature: a model that fuses two source lines into one
+    // translation and pads the id list by repeating a neighbouring translation
+    // passes the id-count check while the content is shifted by one line.
+    // Adjacent identical translations over *different* source lines are the
+    // observable trace. Genuinely repeated source lines ("Okay?" / "Okay?")
+    // are exempt when sources are provided. This failure is retryable: the
+    // client retries, and persistent failure feeds the split ladder
+    // (20→10→5→1), which shrinks the window until merging is impossible.
+    let dup_ids = adjacent_duplicate_ids(&ordered, ctx.source_texts);
+    if !dup_ids.is_empty() {
+        return Err(LlmSemanticValidationError::retryable(format!(
+            "adjacent duplicate translations on ids {}; each currentLines id needs its own translation — do not merge lines or repeat a neighbouring translation",
+            format_id_list(&dup_ids)
+        )));
+    }
+
     Ok(out)
+}
+
+/// Min length (chars) for an adjacent duplicate pair to be suspect. Short
+/// interjections ("对吧？") repeat legitimately far too often to flag.
+const MIN_DUPLICATE_CHARS: usize = 10;
+
+fn adjacent_duplicate_ids(
+    ordered: &[(usize, &str)],
+    source_texts: &[String],
+) -> Vec<usize> {
+    let mut ids = Vec::new();
+    for (index, pair) in ordered.windows(2).enumerate() {
+        let (id_a, text_a) = pair[0];
+        let (id_b, text_b) = pair[1];
+        if text_a != text_b || text_a.chars().count() < MIN_DUPLICATE_CHARS {
+            continue;
+        }
+        let same_source = source_texts
+            .get(index)
+            .zip(source_texts.get(index + 1))
+            .is_some_and(|(a, b)| a == b);
+        if same_source {
+            continue;
+        }
+        ids.push(id_a);
+        ids.push(id_b);
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 fn collect_translation_pairs(value: &Value, out: &mut Vec<(usize, String)>) {

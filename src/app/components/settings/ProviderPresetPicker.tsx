@@ -5,7 +5,7 @@ import {
   getProviderById,
   type LlmProviderId,
 } from "../../../features/media/llmProviders";
-import { CheckIcon } from "../Icons";
+import { CheckIcon, SettingsIcon } from "../Icons";
 
 type ProviderPresetPickerProps = {
   selectedId: LlmProviderId | string;
@@ -99,7 +99,7 @@ export function ProviderPresetPicker({
                 </span>
               ) : (
                 <span className="llm-provider-icon-wrap llm-provider-icon-fallback" aria-hidden>
-                  ⚙
+                  <SettingsIcon />
                 </span>
               )}
               <span className={`llm-provider-short ${isSelected ? "active" : ""}`}>

@@ -7,7 +7,6 @@ pub enum TaskStage {
     Segmenting,
     Terminology,
     Translating,
-    SubtitleLayout,
     Burning,
 }
 
@@ -21,7 +20,6 @@ impl TaskStage {
             TaskStage::Segmenting => "segmenting",
             TaskStage::Terminology => "terminology",
             TaskStage::Translating => "translating",
-            TaskStage::SubtitleLayout => "subtitleLayout",
             TaskStage::Burning => "burning",
         }
     }
@@ -43,7 +41,6 @@ impl TaskStage {
             TaskStage::Segmenting => 40,
             TaskStage::Terminology => 60,
             TaskStage::Translating => 70,
-            TaskStage::SubtitleLayout => 80,
             TaskStage::Burning => 95,
         }
     }

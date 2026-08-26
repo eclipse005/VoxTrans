@@ -7155,8 +7155,6 @@ version = "0.1.0"
 dependencies = [
  "fireredvad",
  "hound",
- "serde",
- "serde_json",
 ]
 
 [[package]]

@@ -18,22 +18,22 @@ type ExportOption = {
 const EXPORT_OPTIONS: ExportOption[] = [
   {
     item: "source",
-    labelKey: "subtitles.export.sourceMono",
+    labelKey: "subtitles:export.sourceMono",
     needsTranslation: false,
   },
   {
     item: "target",
-    labelKey: "subtitles.export.targetMono",
+    labelKey: "subtitles:export.targetMono",
     needsTranslation: true,
   },
   {
     item: "bilingualSourceFirst",
-    labelKey: "subtitles.export.bilingualSourceFirst",
+    labelKey: "subtitles:export.bilingualSourceFirst",
     needsTranslation: true,
   },
   {
     item: "bilingualTargetFirst",
-    labelKey: "subtitles.export.bilingualTargetFirst",
+    labelKey: "subtitles:export.bilingualTargetFirst",
     needsTranslation: true,
   },
 ];

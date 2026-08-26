@@ -17,6 +17,7 @@ import { SUBTITLE_STYLE_PRESETS } from "./settings/subtitleStylePresets";
 import { useDialogA11y } from "./useDialogA11y";
 import { useSettingsFormContext } from "../contexts/SettingsFormContext";
 import {
+  KEYLESS_API_KEY_PLACEHOLDER,
   getActiveProfile,
   isProfileAtPresetDefaults,
   isProfileConfigured,
@@ -63,7 +64,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
   const configuredProviderIds = useMemo(() => {
     const s = new Set<string>();
     for (const p of ctx.form.llmProfiles) {
-      // Keyful: green when key set. Keyless (Ollama): ready without key.
+      // Keyful: green when key set. Keyless: ready without a key.
       if (isProfileConfigured(p) && (p.requiresKey === false || p.apiKey?.trim())) {
         s.add(p.id);
       }
@@ -370,7 +371,11 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                         type="password"
                         value={activeLlm.apiKey}
                         onChange={(e) => ctx.updateActiveLlmProfile({ apiKey: e.target.value })}
-                        placeholder={activeLlm.requiresKey === false ? "ollama" : "sk-...  or  sk-aaa|sk-bbb"}
+                        placeholder={
+                          activeLlm.requiresKey === false
+                            ? KEYLESS_API_KEY_PLACEHOLDER
+                            : "sk-...  or  sk-aaa|sk-bbb"
+                        }
                         autoComplete="off"
                       />
                       <span className="toggle-desc">{t("settings:translate.apiKeyHint")}</span>

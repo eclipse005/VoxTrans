@@ -30,11 +30,6 @@ impl TaskStore {
         Self { pool }
     }
 
-    #[allow(dead_code)]
-    pub fn pool(&self) -> &SqlitePool {
-        &self.pool
-    }
-
     // ---- settings ----
 
     /// Load the single settings row, plus flat_srt_items and terminology_groups.
@@ -210,13 +205,13 @@ impl TaskStore {
         use std::collections::HashMap;
 
         let group_rows: Vec<TerminologyGroupRow> =
-            sqlx::query_as("SELECT id, name, updated_at FROM terminology_groups")
+            sqlx::query_as("SELECT id, name FROM terminology_groups")
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| format!("load terminology_groups: {e}"))?;
 
         let term_rows: Vec<TerminologyTermRow> = sqlx::query_as(
-            "SELECT id, group_id, origin, target, note, updated_at FROM terminology_terms",
+            "SELECT id, group_id, origin, target, note FROM terminology_terms",
         )
         .fetch_all(&self.pool)
         .await
@@ -919,7 +914,7 @@ mod tests {
         .bind(id)
         .bind(id)
         .bind(now)
-        .execute(s.pool())
+        .execute(&s.pool)
         .await
         .expect("insert blank task");
     }
@@ -1056,7 +1051,7 @@ mod tests {
 
         // No orphan words from the previous "hello" segment remain.
         let word_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM subtitle_words")
-            .fetch_one(s.pool())
+            .fetch_one(&s.pool)
             .await
             .unwrap();
         assert_eq!(word_count, 0);
@@ -1200,7 +1195,7 @@ mod tests {
         s.upsert_task(&item, &extras).await.unwrap();
         let first_updated_at: i64 = sqlx::query_scalar("SELECT updated_at FROM tasks WHERE id = ?")
             .bind("task-1")
-            .fetch_one(s.pool())
+            .fetch_one(&s.pool)
             .await
             .unwrap();
 
@@ -1222,7 +1217,7 @@ mod tests {
         let second_updated_at: i64 =
             sqlx::query_scalar("SELECT updated_at FROM tasks WHERE id = ?")
                 .bind("task-1")
-                .fetch_one(s.pool())
+                .fetch_one(&s.pool)
                 .await
                 .unwrap();
         assert!(second_updated_at > first_updated_at);

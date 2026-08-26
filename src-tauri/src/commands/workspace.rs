@@ -153,49 +153,11 @@ pub async fn save_subtitle_editor(
 }
 
 #[tauri::command]
-pub async fn execute_task_run(
-    app: AppHandle,
-    request: ExecuteTaskRunCommandRequest,
-) -> Result<(), String> {
-    let response = execute_task_batch_internal(&app, vec![request]).await;
-    if let Some(failed) = response.failed.first() {
-        return Err(failed.error.clone());
-    }
-    Ok(())
-}
-
-#[tauri::command]
 pub async fn execute_task_batch(
     app: AppHandle,
     request: ExecuteTaskBatchCommandRequest,
 ) -> Result<ExecuteTaskBatchCommandResponse, String> {
     Ok(execute_task_batch_internal(&app, request.items).await)
-}
-
-#[tauri::command]
-pub async fn enqueue_and_execute_task_batch(
-    app: AppHandle,
-    request: EnqueueAndExecuteTaskBatchCommandRequest,
-) -> Result<ExecuteTaskBatchCommandResponse, String> {
-    let mut failed = Vec::<ExecuteTaskBatchFailedItem>::new();
-    let mut execute_items = Vec::<ExecuteTaskRunCommandRequest>::new();
-
-    for item in request.items {
-        match enqueue_task_run_internal(&app, item.clone()).await {
-            Ok(()) => execute_items.push(ExecuteTaskRunCommandRequest {
-                task_id: item.id,
-                intent: Some(item.intent),
-            }),
-            Err(err) => failed.push(ExecuteTaskBatchFailedItem {
-                task_id: item.id,
-                error: err.to_command_error(),
-            }),
-        }
-    }
-
-    let mut response = execute_task_batch_internal(&app, execute_items).await;
-    response.failed.splice(0..0, failed);
-    Ok(response)
 }
 
 pub fn task_subtitle_beautify_context(

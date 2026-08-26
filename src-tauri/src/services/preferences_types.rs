@@ -189,13 +189,6 @@ impl SubtitleBurnMode {
 }
 
 impl SubtitleBorderStyle {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Outline => "outline",
-            Self::Box => "box",
-        }
-    }
-
     pub fn parse(value: &str) -> Self {
         match value.trim() {
             "box" => Self::Box,
@@ -328,10 +321,14 @@ pub struct LlmProfile {
     /// Which vendor preset this slot came from (usually equals `id`).
     #[serde(default)]
     pub preset_id: String,
-    /// When false (e.g. local Ollama), empty key is allowed and treated as `"ollama"`.
+    /// When false (keyless slot), an empty key is filled with
+    /// [`KEYLESS_API_KEY_PLACEHOLDER`] so pipeline validation passes.
     #[serde(default = "default_true")]
     pub requires_key: bool,
 }
+
+/// Non-empty stand-in stored for keyless slots; the transport ignores it.
+pub const KEYLESS_API_KEY_PLACEHOLDER: &str = "keyless";
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

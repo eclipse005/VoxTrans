@@ -3,7 +3,6 @@ import {
   mergeTaskStateChanged,
   shouldKeepCurrentProcessingStage,
   stageOrder,
-  stageRatio,
   toEnqueuePayload,
   type QueueRunMode,
 } from "./queueUtils";
@@ -21,21 +20,6 @@ describe("stageOrder", () => {
 
   it("returns 0 for non-finite", () => {
     expect(stageOrder({ order: NaN })).toBe(0);
-  });
-});
-
-describe("stageRatio", () => {
-  it("computes ratio correctly", () => {
-    expect(stageRatio({ current: 2, total: 4 })).toBe(0.5);
-  });
-
-  it("returns 0 for zero total", () => {
-    expect(stageRatio({ current: 1, total: 0 })).toBe(0);
-  });
-
-  it("clamps to 0-1 range", () => {
-    expect(stageRatio({ current: 10, total: 4 })).toBe(1);
-    expect(stageRatio({ current: -1, total: 4 })).toBe(0);
   });
 });
 

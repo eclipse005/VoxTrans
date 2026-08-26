@@ -1,7 +1,6 @@
 //! Tauri command entrypoints grouped by domain.
 //!
 //! Boundary:
-//! - `transcribe`: ASR execution and low-level segmentation command.
 //! - `transcription`: post-ASR pipeline orchestration and phase events.
 pub mod file;
 pub mod language;
@@ -9,8 +8,6 @@ pub mod logs;
 pub mod model;
 pub mod preferences;
 pub mod system;
-pub mod transcribe;
-mod transcribe_mapping;
 pub mod transcribe_types;
 pub mod transcription;
 mod transcription_types;
@@ -32,8 +29,6 @@ mod command_registration_tests {
     fn youtube_commands_are_registered_in_tauri_handler() {
         for command in [
             "commands::youtube::download_youtube_to_task_run",
-            "commands::youtube::get_youtube_download_progress",
-            "commands::youtube::list_youtube_download_progress",
             "commands::youtube::cancel_youtube_download",
             "commands::youtube::get_yt_dlp_version",
             "commands::youtube::update_yt_dlp",

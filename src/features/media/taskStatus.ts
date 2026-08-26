@@ -1,5 +1,4 @@
 import type { TranscribeStatus } from "./types";
-import { isSubtitleEditMode } from "./subtitleEditorMode";
 
 /**
  * Holds the single pipeline slot: no other task may start machine work.
@@ -20,13 +19,4 @@ export function holdsPipelineSlot(status: TranscribeStatus | string): boolean {
  */
 export function isBusyStatus(status: TranscribeStatus | string): boolean {
   return status === "queued" || status === "processing";
-}
-
-export function isAwaitingReviewStatus(status: TranscribeStatus | string): boolean {
-  return status === "review_source" || status === "review_target";
-}
-
-/** Subtitle editor may write SoT — same rule as subtitle editor edit mode. */
-export function isEditableStatus(status: TranscribeStatus | string): boolean {
-  return isSubtitleEditMode(status);
 }

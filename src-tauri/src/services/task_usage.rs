@@ -7,7 +7,7 @@ pub struct LlmTokenUsage {
     pub total_tokens: u64,
 }
 
-pub async fn record_llm_usage(
+async fn record_llm_usage(
     task_id: &str,
     _phase: &str,
     usage: LlmTokenUsage,

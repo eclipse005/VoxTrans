@@ -132,20 +132,16 @@ pub struct SubtitleWordRow {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-#[allow(dead_code)]
 pub struct TerminologyGroupRow {
     pub id: String,
     pub name: String,
-    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-#[allow(dead_code)]
 pub struct TerminologyTermRow {
     pub id: String,
     pub group_id: String,
     pub origin: String,
     pub target: String,
     pub note: String,
-    pub updated_at: i64,
 }

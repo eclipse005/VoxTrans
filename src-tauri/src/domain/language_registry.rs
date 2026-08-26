@@ -206,10 +206,6 @@ static ALIGN_MAPPINGS: &[AlignLanguageMapping] = &[
 pub struct LanguageRegistry;
 
 impl LanguageRegistry {
-    pub fn all_source_languages() -> &'static [LanguageMetadata] {
-        ALL_SOURCE_LANGUAGES
-    }
-
     pub fn supported_for(
         asr: AsrModel,
         align: AlignModel,

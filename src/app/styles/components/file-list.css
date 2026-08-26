@@ -948,8 +948,14 @@
 }
 
 .llm-provider-icon-fallback {
-  font-size: 14px;
   color: var(--apple-text-secondary);
+}
+
+/* Match the 22px brand-icon box; overrides the component's intrinsic 16px. */
+.llm-provider-icon-fallback svg {
+  width: 22px;
+  height: 22px;
+  display: block;
 }
 
 .llm-provider-short {

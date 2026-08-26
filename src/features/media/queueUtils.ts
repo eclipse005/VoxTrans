@@ -57,14 +57,6 @@ export function stageOrder(stage: Partial<TaskStageProgress> | null | undefined)
   return Math.max(0, Math.round(value));
 }
 
-export function stageRatio(stage: Partial<TaskStageProgress> | null | undefined): number {
-  if (!stage) return 0;
-  const current = Number(stage.current ?? 0);
-  const total = Number(stage.total ?? 0);
-  if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return 0;
-  return Math.max(0, Math.min(1, current / total));
-}
-
 export function shouldKeepCurrentProcessingStage(
   current: QueueItem,
   incoming: TaskStateChangedEvent,

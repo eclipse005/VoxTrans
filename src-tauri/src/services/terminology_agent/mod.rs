@@ -24,7 +24,7 @@ pub fn debug_candidates_block(cues: &[TranscriptCue]) -> String {
 use serde::{Deserialize, Serialize};
 
 use crate::db::store::TaskStore;
-use crate::services::llm::client::OpenAiCompatLlmClient;
+use crate::services::llm::client::AnthropicLlmClient;
 use crate::services::llm::port::LlmConfig;
 use crate::services::task_log::{event, TaskLogger};
 
@@ -146,7 +146,7 @@ where
         }
     }
 
-    let client = OpenAiCompatLlmClient::new(LlmConfig::new(
+    let client = AnthropicLlmClient::new(LlmConfig::new(
         input.base_url.clone(),
         input.api_key.clone(),
         input.model.clone(),

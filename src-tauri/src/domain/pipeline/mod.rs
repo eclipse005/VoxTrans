@@ -122,11 +122,6 @@ impl UnitStore {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn task_id(&self) -> &str {
-        &self.task_id
-    }
-
     pub fn store(&self) -> &TaskStore {
         &self.store
     }

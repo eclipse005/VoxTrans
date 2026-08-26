@@ -3,57 +3,14 @@
 // settings layer can never drift apart. Re-exported for call-site locality.
 pub use crate::services::preferences_types::SubtitleLengthPreset;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SubtitleLengthLimits {
-    pub source_limit: u32,
-    pub target_limit: u32,
-}
-
 /// Parse a preset from its lowercase string id. Thin wrapper over the
 /// canonical enum's `parse` so there is a single mapping to maintain.
 pub fn subtitle_length_preset_from_id(value: &str) -> SubtitleLengthPreset {
     SubtitleLengthPreset::parse(value)
 }
 
-pub fn source_limit_for_preset(source_lang: &str, preset_id: &str) -> u32 {
-    source_limit_for_language(source_lang, subtitle_length_preset_from_id(preset_id))
-}
-
 pub fn target_limit_for_preset(target_lang: &str, preset_id: &str) -> u32 {
     target_limit_for_language(target_lang, subtitle_length_preset_from_id(preset_id))
-}
-
-pub fn effective_subtitle_limits_from_preset(
-    source_lang: &str,
-    target_lang: &str,
-    preset_id: &str,
-) -> SubtitleLengthLimits {
-    effective_subtitle_limits(
-        source_lang,
-        target_lang,
-        subtitle_length_preset_from_id(preset_id),
-    )
-}
-
-pub fn effective_subtitle_limits(
-    source_lang: &str,
-    target_lang: &str,
-    preset: SubtitleLengthPreset,
-) -> SubtitleLengthLimits {
-    SubtitleLengthLimits {
-        source_limit: source_limit_for_language(source_lang, preset),
-        target_limit: target_limit_for_language(target_lang, preset),
-    }
-}
-
-fn source_limit_for_language(lang: &str, preset: SubtitleLengthPreset) -> u32 {
-    match language_key(lang).as_str() {
-        "zh" | "yue" | "ja" => cjk_limits(preset),
-        "ko" => korean_limits(preset),
-        "de" | "fr" => long_word_source_limits(preset),
-        "en" | "it" | "es" | "pt" => source_word_limits(preset),
-        _ => source_word_limits(preset),
-    }
 }
 
 fn target_limit_for_language(lang: &str, preset: SubtitleLengthPreset) -> u32 {
@@ -75,22 +32,6 @@ fn language_key(lang: &str) -> String {
         .find(['-', '_'])
         .unwrap_or(trimmed.len());
     trimmed[..end].to_ascii_lowercase()
-}
-
-fn source_word_limits(preset: SubtitleLengthPreset) -> u32 {
-    match preset {
-        SubtitleLengthPreset::Short => 12,
-        SubtitleLengthPreset::Standard => 16,
-        SubtitleLengthPreset::Loose => 20,
-    }
-}
-
-fn long_word_source_limits(preset: SubtitleLengthPreset) -> u32 {
-    match preset {
-        SubtitleLengthPreset::Short => 11,
-        SubtitleLengthPreset::Standard => 14,
-        SubtitleLengthPreset::Loose => 18,
-    }
 }
 
 fn target_word_limits(preset: SubtitleLengthPreset) -> u32 {

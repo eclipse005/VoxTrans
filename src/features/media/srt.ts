@@ -1,7 +1,6 @@
 import type { SubtitleCue } from "./types";
 
 const TIME_RE = /^(\d{2}):(\d{2}):(\d{2}),(\d{3})$/;
-const RANGE_RE = /^(.+?)\s*-->\s*(.+)$/;
 
 export function formatSrtTime(ms: number): string {
   const safe = Math.max(0, Math.round(ms));
@@ -23,45 +22,6 @@ export function parseSrtTime(value: string): number | null {
   const ms = Number.parseInt(m[4], 10);
   if (min >= 60 || sec >= 60 || ms >= 1000) return null;
   return h * 3_600_000 + min * 60_000 + sec * 1_000 + ms;
-}
-
-export function parseSrtContent(content: string): SubtitleCue[] {
-  const normalized = content.replace(/\r\n/g, "\n");
-  const blocks = normalized
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean);
-
-  const cues: SubtitleCue[] = [];
-  for (let i = 0; i < blocks.length; i += 1) {
-    const lines = blocks[i].split("\n");
-    if (!lines.length) continue;
-
-    let lineOffset = 0;
-    if (/^\d+$/.test(lines[0].trim())) {
-      lineOffset = 1;
-    }
-
-    const tsLine = lines[lineOffset]?.trim();
-    if (!tsLine) continue;
-    const range = RANGE_RE.exec(tsLine);
-    if (!range) continue;
-
-    const startMs = parseSrtTime(range[1]);
-    const endMs = parseSrtTime(range[2]);
-    if (startMs == null || endMs == null) continue;
-
-    const text = lines.slice(lineOffset + 1).join("\n").trim();
-    cues.push({
-      id: cueId(i + 1, startMs),
-      startMs,
-      endMs: Math.max(endMs, startMs),
-      text,
-      translatedText: "",
-    });
-  }
-
-  return cues;
 }
 
 export function cuesToSrt(cues: SubtitleCue[]): string {

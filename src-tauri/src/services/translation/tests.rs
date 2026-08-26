@@ -266,6 +266,7 @@ fn validate_rejects_source_language_paraphrase() {
             source_lang: "ja",
             target_lang: "zh-CN",
             enforced_targets: &[],
+            source_texts: &[],
         },
     )
     .expect_err("source-language paraphrase must fail");
@@ -291,10 +292,79 @@ fn validate_accepts_enforced_target_with_source_script() {
             source_lang: "ja",
             target_lang: "zh-CN",
             enforced_targets: &["Last Call（ラストコール）".to_string()],
+            source_texts: &[],
         },
     )
     .expect("enforced kana-bearing target must not trip the leak guard");
     assert_eq!(out.len(), 1);
+}
+
+#[test]
+fn validate_rejects_adjacent_duplicate_translations_over_different_sources() {
+    use super::responses::{
+        TranslationValidationContext, validate_batch_translation_response_with_context,
+    };
+    // Merge/shift signature: id 3's translation is a copy of id 2's while the
+    // sources differ — the model merged a line and padded the id list.
+    let value = json!({
+        "translations": [
+            { "id": 1, "text": "第一句的译文。" },
+            { "id": 2, "text": "我们在预期季度转换时会关注未平仓合约量" },
+            { "id": 3, "text": "我们在预期季度转换时会关注未平仓合约量" }
+        ]
+    });
+    let sources = vec![
+        "first source line.".to_string(),
+        "We look at open interest when anticipating a quarterly shift.".to_string(),
+        "This is what we're doing in price action, right?".to_string(),
+    ];
+    let err = validate_batch_translation_response_with_context(
+        value,
+        &TranslationValidationContext {
+            expected_ids: &[1, 2, 3],
+            source_lang: "en",
+            target_lang: "zh-CN",
+            enforced_targets: &[],
+            source_texts: &sources,
+        },
+    )
+    .expect_err("adjacent duplicate over different sources must fail");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("adjacent duplicate translations"), "msg={msg}");
+}
+
+#[test]
+fn validate_allows_adjacent_duplicates_when_source_repeats_or_text_is_short() {
+    use super::responses::{
+        TranslationValidationContext, validate_batch_translation_response_with_context,
+    };
+    // Same source twice ("Okay?" / "Okay?") -> same translation is legitimate.
+    let value = json!({
+        "translations": [
+            { "id": 1, "text": "市场在这一段里反复震荡整理中" },
+            { "id": 2, "text": "市场在这一段里反复震荡整理中" },
+            { "id": 3, "text": "对吧？" },
+            { "id": 4, "text": "对吧？" }
+        ]
+    });
+    let sources = vec![
+        "The market keeps ranging here, right?".to_string(),
+        "The market keeps ranging here, right?".to_string(),
+        "Okay?".to_string(),
+        "Right?".to_string(),
+    ];
+    let out = validate_batch_translation_response_with_context(
+        value,
+        &TranslationValidationContext {
+            expected_ids: &[1, 2, 3, 4],
+            source_lang: "en",
+            target_lang: "zh-CN",
+            enforced_targets: &[],
+            source_texts: &sources,
+        },
+    )
+    .expect("repeated source lines and short interjections must pass");
+    assert_eq!(out.len(), 4);
 }
 
 #[test]

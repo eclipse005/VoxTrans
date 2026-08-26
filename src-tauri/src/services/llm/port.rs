@@ -67,6 +67,10 @@ pub struct LlmTokenUsage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    /// Anthropic prompt-cache accounting (log-only; DB schema untouched).
+    /// Both are also included in `prompt_tokens`.
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +79,10 @@ pub struct LlmCallContext {
     pub media_path: Option<String>,
     pub phase: String,
     pub store: Option<TaskStore>,
+    /// JSON Schema forwarded as Anthropic structured output
+    /// (`output_config.format`). Endpoints that reject it fall back to
+    /// plain-JSON generation with the existing repair chain.
+    pub output_schema: Option<Value>,
 }
 
 #[derive(Debug, Clone)]

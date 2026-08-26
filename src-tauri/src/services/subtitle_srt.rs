@@ -68,21 +68,6 @@ pub fn is_reserved_task_srt_basename(file_name: &str) -> bool {
         .any(|reserved| reserved.eq_ignore_ascii_case(name.as_str()))
 }
 
-pub fn write_task_output_variants_for_completion(
-    task_id: &str,
-    media_path: &Path,
-    segments: Vec<SubtitleSrtSegment>,
-    include_translation_variants: bool,
-) -> Result<Vec<String>, String> {
-    write_task_output_variants_for_completion_with_options(
-        task_id,
-        media_path,
-        segments,
-        include_translation_variants,
-        true,
-    )
-}
-
 /// When `include_source` is false (SRT-import translate tasks), skip writing
 /// another `src.srt` because the original subtitle file is already in the
 /// task folder under its real name. Only translation + bilingual outputs.

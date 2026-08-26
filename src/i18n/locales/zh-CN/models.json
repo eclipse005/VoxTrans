@@ -2,7 +2,6 @@
   "card": {
     "ready": "已就绪",
     "notReady": "未就绪",
-    "versionLabel": "版本",
     "openDir": "打开目录",
     "openDirAria": "打开 {{target}} 模型目录",
     "cancelDownload": "取消下载",
@@ -20,7 +19,6 @@
     "align": "时间轴对齐",
     "currentAlign": "当前选用",
     "support": "配套模型",
-    "alignRole": "必需 · 词级时间戳",
     "demucsRole": "可选 · 人声分离"
   },
   "names": {

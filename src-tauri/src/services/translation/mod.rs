@@ -6,9 +6,34 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use crate::services::llm::batch::run_indexed_chained_idempotent;
-use crate::services::llm::client::OpenAiCompatLlmClient;
+use crate::services::llm::client::AnthropicLlmClient;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 use crate::services::task_log::TaskLogger;
+
+/// Structured-output schema for translation batches: the model must answer
+/// with `{"translations":[{"id":<int>,"text":<str>}]}`. Endpoints that
+/// reject `output_config` fall back to plain JSON + the repair chain.
+fn translation_output_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "translations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "text": {"type": "string"}
+                    },
+                    "required": ["id", "text"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["translations"],
+        "additionalProperties": false
+    })
+}
 
 mod batches;
 mod guard;
@@ -29,10 +54,10 @@ use responses::{
 use types::BatchWindow;
 use segments::normalize_segments;
 pub use types::{
-    BuildTranslationLayerRequest, BuildTranslationLayerResponse, TranslationProgress,
-    TranslationSegmentInput, TranslationSegmentOutput, TranslationTerminologyEntry,
-    TranslationToken,
+    BuildTranslationLayerRequest, TranslationProgress, TranslationSegmentInput,
+    TranslationSegmentOutput, TranslationTerminologyEntry, TranslationToken,
 };
+pub(crate) use types::BuildTranslationLayerResponse;
 
 const DEFAULT_BATCH_SIZE: usize = 20;
 const MAX_BATCH_SIZE: usize = 40;
@@ -57,7 +82,7 @@ pub async fn build_translation_layer_with_progress(
 
     // HTTP retries live on the client. JSON/semantic failures return here and
     // split currentLines (20→10→5→1) with the same translate prompt.
-    let llm_client = OpenAiCompatLlmClient::new(LlmConfig::new(
+    let llm_client = AnthropicLlmClient::new(LlmConfig::new(
         request.translate_base_url.clone(),
         request.translate_api_key.clone(),
         request.translate_model.clone(),
@@ -118,6 +143,7 @@ pub async fn build_translation_layer_with_progress(
         media_path: Some(request.media_path.clone()),
         phase: "step4_translate_batch".to_string(),
         store: request.unit_store.as_ref().map(|us| us.store().clone()),
+        output_schema: Some(translation_output_schema()),
     };
 
     // Share the batch windows across worker tasks via Arc instead of
@@ -282,7 +308,7 @@ pub async fn build_translation_layer_with_progress(
 
 #[derive(Clone)]
 struct TranslateCall {
-    llm_client: OpenAiCompatLlmClient,
+    llm_client: AnthropicLlmClient,
     context: LlmCallContext,
     segments: Arc<Vec<types::NormalizedSegment>>,
     known_translations: Arc<Mutex<HashMap<usize, String>>>,
@@ -355,6 +381,11 @@ async fn translate_window_once(
     };
     let local_to_global = window.local_to_global.clone();
     let local_ids = window.local_ids.clone();
+    let source_texts: Vec<String> = window
+        .current_lines
+        .iter()
+        .map(|line| line.text.clone())
+        .collect();
     let source_lang = window.source_lang.clone();
     let target_lang = window.target_lang.clone();
     // Only terms whose source actually appears in this window are enforced
@@ -379,6 +410,7 @@ async fn translate_window_once(
                         source_lang: &source_lang,
                         target_lang: &target_lang,
                         enforced_targets: &enforced_targets,
+                        source_texts: &source_texts,
                     },
                 )
             },

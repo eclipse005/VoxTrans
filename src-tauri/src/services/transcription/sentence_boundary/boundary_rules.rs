@@ -391,11 +391,6 @@ pub(super) const JA_TURN_STARTERS: &[&str] = &[
     "まずは", "まず", "次に", "ところで", "ちなみに",
 ];
 
-#[allow(dead_code)]
-pub(super) fn is_ja_turn_start(token: &str, next: &str) -> bool {
-    is_ja_turn_start_after("", token, next)
-}
-
 pub(super) fn is_ja_turn_start_after(prev: &str, token: &str, next: &str) -> bool {
     if is_ja_address_greeting_bind(prev, token) {
         return false;
@@ -533,11 +528,6 @@ fn is_explanatory_or_question_no(token: &str) -> bool {
 
 /// Spoken clause end: です/ます/ました/だ. Equivalent to a missing 。
 /// て-form is not treated as a sentence end (serial verbs / てください).
-#[allow(dead_code)]
-pub(super) fn is_japanese_clause_ending(left: &str, right: &str) -> bool {
-    is_japanese_clause_ending_with_peek(left, right, "")
-}
-
 pub(super) fn is_japanese_spoken_end(prev: &str, left: &str, right: &str, right2: &str) -> bool {
     if is_line_start_bound_particle(right) && !is_split_hai(right, right2) {
         return false;
@@ -918,13 +908,9 @@ mod tests {
         assert!(!is_hiragana_continuation_bind("挑む", "もっと"));
         assert!(!is_hiragana_continuation_bind("ます", "あの"));
         assert!(!is_hiragana_continuation_bind("です", "だから"));
-        assert!(is_ja_turn_start("はい", ""));
-        assert!(is_ja_turn_start("皆", "さん"));
-        assert!(!is_ja_turn_start("登場", "皆"));
         assert!(!is_suru_compound_bind("は", "する"));
         assert!(!is_split_hai("は", "選手"));
         assert!(is_japanese_clause_ending_with_peek("ます", "は", "いじゃあ"));
-        assert!(!is_japanese_clause_ending("ます", "は"));
         assert!(is_connector_like("いじゃあ", &["じゃあ", "はい"]));
         assert!(is_split_connector_pair("なる", "ほど", &["なるほど"]));
         assert!(is_split_connector_pair("皆", "さん", &["皆さん"]));
@@ -937,22 +923,6 @@ mod tests {
         assert!(!is_open_genitive_link("してるの", "これから"));
         assert!(is_open_genitive_link("東京の", "天気"));
         assert!(is_open_genitive_link("担当の", "先生"));
-    }
-
-    #[test]
-    fn spoken_copula_is_a_clause_ending() {
-        assert!(is_japanese_clause_ending("美味しいです", "今日"));
-        assert!(is_japanese_clause_ending("行きます", "それから"));
-        assert!(is_japanese_clause_ending("始まりました", "次"));
-        assert!(is_japanese_clause_ending("してください", "こちら"));
-        assert!(is_japanese_clause_ending("好きだ", "でも"));
-        assert!(is_japanese_clause_ending("学生なんだ", "明日"));
-        assert!(!is_japanese_clause_ending("美味しいです", "が"));
-        assert!(!is_japanese_clause_ending("行きます", "けど"));
-        assert!(!is_japanese_clause_ending("ただ", "それ"));
-        assert!(!is_japanese_clause_ending("して", "いる"));
-        assert!(!is_japanese_clause_ending("見て", "ほしい"));
-        assert!(!is_japanese_clause_ending("して", "ください"));
     }
 
     #[test]

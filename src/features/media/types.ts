@@ -223,48 +223,6 @@ export function normalizeTaskProgress(value: unknown): TaskProgress {
   });
 }
 
-export type WordToken = {
-  start: number;
-  end: number;
-  word: string;
-};
-
-export type TranscribeResponse = {
-  words: WordToken[];
-  text: string;
-  alignedText: string;
-  segmentTotal: number;
-  segmentDurationsSec: number[];
-  audioDurationSec: number;
-  vadElapsedSec: number;
-  transcribeElapsedSec: number;
-  timingSec: TranscribeTimingSec;
-  rtfX: number;
-  rtfBreakdownX: TranscribeRtfBreakdownX;
-  executionProvider: string;
-};
-
-type TranscribeTimingSec = {
-  prepareElapsedSec: number;
-  vadElapsedSec: number;
-  tempWavWriteSec: number;
-  asrLoadSec: number;
-  asrTranscribeSec: number;
-  alignLoadSec: number;
-  alignSec: number;
-  punctuationMapSec: number;
-  totalElapsedSec: number;
-};
-
-type TranscribeRtfBreakdownX = {
-  total: number;
-  asrStage: number;
-  asrTranscribe: number;
-  alignStage: number;
-  align: number;
-  modelOnly: number;
-};
-
 export type WorkspaceStateResponse = {
   queue: QueueItem[];
 };

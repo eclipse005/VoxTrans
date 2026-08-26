@@ -7,13 +7,6 @@ pub use super::transcription_types::{
     WordTokenCommandDto,
 };
 
-#[tauri::command]
-pub async fn build_source_sentences(
-    request: BuildSourceSentencesCommandRequest,
-) -> Result<BuildSourceSentencesCommandResponse, String> {
-    build_source_sentences_with_progress(request, None).await
-}
-
 pub async fn build_source_sentences_with_progress(
     request: BuildSourceSentencesCommandRequest,
     on_progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,

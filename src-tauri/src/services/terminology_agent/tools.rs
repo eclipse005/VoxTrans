@@ -881,13 +881,25 @@ pub fn tool_submit_result(args: &Value, ctx: &mut AgentToolContext<'_>) -> ToolO
     );
     if !failing.is_empty() {
         // Salvage stop-loss: a pair the model cannot adjudicate after
-        // repeated attempts is resolved by EXCLUSION of BOTH surfaces. A
-        // missing row does no damage; a wrong row enforces a fabricated
-        // distinction on every matching line. Frequency is deliberately NOT
-        // used to pick a survivor — a mishearing can out-occur the real term.
+        // repeated attempts is resolved by EXCLUSION of BOTH surfaces — but
+        // only when their targets CONFLICT (that is where a fabricated
+        // distinction would do damage). A pair already mapped to the SAME
+        // target is a mishearing mapping: identical rendering carries no
+        // consistency risk, so those rows are kept. Frequency is deliberately
+        // NOT used to pick a survivor — a mishearing can out-occur the real
+        // term.
         if ctx.submit_rejects.len() >= 2 {
             let mut dropped: Vec<String> = Vec::new();
+            let mut kept_pairs: Vec<String> = Vec::new();
             for (a, b) in &failing {
+                let same_target = match (kept.get(&normalize_term_key(a)), kept.get(&normalize_term_key(b))) {
+                    (Some((ta, _)), Some((tb, _))) => ta == tb,
+                    _ => false,
+                };
+                if same_target {
+                    kept_pairs.push(format!("'{a}' = '{b}'"));
+                    continue;
+                }
                 for surface in [a, b] {
                     let key = normalize_term_key(surface);
                     if dropped.iter().any(|d| d == surface) {
@@ -931,11 +943,25 @@ pub fn tool_submit_result(args: &Value, ctx: &mut AgentToolContext<'_>) -> ToolO
                     );
                 }
             }
+            let promoted = promote_style_guide_mappings(&mut glossary, &style, &all_pairs, &transcript_lc);
             ctx.final_glossary = Some(glossary.clone());
             ctx.final_style = Some(style.clone());
+            let kept_note = if kept_pairs.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " Kept same-target pair(s) (identical rendering, no consistency risk): {}.",
+                    kept_pairs.join(", ")
+                )
+            };
+            let promote_note = if promoted == 0 {
+                String::new()
+            } else {
+                format!(" Promoted {promoted} style_guide mapping(s) into glossary row(s).")
+            };
             return ToolOutcome::submit_ok(format!(
                 "Briefing submitted WITH SALVAGE: dropped {} row(s) from ⚠ pair(s) still unresolved after repeated attempts: {}. \
-                 Exclusion is the safe call; add them next time via mapping/exclusion notes. glossary={}, style_guide={} chars.{strip_note} Finalizing.",
+                 Exclusion is the safe call for conflicting targets; add them next time via mapping/exclusion notes. glossary={}, style_guide={} chars.{strip_note}{kept_note}{promote_note} Finalizing.",
                 dropped.len(),
                 dropped.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(", "),
                 glossary.len(),
@@ -950,7 +976,7 @@ pub fn tool_submit_result(args: &Value, ctx: &mut AgentToolContext<'_>) -> ToolO
              or keep it with a note naming the other surface and the call (\"likely ASR mishearing of 'X'\" / \"'X' excluded as likely mishearing\" / \"distinct from 'X'\"). \
              One side naming the other is enough; two surfaces each declaring a mishearing of the same canonical term also resolves the pair. \
              Do not resubmit the same call with reworded notes — change the CALL or add what was missing. \
-             Repeated rejected attempts trigger salvage: BOTH surfaces of the still-failing pair(s) get dropped; the rest is accepted.\
+             Repeated rejected attempts trigger salvage: still-failing pair(s) with CONFLICTING targets lose BOTH rows; pairs already mapped to the SAME target are kept as a mishearing mapping.\
              {}",
             unresolved.join("; "),
             rejection_evidence(&unresolved, ctx)
@@ -989,6 +1015,7 @@ pub fn tool_submit_result(args: &Value, ctx: &mut AgentToolContext<'_>) -> ToolO
         ));
     }
 
+    let promoted = promote_style_guide_mappings(&mut glossary, &style, &all_pairs, &transcript_lc);
     ctx.final_glossary = Some(glossary.clone());
     ctx.final_style = Some(style.clone());
     let drop_msg = if dropped > 0 {
@@ -996,8 +1023,13 @@ pub fn tool_submit_result(args: &Value, ctx: &mut AgentToolContext<'_>) -> ToolO
     } else {
         String::new()
     };
+    let promote_msg = if promoted > 0 {
+        format!(" ({promoted} style_guide mapping(s) promoted into glossary rows)")
+    } else {
+        String::new()
+    };
     ToolOutcome::submit_ok(format!(
-        "Briefing submitted: glossary={}{drop_msg}, style_guide={} chars. Finalizing.",
+        "Briefing submitted: glossary={}{drop_msg}{promote_msg}, style_guide={} chars. Finalizing.",
         glossary.len(),
         style.chars().count()
     ))
@@ -1124,6 +1156,138 @@ fn has_verified_quote(note_lc: &str, transcript_lc: &str) -> bool {
         }
         false
     })
+}
+
+/// Promote explicit "X译为Y" / "X译作Y" mappings taught in style_guide into
+/// structured glossary rows. The structured terminology channel is the one the
+/// translator is instructed to apply verbatim; free-text style guidance is
+/// followed far less reliably (observed: terms rendered per style_guide in
+/// some batches, left in the source language in others). A mapping is promoted
+/// only when no glossary row covers the source, the source literally appears
+/// in the transcript, and the source is not a member of any ⚠/flagged pair —
+/// pair surfaces must go through the pair gate, not a text-pattern backdoor.
+fn promote_style_guide_mappings(
+    glossary: &mut Vec<GlossaryEntry>,
+    style: &str,
+    all_pairs: &[(String, String)],
+    transcript_lc: &str,
+) -> usize {
+    let pair_surfaces: std::collections::HashSet<String> = all_pairs
+        .iter()
+        .flat_map(|(a, b)| [normalize_term_key(a), normalize_term_key(b)])
+        .collect();
+    let transcript_folded: String = transcript_lc
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let mut promoted = 0usize;
+    for (source, target) in extract_style_guide_mappings(style) {
+        if glossary.len() >= MAX_GLOSSARY_ROWS {
+            break;
+        }
+        let key = normalize_term_key(&source);
+        if key.is_empty()
+            || pair_surfaces.contains(&key)
+            || glossary.iter().any(|g| normalize_term_key(&g.source) == key)
+            || !transcript_folded.contains(&key)
+        {
+            continue;
+        }
+        glossary.push(GlossaryEntry::new(source, target, "promoted from style_guide"));
+        promoted += 1;
+    }
+    promoted
+}
+
+/// Extract explicit term mappings of the form `X译为"Y"` / `X 译作 "Y"` from
+/// free-text style guidance. The source may be bare or quoted; the target must
+/// be quoted with "...", "..." or 「...」. Patterns without an explicit
+/// 译为/译作 marker (e.g. parenthetical renderings) are intentionally NOT
+/// extracted — false positives there would enforce invented mappings.
+fn extract_style_guide_mappings(style: &str) -> Vec<(String, String)> {
+    const MAX_SOURCE_CHARS: usize = 40;
+    const MAX_TARGET_CHARS: usize = 40;
+    let chars: Vec<char> = style.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i + 1 < chars.len() {
+        let is_marker = chars[i] == '译' && matches!(chars[i + 1], '为' | '作');
+        if !is_marker {
+            i += 1;
+            continue;
+        }
+        // Source: walk back from the marker over whitespace and a closing quote.
+        let mut s_end = i;
+        while s_end > 0 && chars[s_end - 1].is_whitespace() {
+            s_end -= 1;
+        }
+        if s_end > 0 && matches!(chars[s_end - 1], '"' | '\u{201D}' | '\u{2019}' | '」') {
+            s_end -= 1;
+        }
+        let mut s_start = s_end;
+        while s_start > 0 {
+            let c = chars[s_start - 1];
+            // Whitespace stays in the walk (multi-word sources like
+            // "quarterly shift"); boundaries are CJK punctuation and quotes.
+            // Over-capture is filtered later by the transcript-containment
+            // check in promote_style_guide_mappings.
+            if matches!(
+                c,
+                '\n' | '\r'
+                    | '，'
+                    | '。'
+                    | '；'
+                    | '、'
+                    | ','
+                    | ';'
+                    | ':'
+                    | '：'
+                    | '"'
+                    | '\u{201C}'
+                    | '\u{2018}'
+                    | '「'
+                    | '（'
+                    | '('
+                    | '）'
+                    | ')'
+            ) {
+                break;
+            }
+            s_start -= 1;
+        }
+        // Target: skip whitespace, then require an opening quote.
+        let mut j = i + 2;
+        while j < chars.len() && chars[j].is_whitespace() {
+            j += 1;
+        }
+        if j >= chars.len() || !matches!(chars[j], '"' | '\u{201C}' | '「') {
+            i += 1;
+            continue;
+        }
+        let close = match chars[j] {
+            '\u{201C}' => '\u{201D}',
+            '「' => '」',
+            other => other,
+        };
+        let t_start = j + 1;
+        let mut t_end = t_start;
+        while t_end < chars.len() && chars[t_end] != close {
+            t_end += 1;
+        }
+        let source: String = chars[s_start..s_end].iter().collect::<String>().trim().to_string();
+        let target: String = chars[t_start..t_end].iter().collect::<String>().trim().to_string();
+        i = t_end + 1;
+        let source_len = source.chars().count();
+        if source_len < 2
+            || source_len > MAX_SOURCE_CHARS
+            || target.is_empty()
+            || target.chars().count() > MAX_TARGET_CHARS
+        {
+            continue;
+        }
+        out.push((source, target));
+    }
+    out
 }
 
 pub fn clean_glossary(raw: Option<&Value>) -> (Vec<GlossaryEntry>, usize) {
@@ -1932,5 +2096,96 @@ mod tests {
         assert!(style.contains("ASR 误听"), "style={style}");
         assert!(!style.contains("译为「乙」"), "style={style}");
         assert!(style.contains("口语化"), "style={style}");
+    }
+
+    #[test]
+    fn salvage_keeps_same_target_pair_rows() {
+        // Same target on both surfaces = a mishearing mapping: identical
+        // rendering carries no consistency risk, so salvage must not drop
+        // these rows the way it drops conflicting-target pairs.
+        let cues = cues();
+        let pairs = vec![("foo bar".to_string(), "foo baz".to_string())];
+        let mut ctx = AgentToolContext {
+            cues: &cues,
+            web_search_count: 0,
+            web_search_enabled: false,
+            web_queries: Vec::new(),
+            submit_rejects: Vec::new(),
+            final_glossary: None,
+            final_style: None,
+            confusable_pairs: &pairs,
+            declared_pairs: Vec::new(),
+        };
+        let attempt = || {
+            json!({
+                "glossary":[
+                    {"source":"foo bar","target":"甲"},
+                    {"source":"foo baz","target":"甲"},
+                    {"source":"Canyon","target":"峡谷"}
+                ],
+                "style_guide":"s"
+            })
+        };
+        tool_submit_result(&attempt(), &mut ctx);
+        tool_submit_result(&attempt(), &mut ctx);
+        let third = tool_submit_result(&attempt(), &mut ctx);
+        assert!(third.terminate, "{}", third.message);
+        assert!(third.message.contains("SALVAGE"));
+        assert!(third.message.contains("Kept same-target"), "{}", third.message);
+        let g = ctx.final_glossary.as_ref().unwrap();
+        assert_eq!(g.len(), 3, "same-target pair must survive salvage: {g:?}");
+    }
+
+    #[test]
+    fn extract_style_guide_mappings_parses_quoted_targets() {
+        let m = extract_style_guide_mappings(
+            "术语统一：quarterly shift译为\"季度转换\"，seasonal tendency 译为「季节性倾向」。",
+        );
+        assert_eq!(
+            m,
+            vec![
+                ("quarterly shift".to_string(), "季度转换".to_string()),
+                ("seasonal tendency".to_string(), "季节性倾向".to_string()),
+            ]
+        );
+        // Unquoted target -> not an explicit mapping, ignored.
+        assert!(extract_style_guide_mappings("月份名称译为中文").is_empty());
+    }
+
+    #[test]
+    fn submit_promotes_style_guide_mappings_into_glossary() {
+        let cues = cues();
+        let pairs: Vec<(String, String)> = Vec::new();
+        let mut ctx = AgentToolContext {
+            cues: &cues,
+            web_search_count: 0,
+            web_search_enabled: false,
+            web_queries: Vec::new(),
+            submit_rejects: Vec::new(),
+            final_glossary: None,
+            final_style: None,
+            confusable_pairs: &pairs,
+            declared_pairs: Vec::new(),
+        };
+        let out = tool_submit_result(
+            &json!({
+                "glossary":[{"source":"Canyon","target":"峡谷"}],
+                "style_guide":"术语统一：Last Call 译为「最后来电」，quarterly shift 译为\"季度转换\"。Canyon 译为「峡谷沟」。保持口语化。"
+            }),
+            &mut ctx,
+        );
+        assert!(out.terminate, "{}", out.message);
+        assert!(out.message.contains("promoted"), "{}", out.message);
+        let g = ctx.final_glossary.as_ref().unwrap();
+        // "Last Call" appears in the transcript -> promoted.
+        assert!(
+            g.iter().any(|e| e.source == "Last Call" && e.target == "最后来电"),
+            "glossary={g:?}"
+        );
+        // "quarterly shift" is not in the transcript -> skipped.
+        // "Canyon" already has a glossary row -> not overwritten/duplicated.
+        assert_eq!(g.len(), 2, "glossary={g:?}");
+        assert_eq!(g[0].source, "Canyon");
+        assert_eq!(g[0].target, "峡谷");
     }
 }
