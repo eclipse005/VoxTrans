@@ -1,40 +1,38 @@
 use crate::services::subtitle_srt::SubtitleSrtSegment;
-use crate::services::workspace_subtitle::{
-    WorkspaceSubtitleSegment, WorkspaceSubtitleWord,
-};
+use crate::services::workspace_subtitle::WorkspaceSubtitleSegment;
 
 pub fn beautify_subtitle_srt_segments(
     segments: &mut Vec<SubtitleSrtSegment>,
-    subtitle_length_preset: &str,
+    _subtitle_length_preset: &str,
     target_lang: &str,
 ) {
-    // Text beautify (comma/period trimming, CJK-ASCII spacing) only makes
-    // sense for CJK targets — it would mangle Latin punctuation in
-    // English/Spanish/etc.
-    if is_cjk_target(target_lang) {
-        for segment in &mut *segments {
-            segment.translated_text = beautify_subtitle_text(&segment.translated_text);
-        }
-    }
-    // Watchability merge (flash/orphan line re-joining) runs for EVERY
-    // supported target language: length accounting is language-aware
-    // (chars for zh/ja/ko/th, words for the rest) and the fragment tables
-    // cover both CJK and Latin/Germanic/Romance starters & connectors, so
-    // non-CJK targets get the same flash-line protection as CJK ones.
-    crate::services::subtitle_step5::merge_watchability_subtitle_srt_segments(
-        segments,
-        subtitle_length_preset,
-        target_lang,
-    );
+    beautify_subtitle_srt_text(segments, target_lang);
     pad_cue_hold_and_gaps(segments);
 }
 
-/// Minimum on-screen time when the following gap can absorb the extra hold.
-const MIN_HOLD_MS: u64 = 500;
-/// If the wait until the next cue is this small, hold until that cue starts
-/// so the viewer sees a cut, not a blank flash.
-const MAX_GAP_FILL_MS: u64 = 1000;
+/// CJK comma/period polish only. Does not change timestamps.
+/// Export uses this so hold/gap padding is not applied twice on already
+/// materialized cues (min-hold then bridging the leftover gap).
+pub fn beautify_subtitle_srt_text(segments: &mut [SubtitleSrtSegment], target_lang: &str) {
+    if !is_cjk_target(target_lang) {
+        return;
+    }
+    for segment in segments {
+        segment.translated_text = beautify_subtitle_text(&segment.translated_text);
+    }
+}
 
+/// Minimum on-screen duration. A short cue may grow up to this when there
+/// is room — never in the same step as snapping to the next cue.
+const MIN_HOLD_MS: u64 = 500;
+/// If the original gap to the next cue is at most this, snap end to next
+/// start so the viewer sees a cut, not a blank flash.
+const MAX_GAP_FILL_MS: u64 = 500;
+
+/// Two mutually exclusive timing tweaks, decided from the original gap:
+/// 1. Gap to next is (0, 0.5s] → end = next.start. Done.
+/// 2. Else if duration < 0.5s → grow up to 0.5s, never past next.start.
+///    The leftover gap is left as-is; it must not then trigger (1).
 fn pad_cue_hold_and_gaps(segments: &mut [SubtitleSrtSegment]) {
     let len = segments.len();
     for i in 0..len {
@@ -46,35 +44,24 @@ fn pad_cue_hold_and_gaps(segments: &mut [SubtitleSrtSegment]) {
             None
         };
 
-        let hold_end = start.saturating_add(MIN_HOLD_MS);
-        let needs_min_hold = end < hold_end;
-        if needs_min_hold {
-            end = match next_start {
-                Some(next) if next <= start => end,
-                Some(next) => hold_end.min(next),
-                None => hold_end,
-            };
-        }
-
-        // Cues that only just reached the 0.5s floor stay there. Bridging
-        // through to the next cue is for lines that were already long enough.
-        if !needs_min_hold
-            && let Some(next) = next_start
-            && next > end
-            && next - end <= MAX_GAP_FILL_MS
-        {
-            end = next;
+        match next_start {
+            Some(next) if next <= start => {}
+            Some(next) if next > end && next - end <= MAX_GAP_FILL_MS => {
+                end = next;
+            }
+            Some(next) if next > end && end - start < MIN_HOLD_MS => {
+                end = start.saturating_add(MIN_HOLD_MS).min(next);
+            }
+            None if end - start < MIN_HOLD_MS => {
+                end = start.saturating_add(MIN_HOLD_MS);
+            }
+            _ => {}
         }
 
         segments[i].end_ms = end;
     }
 }
 
-/// Whether the target language is a CJK variant that should receive the
-/// full beautify + watchability merge pass. Covers zh-CN, zh-TW, yue,
-/// and any other `zh*` / `yue*` code. Kept here rather than in
-/// `subtitle_step5` so the gate decision and the text-level helpers
-/// (which check `is_cjk_char`) stay in the same module.
 fn is_cjk_target(target_lang: &str) -> bool {
     let lower = target_lang.to_ascii_lowercase();
     lower == "zh-cn"
@@ -85,33 +72,13 @@ fn is_cjk_target(target_lang: &str) -> bool {
         || lower.starts_with("yue-")
 }
 
-/// Beautify `WorkspaceSubtitleSegment`s in place so the SRT writer, DB,
-/// and the in-app subtitle editor all see the same (beautified) text.
-///
-/// Internally runs `beautify_subtitle_srt_segments` (which only knows
-/// about text), then re-attaches `source_words` to the (possibly
-/// merged) output segments by timing containment — each word from the
-/// originals is appended to whichever output segment covers its
-/// [start_ms, end_ms].
+/// Beautify workspace segments in place so the SRT writer, DB, and editor
+/// share the same text and hold/gap timestamps. Segment count is unchanged.
 pub fn beautify_workspace_segments(
     segments: &mut Vec<WorkspaceSubtitleSegment>,
     subtitle_length_preset: &str,
     target_lang: &str,
 ) {
-    // Snapshot original words with their timings, source_text BEFORE
-    // beautify (used to fix the source-text side which the SRT helper
-    // does not touch).
-    let original_words: Vec<(u64, u64, WorkspaceSubtitleWord)> = segments
-        .iter()
-        .flat_map(|seg| {
-            seg.source_words
-                .iter()
-                .map(|w| (seg.start_ms, seg.end_ms, w.clone()))
-                .collect::<Vec<_>>()
-        })
-        .collect();
-
-    // Run the SRT-level beautify (text + watchability merge).
     let mut srt_segments: Vec<SubtitleSrtSegment> = segments
         .iter()
         .map(|seg| SubtitleSrtSegment {
@@ -122,33 +89,10 @@ pub fn beautify_workspace_segments(
         })
         .collect();
     beautify_subtitle_srt_segments(&mut srt_segments, subtitle_length_preset, target_lang);
-
-    // Map back to WorkspaceSubtitleSegment.
-    // - text fields: translated_text comes from srt_segments (already beautified);
-    //   source_text is preserved as-is (beautify should only affect translation).
-    // - source_words: re-attach by timing containment so a merged segment
-    //   inherits the union of words from the originals it absorbed.
-    *segments = srt_segments
-        .into_iter()
-        .map(|s| {
-            let mut words: Vec<WorkspaceSubtitleWord> = original_words
-                .iter()
-                .filter(|(_orig_start, _orig_end, w)| {
-                    // Word falls within this segment's window.
-                    w.start_ms >= s.start_ms && w.end_ms <= s.end_ms
-                })
-                .map(|(_, _, w)| w.clone())
-                .collect();
-            words.sort_by_key(|w| w.start_ms);
-            WorkspaceSubtitleSegment {
-                start_ms: s.start_ms,
-                end_ms: s.end_ms,
-                source_text: s.source_text,
-                translated_text: s.translated_text,
-                source_words: words,
-            }
-        })
-        .collect();
+    for (seg, srt) in segments.iter_mut().zip(srt_segments) {
+        seg.end_ms = srt.end_ms;
+        seg.translated_text = srt.translated_text;
+    }
 }
 
 fn beautify_subtitle_text(raw: &str) -> String {
@@ -313,10 +257,7 @@ mod tests {
             "你好 世界 再见"
         );
         // Other punctuation (？！、！) is left untouched.
-        assert_eq!(
-            beautify_subtitle_text("你好！真的吗？"),
-            "你好！真的吗？"
-        );
+        assert_eq!(beautify_subtitle_text("你好！真的吗？"), "你好！真的吗？");
     }
 
     #[test]
@@ -351,50 +292,21 @@ mod tests {
         // spacing) is skipped, so translation text stays byte-identical.
         assert_eq!(segments[0].translated_text, "Hola, mundo.");
         assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].end_ms, 1000);
     }
 
     #[test]
-    fn subtitle_beautify_srt_segments_merges_with_original_watchability_logic() {
-        let mut segments = vec![
-            SubtitleSrtSegment {
-                start_ms: 51_120,
-                end_ms: 52_760,
-                source_text: "And it's also just a good".to_string(),
-                translated_text: "如果你某周表现不佳，可能会怀疑这".to_string(),
-            },
-            SubtitleSrtSegment {
-                start_ms: 52_760,
-                end_ms: 54_400,
-                source_text: "exercise to rebuild belief in the system.".to_string(),
-                translated_text: "个系统是否还有效，重建系统信心".to_string(),
-            },
-        ];
-
-        beautify_subtitle_srt_segments(&mut segments, "standard", "zh-CN");
-
-        assert_eq!(segments.len(), 1);
-        assert_eq!(
-            segments[0].source_text,
-            "And it's also just a good exercise to rebuild belief in the system."
-        );
-        assert_eq!(
-            segments[0].translated_text,
-            "如果你某周表现不佳 可能会怀疑这个系统是否还有效 重建系统信心"
-        );
-    }
-
-    #[test]
-    fn subtitle_beautify_srt_segments_keeps_gap_over_watchability_threshold() {
+    fn subtitle_beautify_does_not_merge_adjacent_cues() {
         let mut segments = vec![
             SubtitleSrtSegment {
                 start_ms: 0,
-                end_ms: 1000,
+                end_ms: 2000,
                 source_text: "And it's also just a good".to_string(),
                 translated_text: "如果你某周表现不佳，可能会怀疑这".to_string(),
             },
             SubtitleSrtSegment {
                 start_ms: 2000,
-                end_ms: 3000,
+                end_ms: 3500,
                 source_text: "exercise to rebuild belief in the system.".to_string(),
                 translated_text: "个系统是否还有效，重建系统信心".to_string(),
             },
@@ -403,98 +315,8 @@ mod tests {
         beautify_subtitle_srt_segments(&mut segments, "standard", "zh-CN");
 
         assert_eq!(segments.len(), 2);
-    }
-
-    #[test]
-    fn subtitle_beautify_srt_segments_respects_short_word_target_limit_when_merging() {
-        let mut segments = vec![
-            SubtitleSrtSegment {
-                start_ms: 0,
-                end_ms: 2000,
-                source_text: "This source line is long enough to count as a real fragment"
-                    .to_string(),
-                translated_text:
-                    "this local subtitle line is still clearly incomplete near the edge and"
-                        .to_string(),
-            },
-            SubtitleSrtSegment {
-                start_ms: 2000,
-                end_ms: 3500,
-                source_text: "the continuation should not make the short preset too wide"
-                    .to_string(),
-                translated_text:
-                    "the continuation adds several more words for viewing comfort today again now"
-                        .to_string(),
-            },
-        ];
-
-        beautify_subtitle_srt_segments(&mut segments, "short", "en");
-
-        assert_eq!(segments.len(), 2);
-    }
-
-    #[test]
-    fn subtitle_beautify_srt_segments_merges_latin_targets_with_space() {
-        let mut segments = vec![
-            SubtitleSrtSegment {
-                start_ms: 0,
-                end_ms: 2000,
-                source_text: "I told him that we should go to the market now".to_string(),
-                // Ends with a connector word → watchability fragment issue,
-                // so it qualifies as the mergeable left side.
-                translated_text: "we had to stop and".to_string(),
-            },
-            SubtitleSrtSegment {
-                start_ms: 2000,
-                end_ms: 3500,
-                source_text: "the plan works fine for everyone involved".to_string(),
-                // Starts with a continuation starter ("the").
-                translated_text: "the plan still works for everyone involved".to_string(),
-            },
-        ];
-
-        beautify_subtitle_srt_segments(&mut segments, "standard", "en");
-
-        assert_eq!(segments.len(), 1);
-        // Word-based targets join translations with a single space.
-        assert_eq!(
-            segments[0].translated_text,
-            "we had to stop and the plan still works for everyone involved"
-        );
-        assert_eq!(
-            segments[0].source_text,
-            "I told him that we should go to the market now the plan works fine for everyone involved"
-        );
-    }
-
-    #[test]
-    fn subtitle_beautify_does_not_merge_photo_as_to_connector() {
-        let mut segments = vec![
-            SubtitleSrtSegment {
-                start_ms: 0,
-                end_ms: 2500,
-                source_text: "I took a photo of the harbor at sunset yesterday".to_string(),
-                translated_text: "I took a photo".to_string(),
-            },
-            SubtitleSrtSegment {
-                start_ms: 2500,
-                end_ms: 5000,
-                source_text: "the sunset was nice over the water that evening".to_string(),
-                translated_text: "the sunset was nice".to_string(),
-            },
-        ];
-
-        beautify_subtitle_srt_segments(&mut segments, "standard", "en");
-
-        assert_eq!(
-            segments.len(),
-            2,
-            "photo must not count as a dangling 'to' connector: {:?}",
-            segments
-                .iter()
-                .map(|s| s.translated_text.as_str())
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(segments[0].end_ms, 2000);
+        assert_eq!(segments[1].start_ms, 2000);
     }
 
     #[test]
@@ -533,23 +355,42 @@ mod tests {
     }
 
     #[test]
-    fn fills_gap_of_at_most_1s_to_next_start() {
+    fn snaps_end_to_next_when_original_gap_is_at_most_500ms() {
+        let mut segments = vec![timed(0, 600), timed(1100, 2000)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].end_ms, 1100);
+    }
+
+    #[test]
+    fn does_not_fill_gap_wider_than_500ms() {
         let mut segments = vec![timed(0, 600), timed(1400, 2000)];
         pad_cue_hold_and_gaps(&mut segments);
-        assert_eq!(segments[0].end_ms, 1400);
+        assert_eq!(segments[0].end_ms, 600);
     }
 
     #[test]
-    fn min_hold_cues_do_not_bridge_to_next_start() {
-        let mut segments = vec![timed(0, 240), timed(1000, 1600)];
-        pad_cue_hold_and_gaps(&mut segments);
-        assert_eq!(segments[0].end_ms, 500);
-    }
-
-    #[test]
-    fn does_not_fill_gap_wider_than_1s() {
-        let mut segments = vec![timed(0, 600), timed(2600, 3200)];
+    fn short_cue_with_small_gap_snaps_instead_of_min_hold() {
+        // Original gap 400ms ≤ 0.5s → snap to next. Do not min-hold to 500
+        // and then keep (or close) the leftover 100ms.
+        let mut segments = vec![timed(0, 200), timed(600, 1200)];
         pad_cue_hold_and_gaps(&mut segments);
         assert_eq!(segments[0].end_ms, 600);
+    }
+
+    #[test]
+    fn min_hold_does_not_then_bridge_the_leftover_gap() {
+        // Duration 200ms, original gap 700ms > 0.5s → grow to 500ms only.
+        // Leftover 400ms stays; do not also snap to the next cue.
+        let mut segments = vec![timed(0, 200), timed(900, 1500)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].end_ms, 500);
+        assert_eq!(segments[1].start_ms, 900);
+    }
+
+    #[test]
+    fn last_cue_pads_to_min_hold() {
+        let mut segments = vec![timed(0, 240)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].end_ms, 500);
     }
 }

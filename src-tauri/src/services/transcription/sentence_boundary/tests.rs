@@ -1,5 +1,5 @@
 use super::{
-    BoundaryDecisionKind, build_deterministic_sentence_spans, build_micro_chunks,
+    build_deterministic_sentence_spans, build_micro_chunks,
     build_source_sentences_from_words_with_progress,
 };
 use crate::services::transcribe::WordTokenDto;
@@ -303,8 +303,7 @@ fn japanese_particle_guides_force_cuts() {
     ))
     .expect("step2 should build japanese sentences");
 
-    // A 3-char first piece ("それは") is an orphan flash line; source-side
-    // watchability may glue it back. Final cues must stay within the cap.
+    // Final cues must stay within the short-preset cap (16 + 2 grace).
     let joined = response
         .translation_sentences
         .iter()
@@ -317,8 +316,6 @@ fn japanese_particle_guides_force_cuts() {
     );
     let n = response.translation_sentences.len();
     for (idx, s) in response.translation_sentences.iter().enumerate() {
-        // Watchability may re-glue a 3-char particle orphan, using the same
-        // grace band DP already allowed (short 16 + 2).
         assert!(s.text.chars().count() <= 22, "cue over cap: {:?}", s.text);
         if idx + 1 < n {
             let last = s.text.chars().last().unwrap_or_default();
@@ -1068,26 +1065,9 @@ fn step2_builds_same_response_shape_without_llm_settings() {
     ))
     .expect("step2 should not require llm settings");
 
-    // "Again." is a 0.3s orphan tail after "Hello world."; source-side
-    // watchability glues it so it does not flash on screen.
-    assert_eq!(response.sentence_total, 1);
-    assert_eq!(
-        response.translation_sentences[0].text,
-        "Hello world. Again."
-    );
-    assert_eq!(response.boundary_total, 2);
-    assert!(
-        response
-            .boundaries
-            .iter()
-            .all(|b| b.final_decision == BoundaryDecisionKind::Merge),
-        "merged orphan tail should not keep a split boundary: {:?}",
-        response
-            .boundaries
-            .iter()
-            .map(|b| &b.reason_tag)
-            .collect::<Vec<_>>()
-    );
+    assert_eq!(response.sentence_total, 2);
+    assert_eq!(response.translation_sentences[0].text, "Hello world.");
+    assert_eq!(response.translation_sentences[1].text, "Again.");
 }
 
 #[test]

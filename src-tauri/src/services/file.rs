@@ -161,7 +161,7 @@ pub fn export_task_srts(store: &TaskStore, request: ExportTaskSrtsRequest) -> Re
     }
 
     let task_item = crate::commands::workspace::get_task_queue_item_for_export(&request.task_id)?;
-    let (task_enable_subtitle_beautify, subtitle_length_preset, target_lang) =
+    let (task_enable_subtitle_beautify, _subtitle_length_preset, target_lang) =
         crate::commands::workspace::task_subtitle_beautify_context(store, &request.task_id)?;
     let segments =
         crate::services::subtitle_srt::parse_segments_json(&task_item.subtitle_segments_json)
@@ -171,9 +171,11 @@ pub fn export_task_srts(store: &TaskStore, request: ExportTaskSrtsRequest) -> Re
     }
     let mut segments = segments;
     if task_enable_subtitle_beautify {
-        crate::services::subtitle_beautify::beautify_subtitle_srt_segments(
+        // Text polish only. Hold/gap padding already ran when the SoT was
+        // materialized; running it again would min-hold a short cue and then
+        // treat the leftover gap as a snap-to-next.
+        crate::services::subtitle_beautify::beautify_subtitle_srt_text(
             &mut segments,
-            &subtitle_length_preset,
             &target_lang,
         );
     }

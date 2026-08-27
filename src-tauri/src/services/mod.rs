@@ -21,7 +21,6 @@ pub mod subtitle_import;
 pub mod subtitle_length;
 pub mod subtitle_render;
 pub mod subtitle_srt;
-pub mod subtitle_step5;
 pub mod system;
 pub mod task_log;
 pub mod task_path;

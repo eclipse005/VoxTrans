@@ -127,9 +127,7 @@ fn format_srt_ms(total_ms: u64) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02},{millis:03}")
 }
 
-// Re-export the shared implementation so all three historical call sites
-// (adapters, subtitle_step5, transcription::sentence_boundary) agree on
-// NaN/overflow handling. See services::time_utils for the single source.
+// Shared NaN/overflow handling. See services::time_utils.
 use crate::services::time_utils::seconds_to_millis;
 
 #[cfg(test)]

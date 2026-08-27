@@ -703,7 +703,7 @@ pub(super) fn is_discourse_marker_comma(token: &str) -> bool {
 }
 
 /// Discourse marker after stripping sentence-edge punctuation ("Okay." / "Now,").
-pub(crate) fn is_discourse_marker_text(text: &str) -> bool {
+fn is_discourse_marker_text(text: &str) -> bool {
     let core = text
         .trim()
         .trim_start_matches(|c: char| !is_token_core(c))

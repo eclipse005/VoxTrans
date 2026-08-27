@@ -1,10 +1,10 @@
 //! Shared time-conversion helpers.
 //!
-//! `seconds_to_millis` was previously duplicated in three places with
-//! subtly different NaN/overflow handling (see domain::task::adapters,
-//! services::subtitle_step5::time_utils, services::transcription::
-//! sentence_boundary::timing). Centralizing here ensures the same
-//! timestamp produces the same millisecond value across pipeline steps.
+//! `seconds_to_millis` was previously duplicated with subtly different
+//! NaN/overflow handling (see domain::task::adapters and
+//! services::transcription::sentence_boundary::timing). Centralizing here
+//! ensures the same timestamp produces the same millisecond value across
+//! pipeline steps.
 
 /// Convert seconds to milliseconds, rounding to the nearest ms.
 ///
