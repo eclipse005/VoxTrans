@@ -24,14 +24,14 @@ pub fn beautify_subtitle_srt_text(segments: &mut [SubtitleSrtSegment], target_la
 
 /// Minimum on-screen duration. A short cue may grow up to this when there
 /// is room — never in the same step as snapping to the next cue.
-const MIN_HOLD_MS: u64 = 500;
-/// If the original gap to the next cue is at most this, snap end to next
+const MIN_HOLD_MS: u64 = 1000;
+/// If the original gap to the next cue is below this, snap end to next
 /// start so the viewer sees a cut, not a blank flash.
-const MAX_GAP_FILL_MS: u64 = 500;
+const MAX_GAP_FILL_MS: u64 = 1000;
 
 /// Two mutually exclusive timing tweaks, decided from the original gap:
-/// 1. Gap to next is (0, 0.5s] → end = next.start. Done.
-/// 2. Else if duration < 0.5s → grow up to 0.5s, never past next.start.
+/// 1. Gap to next is (0, 1s) → end = next.start. Done.
+/// 2. Else if duration < 1s → grow up to 1s, never past next.start.
 ///    The leftover gap is left as-is; it must not then trigger (1).
 fn pad_cue_hold_and_gaps(segments: &mut [SubtitleSrtSegment]) {
     let len = segments.len();
@@ -46,7 +46,7 @@ fn pad_cue_hold_and_gaps(segments: &mut [SubtitleSrtSegment]) {
 
         match next_start {
             Some(next) if next <= start => {}
-            Some(next) if next > end && next - end <= MAX_GAP_FILL_MS => {
+            Some(next) if next > end && next - end < MAX_GAP_FILL_MS => {
                 end = next;
             }
             Some(next) if next > end && end - start < MIN_HOLD_MS => {
@@ -349,10 +349,10 @@ mod tests {
     }
 
     #[test]
-    fn pads_sub_500ms_hold_when_following_gap_is_wide() {
+    fn pads_sub_1000ms_hold_when_following_gap_is_wide() {
         let mut segments = vec![timed(0, 240), timed(4000, 5000)];
         pad_cue_hold_and_gaps(&mut segments);
-        assert_eq!(segments[0].end_ms, 500);
+        assert_eq!(segments[0].end_ms, 1000);
         assert_eq!(segments[1].start_ms, 4000);
     }
 
@@ -364,23 +364,23 @@ mod tests {
     }
 
     #[test]
-    fn snaps_end_to_next_when_original_gap_is_at_most_500ms() {
+    fn snaps_end_to_next_when_original_gap_is_under_1000ms() {
         let mut segments = vec![timed(0, 600), timed(1100, 2000)];
         pad_cue_hold_and_gaps(&mut segments);
         assert_eq!(segments[0].end_ms, 1100);
     }
 
     #[test]
-    fn does_not_fill_gap_wider_than_500ms() {
-        let mut segments = vec![timed(0, 600), timed(1400, 2000)];
+    fn does_not_fill_gap_of_1000ms_or_more() {
+        let mut segments = vec![timed(0, 1200), timed(2200, 3000)];
         pad_cue_hold_and_gaps(&mut segments);
-        assert_eq!(segments[0].end_ms, 600);
+        assert_eq!(segments[0].end_ms, 1200);
     }
 
     #[test]
     fn short_cue_with_small_gap_snaps_instead_of_min_hold() {
-        // Original gap 400ms ≤ 0.5s → snap to next. Do not min-hold to 500
-        // and then keep (or close) the leftover 100ms.
+        // Original gap 400ms < 1s → snap to next. Do not min-hold to 1000
+        // (which would overlap the next cue anyway).
         let mut segments = vec![timed(0, 200), timed(600, 1200)];
         pad_cue_hold_and_gaps(&mut segments);
         assert_eq!(segments[0].end_ms, 600);
@@ -388,28 +388,28 @@ mod tests {
 
     #[test]
     fn min_hold_does_not_then_bridge_the_leftover_gap() {
-        // Duration 200ms, original gap 700ms > 0.5s → grow to 500ms only.
-        // Leftover 400ms stays; do not also snap to the next cue.
-        let mut segments = vec![timed(0, 200), timed(900, 1500)];
+        // Duration 200ms, original gap 1300ms ≥ 1s → grow to 1000ms only.
+        // Leftover 500ms stays; do not also snap to the next cue.
+        let mut segments = vec![timed(0, 200), timed(1500, 2200)];
         pad_cue_hold_and_gaps(&mut segments);
-        assert_eq!(segments[0].end_ms, 500);
-        assert_eq!(segments[1].start_ms, 900);
+        assert_eq!(segments[0].end_ms, 1000);
+        assert_eq!(segments[1].start_ms, 1500);
     }
 
     #[test]
     fn last_cue_pads_to_min_hold() {
         let mut segments = vec![timed(0, 240)];
         pad_cue_hold_and_gaps(&mut segments);
-        assert_eq!(segments[0].end_ms, 500);
+        assert_eq!(segments[0].end_ms, 1000);
     }
 
     #[test]
     fn text_polish_after_pad_does_not_snap_leftover_gap() {
-        let mut segments = vec![timed(0, 200), timed(900, 1500)];
+        let mut segments = vec![timed(0, 200), timed(1500, 2200)];
         beautify_subtitle_srt_segments(&mut segments, "standard", "en");
-        assert_eq!(segments[0].end_ms, 500);
+        assert_eq!(segments[0].end_ms, 1000);
         beautify_subtitle_srt_text(&mut segments, "en");
-        assert_eq!(segments[0].end_ms, 500);
-        assert_eq!(segments[1].start_ms, 900);
+        assert_eq!(segments[0].end_ms, 1000);
+        assert_eq!(segments[1].start_ms, 1500);
     }
 }
