@@ -702,17 +702,6 @@ pub(super) fn is_discourse_marker_comma(token: &str) -> bool {
     in_list(trimmed, DISCOURSE_MARKERS)
 }
 
-/// Discourse marker after stripping sentence-edge punctuation ("Okay." / "Now,").
-fn is_discourse_marker_text(text: &str) -> bool {
-    let core = text
-        .trim()
-        .trim_start_matches(|c: char| !is_token_core(c))
-        .trim_end_matches(|c: char| {
-            matches!(c, '.' | '!' | '?' | '。' | '！' | '？' | '…' | ',' | '，' | '、')
-        });
-    in_list(core, DISCOURSE_MARKERS)
-}
-
 /// "need to" / "want to" — the following "to" is not an independent start.
 pub(super) fn is_to_binding_left(token: &str) -> bool {
     in_list(token, TO_BINDING_LEFT)
@@ -949,9 +938,6 @@ mod tests {
         assert!(!is_discourse_marker_comma("Okay"));
         assert!(is_discourse_marker_comma("Ok,")); // case-insensitive via strip
         assert!(!is_discourse_marker_comma("market,"));
-        assert!(is_discourse_marker_text("Okay."));
-        assert!(is_discourse_marker_text("Now,"));
-        assert!(!is_discourse_marker_text("market"));
     }
 
     #[test]
