@@ -15,7 +15,9 @@ use voxtrans::db::open_pool_at;
 use voxtrans::db::store::TaskStore;
 use voxtrans::domain::pipeline::UnitStore;
 use voxtrans::domain::task::adapters::workspace_subtitle_segments_from_step2_segments;
-use voxtrans::services::subtitle_beautify::beautify_workspace_segments;
+use voxtrans::services::subtitle_beautify::{
+    beautify_workspace_segments, beautify_workspace_text,
+};
 use voxtrans::services::subtitle_srt::{
     write_variants_to_directory, ExportSrtItem, SubtitleSrtSegment,
 };
@@ -208,11 +210,7 @@ async fn run() -> Result<(), String> {
         }
     }
     if settings.enable_subtitle_beautify {
-        beautify_workspace_segments(
-            &mut workspace,
-            &settings.subtitle_length_preset,
-            &settings.target_lang,
-        );
+        beautify_workspace_text(&mut workspace, &settings.target_lang);
         eprintln!("target beautify cues={}", workspace.len());
     }
 

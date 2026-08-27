@@ -72,8 +72,7 @@ fn is_cjk_target(target_lang: &str) -> bool {
         || lower.starts_with("yue-")
 }
 
-/// Beautify workspace segments in place so the SRT writer, DB, and editor
-/// share the same text and hold/gap timestamps. Segment count is unchanged.
+/// Text polish + one-shot hold/gap pad. Call once on source SoT.
 pub fn beautify_workspace_segments(
     segments: &mut Vec<WorkspaceSubtitleSegment>,
     subtitle_length_preset: &str,
@@ -92,6 +91,16 @@ pub fn beautify_workspace_segments(
     for (seg, srt) in segments.iter_mut().zip(srt_segments) {
         seg.end_ms = srt.end_ms;
         seg.translated_text = srt.translated_text;
+    }
+}
+
+/// CJK text polish only. Use on already-padded cues (target SoT / export).
+pub fn beautify_workspace_text(segments: &mut [WorkspaceSubtitleSegment], target_lang: &str) {
+    if !is_cjk_target(target_lang) {
+        return;
+    }
+    for segment in segments {
+        segment.translated_text = beautify_subtitle_text(&segment.translated_text);
     }
 }
 
@@ -210,9 +219,9 @@ fn collapse_multiple_spaces(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        beautify_subtitle_srt_segments, beautify_subtitle_text, collapse_multiple_spaces,
-        is_ascii_word_char, is_cjk_char, need_cjk_ascii_space, pad_cue_hold_and_gaps,
-        trim_bounding_punctuation,
+        beautify_subtitle_srt_segments, beautify_subtitle_srt_text, beautify_subtitle_text,
+        collapse_multiple_spaces, is_ascii_word_char, is_cjk_char, need_cjk_ascii_space,
+        pad_cue_hold_and_gaps, trim_bounding_punctuation,
     };
     use crate::services::subtitle_srt::SubtitleSrtSegment;
 
@@ -392,5 +401,15 @@ mod tests {
         let mut segments = vec![timed(0, 240)];
         pad_cue_hold_and_gaps(&mut segments);
         assert_eq!(segments[0].end_ms, 500);
+    }
+
+    #[test]
+    fn text_polish_after_pad_does_not_snap_leftover_gap() {
+        let mut segments = vec![timed(0, 200), timed(900, 1500)];
+        beautify_subtitle_srt_segments(&mut segments, "standard", "en");
+        assert_eq!(segments[0].end_ms, 500);
+        beautify_subtitle_srt_text(&mut segments, "en");
+        assert_eq!(segments[0].end_ms, 500);
+        assert_eq!(segments[1].start_ms, 900);
     }
 }

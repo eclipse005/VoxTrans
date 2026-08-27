@@ -116,14 +116,14 @@ pub(super) async fn materialize_target_sot(
     segments: &[crate::commands::translate_types::BuildTranslationSegmentCommand],
     source_text: &str,
     enable_subtitle_beautify: bool,
-    subtitle_length_preset: &str,
+    _subtitle_length_preset: &str,
     target_lang: &str,
 ) -> WorkspaceResult<Vec<WorkspaceSubtitleSegment>> {
     let mut workspace_segments = workspace_subtitle_segments_from_translation_segments(segments);
     if enable_subtitle_beautify {
-        crate::services::subtitle_beautify::beautify_workspace_segments(
+        // Times were already padded on source SoT. Text polish only.
+        crate::services::subtitle_beautify::beautify_workspace_text(
             &mut workspace_segments,
-            subtitle_length_preset,
             target_lang,
         );
     }
