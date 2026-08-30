@@ -157,11 +157,13 @@ fn terminal_punctuation_still_splits_long_runs() {
 
 #[test]
 fn broad_terminal_punctuation_splits_step2_sentences() {
+    // Fullwidth period still force-splits (period fallback). Interrobang
+    // does not: ?/! is not period-fallback, and Punkt did not split here.
     let words = vec![w(0, "你好．"), w(1, "Next⁉"), w(2, "Again")];
 
     let spans = build_deterministic_sentence_spans(&words);
 
-    assert_eq!(spans, vec![(0, 0), (1, 1), (2, 2)]);
+    assert_eq!(spans, vec![(0, 0), (1, 2)]);
 }
 
 #[test]
@@ -171,6 +173,130 @@ fn abbreviation_terminal_punctuation_does_not_split_step2_sentence() {
     let spans = build_deterministic_sentence_spans(&words);
 
     assert_eq!(spans, vec![(0, 2)]);
+}
+
+#[test]
+fn quoted_question_title_does_not_split_from_following_head_noun() {
+    // "I post a \"What Do You See?\" post." — the ? closes the title, not
+    // the outer sentence. Tokenizations with the closer attached or separate
+    // must both keep `post.` on the same span.
+    let attached = vec![
+        w(0, "I"),
+        w(1, "post"),
+        w(2, "a"),
+        w(3, "\"What"),
+        w(4, "Do"),
+        w(5, "You"),
+        w(6, "See?\""),
+        w(7, "post."),
+    ];
+    assert_eq!(
+        build_deterministic_sentence_spans(&attached),
+        vec![(0, 7)]
+    );
+
+    let separate_closer = vec![
+        w(0, "I"),
+        w(1, "post"),
+        w(2, "a"),
+        w(3, "\""),
+        w(4, "What"),
+        w(5, "Do"),
+        w(6, "You"),
+        w(7, "See?"),
+        w(8, "\""),
+        w(9, "post."),
+    ];
+    assert_eq!(
+        build_deterministic_sentence_spans(&separate_closer),
+        vec![(0, 9)]
+    );
+
+    let curly = vec![
+        w(0, "I"),
+        w(1, "post"),
+        w(2, "a"),
+        w(3, "“What"),
+        w(4, "Do"),
+        w(5, "You"),
+        w(6, "See?”"),
+        w(7, "post."),
+    ];
+    assert_eq!(build_deterministic_sentence_spans(&curly), vec![(0, 7)]);
+}
+
+#[test]
+fn quoted_question_still_splits_when_next_word_is_sentence_start() {
+    let words = vec![
+        w(0, "He"),
+        w(1, "asked,"),
+        w(2, "\"What"),
+        w(3, "do"),
+        w(4, "you"),
+        w(5, "see?\""),
+        w(6, "Then"),
+        w(7, "he"),
+        w(8, "left."),
+    ];
+
+    let spans = build_deterministic_sentence_spans(&words);
+
+    assert_eq!(spans, vec![(0, 5), (6, 8)]);
+}
+
+#[test]
+fn unquoted_question_does_not_split_before_lowercase_continuation() {
+    let words = vec![w(0, "Really?"), w(1, "she"), w(2, "asked.")];
+
+    let spans = build_deterministic_sentence_spans(&words);
+
+    assert_eq!(spans, vec![(0, 2)]);
+}
+
+#[test]
+fn twitter_what_do_you_see_post_stays_one_cue() {
+    let text = r#"Every week on Twitter slash X, I post a " What Do You See?" post."#;
+    let words = text
+        .split_whitespace()
+        .enumerate()
+        .map(|(index, token)| w(index, token))
+        .collect::<Vec<_>>();
+
+    let spans = build_deterministic_sentence_spans(&words);
+    assert_eq!(
+        spans,
+        vec![(0, words.len() - 1)],
+        "hard split must not cut at See?"
+    );
+
+    // Short preset is 12 words; this line is ~14 so layout may split at the
+    // comma after "X,". The quoted title and its head noun `post` must stay
+    // in the same cue — that was the original flash-line bug.
+    let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
+        request_with_lang_and_preset(words, "en", "short"),
+        None,
+    ))
+    .expect("step2 should keep the quoted title with its head noun");
+
+    let with_title = response
+        .translation_sentences
+        .iter()
+        .find(|s| s.text.contains("See?"))
+        .expect("quoted title cue");
+    assert!(
+        with_title.text.to_ascii_lowercase().contains("post"),
+        "must not isolate post from See?: {:?}",
+        response.translation_sentences
+    );
+    assert!(
+        response
+            .translation_sentences
+            .iter()
+            .all(|s| s.text.trim().to_ascii_lowercase() != "post"
+                && s.text.trim().to_ascii_lowercase() != "post."),
+        "flash cue: {:?}",
+        response.translation_sentences
+    );
 }
 
 #[test]

@@ -1,7 +1,9 @@
 use crate::services::transcribe::WordTokenDto;
 use voxtrans_core::subtitle::text_rules::{ends_with_terminal_punctuation, strip_trailing_closers};
 
-use super::boundary_rules::{is_ja_turn_start_after, is_japanese_spoken_end};
+use super::boundary_rules::{
+    is_ja_turn_start_after, is_japanese_spoken_end, is_opening_punctuation,
+};
 use super::language::LanguageProfile;
 use super::punkt_map::map_sentence_boundaries_to_word_indices;
 use super::text::join_words;
@@ -12,7 +14,8 @@ use super::types::SplitReason;
 /// **英文路径（Punkt 统计学习）**：当 `profile.uses_punkt_sentence_boundary()`
 /// 返回 `true` 时，把所有 word 拼接成完整文本交给 Punkt 断句，再把句子边界
 /// 映射回 word 索引。Punkt 会自动识别 `Mr.`/`Dr.`/`p.m.`/`U.S.` 等缩写而不
-/// 在这些位置切分。单字母缩写链（`J. K.`）仍用规则特判。
+/// 在这些位置切分。单字母缩写链（`J. K.`）仍用规则特判。规则兜底只补漏掉的
+/// 句号；`?`/`!` 在闭引号前或下一词不像句首时禁止硬切。
 ///
 /// **其他语言路径（规则 + 缩写表）**：每个以 `. ! ?` 结尾的 token 产生切分，
 /// 除非它在 `LanguageProfile::abbreviations()` 列表中，或是单字母缩写链。
@@ -32,12 +35,15 @@ pub(super) fn build_split_points_from_hard_boundaries(
     }
 }
 
-/// 英文路径：Punkt 统计学习断句 + 规则兜底 + 单字母缩写链特判。
+/// 英文路径：Punkt 统计学习断句 + 句号兜底 + 单字母缩写链特判。
 ///
 /// Punkt 在短文本或训练数据覆盖不足时可能漏切（如 "Hello world. Again."
-/// 被识别为单句）。为了不退化到比规则更差，对 Punkt 没识别的句末标点
-/// 位置，再用规则补切：只要 token 以 `. ! ?` 结尾且不是单字母缩写链，
-/// 就强制切分。Punkt 识别出的边界优先，规则补 Punkt 漏掉的。
+/// 被识别为单句）。为了不退化到比规则更差，对 Punkt 没识别的 **句号**
+/// 位置再用规则补切。`?`/`!` 不走兜底：引号标题（`a "What Do You See?" post`）
+/// 里 Punkt 正确地不切，强制补切会把中心语甩到下一句。
+///
+/// Punkt 已经切了的 `?`/`!` 也要再看一眼：闭引号后若不是句首（小写延续），
+/// 仍然不切。
 fn build_split_points_with_punkt(
     words: &[WordTokenDto],
     _profile: &dyn LanguageProfile,
@@ -71,8 +77,7 @@ fn build_split_points_with_punkt(
             .into_iter()
             .collect();
 
-    // 规则兜底：Punkt 没切的句末标点位置也切
-    // （但排除单字母缩写链 J. K. 的内部）
+    // 规则兜底：只补 Punkt 漏掉的句号。排除单字母缩写链 J. K. 的内部。
     let mut out = Vec::new();
     for index in 0..words.len() {
         // Punkt 已经识别为切分点
@@ -87,16 +92,19 @@ fn build_split_points_with_punkt(
                     continue;
                 }
             }
+            if should_suppress_question_bang_split(words, index) {
+                continue;
+            }
             push_split_point(&mut out, index, SplitReason::TerminalPunctuation);
             continue;
         }
 
-        // 规则兜底：Punkt 漏切的句末标点
+        // 规则兜底：Punkt 漏切的句号。`?`/`!` 不补。
         // 只对最后一个 word 跳过（它是真正的文本末尾，不需要切）
         if index == words.len() - 1 {
             continue;
         }
-        if is_terminal_end_rule_fallback(&words[index].word) {
+        if is_period_end_rule_fallback(&words[index].word) {
             // 单字母缩写链特判
             if is_single_letter_dotted(&words[index].word) {
                 let continues = words
@@ -113,14 +121,64 @@ fn build_split_points_with_punkt(
     out
 }
 
-/// 规则兜底：token 是否以句末标点结尾（`. ! ?`，含 CJK 等价符）。
+/// English `?`/`!` that is not a real sentence end: quoted title/question
+/// whose next content word continues the outer sentence (`a "…?" post`),
+/// or any `?`/`!` followed by a non-sentence-start (`Really? she asked`).
 ///
-/// 这是 Punkt 漏切时的 fallback。不依赖 Punkt 已知的缩写（Punkt 应该
-/// 已经识别缩写并避免切分），但当 Punkt 漏切时，我们用一个小型常见
-/// 缩写黑名单 + 点分隔模式来避免误切缩写。
-fn is_terminal_end_rule_fallback(token: &str) -> bool {
+/// Closing-quote tokens are skipped when looking for the next word, so
+/// `See?` + `"` + `post.` and `See?"` + `post.` behave the same.
+pub(super) fn should_suppress_question_bang_split(
+    words: &[WordTokenDto],
+    index: usize,
+) -> bool {
+    let Some(token) = words.get(index) else {
+        return false;
+    };
+    if !is_question_or_bang_terminal(&token.word) {
+        return false;
+    }
+    let Some(next) = next_content_word(words, index) else {
+        return false;
+    };
+    !looks_like_english_sentence_start(next)
+}
+
+fn is_question_or_bang_terminal(token: &str) -> bool {
     let normalized = strip_trailing_closers(token.trim());
-    if normalized.is_empty() || !ends_with_terminal_punctuation(normalized) {
+    matches!(
+        normalized.chars().last(),
+        Some('!' | '?' | '！' | '？' | '‼' | '⁇' | '⁈' | '⁉')
+    )
+}
+
+fn is_closer_only_token(token: &str) -> bool {
+    let trimmed = token.trim();
+    !trimmed.is_empty() && strip_trailing_closers(trimmed).is_empty()
+}
+
+fn next_content_word(words: &[WordTokenDto], index: usize) -> Option<&str> {
+    words[(index + 1)..]
+        .iter()
+        .map(|word| word.word.as_str())
+        .find(|token| !is_closer_only_token(token))
+}
+
+fn looks_like_english_sentence_start(token: &str) -> bool {
+    let trimmed = token.trim().trim_start_matches(|c: char| {
+        is_opening_punctuation(c) || matches!(c, '"' | '\'' | '«' | '‹')
+    });
+    match trimmed.chars().find(|c| c.is_alphabetic()) {
+        Some(c) => c.is_uppercase(),
+        None => false,
+    }
+}
+
+/// 规则兜底：token 是否以句号结尾（`.` / CJK 句号）。不含 `?`/`!`。
+///
+/// 这是 Punkt 漏切句号时的 fallback。缩写仍走黑名单 + 点分隔模式。
+fn is_period_end_rule_fallback(token: &str) -> bool {
+    let normalized = strip_trailing_closers(token.trim());
+    if normalized.is_empty() || !ends_with_period_terminal(normalized) {
         return false;
     }
     let lower = normalized.to_ascii_lowercase();
@@ -133,6 +191,13 @@ fn is_terminal_end_rule_fallback(token: &str) -> bool {
         return false;
     }
     true
+}
+
+fn ends_with_period_terminal(token: &str) -> bool {
+    matches!(
+        token.chars().last(),
+        Some('.' | '。' | '｡' | '．' | '﹒')
+    )
 }
 
 /// 常见英文缩写黑名单（Punkt 漏切时的兜底保护）。
