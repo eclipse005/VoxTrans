@@ -15,7 +15,13 @@ fn seg(text: &str) -> TranslationSegmentInput {
 
 #[test]
 fn split_batches_respects_requested_size() {
-    let normalized = normalize_segments(&[seg("a"), seg("b"), seg("c"), seg("d"), seg("e")]);
+    let normalized = normalize_segments(&[
+        seg("One."),
+        seg("Two."),
+        seg("Three."),
+        seg("Four."),
+        seg("Five."),
+    ]);
     let windows = build_batch_windows(
         &normalized,
         2,
@@ -35,7 +41,7 @@ fn split_batches_respects_requested_size() {
 
 #[test]
 fn context_windows_are_prev_3_next_2() {
-    let inputs: Vec<_> = (0..10).map(|i| seg(&format!("L{i}"))).collect();
+    let inputs: Vec<_> = (0..10).map(|i| seg(&format!("L{i}."))).collect();
     let normalized = normalize_segments(&inputs);
     let windows = build_batch_windows(
         &normalized,
@@ -49,15 +55,20 @@ fn context_windows_are_prev_3_next_2() {
     assert_eq!(window.local_to_global, vec![5, 6]);
     let prev: Vec<&str> = window.prev_lines.iter().map(|(_, t)| t.as_str()).collect();
     let next: Vec<&str> = window.next_lines.iter().map(|(_, t)| t.as_str()).collect();
-    assert_eq!(prev, vec!["L1", "L2", "L3"]);
-    assert_eq!(next, vec!["L6", "L7"]);
+    assert_eq!(prev, vec!["L1.", "L2.", "L3."]);
+    assert_eq!(next, vec!["L6.", "L7."]);
 }
-
 
 #[test]
 fn bilingual_context_renders_known_translations_in_prompt() {
     use std::collections::HashMap;
-    let normalized = normalize_segments(&[seg("a"), seg("b"), seg("c"), seg("d"), seg("e")]);
+    let normalized = normalize_segments(&[
+        seg("One."),
+        seg("Two."),
+        seg("Three."),
+        seg("Four."),
+        seg("Five."),
+    ]);
     let windows = build_batch_windows(
         &normalized,
         2,
@@ -66,31 +77,32 @@ fn bilingual_context_renders_known_translations_in_prompt() {
         "",
         &Vec::<TranslationTerminologyEntry>::new(),
     );
-    // Window 1 covers c,d (global ids 3,4); prev = a,b (ids 1,2); next = e (id 5).
+    // Window 1 covers Three.,Four. (global ids 3,4); prev = One.,Two. (ids 1,2); next = Five. (id 5).
     let mut known = HashMap::<usize, String>::new();
     known.insert(1, "甲".to_string());
     known.insert(2, "乙".to_string());
     let prompt = windows[1].build_prompt(&known, &[], &[]);
     // Known translations render bilingually...
-    assert!(prompt.contains("a → 甲"), "prompt={prompt}");
-    assert!(prompt.contains("b → 乙"), "prompt={prompt}");
+    assert!(prompt.contains("One. → 甲"), "prompt={prompt}");
+    assert!(prompt.contains("Two. → 乙"), "prompt={prompt}");
     // ...unknown lines stay source-only, and current lines are plain text.
-    assert!(prompt.contains("\"e\""), "prompt={prompt}");
-    assert!(prompt.contains("\"c\""), "prompt={prompt}");
-    assert!(!prompt.contains("d → "), "prompt={prompt}");
+    assert!(prompt.contains("\"Five.\""), "prompt={prompt}");
+    assert!(prompt.contains("\"Three.\""), "prompt={prompt}");
+    assert!(!prompt.contains("Four. → "), "prompt={prompt}");
     // nextLines stay source-only even when a translation is already known
     // (resume). They are context, not an answer key.
     known.insert(5, "戊".to_string());
     let resume_prompt = windows[1].build_prompt(&known, &[], &[]);
     assert!(
-        !resume_prompt.contains("e → 戊"),
+        !resume_prompt.contains("Five. → 戊"),
         "nextLines must not be bilingual: {resume_prompt}"
     );
-    assert!(resume_prompt.contains("\"e\""), "prompt={resume_prompt}");
+    assert!(resume_prompt.contains("\"Five.\""), "prompt={resume_prompt}");
     // Without any known translation the context is raw source.
     let empty_prompt = windows[2].build_prompt(&HashMap::new(), &[], &[]);
-    assert!(empty_prompt.contains("\"e\""), "empty prompt must keep raw context");
+    assert!(empty_prompt.contains("\"Five.\""), "empty prompt must keep raw context");
 }
+
 #[test]
 fn validate_batch_translation_response_rejects_missing_expected_id() {
     let value = json!({
@@ -386,3 +398,4 @@ fn merge_local_to_global_ignores_zero_and_out_of_range_ids() {
     assert_eq!(merged.get(&10).map(String::as_str), Some("first"));
     assert_eq!(skipped, vec![0, 4]);
 }
+

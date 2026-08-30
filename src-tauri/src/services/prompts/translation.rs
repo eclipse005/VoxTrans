@@ -31,7 +31,7 @@ pub fn build_batch_translate_prompt(
     established_names: &[TranslationNameExample],
 ) -> String {
     let mut instruction = String::from(
-        "Translate currentLines into targetLanguage. previousLines may be \"source → translation\" pairs and nextLines are upcoming source; both are context only. Return JSON only as {\"translations\":[{\"id\":1,\"text\":\"...\"}]} with every currentLines id in order. Each currentLines id maps to exactly one translation: never merge, split, or drop lines — a sentence fragment stays a fragment.",
+        "Translate currentLines into targetLanguage. currentLines are consecutive subtitle cues from one recording, in order — not independent sentences. Write faithful, fluent, idiomatic targetLanguage: grammar, word order, and convention follow that language, not a calque of the source. previousLines may be \"source → translation\" pairs and nextLines are upcoming source; use them only as context. Return JSON only as {\"translations\":[{\"id\":1,\"text\":\"...\"}]} with every currentLines id in order. Each id is a display slot: fill it with the portion of the natural translation that belongs on screen with that cue. Never merge, split, or drop ids, and do not leave an id empty. Concatenating the translations in order should read as natural targetLanguage for the passage.",
     );
     if !terms.is_empty() {
         instruction.push_str(
@@ -109,8 +109,20 @@ mod tests {
             instruction.contains("targetLanguage"),
             "output-language lock must stay in the instruction"
         );
+        assert!(
+            instruction.contains("idiomatic targetLanguage"),
+            "quality bar is idiomatic target language, not a source calque"
+        );
         assert!(parsed.get("establishedNames").is_none());
         assert_eq!(parsed["currentLines"][0]["text"], "hello");
+        assert!(
+            instruction.contains("consecutive subtitle cues"),
+            "batch is one passage of cues, not isolated sentences"
+        );
+        assert!(
+            instruction.contains("display slot"),
+            "each id is a display slot of the natural translation"
+        );
     }
 
     #[test]
@@ -153,6 +165,25 @@ mod tests {
         );
         let parsed: serde_json::Value = serde_json::from_str(&prompt).unwrap();
         assert_eq!(parsed["establishedNames"][0]["source"], "Alpha");
+    }
+
+    #[test]
+    fn batch_is_instructed_as_a_passage_of_cues() {
+        let prompt = build_batch_translate_prompt(
+            "en",
+            "zh-CN",
+            "",
+            &[],
+            &sample_lines(),
+            &[],
+            &[],
+            &[],
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&prompt).unwrap();
+        let instruction = parsed["instruction"].as_str().unwrap();
+        assert!(instruction.contains("not independent sentences"));
+        assert!(instruction.contains("not a calque of the source"));
+        assert!(instruction.contains("display slot"));
     }
 }
 
