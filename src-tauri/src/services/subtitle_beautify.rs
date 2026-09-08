@@ -113,7 +113,13 @@ fn beautify_subtitle_text(raw: &str) -> String {
 
     let without_edges = trim_bounding_punctuation(normalized);
     if without_edges.is_empty() {
-        return String::new();
+        // Punctuation-only text (e.g. a translation slot that ended up as
+        // just "。"): keep it verbatim instead of emptying. Emptying here
+        // would make the SRT writer drop the cue and desynchronize cue
+        // counts between src/trans variants. The slot-level repair pass
+        // should have prevented this state; this guard preserves the
+        // 1:1 cue-count invariant if anything upstream slips through.
+        return normalized.to_string();
     }
     let without_commas = remove_internal_commas_for_subtitle(&without_edges);
     let with_spacing = normalize_cjk_ascii_spacing(&without_commas);
@@ -255,6 +261,10 @@ mod tests {
     fn subtitle_beautify_text_handles_chinese_commas_and_periods() {
         // Leading/trailing Chinese comma and period are stripped.
         assert_eq!(beautify_subtitle_text("，你好，世界。"), "你好 世界");
+        // Punctuation-only text is kept verbatim (never emptied — the SRT
+        // writer drops empty cues and that would desynchronize cue counts).
+        assert_eq!(beautify_subtitle_text("。"), "。");
+        assert_eq!(beautify_subtitle_text("，，"), "，，");
         // Internal commas and periods become spaces.
         assert_eq!(
             beautify_subtitle_text("你好，世界。你好。世界，"),

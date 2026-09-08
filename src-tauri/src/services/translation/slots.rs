@@ -123,6 +123,9 @@ pub(super) fn slot_texts_in_order(
 ///    (spaced script) provably splits a word → snap to the nearest space.
 /// ③ zh target: a boundary that falls inside a jieba word snaps to the
 ///    nearest dictionary word edge.
+/// ④ a slot consisting entirely of punctuation pulls the preceding word
+///    chunk down into itself (a line may not be made purely of punctuation;
+///    downstream beautify strips bounding punctuation and would empty it).
 ///
 /// Accept gate: the normalized concatenation must be unchanged and no slot
 /// may be emptied; otherwise the original texts are kept. Moves only ever
@@ -184,6 +187,34 @@ pub(super) fn repair_slot_boundaries(texts: &mut [String], target_lang: &str) {
                 // ③ zh target: dictionary word-edge snap.
                 if let Some(edge) = nearest_jieba_edge(edges, b, prev_b, next_b, &concat) {
                     b = edge;
+                }
+            }
+        }
+
+        // ④ Punctuation-only slot (行尾禁则 twin of rule ①): a slot whose
+        // entire text is punctuation (e.g. the model parked "。" alone on a
+        // slot) pulls the preceding word chunk down into itself. Runs after
+        // ② so the word-edge snap cannot undo it. Skipped when the char
+        // crossing the boundary is ASCII-alphanumeric (spaced scripts keep
+        // trailing punctuation attached by a different convention and their
+        // beautify pass never empties such slots anyway).
+        if (b..next_b).all(|k| !is_word_char(chars[k])) && b > prev_b {
+            if !chars[b - 1].is_ascii_alphanumeric() {
+                let mut target = None;
+                if let Some(edges) = &jieba_edges {
+                    target = edges
+                        .iter()
+                        .copied()
+                        .filter(|e| *e > prev_b && *e < b && is_word_char(chars[*e]))
+                        .min_by_key(|e| b - e);
+                }
+                match target {
+                    Some(edge) => b = edge,
+                    None => {
+                        while b > prev_b + 1 && !is_word_char(chars[b]) {
+                            b -= 1;
+                        }
+                    }
                 }
             }
         }
@@ -347,6 +378,35 @@ mod tests {
         let mut texts = vec!["用2倍速一口气刷完".to_string(), "、却不真正体验".to_string()];
         repair_slot_boundaries(&mut texts, "zh-CN");
         assert_eq!(texts, vec!["用2倍速一口气刷完、", "却不真正体验"]);
+    }
+
+    #[test]
+    fn punctuation_only_slot_pulls_preceding_word() {
+        // The ja#009 observation: ですね split across cues as です|ね。, the
+        // model distributed "对吧。" as "对吧" + "。" leaving a punctuation-
+        // only slot. The slot must absorb its preceding word chunk instead
+        // (a line may not be made purely of punctuation).
+        let mut texts = vec!["对吧".to_string(), "。".to_string()];
+        repair_slot_boundaries(&mut texts, "zh-CN");
+        assert_eq!(texts, vec!["对", "吧。"]);
+    }
+
+    #[test]
+    fn punctuation_only_slot_prefers_jieba_word_edge() {
+        // concat 因此有。 — jieba edges give 因此|有|。; pulling to the
+        // word edge yields 因此 + 有。 rather than 因此有 + 。.
+        let mut texts = vec!["因此有".to_string(), "。".to_string()];
+        repair_slot_boundaries(&mut texts, "zh-CN");
+        assert_eq!(texts, vec!["因此", "有。"]);
+    }
+
+    #[test]
+    fn punctuation_only_slot_never_empties_previous() {
+        // Previous slot holds a single char: nothing to pull without
+        // emptying it, so the original split is kept.
+        let mut texts = vec!["对".to_string(), "。".to_string()];
+        repair_slot_boundaries(&mut texts, "zh-CN");
+        assert_eq!(texts, vec!["对", "。"]);
     }
 
     #[test]

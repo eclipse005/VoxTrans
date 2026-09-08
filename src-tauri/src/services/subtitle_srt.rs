@@ -379,4 +379,58 @@ mod tests {
         let _ = std::fs::remove_file(media_path);
         let _ = std::fs::remove_dir_all(media_dir);
     }
+
+    /// Row-count invariant (kjynvk incident): every variant must carry one
+    /// row per segment, so src/trans stay index-aligned. The incident chain
+    /// was: pure-punctuation slot "。" → beautify stripped it to "" → the
+    /// writer skipped the empty body → every later trans row number shifted
+    /// by one vs src. The upstream layers now prevent emptying; this test
+    /// locks the end-to-end guarantee through the real export path.
+    #[test]
+    fn variants_keep_one_row_per_segment_after_beautify() {
+        let mut segments = vec![
+            SubtitleSrtSegment {
+                start_ms: 0,
+                end_ms: 800,
+                source_text: "です".to_string(),
+                translated_text: "对吧".to_string(),
+            },
+            SubtitleSrtSegment {
+                start_ms: 800,
+                end_ms: 1400,
+                source_text: "ね。".to_string(),
+                // The degenerate state rule ④ should have prevented; the
+                // beautify guard must survive it either way.
+                translated_text: "。".to_string(),
+            },
+            SubtitleSrtSegment {
+                start_ms: 1400,
+                end_ms: 2400,
+                source_text: "さあ、始まりました".to_string(),
+                translated_text: "好，开始了！".to_string(),
+            },
+        ];
+        crate::services::subtitle_beautify::beautify_subtitle_srt_text(
+            &mut segments,
+            "zh-CN",
+        );
+
+        for item in [
+            ExportSrtItem::Source,
+            ExportSrtItem::Target,
+            ExportSrtItem::BilingualSourceFirst,
+            ExportSrtItem::BilingualTargetFirst,
+        ] {
+            let srt = build_variant_srt(&segments, item);
+            let rows = srt
+                .split("\n\n")
+                .filter(|block| !block.trim().is_empty())
+                .count();
+            assert_eq!(rows, segments.len(), "variant {item:?} lost a row");
+        }
+        // Index alignment: trans row #2 must still be cue #2 (its own time).
+        let trans = build_variant_srt(&segments, ExportSrtItem::Target);
+        assert!(trans.contains("00:00:00,800 --> 00:00:01,400"));
+        assert!(trans.contains("。"));
+    }
 }
