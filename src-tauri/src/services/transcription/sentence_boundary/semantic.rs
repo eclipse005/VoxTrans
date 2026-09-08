@@ -336,30 +336,38 @@ pub(super) fn split_points_to_spans(
     out
 }
 
-/// Semantic-layer kinsoku: a sentence must not START with a bound particle.
+/// Semantic-layer kinsoku: a sentence with NO content must not exist.
 ///
 /// Real ASR streams occasionally exile a function-word tail into a sentence
-/// of its own — either a zero-duration trailing particle token (`だ` + `な。`)
-/// or an odd word order after a punctuation split (`…う。` + `ます。`). Left
+/// of its own — a zero-duration trailing particle token (`だ` + `な。`) or
+/// an odd word order after a punctuation split (`…う。` + `ます。`). Left
 /// alone, such a sentence becomes a translation unit with nothing to
-/// translate and renders as a bare "。" row in the SRT. Merge any span whose
-/// head is a line-start bound particle back into its predecessor, so the
-/// illegal state is unrepresentable at the layer that produces sentences
-/// (the same kinsoku principle the display layer already enforces on cues).
-/// The check is table-driven and full-match, so it holds for ja / ko / zh
-/// alike and never touches content words (`ない` ≠ `な`).
+/// translate and renders as a bare "。" row in the SRT. A pure-tail span is
+/// merged back into its predecessor, so the illegal state is unrepresentable
+/// at the layer that produces sentences (the same kinsoku principle the
+/// display layer already enforces on cues). Table-driven and full-match, so
+/// it holds for ja / ko / zh alike and never touches content words.
 pub(super) fn merge_leading_bound_particle_spans(
     words: &[WordTokenDto],
     spans: &[(usize, usize)],
 ) -> Vec<(usize, usize)> {
-    use super::boundary_rules::is_line_start_bound_particle;
+    use super::boundary_rules::{is_line_start_bound_particle, strip_token};
+
+    // A span qualifies ONLY when it is a pure function tail: every token
+    // strips to bare punctuation or a line-start bound particle. Spans that
+    // merely START with a particle but carry content (の三昧学で…) stay
+    // untouched — those belong to the layout layer's own kinsoku balancing.
+    let is_function_tail = |start: usize, end: usize| {
+        (start..=end).all(|k| {
+            let core = strip_token(&words[k].word);
+            core.is_empty() || is_line_start_bound_particle(&words[k].word)
+        })
+    };
 
     let mut out: Vec<(usize, usize)> = Vec::with_capacity(spans.len());
     for &(start, end) in spans {
         let merges_back = match out.last() {
-            Some(&(_, prev_end)) => {
-                start == prev_end + 1 && is_line_start_bound_particle(words[start].word.as_str())
-            }
+            Some(&(_, prev_end)) => start == prev_end + 1 && is_function_tail(start, end),
             None => false,
         };
         if merges_back {
