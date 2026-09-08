@@ -362,10 +362,6 @@ pub struct SavedSettings {
     /// Frozen per task at enqueue. Fail-open: agent errors skip to translation.
     #[serde(default)]
     pub enable_terminology_agent: bool,
-    /// AnySearch key for the terminology agent's web_search tool. Live
-    /// setting (not frozen); empty = free Parallel endpoint fallback.
-    #[serde(default)]
-    pub anysearch_api_key: String,
     #[serde(default = "default_true")]
     pub enable_click_sound: bool,
     #[serde(default)]

@@ -40,7 +40,7 @@ impl TaskStore {
              align_model, demucs_model, enable_vocal_separation, translate_api_key, \
              translate_base_url, translate_model, llm_profiles_json, active_llm_profile_id, \
              llm_concurrency, active_terminology_group_id, \
-             enable_subtitle_beautify, enable_terminology_agent, anysearch_api_key, enable_click_sound, auto_burn_hard_subtitle, \
+             enable_subtitle_beautify, enable_terminology_agent, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
              locale, models_dir, default_review_source, \
              default_review_target, updated_at \
@@ -83,7 +83,7 @@ impl TaskStore {
              asr_model, align_model, demucs_model, enable_vocal_separation, translate_api_key, \
              translate_base_url, translate_model, llm_profiles_json, active_llm_profile_id, \
              llm_concurrency, active_terminology_group_id, \
-             enable_subtitle_beautify, enable_terminology_agent, anysearch_api_key, enable_click_sound, auto_burn_hard_subtitle, \
+             enable_subtitle_beautify, enable_terminology_agent, enable_click_sound, auto_burn_hard_subtitle, \
              subtitle_burn_mode, subtitle_render_style_json, flat_srt_output, \
              locale, models_dir, default_review_source, \
              default_review_target, updated_at) \
@@ -102,7 +102,6 @@ impl TaskStore {
              active_terminology_group_id=excluded.active_terminology_group_id, \
              enable_subtitle_beautify=excluded.enable_subtitle_beautify, \
              enable_terminology_agent=excluded.enable_terminology_agent, \
-             anysearch_api_key=excluded.anysearch_api_key, \
              enable_click_sound=excluded.enable_click_sound, \
              auto_burn_hard_subtitle=excluded.auto_burn_hard_subtitle, \
              subtitle_burn_mode=excluded.subtitle_burn_mode, \
@@ -130,7 +129,6 @@ impl TaskStore {
         .bind(&row.active_terminology_group_id)
         .bind(row.enable_subtitle_beautify)
         .bind(row.enable_terminology_agent)
-        .bind(&row.anysearch_api_key)
         .bind(row.enable_click_sound)
         .bind(row.auto_burn_hard_subtitle)
         .bind(&row.subtitle_burn_mode)
@@ -943,7 +941,6 @@ mod tests {
             active_terminology_group_id: String::new(),
             enable_subtitle_beautify: true,
             enable_terminology_agent: false,
-            anysearch_api_key: String::new(),
             enable_click_sound: true,
             auto_burn_hard_subtitle: false,
             default_review_source: false,

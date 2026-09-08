@@ -60,8 +60,6 @@ pub struct PipelineRuntimeSettings {
     pub translate_api_key: String,
     pub translate_base_url: String,
     pub translate_model: String,
-    /// AnySearch key (settings UI). Empty = free Parallel fallback.
-    pub anysearch_api_key: String,
     pub llm_concurrency: u32,
     pub terminology_entries: Vec<TranslateTerminologyEntryCommand>,
 }
@@ -88,7 +86,6 @@ pub fn resolve_runtime_settings(
     let translate_api_key = saved.translate_api_key.clone();
     let translate_base_url = saved.translate_base_url.clone();
     let translate_model = saved.translate_model.clone();
-    let anysearch_api_key = saved.anysearch_api_key.clone();
     let llm_concurrency = saved.llm_concurrency.clamp(1, 16);
 
     if require_translate_llm && translate_api_key.trim().is_empty() {
@@ -141,7 +138,6 @@ pub fn resolve_runtime_settings(
         translate_api_key,
         translate_base_url,
         translate_model,
-        anysearch_api_key,
         llm_concurrency,
         terminology_entries,
     })

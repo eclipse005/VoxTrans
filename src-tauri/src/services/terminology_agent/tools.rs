@@ -559,19 +559,17 @@ pub fn truncate_web_result(text: &str) -> String {
     text.chars().take(MAX_WEB_RESULT_CHARS).collect::<String>() + "…"
 }
 
-/// Web search provider selection. AnySearch (api.anysearch.com, needs
-/// ANYSEARCH_API_KEY) wins when configured; otherwise Parallel Search's
-/// hosted MCP endpoint, which answers unauthenticated (rate-limited) —
-/// PARALLEL_API_KEY attaches a Bearer token for higher limits.
+/// Web search provider: Parallel Search's hosted MCP endpoint, which
+/// answers unauthenticated (rate-limited) — PARALLEL_API_KEY attaches a
+/// Bearer token for higher limits.
 /// VOXTRANS_WEB_SEARCH=off disables the tool entirely (privacy: queries
 /// contain a few words from the video).
 #[derive(Debug, Clone)]
 pub enum WebSearchProvider {
     Parallel { key: Option<String> },
-    AnySearch { key: String },
 }
 
-pub fn web_search_provider(settings_anysearch_key: &str) -> Option<WebSearchProvider> {
+pub fn web_search_provider() -> Option<WebSearchProvider> {
     if std::env::var("VOXTRANS_WEB_SEARCH")
         .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "off" | "0" | "false"))
         .unwrap_or(false)
@@ -584,15 +582,6 @@ pub fn web_search_provider(settings_anysearch_key: &str) -> Option<WebSearchProv
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
     };
-    // Priority: settings UI key > env key > Parallel free endpoint.
-    let key = if settings_anysearch_key.trim().is_empty() {
-        env_val("ANYSEARCH_API_KEY")
-    } else {
-        Some(settings_anysearch_key.trim().to_string())
-    };
-    if let Some(key) = key {
-        return Some(WebSearchProvider::AnySearch { key });
-    }
     Some(WebSearchProvider::Parallel {
         key: env_val("PARALLEL_API_KEY"),
     })
@@ -612,7 +601,6 @@ pub async fn execute_web_search(query: &str, session_id: &str, provider: &WebSea
         WebSearchProvider::Parallel { key } => {
             parallel_search(query, session_id, key.as_deref()).await
         }
-        WebSearchProvider::AnySearch { key } => anysearch_search(query, key).await,
     };
     match result {
         Ok(text) if !text.trim().is_empty() => format!(
@@ -667,57 +655,6 @@ async fn parallel_search(
         .await
         .unwrap_or_default();
     Ok(extract_mcp_text(&raw))
-}
-
-async fn anysearch_search(query: &str, api_key: &str) -> Result<String, String> {
-    let client = http_client()?;
-    let raw = client
-        .post("https://api.anysearch.com/v1/search")
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {api_key}"))
-        // extract_anysearch_text keeps the top 6; ask for exactly that
-        // (API default is 10) to keep the payload lean.
-        .json(&json!({ "query": query, "max_results": 6 }))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .text()
-        .await
-        .unwrap_or_default();
-    extract_anysearch_text(&raw)
-}
-
-/// AnySearch returns `{code, data: {results: [{title,url,snippet,content}]}}`.
-/// Keep the top few results; transcripts dumps may carry the same ASR error
-/// the agent is trying to adjudicate, so titles/URLs stay visible as hints.
-pub fn extract_anysearch_text(raw: &str) -> Result<String, String> {
-    let data: Value = serde_json::from_str(raw.trim()).map_err(|e| e.to_string())?;
-    if data.get("code").and_then(|c| c.as_i64()) != Some(0) {
-        let msg = data
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("unknown error");
-        return Err(msg.to_string());
-    }
-    let Some(results) = data.pointer("/data/results").and_then(|r| r.as_array()) else {
-        return Ok(String::new());
-    };
-    let mut blocks = Vec::new();
-    for r in results.iter().take(6) {
-        let title = r.get("title").and_then(|v| v.as_str()).unwrap_or("").trim();
-        let url = r.get("url").and_then(|v| v.as_str()).unwrap_or("").trim();
-        let snippet = r
-            .get("snippet")
-            .and_then(|v| v.as_str())
-            .or_else(|| r.get("content").and_then(|v| v.as_str()))
-            .unwrap_or("")
-            .trim();
-        if snippet.is_empty() {
-            continue;
-        }
-        blocks.push(format!("- {title}\n  {url}\n  {snippet}"));
-    }
-    Ok(blocks.join("\n"))
 }
 
 pub fn extract_mcp_text(raw: &str) -> String {

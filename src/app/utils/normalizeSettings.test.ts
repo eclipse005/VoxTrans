@@ -25,7 +25,6 @@ function baseDefaults(): SavedSettings {
     activeTerminologyGroupId: "",
     enableSubtitleBeautify: true,
     enableTerminologyAgent: false,
-    anysearchApiKey: "",
     enableClickSound: true,
     autoBurnHardSubtitle: false,
     defaultReviewSource: false,
@@ -81,27 +80,6 @@ describe("normalizeSettings", () => {
     };
     const result = normalizeSettings(input, defaults);
     expect(result).toEqual(input);
-  });
-
-  it("normalizes anysearchApiKey (trims, missing/null → empty, non-string → string)", () => {
-    const defaults = baseDefaults();
-    const trimmed = normalizeSettings({ ...defaults, anysearchApiKey: "  sk-abc  " }, defaults);
-    expect(trimmed.anysearchApiKey).toBe("sk-abc");
-    const missing = normalizeSettings(
-      { ...defaults, anysearchApiKey: undefined } as unknown as SavedSettings,
-      defaults,
-    );
-    expect(missing.anysearchApiKey).toBe("");
-    const nulled = normalizeSettings(
-      { ...defaults, anysearchApiKey: null } as unknown as SavedSettings,
-      defaults,
-    );
-    expect(nulled.anysearchApiKey).toBe("");
-    const numeric = normalizeSettings(
-      { ...defaults, anysearchApiKey: 123 } as unknown as SavedSettings,
-      defaults,
-    );
-    expect(numeric.anysearchApiKey).toBe("123");
   });
 
   it("clamps chunkTargetSeconds to [30, 180]", () => {

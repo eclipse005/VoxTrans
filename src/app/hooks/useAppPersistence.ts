@@ -37,7 +37,6 @@ const LAST_RESORT_DEFAULTS: SavedSettings = {
   activeTerminologyGroupId: "",
   enableSubtitleBeautify: true,
   enableTerminologyAgent: false,
-  anysearchApiKey: "",
   enableClickSound: true,
   autoBurnHardSubtitle: false,
   defaultReviewSource: false,

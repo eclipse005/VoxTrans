@@ -183,7 +183,6 @@ async fn resolve_terminology_for_translation(
             api_key: runtime.translate_api_key.clone(),
             base_url: runtime.translate_base_url.clone(),
             model: runtime.translate_model.clone(),
-            anysearch_api_key: runtime.anysearch_api_key.clone(),
             store: Some(store.clone()),
         },
         move |win, nwin, round, max, _tool| {

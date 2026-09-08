@@ -56,9 +56,6 @@ pub struct TerminologyAgentInput {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
-    /// AnySearch key from settings UI. Empty = fall back to the free
-    /// Parallel endpoint (see tools::web_search_provider).
-    pub anysearch_api_key: String,
     pub store: Option<TaskStore>,
 }
 
@@ -164,7 +161,7 @@ where
     let confusable_pairs = candidates::find_confusable_pairs(&cands);
     let candidates_block = candidates::format_candidates_block(&cands, &confusable_pairs)
         + &candidates::format_pair_evidence(&confusable_pairs, &input.cues);
-    let web_search_provider = tools::web_search_provider(&input.anysearch_api_key);
+    let web_search_provider = tools::web_search_provider();
 
     main_logger.event(
         event::TERMINOLOGY_AGENT_START,

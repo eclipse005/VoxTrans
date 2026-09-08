@@ -57,7 +57,6 @@ export type SettingsForm = {
   activeTerminologyGroupId: string;
   enableSubtitleBeautify: boolean;
   enableTerminologyAgent: boolean;
-  anysearchApiKey: string;
   enableClickSound: boolean;
   autoBurnHardSubtitle: boolean;
   defaultReviewSource: boolean;
@@ -91,7 +90,6 @@ function settingsToForm(settings: SavedSettings): SettingsForm {
     activeTerminologyGroupId: settings.activeTerminologyGroupId,
     enableSubtitleBeautify: settings.enableSubtitleBeautify,
     enableTerminologyAgent: settings.enableTerminologyAgent,
-    anysearchApiKey: settings.anysearchApiKey,
     enableClickSound: settings.enableClickSound,
     autoBurnHardSubtitle: settings.autoBurnHardSubtitle,
     defaultReviewSource: settings.defaultReviewSource,
@@ -217,7 +215,6 @@ export function useSettingsController({
       activeTerminologyGroupId: form.activeTerminologyGroupId,
       enableSubtitleBeautify: form.enableSubtitleBeautify,
       enableTerminologyAgent: form.enableTerminologyAgent,
-      anysearchApiKey: form.anysearchApiKey,
       enableClickSound: form.enableClickSound,
       autoBurnHardSubtitle: form.autoBurnHardSubtitle,
       defaultReviewSource: form.defaultReviewSource,
