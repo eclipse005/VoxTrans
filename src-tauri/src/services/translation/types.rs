@@ -10,6 +10,10 @@ pub struct TranslationToken {
 #[derive(Debug, Clone)]
 pub struct TranslationSegmentInput {
     pub segment: String,
+    /// Semantic-sentence grouping: segments sharing a non-zero id are display
+    /// slots of one sentence-level translation unit (two-stage pipeline).
+    /// 0 = no grouping → the segment is its own unit.
+    pub sentence_id: usize,
     pub start: f64,
     pub end: f64,
     pub tokens: Vec<TranslationToken>,
@@ -74,22 +78,33 @@ pub struct TranslationProgress {
 #[derive(Debug, Clone)]
 pub(super) struct NormalizedSegment {
     pub(super) segment_id: usize,
+    /// Semantic-sentence grouping (0 = per-segment unit); carried from the
+    /// input so batches can group display cues into sentence-level units.
+    pub(super) sentence_id: usize,
     pub(super) start: f64,
     pub(super) end: f64,
     pub(super) source: String,
     pub(super) tokens: Vec<TranslationToken>,
 }
 
+/// A display slot of one translation unit: the global segment id (the model
+/// echoes it back) plus the cue text shown on screen while the slot plays.
+pub(super) type UnitSlot = (usize, String);
+
 #[derive(Debug, Clone)]
 pub(super) struct BatchWindow {
     pub(super) batch_id: usize,
-    pub(super) local_ids: Vec<usize>,
+    /// Local unit index (0-based) → global unit id (used for context lines).
     pub(super) local_to_global: Vec<usize>,
-    /// Current-batch lines as the LLM sees them (1-based local ids).
+    /// Current-batch units as the LLM sees them (1-based local ids). The text
+    /// is the unit's full source sentence (its slot cues joined).
     pub(super) current_lines: Arc<[crate::services::prompts::translation::TranslationPromptLine]>,
-    /// (segment_id, source) for up to PREV_CONTEXT_LINES before the batch.
+    /// Display slots per local unit (same order as current_lines): the global
+    /// segment ids and the cue source texts the model must backfill.
+    pub(super) unit_slots: Arc<[Vec<UnitSlot>]>,
+    /// (global unit id, unit source) for up to PREV_CONTEXT_LINES before the batch.
     pub(super) prev_lines: Arc<[(usize, String)]>,
-    /// (segment_id, source) for up to NEXT_CONTEXT_LINES after the batch.
+    /// (global unit id, unit source) for up to NEXT_CONTEXT_LINES after the batch.
     pub(super) next_lines: Arc<[(usize, String)]>,
     /// Terminology entries selected for this batch.
     pub(super) terms: Arc<[crate::services::prompts::translation::TranslationPromptTerm]>,
@@ -103,14 +118,15 @@ impl BatchWindow {
     ///
     /// previousLines become `"source → translation"` once the predecessor
     /// batch has committed. nextLines stay source-only even on resume — the
-    /// future batch is context, not an answer key.
+    /// future batch is context, not an answer key. Each current unit carries
+    /// its display slots (global segment ids + cue source texts).
     pub(super) fn build_prompt(
         &self,
         known_translations: &std::collections::HashMap<usize, String>,
         extra_terms: &[crate::services::prompts::translation::TranslationPromptTerm],
         established_names: &[crate::services::prompts::translation::TranslationNameExample],
     ) -> String {
-        let prev_lines = self
+        let prev_units = self
             .prev_lines
             .iter()
             .map(|(id, source)| match known_translations.get(id) {
@@ -118,19 +134,37 @@ impl BatchWindow {
                 None => source.clone(),
             })
             .collect::<Vec<_>>();
-        let next_lines = self
+        let next_units = self
             .next_lines
             .iter()
             .map(|(_, source)| source.clone())
+            .collect::<Vec<_>>();
+        let current_units = self
+            .current_lines
+            .iter()
+            .zip(self.unit_slots.iter())
+            .map(|(line, slots)| crate::services::prompts::translation::TranslationPromptUnit {
+                id: line.id,
+                text: line.text.clone(),
+                slots: slots
+                    .iter()
+                    .map(|(id, source)| {
+                        crate::services::prompts::translation::TranslationPromptSlot {
+                            id: *id,
+                            text: source.clone(),
+                        }
+                    })
+                    .collect(),
+            })
             .collect::<Vec<_>>();
         let terms = merge_terms(&self.terms, extra_terms);
         crate::services::prompts::translation::build_batch_translate_prompt(
             &self.source_lang,
             &self.target_lang,
             &self.style_guide,
-            &prev_lines,
-            &self.current_lines,
-            &next_lines,
+            &prev_units,
+            &current_units,
+            &next_units,
             &terms,
             established_names,
         )

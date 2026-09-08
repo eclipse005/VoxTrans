@@ -1,27 +1,55 @@
-use std::collections::HashSet;
+//! Translation-unit batching: display cues are grouped into sentence-level
+//! units (two-stage pipeline), windows batch units, and the split ladder
+//! shrinks a failed window 8→4→2→1 units.
+
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::services::prompts::translation::{TranslationPromptLine, TranslationPromptTerm};
+use crate::services::transcription::join_words;
 
-use super::types::{BatchWindow, NormalizedSegment, TranslationTerminologyEntry};
+use super::types::{BatchWindow, NormalizedSegment, TranslationTerminologyEntry, UnitSlot};
 use super::{MAX_TERMS_PER_BATCH, NEXT_CONTEXT_LINES, PREV_CONTEXT_LINES};
 
-/// Next split size after a window of `len` lines fails.
-/// 20→10, 10→5, 5→1. `None` means this window cannot split (1 line).
+/// Next split size after a window of `len` units fails.
+/// 8→4, 4→2, 2→1. `None` means this window cannot split (1 unit).
 pub(super) fn split_chunk_size(len: usize) -> Option<usize> {
     if len <= 1 {
         None
-    } else if len > 10 {
-        Some(10)
-    } else if len > 5 {
-        Some(5)
+    } else if len > 4 {
+        Some(4)
+    } else if len > 2 {
+        Some(2)
     } else {
         Some(1)
     }
 }
 
-/// Split `window` into consecutive sub-windows of `chunk` lines (last may be shorter).
-/// Each slice keeps prev3/next2 relative to its own currentLines.
+/// Group ordered display cues into sentence-level translation units: a
+/// maximal run of adjacent segments sharing a non-zero `sentence_id`
+/// (semantic-sentence grouping from the boundary stage). `sentence_id` 0 —
+/// imported cues, legacy artifacts — yields single-cue units. Returns the
+/// member segment ids per unit, in order.
+pub(super) fn build_translation_units(segments: &[NormalizedSegment]) -> Vec<Vec<usize>> {
+    let mut units = Vec::<Vec<usize>>::new();
+    let mut group_keys = Vec::<usize>::new();
+    for segment in segments {
+        let grouped = segment.sentence_id != 0;
+        if grouped && group_keys.last() == Some(&segment.sentence_id) {
+            units
+                .last_mut()
+                .expect("group_keys and units stay in sync")
+                .push(segment.segment_id);
+        } else {
+            units.push(vec![segment.segment_id]);
+            group_keys.push(if grouped { segment.sentence_id } else { 0 });
+        }
+    }
+    units
+}
+
+/// Split `total` units into consecutive sub-windows of `chunk` units (last may
+/// be shorter). Each slice keeps prev/next context relative to its own units.
 pub(super) fn split_window(window: &BatchWindow, chunk: usize) -> Vec<BatchWindow> {
     let n = window.local_to_global.len();
     if chunk == 0 || n == 0 {
@@ -41,7 +69,6 @@ pub(super) fn split_window(window: &BatchWindow, chunk: usize) -> Vec<BatchWindo
 }
 
 fn slice_window(window: &BatchWindow, start: usize, end: usize) -> BatchWindow {
-    let count = end.saturating_sub(start);
     let current_lines: Vec<TranslationPromptLine> = window.current_lines[start..end]
         .iter()
         .enumerate()
@@ -74,9 +101,9 @@ fn slice_window(window: &BatchWindow, start: usize, end: usize) -> BatchWindow {
 
     BatchWindow {
         batch_id: window.batch_id,
-        local_ids: (1..=count).collect(),
         local_to_global: window.local_to_global[start..end].to_vec(),
         current_lines: Arc::from(current_lines),
+        unit_slots: Arc::from(window.unit_slots[start..end].to_vec()),
         prev_lines: Arc::from(prev_lines),
         next_lines: Arc::from(next_lines),
         terms: Arc::clone(&window.terms),
@@ -86,18 +113,15 @@ fn slice_window(window: &BatchWindow, start: usize, end: usize) -> BatchWindow {
     }
 }
 
-/// Compute the (start, end) index ranges for each batch.
-pub(super) fn batch_index_ranges(
-    segments: &[NormalizedSegment],
-    batch_size: usize,
-) -> Vec<(usize, usize)> {
-    if segments.is_empty() || batch_size == 0 {
+/// Compute the (start, end) unit-index ranges for each batch.
+fn unit_index_ranges(total_units: usize, batch_size: usize) -> Vec<(usize, usize)> {
+    if total_units == 0 || batch_size == 0 {
         return Vec::new();
     }
     let mut ranges = Vec::new();
     let mut start = 0usize;
-    while start < segments.len() {
-        let end = (start + batch_size).min(segments.len());
+    while start < total_units {
+        let end = (start + batch_size).min(total_units);
         ranges.push((start, end));
         start = end;
     }
@@ -116,36 +140,61 @@ pub(super) fn build_batch_windows(
         return Vec::new();
     }
 
+    let units = build_translation_units(segments);
+    let by_id: HashMap<usize, &NormalizedSegment> =
+        segments.iter().map(|s| (s.segment_id, s)).collect();
+    // Unit source text = its slot cue texts joined with language-aware
+    // spacing (the same join the boundary stage used to build cue texts).
+    let unit_sources: Vec<String> = units
+        .iter()
+        .map(|ids| {
+            join_words(
+                ids.iter()
+                    .filter_map(|id| by_id.get(id))
+                    .map(|s| s.source.as_str()),
+            )
+        })
+        .collect();
+
     let mut out = Vec::<BatchWindow>::new();
-    for (batch_start, batch_end) in batch_index_ranges(segments, batch_size) {
-        let current = &segments[batch_start..batch_end];
+    for (batch_start, batch_end) in unit_index_ranges(units.len(), batch_size) {
+        let unit_range = batch_start..batch_end;
 
         let prev_start = batch_start.saturating_sub(PREV_CONTEXT_LINES);
-        let prev = &segments[prev_start..batch_start];
+        let prev: Vec<(usize, String)> = (prev_start..batch_start)
+            .map(|i| (i + 1, unit_sources[i].clone()))
+            .collect();
+        let next_end = (batch_end + NEXT_CONTEXT_LINES).min(units.len());
+        let next: Vec<(usize, String)> = (batch_end..next_end)
+            .map(|i| (i + 1, unit_sources[i].clone()))
+            .collect();
 
-        let next_end = (batch_end + NEXT_CONTEXT_LINES).min(segments.len());
-        let next = &segments[batch_end..next_end];
-
-        let terms = select_batch_terms(current, terminology_entries, MAX_TERMS_PER_BATCH);
-        // Keep (segment_id, source) pairs so the prompt can be rebuilt at call
-        // time with any translations that became known since window creation
-        // (resumed batches, or batches completed earlier in this run).
-        let prev_lines = prev
-            .iter()
-            .map(|segment| (segment.segment_id, segment.source.clone()))
-            .collect::<Vec<_>>();
-        let current_lines = current
-            .iter()
+        let current_lines: Vec<TranslationPromptLine> = unit_range
+            .clone()
             .enumerate()
-            .map(|(index, segment)| TranslationPromptLine {
+            .map(|(index, i)| TranslationPromptLine {
                 id: index + 1,
-                text: segment.source.clone(),
+                text: unit_sources[i].clone(),
             })
-            .collect::<Vec<_>>();
-        let next_lines = next
-            .iter()
-            .map(|segment| (segment.segment_id, segment.source.clone()))
-            .collect::<Vec<_>>();
+            .collect();
+
+        let unit_slots: Vec<Vec<UnitSlot>> = unit_range
+            .clone()
+            .map(|i| {
+                units[i]
+                    .iter()
+                    .map(|id| {
+                        let segment = by_id[id];
+                        (*id, segment.source.clone())
+                    })
+                    .collect()
+            })
+            .collect();
+
+        // Terminology matched against this batch's unit texts.
+        let batch_unit_texts: Vec<&str> =
+            unit_range.clone().map(|i| unit_sources[i].as_str()).collect();
+        let terms = select_batch_terms(&batch_unit_texts, terminology_entries, MAX_TERMS_PER_BATCH);
         let prompt_terms = terms
             .iter()
             .map(|term| TranslationPromptTerm {
@@ -155,15 +204,13 @@ pub(super) fn build_batch_windows(
             })
             .collect::<Vec<_>>();
 
-        let batch_index = out.len();
-
         out.push(BatchWindow {
-            batch_id: batch_index,
-            local_ids: (1..=current.len()).collect(),
-            local_to_global: current.iter().map(|segment| segment.segment_id).collect(),
+            batch_id: out.len(),
+            local_to_global: unit_range.clone().map(|i| i + 1).collect(),
             current_lines: Arc::from(current_lines),
-            prev_lines: Arc::from(prev_lines),
-            next_lines: Arc::from(next_lines),
+            unit_slots: Arc::from(unit_slots),
+            prev_lines: Arc::from(prev),
+            next_lines: Arc::from(next),
             terms: Arc::from(prompt_terms),
             style_guide: style_guide.to_string(),
             source_lang: source_lang.to_string(),
@@ -175,7 +222,7 @@ pub(super) fn build_batch_windows(
 }
 
 fn select_batch_terms(
-    current_segments: &[NormalizedSegment],
+    unit_sources: &[&str],
     entries: &[TranslationTerminologyEntry],
     max_terms: usize,
 ) -> Vec<TranslationTerminologyEntry> {
@@ -188,14 +235,8 @@ fn select_batch_terms(
     // block" / "Order Block" in the batch. Every term that appears in this
     // batch MUST be sent: never drop a relevant term (可以多送不能少送).
     // Over-inclusion is acceptable; the translator LLM ignores terms that
-    // don't fit a given line.
-    let batch_norm = normalize_for_match(
-        &current_segments
-            .iter()
-            .map(|segment| segment.source.as_str())
-            .collect::<Vec<_>>()
-            .join("\n"),
-    );
+    // don't fit a given unit.
+    let batch_norm = normalize_for_match(&unit_sources.join("\n"));
 
     let mut selected = Vec::<TranslationTerminologyEntry>::new();
     let mut seen = HashSet::<String>::new();
@@ -264,6 +305,7 @@ pub(super) fn matched_term_targets(
 
 #[cfg(test)]
 mod tests {
+    use super::build_translation_units;
     use super::select_batch_terms;
     use super::super::types::{NormalizedSegment, TranslationTerminologyEntry, TranslationToken};
 
@@ -275,9 +317,10 @@ mod tests {
         }
     }
 
-    fn seg(source: &str) -> NormalizedSegment {
+    fn seg(id: usize, source: &str, sentence_id: usize) -> NormalizedSegment {
         NormalizedSegment {
-            segment_id: 1,
+            segment_id: id,
+            sentence_id,
             start: 0.0,
             end: 1.0,
             source: source.to_string(),
@@ -286,26 +329,48 @@ mod tests {
     }
 
     #[test]
+    fn units_group_adjacent_same_sentence_segments() {
+        // Segments 1-2 belong to semantic sentence 7; 3 is its own sentence;
+        // 4-5 carry no grouping (0) and stay single-cue units.
+        let segments = vec![
+            seg(1, "Hence", 7),
+            seg(2, "this video.", 7),
+            seg(3, "Next one.", 8),
+            seg(4, "Imported cue A.", 0),
+            seg(5, "Imported cue B.", 0),
+        ];
+        let units = build_translation_units(&segments);
+        assert_eq!(units, vec![vec![1, 2], vec![3], vec![4], vec![5]]);
+    }
+
+    #[test]
+    fn units_do_not_group_across_intervening_segments() {
+        // Same sentence_id repeated non-adjacently must NOT merge.
+        let segments = vec![seg(1, "a", 7), seg(2, "b", 8), seg(3, "c", 7)];
+        let units = build_translation_units(&segments);
+        assert_eq!(units, vec![vec![1], vec![2], vec![3]]);
+    }
+
+    #[test]
     fn fuzzy_matches_spacing_and_case_variants() {
         // The regression: a configured "orderblock" must match "order block"
         // (with a space) in the batch. Exact substring matching dropped it.
         let entries = vec![term("orderblock", "订单块")];
-        let batch = [seg("We trade into the order block here.")];
-        let selected = select_batch_terms(&batch, &entries, 16);
+        let units = ["We trade into the order block here."];
+        let selected = select_batch_terms(&units, &entries, 16);
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].target, "订单块");
     }
 
     #[test]
-    fn split_ladder_is_10_then_5_then_1() {
+    fn split_ladder_is_4_then_2_then_1() {
         use super::split_chunk_size;
-        assert_eq!(split_chunk_size(20), Some(10));
-        assert_eq!(split_chunk_size(13), Some(10));
-        assert_eq!(split_chunk_size(11), Some(10));
-        assert_eq!(split_chunk_size(10), Some(5));
-        assert_eq!(split_chunk_size(6), Some(5));
-        assert_eq!(split_chunk_size(5), Some(1));
-        assert_eq!(split_chunk_size(3), Some(1));
+        assert_eq!(split_chunk_size(20), Some(4));
+        assert_eq!(split_chunk_size(8), Some(4));
+        assert_eq!(split_chunk_size(5), Some(4));
+        assert_eq!(split_chunk_size(4), Some(2));
+        assert_eq!(split_chunk_size(3), Some(2));
+        assert_eq!(split_chunk_size(2), Some(1));
         assert_eq!(split_chunk_size(1), None);
         assert_eq!(split_chunk_size(0), None);
     }
@@ -320,14 +385,21 @@ mod tests {
         let current: Vec<TranslationPromptLine> = (0..6)
             .map(|i| TranslationPromptLine {
                 id: i + 1,
-                text: format!("c{i}"),
+                text: format!("u{i}"),
             })
             .collect();
         let window = BatchWindow {
             batch_id: 2,
-            local_ids: (1..=6).collect(),
             local_to_global: vec![10, 11, 12, 13, 14, 15],
             current_lines: Arc::from(current),
+            unit_slots: Arc::from(vec![
+                vec![(101, "s0".to_string())],
+                vec![(102, "s1".to_string())],
+                vec![(103, "s2".to_string())],
+                vec![(104, "s3".to_string())],
+                vec![(105, "s4".to_string())],
+                vec![(106, "s5".to_string())],
+            ]),
             prev_lines: Arc::from(vec![
                 (7, "p1".into()),
                 (8, "p2".into()),
@@ -343,15 +415,14 @@ mod tests {
         let parts = split_window(&window, 3);
         assert_eq!(parts.len(), 2);
 
-        assert_eq!(parts[0].local_ids, vec![1, 2, 3]);
         assert_eq!(parts[0].local_to_global, vec![10, 11, 12]);
         assert_eq!(
-            parts[0]
-                .current_lines
-                .iter()
-                .map(|l| l.text.as_str())
-                .collect::<Vec<_>>(),
-            vec!["c0", "c1", "c2"]
+            parts[0].unit_slots.as_ref(),
+            &[
+                vec![(101, "s0".to_string())],
+                vec![(102, "s1".to_string())],
+                vec![(103, "s2".to_string())],
+            ]
         );
         assert_eq!(
             parts[0].prev_lines.as_ref(),
@@ -359,60 +430,18 @@ mod tests {
         );
         assert_eq!(
             parts[0].next_lines.as_ref(),
-            &[(13, "c3".into()), (14, "c4".into())]
+            &[(13, "u3".into()), (14, "u4".into())]
         );
 
-        assert_eq!(parts[1].local_ids, vec![1, 2, 3]);
         assert_eq!(parts[1].local_to_global, vec![13, 14, 15]);
         assert_eq!(
             parts[1].prev_lines.as_ref(),
-            &[(10, "c0".into()), (11, "c1".into()), (12, "c2".into())]
+            &[(10, "u0".into()), (11, "u1".into()), (12, "u2".into())]
         );
         assert_eq!(
             parts[1].next_lines.as_ref(),
             &[(16, "n1".into()), (17, "n2".into())]
         );
-    }
-
-    #[test]
-    fn split_keeps_translate_prompt_with_fewer_current_lines() {
-        use super::split_window;
-        use super::super::types::BatchWindow;
-        use crate::services::prompts::translation::TranslationPromptLine;
-        use std::collections::HashMap;
-        use std::sync::Arc;
-
-        let current: Vec<TranslationPromptLine> = (0..20)
-            .map(|i| TranslationPromptLine {
-                id: i + 1,
-                text: format!("line {i}"),
-            })
-            .collect();
-        let window = BatchWindow {
-            batch_id: 0,
-            local_ids: (1..=20).collect(),
-            local_to_global: (1..=20).collect(),
-            current_lines: Arc::from(current),
-            prev_lines: Arc::from(Vec::new()),
-            next_lines: Arc::from(Vec::new()),
-            terms: Arc::from(Vec::new()),
-            style_guide: String::new(),
-            source_lang: "en".into(),
-            target_lang: "zh-CN".into(),
-        };
-        let parts = split_window(&window, 10);
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0].local_to_global.len(), 10);
-        assert_eq!(parts[1].local_to_global.len(), 10);
-
-        let prompt = parts[0].build_prompt(&HashMap::new(), &[], &[]);
-        let parsed: serde_json::Value = serde_json::from_str(&prompt).unwrap();
-        assert_eq!(parsed["currentLines"].as_array().unwrap().len(), 10);
-        let instruction = parsed["instruction"].as_str().unwrap();
-        assert!(instruction.contains("Translate currentLines"));
-        assert!(!instruction.contains("Retry"));
-        assert!(!instruction.contains("reshape"));
-        assert!(!instruction.contains("repair"));
     }
 
     #[test]
@@ -423,8 +452,8 @@ mod tests {
             term("orderblock", "订单块"),
             term("FVG", "公允价值缺口"),
         ];
-        let batch = [seg("order block and FVG together")];
-        let selected = select_batch_terms(&batch, &entries, 1);
+        let units = ["order block and FVG together"];
+        let selected = select_batch_terms(&units, &entries, 1);
         assert_eq!(selected.len(), 2);
     }
 

@@ -61,6 +61,7 @@ pub async fn build_translation_layer_with_progress_and_unit_store(
             .map(
                 |segment| crate::services::translation::TranslationSegmentInput {
                     segment: segment.segment.clone(),
+                    sentence_id: segment.semantic_sentence_id,
                     start: segment.start,
                     end: segment.end,
                     tokens: segment

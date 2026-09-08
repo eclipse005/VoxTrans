@@ -17,6 +17,7 @@ mod text;
 mod timing;
 mod types;
 mod vad_align;
+mod word_units;
 mod words;
 
 use assembly::{
@@ -24,13 +25,15 @@ use assembly::{
 };
 use semantic::{build_split_points_from_hard_boundaries, split_points_to_spans};
 use subtitle_layout::build_subtitle_layout_split_points;
-#[cfg(test)]
-use text::join_words;
 use types::SourceSentenceStep2;
 use words::{from_core_words, to_core_words};
 
 pub use assembly::source_sentences_to_srt;
 pub use types::{BoundaryDecisionKind, SentenceBoundaryRequest};
+/// Language-aware word joining (spacing rules) shared with the translation
+/// service, which rebuilds a semantic sentence's source text from its display
+/// cue fragments.
+pub(crate) use text::join_words;
 
 pub async fn build_source_sentences_from_words_with_progress(
     request: SentenceBoundaryRequest,
@@ -77,7 +80,8 @@ pub async fn build_source_sentences_from_words_with_progress(
         return Err("failed to build sentence spans".to_string());
     }
 
-    let translation_sentences = build_sentences_from_word_spans(&normalized_words, &spans);
+    let translation_sentences =
+        build_sentences_from_word_spans(&normalized_words, &spans, &semantic_spans);
     let boundaries = build_boundaries_from_split_points(&micro_chunks, &split_points);
 
     Ok(SourceSentenceStep2 {
@@ -106,6 +110,9 @@ fn merge_split_points(
 
 fn split_reason_priority(reason: types::SplitReason) -> u8 {
     match reason {
+        // Hard pause is the strongest display signal — it must win any
+        // same-index dedup against layout preferences.
+        types::SplitReason::HardPause => 0,
         types::SplitReason::TerminalPunctuation => 1,
         types::SplitReason::SubtitleLayout => 2,
     }

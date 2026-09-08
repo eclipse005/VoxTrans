@@ -1143,6 +1143,36 @@ fn grace_band_keeps_whole_line_without_good_cut() {
     assert_eq!(response.sentence_total, 1);
 }
 
+/// Grace band whose ONLY good cut strands a one-word flash line must keep the
+/// whole (slightly over) line. Real-world case: "Meaning | that the bias …"
+/// left "Meaning" alone on screen — the connector cut before "that" was the
+/// only quality candidate, and quality mode preferred splitting to packing.
+#[test]
+fn grace_band_connector_cut_may_not_strand_a_flash_line() {
+    let tokens = [
+        "Meaning", "that", "the", "bias", "from", "8", "AM", "onwards", "would", "be", "for",
+        "a", "green", "candle", "to", "go", "up",
+    ];
+    // 17 words: over the 16-word standard target, inside the +2 grace band.
+    // Contiguous timings → no pause-based quality cuts; the only good cut is
+    // before the connector "that", which would isolate "Meaning".
+    let words = tokens
+        .iter()
+        .enumerate()
+        .map(|(i, t)| w(i, t))
+        .collect::<Vec<_>>();
+    let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
+        request_with_lang_and_preset(words, "en", "standard"),
+        None,
+    ))
+    .expect("step2 should build sentences");
+
+    assert_eq!(
+        response.sentence_total, 1,
+        "flash-line cut must lose to keeping the whole line"
+    );
+}
+
 /// Force-mode cuts must never land right after a function word, even when the
 /// length budget demands a split ("I want to go to the market | and buy...").
 #[test]

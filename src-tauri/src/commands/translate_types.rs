@@ -26,6 +26,11 @@ pub struct SegmentTokenForTerminologyCommand {
 pub struct SourceSegmentForTerminologyCommand {
     #[serde(default, alias = "text")]
     pub segment: String,
+    /// Semantic-sentence grouping for the two-stage translation (segments
+    /// sharing a non-zero id are slots of one sentence-level unit).
+    /// Optional: older clients / imported cues omit it → 0 = per-cue unit.
+    #[serde(default)]
+    pub semantic_sentence_id: usize,
     pub start: f64,
     pub end: f64,
     #[serde(default)]

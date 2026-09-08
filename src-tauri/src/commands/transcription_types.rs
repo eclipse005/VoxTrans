@@ -4,6 +4,11 @@ pub use super::transcribe_types::WordTokenCommandDto;
 #[serde(rename_all = "camelCase")]
 pub struct SourceSentenceCommandDto {
     pub sentence_id: usize,
+    /// 1-based semantic-sentence grouping (punctuation-level span); display
+    /// cues cut by layout or a hard pause share one semantic sentence. Older
+    /// persisted artifacts predate the field — 0 means "unknown grouping".
+    #[serde(default)]
+    pub semantic_sentence_id: usize,
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
@@ -78,6 +83,11 @@ pub struct GroupedSentenceTokenCommandDto {
 #[serde(rename_all = "camelCase")]
 pub struct GroupedSentenceSegmentCommandDto {
     pub segment: String,
+    /// Semantic-sentence grouping carried into the translation pipeline
+    /// (segments sharing a non-zero id are slots of one translation unit).
+    /// 0 = unknown (imported subtitles, legacy artifacts) → per-cue units.
+    #[serde(default)]
+    pub semantic_sentence_id: usize,
     pub start: f64,
     pub end: f64,
     pub tokens: Vec<GroupedSentenceTokenCommandDto>,

@@ -100,7 +100,15 @@ fn is_structured_output_rejection(err: &LlmError) -> bool {
         // trouble as grammar errors, e.g. SenseNova's `guided_grammar …
         // compile_grammar_error: No module named 'xgrammar'`.
         || message.contains("grammar")
-        || message.contains("guided");
+        || message.contains("guided")
+        // SenseNova rejects ANY `output_config` with a generic 400 body
+        // "inference request is invalid" — verified 2026-09 against
+        // token.sensenova.cn: flat and nested schemas both 400 while the
+        // identical request without output_config returns 200. Treating this
+        // as a structured-output rejection is safe: the fallback retries
+        // without the schema, and a genuinely broken request fails again
+        // either way (the memo then only skips a schema the endpoint hates).
+        || message.contains("inference request");
     let format_shaped = message.contains("format")
         && ["unsupported", "not supported", "unknown", "unexpected", "invalid"]
             .iter()
@@ -1008,6 +1016,12 @@ mod tests {
         assert!(is_structured_output_rejection(&rejection(
             400,
             "http status 400: guided_grammar '{\"type\":\"object\"}' has compile_grammar_error: No module named 'xgrammar'"
+        )));
+        // SenseNova's generic 400 for any output_config (empirically
+        // verified: same request without the schema returns 200).
+        assert!(is_structured_output_rejection(&rejection(
+            400,
+            "http status 400: inference request is invalid"
         )));
         // Unrelated 400s and non-4xx/422 statuses never trigger fallback.
         assert!(!is_structured_output_rejection(&rejection(

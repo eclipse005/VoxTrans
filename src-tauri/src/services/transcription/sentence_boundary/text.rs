@@ -1,4 +1,4 @@
-pub(super) fn join_words<'a>(parts: impl Iterator<Item = &'a str>) -> String {
+pub(crate) fn join_words<'a>(parts: impl Iterator<Item = &'a str>) -> String {
     let mut out = String::new();
     let mut prev_has_spacing_word = false;
     let mut prev_allows_space_after = false;

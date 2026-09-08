@@ -22,6 +22,7 @@ pub(super) fn normalize_segments(segments: &[TranslationSegmentInput]) -> Vec<No
         }
         out.push(NormalizedSegment {
             segment_id: index + 1,
+            sentence_id: segment.sentence_id,
             start: segment.start,
             end: segment.end.max(segment.start),
             source,

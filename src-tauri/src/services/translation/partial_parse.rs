@@ -259,6 +259,128 @@ fn insert_prefer_longer(out: &mut HashMap<usize, String>, id: usize, text: Strin
     }
 }
 
+/// One partially-streamed sentence unit (best effort).
+#[derive(Debug, Clone)]
+pub(super) struct PartialUnit {
+    pub id: usize,
+    pub translation: Option<String>,
+    /// (slot id, text) pairs as streamed so far.
+    pub slots: Vec<(usize, String)>,
+}
+
+/// Extract partial sentence units from raw (possibly incomplete) model text:
+/// scan the `units` array, keep every COMPLETE object (brace-depth scanning,
+/// string-escape aware), parse it as JSON. An incomplete trailing object is
+/// skipped — the next stream chunk re-delivers it. Never fails; strict
+/// validation stays at batch completion.
+pub(super) fn extract_partial_units(raw: &str) -> Vec<PartialUnit> {
+    let mut out = Vec::new();
+    if raw.trim().is_empty() {
+        return out;
+    }
+    let Some(array_body) = find_units_array_body(raw) else {
+        return out;
+    };
+    for object in complete_objects(array_body) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&object) else {
+            continue;
+        };
+        let Some(obj) = value.as_object() else {
+            continue;
+        };
+        let Some(id) = obj
+            .get("id")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize)
+        else {
+            continue;
+        };
+        let translation = obj
+            .get("translation")
+            .or_else(|| obj.get("text"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let mut slots = Vec::new();
+        if let Some(items) = obj.get("slots").and_then(|v| v.as_array()) {
+            for item in items {
+                let Some(slot) = item.as_object() else { continue };
+                let Some(slot_id) = slot.get("id").and_then(|v| v.as_u64()).map(|n| n as usize)
+                else {
+                    continue;
+                };
+                let Some(text) = slot.get("text").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                slots.push((slot_id, text.to_string()));
+            }
+        }
+        out.push(PartialUnit {
+            id,
+            translation,
+            slots,
+        });
+    }
+    out
+}
+
+fn find_units_array_body(raw: &str) -> Option<&str> {
+    let key = "\"units\"";
+    let idx = match raw.find(key) {
+        Some(idx) => idx,
+        None => raw.to_ascii_lowercase().find(key)?,
+    };
+    let after_key = &raw[idx + key.len()..];
+    let bracket = after_key.find('[')?;
+    let start = idx + key.len() + bracket + 1;
+    // start is derived only from ASCII finds + fixed ASCII lengths → char boundary.
+    debug_assert!(raw.is_char_boundary(start));
+    Some(&raw[start..])
+}
+
+/// Yield every COMPLETE `{...}` object in the region via string-aware brace
+/// depth scanning (all offsets are char boundaries by construction: scanning
+/// walks `char_indices` and braces are ASCII).
+fn complete_objects(region: &str) -> Vec<String> {
+    let mut objects = Vec::new();
+    let mut depth = 0usize;
+    let mut start: Option<usize> = None;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, ch) in region.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(offset);
+                }
+                depth += 1;
+            }
+            '}' => {
+                if depth > 0 {
+                    depth -= 1;
+                    if depth == 0 {
+                        if let Some(begin) = start.take() {
+                            objects.push(region[begin..=offset].to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    objects
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +436,27 @@ mod tests {
         let raw = r#"{"translations":[{"id":1,"text":"你好世界这是一段"#;
         let map = extract_partial_translations(raw);
         assert_eq!(map.get(&1).map(String::as_str), Some("你好世界这是一段"));
+    }
+
+    #[test]
+    fn partial_units_extracts_complete_objects_with_slots() {
+        let raw = r#"{"units":[{"id":1,"translation":"因此有了这期视频。","slots":[{"id":101,"text":"因此"},{"id":102,"text":"有了这期视频。"}]},{"id":2,"translation":"第二句"#;
+        let units = extract_partial_units(raw);
+        assert_eq!(units.len(), 1, "incomplete trailing unit is skipped");
+        assert_eq!(units[0].id, 1);
+        assert_eq!(units[0].translation.as_deref(), Some("因此有了这期视频。"));
+        assert_eq!(
+            units[0].slots,
+            vec![(101, "因此".to_string()), (102, "有了这期视频。".to_string())]
+        );
+    }
+
+    #[test]
+    fn partial_units_handles_braces_and_quotes_inside_text() {
+        let raw = r#"{"units":[{"id":1,"translation":"他说 \"hi\" {ok}","slots":[{"id":9,"text":"x"}]}]}"#;
+        let units = extract_partial_units(raw);
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].translation.as_deref(), Some(r#"他说 "hi" {ok}"#));
+        assert_eq!(units[0].slots, vec![(9, "x".to_string())]);
     }
 }

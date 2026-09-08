@@ -10,27 +10,41 @@ use crate::services::llm::client::AnthropicLlmClient;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 use crate::services::task_log::TaskLogger;
 
-/// Structured-output schema for translation batches: the model must answer
-/// with `{"translations":[{"id":<int>,"text":<str>}]}`. Endpoints that
-/// reject `output_config` fall back to plain JSON + the repair chain.
+/// Structured-output schema for translation batches (two-stage protocol):
+/// the model must answer with sentence units, each carrying the full unit
+/// translation plus the display-slot backfill `{"units":[{"id":<int>,
+/// "translation":<str>,"slots":[{"id":<int>,"text":<str>}]}]}`. Endpoints
+/// that reject `output_config` fall back to plain JSON + the repair chain.
 fn translation_output_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "properties": {
-            "translations": {
+            "units": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
                         "id": {"type": "integer"},
-                        "text": {"type": "string"}
+                        "translation": {"type": "string"},
+                        "slots": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "integer"},
+                                    "text": {"type": "string"}
+                                },
+                                "required": ["id", "text"],
+                                "additionalProperties": false
+                            }
+                        }
                     },
-                    "required": ["id", "text"],
+                    "required": ["id", "translation", "slots"],
                     "additionalProperties": false
                 }
             }
         },
-        "required": ["translations"],
+        "required": ["units"],
         "additionalProperties": false
     })
 }
@@ -41,16 +55,20 @@ mod name_memory;
 mod partial_parse;
 mod responses;
 mod segments;
+mod slots;
 #[cfg(test)]
 mod tests;
 mod text;
 mod types;
 
 use batches::{build_batch_windows, matched_term_targets, split_chunk_size, split_window};
+use crate::services::transcription::join_words;
 use name_memory::derive_name_memory;
 use responses::{
-    TranslationValidationContext, validate_batch_translation_response_with_context,
+    SlotUnitExpectation, SlotValidationContext, UnitFill,
+    validate_sentence_slot_response_with_context,
 };
+use slots::{proportional_split, repair_slot_boundaries, slot_texts_in_order};
 use types::BatchWindow;
 use segments::normalize_segments;
 pub use types::{
@@ -59,7 +77,10 @@ pub use types::{
 };
 pub(crate) use types::BuildTranslationLayerResponse;
 
-const DEFAULT_BATCH_SIZE: usize = 20;
+/// Units per batch: whole semantic sentences (two-stage pipeline). The pilot
+/// (ep6, 392 sentences) showed 8 keeps prompts compact while the chained
+/// context carries cross-sentence continuity.
+const DEFAULT_BATCH_SIZE: usize = 8;
 const MAX_BATCH_SIZE: usize = 40;
 const PREV_CONTEXT_LINES: usize = 3;
 const NEXT_CONTEXT_LINES: usize = 2;
@@ -102,20 +123,23 @@ pub async fn build_translation_layer_with_progress(
         // transient failure (locked DB, disk full) would otherwise cause a
         // silent full re-translation that clobbers prior persisted work.
         let rows = us.load_translation_batches().await?;
-        let mut map = HashMap::<usize, (usize, HashMap<usize, String>)>::new();
+        let mut map = HashMap::<usize, (usize, WindowOutcome)>::new();
         for row in rows {
-            map.insert(row.batch_index, (row.batch_index, row.segment_translations));
+            map.insert(
+                row.batch_index,
+                (
+                    row.batch_index,
+                    WindowOutcome {
+                        segment_translations: row.segment_translations,
+                        unit_translations: HashMap::new(),
+                    },
+                ),
+            );
         }
         (map, Some(us.clone()))
     } else {
         (HashMap::new(), None)
     };
-    // Translations already known before this run (resumed/checkpointed
-    // batches). Each batch's prompt is built after the predecessor commits
-    // so previousLines render as "source → translation".
-    let known_translations: Arc<Mutex<HashMap<usize, String>>> =
-        Arc::new(Mutex::new(precomputed_translations(&precomputed)));
-
     let windows = build_batch_windows(
         &normalized_segments,
         batch_size,
@@ -127,6 +151,16 @@ pub async fn build_translation_layer_with_progress(
     if windows.is_empty() {
         return Err("failed to build translation batches".to_string());
     }
+
+    // Unit-level translations already known before this run (resumed /
+    // checkpointed batches). Each batch's prompt is built after the
+    // predecessor commits so previousLines render as "source → translation"
+    // at UNIT granularity. A unit counts as known only when its persisted
+    // batch carries every display slot's text.
+    let precomputed_segments = precomputed_translations(&precomputed);
+    let known_translations: Arc<Mutex<HashMap<usize, String>>> = Arc::new(Mutex::new(
+        seed_unit_translations(&windows, &precomputed_segments),
+    ));
 
     let tasks = windows
         .iter()
@@ -169,14 +203,14 @@ pub async fn build_translation_layer_with_progress(
 
     let on_item_done = {
         let store = persist_store.clone();
-        move |idx: usize, val: (usize, HashMap<usize, String>)| {
+        move |idx: usize, val: (usize, WindowOutcome)| {
             let store = store.clone();
             async move {
                 if let Some(ref us) = store {
                     us.save_translation_batch(
                         &crate::services::pipeline::TranslationBatchRow {
                             batch_index: idx,
-                            segment_translations: val.1,
+                            segment_translations: val.1.segment_translations,
                         },
                     )
                     .await?;
@@ -225,12 +259,12 @@ pub async fn build_translation_layer_with_progress(
             let partial_snapshot_cache = partial_snapshot_cache.clone();
             {
                 let completed_batches = completed_batches.clone();
-                move |done: usize, total: usize, result: Option<&(usize, HashMap<usize, String>)>| {
+                move |done: usize, total: usize, result: Option<&(usize, WindowOutcome)>| {
                     completed_batches.store(done, Ordering::Relaxed);
-                    if let Some((_, translations)) = result {
+                    if let Some((_, outcome)) = result {
                         match partial_map.lock() {
                             Ok(mut map) => {
-                                for (id, text) in translations {
+                                for (id, text) in &outcome.segment_translations {
                                     map.insert(*id, text.clone());
                                 }
                             }
@@ -265,10 +299,8 @@ pub async fn build_translation_layer_with_progress(
 
     let mut translated_by_id = HashMap::<usize, String>::new();
     for (_, item) in results {
-        let (_, translated_map) = item?;
-        for (id, translated) in translated_map {
-            translated_by_id.insert(id, translated);
-        }
+        let (_, outcome) = item?;
+        translated_by_id.extend(outcome.segment_translations);
     }
 
     let mut outputs = Vec::<TranslationSegmentOutput>::new();
@@ -319,24 +351,40 @@ struct TranslateCall {
     batch_total: usize,
 }
 
+/// Result of translating one window: display-slot texts keyed by global
+/// segment id (persisted + previewed) and full unit translations keyed by
+/// global unit id (chained context for later batches).
+#[derive(Clone, Default)]
+struct WindowOutcome {
+    segment_translations: HashMap<usize, String>,
+    unit_translations: HashMap<usize, String>,
+}
+
+impl WindowOutcome {
+    fn extend(&mut self, other: WindowOutcome) {
+        self.segment_translations.extend(other.segment_translations);
+        self.unit_translations.extend(other.unit_translations);
+    }
+}
+
 async fn translate_window_with_split(
     call: &TranslateCall,
     window: BatchWindow,
     request_id: String,
-) -> Result<HashMap<usize, String>, String> {
+) -> Result<WindowOutcome, String> {
     match translate_window_once(call, &window, &request_id).await {
-        Ok(map) => return Ok(map),
+        Ok(outcome) => return Ok(outcome),
         Err(err) => {
             let Some(chunk) = split_chunk_size(window.local_to_global.len()) else {
                 return Err(err);
             };
             log_translate_split(&call.context, &window, chunk, &err);
-            let mut combined = HashMap::new();
+            let mut combined = WindowOutcome::default();
             let mut queue: VecDeque<BatchWindow> = split_window(&window, chunk).into();
             while let Some(part) = queue.pop_front() {
                 let part_id = next_llm_request_id();
                 match translate_window_once(call, &part, &part_id).await {
-                    Ok(map) => combined.extend(map),
+                    Ok(outcome) => combined.extend(outcome),
                     Err(part_err) => {
                         let Some(next_chunk) = split_chunk_size(part.local_to_global.len()) else {
                             return Err(part_err);
@@ -358,7 +406,7 @@ async fn translate_window_once(
     call: &TranslateCall,
     window: &BatchWindow,
     request_id: &str,
-) -> Result<HashMap<usize, String>, String> {
+) -> Result<WindowOutcome, String> {
     let current_text = window
         .current_lines
         .iter()
@@ -370,8 +418,23 @@ async fn translate_window_once(
             .known_translations
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Name memory works at unit granularity: one pseudo-segment per unit
+        // (global unit id + full unit source sentence).
+        let unit_pseudo_segments: Vec<types::NormalizedSegment> = window
+            .local_to_global
+            .iter()
+            .zip(window.current_lines.iter())
+            .map(|(global_unit, line)| types::NormalizedSegment {
+                segment_id: *global_unit,
+                sentence_id: 0,
+                start: 0.0,
+                end: 0.0,
+                source: line.text.clone(),
+                tokens: Vec::new(),
+            })
+            .collect();
         let memory = derive_name_memory(
-            call.segments.as_slice(),
+            &unit_pseudo_segments,
             &guard,
             &current_text,
             &window.source_lang,
@@ -379,12 +442,19 @@ async fn translate_window_once(
         );
         window.build_prompt(&guard, &memory.terms, &memory.examples)
     };
-    let local_to_global = window.local_to_global.clone();
-    let local_ids = window.local_ids.clone();
-    let source_texts: Vec<String> = window
-        .current_lines
+    // Lenient mode at the ladder floor: a single-unit window that keeps
+    // failing strict validation salvages its content instead of failing the
+    // whole task (slots kept as-is, or the bare translation for proportional
+    // backfill).
+    let lenient = window.current_lines.len() == 1;
+    let unit_expectations: Vec<SlotUnitExpectation<'_>> = window
+        .unit_slots
         .iter()
-        .map(|line| line.text.clone())
+        .zip(window.current_lines.iter())
+        .map(|(slots, line)| SlotUnitExpectation {
+            slots,
+            source: line.text.as_str(),
+        })
         .collect();
     let source_lang = window.source_lang.clone();
     let target_lang = window.target_lang.clone();
@@ -392,7 +462,8 @@ async fn translate_window_once(
     // verbatim in the output; backfilled terms are context for the LLM and
     // must not blanket-exempt lines from the source-script leak guard.
     let enforced_targets: Vec<String> = matched_term_targets(&current_text, window.terms.as_ref());
-    let on_partial = make_stream_partial(call, local_to_global.clone());
+    let local_to_global = window.local_to_global.clone();
+    let on_partial = make_stream_partial(call, window);
 
     let result = call
         .llm_client
@@ -403,14 +474,14 @@ async fn translate_window_once(
             None,
             on_partial,
             |value| {
-                validate_batch_translation_response_with_context(
+                validate_sentence_slot_response_with_context(
                     value,
-                    &TranslationValidationContext {
-                        expected_ids: &local_ids,
+                    &SlotValidationContext {
+                        units: &unit_expectations,
                         source_lang: &source_lang,
                         target_lang: &target_lang,
                         enforced_targets: &enforced_targets,
-                        source_texts: &source_texts,
+                        lenient,
                     },
                 )
             },
@@ -418,7 +489,7 @@ async fn translate_window_once(
         .await
         .map_err(|err| {
             format!(
-                "step4 translate batch {} ({} lines) failed (llmId={}): {}",
+                "step4 translate batch {} ({} units) failed (llmId={}): {}",
                 window.batch_id + 1,
                 window.local_to_global.len(),
                 request_id,
@@ -428,22 +499,22 @@ async fn translate_window_once(
 
     let mut skipped = |id: usize| {
         eprintln!(
-            "[warn] translate: model returned out-of-range id {id} (expected 1..={}); ignoring",
+            "[warn] translate: model returned out-of-range unit id {id} (expected 1..={}); ignoring",
             local_to_global.len()
         );
     };
-    let translated_map = merge_local_to_global(&local_to_global, result.value, &mut skipped);
+    let outcome = merge_units_to_slots(window, result.value, &mut skipped);
 
     if let Ok(mut known) = call.known_translations.lock() {
-        for (global_id, text) in &translated_map {
-            if !text.trim().is_empty() {
-                known.insert(*global_id, text.clone());
+        for (global_unit, translation) in &outcome.unit_translations {
+            if !translation.trim().is_empty() {
+                known.insert(*global_unit, translation.clone());
             }
         }
     }
     if let Ok(mut map) = call.partial_map.lock() {
-        for (global_id, text) in &translated_map {
-            map.insert(*global_id, text.clone());
+        for (global_segment, text) in &outcome.segment_translations {
+            map.insert(*global_segment, text.clone());
         }
     }
     if let Some(callback) = call.progress_callback.as_ref() {
@@ -458,36 +529,66 @@ async fn translate_window_once(
             partial_outputs,
         });
     }
-    Ok(translated_map)
+    Ok(outcome)
 }
 
-/// Map model-local ids (1-based, per currentLines) to global segment ids.
-/// Ids outside `1..=local_to_global.len()` — a model emitting `0`, or an id
-/// past the window — previously aliased the first/last line via saturating
-/// arithmetic; now they are reported through `skipped` and dropped.
-fn merge_local_to_global(
-    local_to_global: &[usize],
-    pairs: impl IntoIterator<Item = (usize, String)>,
+/// Map validated units onto the window's display slots.
+///
+/// `UnitFill::Slots` texts are used as-is after the deterministic boundary
+/// repair pass; `UnitFill::TranslationOnly` (lenient floor) is distributed
+/// proportionally onto the unit's slots by cue source weight. Both are
+/// content-preserving: the slot texts always concatenate back to the unit's
+/// translation (whitespace and punctuation aside).
+fn merge_units_to_slots(
+    window: &BatchWindow,
+    units: Vec<responses::ValidatedUnit>,
     skipped: &mut dyn FnMut(usize),
-) -> HashMap<usize, String> {
-    let mut out = HashMap::<usize, String>::new();
-    for (local_id, translated) in pairs {
-        let Some(idx) = local_id.checked_sub(1) else {
-            skipped(local_id);
+) -> WindowOutcome {
+    let mut outcome = WindowOutcome::default();
+    for (index, unit) in units.into_iter().enumerate() {
+        let Some(global_unit) = window.local_to_global.get(index).copied() else {
+            skipped(index + 1);
             continue;
         };
-        let Some(global_id) = local_to_global.get(idx).copied() else {
-            skipped(local_id);
+        let Some(slots) = window.unit_slots.get(index) else {
+            skipped(index + 1);
             continue;
         };
-        out.insert(global_id, translated);
+        let slot_texts = match unit.fill {
+            UnitFill::Slots(texts) => texts,
+            UnitFill::TranslationOnly(translation) => {
+                let weights: Vec<usize> = slots
+                    .iter()
+                    .map(|(_, source)| source.chars().count())
+                    .collect();
+                proportional_split(&translation, &weights)
+            }
+        };
+        // Deterministic boundary repair (leading punctuation, mid-word snaps).
+        let mut repaired = slot_texts;
+        repair_slot_boundaries(&mut repaired, &window.target_lang);
+        if repaired.len() != slots.len() {
+            // Defensive: never publish a slot-count mismatch.
+            skipped(global_unit);
+            continue;
+        }
+        for ((segment_id, _), text) in slots.iter().zip(repaired) {
+            if !text.trim().is_empty() {
+                outcome
+                    .segment_translations
+                    .insert(*segment_id, text);
+            }
+        }
+        outcome
+            .unit_translations
+            .insert(global_unit, unit.translation);
     }
-    out
+    outcome
 }
 
 fn make_stream_partial(
     call: &TranslateCall,
-    local_to_global: Vec<usize>,
+    window: &BatchWindow,
 ) -> Arc<dyn Fn(String) + Send + Sync> {
     let partial_map = call.partial_map.clone();
     let progress_callback = call.progress_callback.clone();
@@ -495,27 +596,88 @@ fn make_stream_partial(
     let completed_batches = call.completed_batches.clone();
     let partial_snapshot_cache = call.partial_snapshot_cache.clone();
     let batch_total = call.batch_total;
+    let unit_slots = window.unit_slots.clone();
+    let local_to_global = window.local_to_global.clone();
     let throttle = Arc::new(Mutex::new(StreamThrottle::new()));
     Arc::new(move |raw: String| {
-        let extracted = partial_parse::extract_partial_translations(&raw);
-        if extracted.is_empty() {
+        // Best-effort (segment_id, text) updates from the growing stream.
+        let mut updates: Vec<(usize, String)> = Vec::new();
+        let units = partial_parse::extract_partial_units(&raw);
+        if !units.is_empty() {
+            for unit in units {
+                let Some(idx) = unit.id.checked_sub(1) else {
+                    continue;
+                };
+                if idx >= local_to_global.len() {
+                    continue;
+                }
+                let Some(slots) = unit_slots.get(idx) else {
+                    continue;
+                };
+                if slots.is_empty() {
+                    continue;
+                }
+                if let Some(texts) = slot_texts_in_order(slots, &unit.slots) {
+                    for ((id, _), text) in slots.iter().zip(texts) {
+                        if !text.trim().is_empty() {
+                            updates.push((*id, text));
+                        }
+                    }
+                    continue;
+                }
+                // Slots not complete yet: preview the unit translation
+                // distributed proportionally onto the display slots.
+                if let Some(translation) = unit.translation.as_ref() {
+                    if translation.trim().is_empty() {
+                        continue;
+                    }
+                    let weights: Vec<usize> =
+                        slots.iter().map(|(_, source)| source.chars().count()).collect();
+                    for ((id, _), text) in
+                        slots.iter().zip(proportional_split(translation, &weights))
+                    {
+                        if !text.trim().is_empty() {
+                            updates.push((*id, text));
+                        }
+                    }
+                }
+            }
+        } else {
+            // Fallback: the model ignored the units schema and streamed the
+            // flat "translations" form — ids are unit ids; distribute each
+            // proportionally so the preview still shows plausible slot texts.
+            for (unit_id, text) in partial_parse::extract_partial_translations(&raw) {
+                let Some(idx) = unit_id.checked_sub(1) else {
+                    continue;
+                };
+                if idx >= local_to_global.len() {
+                    continue;
+                }
+                let Some(slots) = unit_slots.get(idx) else {
+                    continue;
+                };
+                if slots.is_empty() || text.trim().is_empty() {
+                    continue;
+                }
+                let weights: Vec<usize> =
+                    slots.iter().map(|(_, source)| source.chars().count()).collect();
+                for ((id, _), slot_text) in
+                    slots.iter().zip(proportional_split(&text, &weights))
+                {
+                    if !slot_text.trim().is_empty() {
+                        updates.push((*id, slot_text));
+                    }
+                }
+            }
+        }
+        if updates.is_empty() {
             return;
         }
         let mut changed = false;
         if let Ok(mut map) = partial_map.lock() {
-            for (local_id, text) in extracted {
-                if text.is_empty() {
-                    continue;
-                }
-                // Per-token-block callback: silently drop out-of-range ids
-                // (the next block re-sends the full line, so previews
-                // self-correct).
-                let Some(idx) = local_id.checked_sub(1) else {
-                    continue;
-                };
-                let Some(global_id) = local_to_global.get(idx).copied() else {
-                    continue;
-                };
+            for (global_id, text) in updates {
+                // Per-token-block callback: previews self-correct as the
+                // stream grows; keep the longest seen text per segment.
                 let entry = map.entry(global_id).or_default();
                 if text.len() >= entry.len() || entry.is_empty() {
                     if text != *entry {
@@ -614,12 +776,46 @@ impl StreamThrottle {
 /// segment_id -> translation map so the partial preview starts from the
 /// already-translated segments instead of empty.
 fn precomputed_translations(
-    precomputed: &HashMap<usize, (usize, HashMap<usize, String>)>,
+    precomputed: &HashMap<usize, (usize, WindowOutcome)>,
 ) -> HashMap<usize, String> {
     let mut out = HashMap::new();
-    for (_, translations) in precomputed.values() {
-        for (id, text) in translations {
+    for (_, outcome) in precomputed.values() {
+        for (id, text) in &outcome.segment_translations {
             out.insert(*id, text.clone());
+        }
+    }
+    out
+}
+
+/// Seed the unit-keyed known-translations map (chained context) from the
+/// persisted segment-level slot texts: a unit counts as known only when its
+/// persisted batch carries every display slot's text; the unit translation
+/// is the slot texts re-joined with language-aware spacing.
+fn seed_unit_translations(
+    windows: &[BatchWindow],
+    precomputed_segments: &HashMap<usize, String>,
+) -> HashMap<usize, String> {
+    let mut out = HashMap::new();
+    for window in windows {
+        for (local_index, slots) in window.unit_slots.iter().enumerate() {
+            if slots.is_empty() {
+                continue;
+            }
+            let all_known = slots
+                .iter()
+                .all(|(id, _)| precomputed_segments.contains_key(id));
+            if !all_known {
+                continue;
+            }
+            let joined = join_words(
+                slots
+                    .iter()
+                    .filter_map(|(id, _)| precomputed_segments.get(id).map(String::as_str)),
+            );
+            if joined.trim().is_empty() {
+                continue;
+            }
+            out.insert(window.local_to_global[local_index], joined);
         }
     }
     out

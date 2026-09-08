@@ -20,10 +20,12 @@ use super::types::SplitReason;
 /// **其他语言路径（规则 + 缩写表）**：每个以 `. ! ?` 结尾的 token 产生切分，
 /// 除非它在 `LanguageProfile::abbreviations()` 列表中，或是单字母缩写链。
 ///
-/// VAD silence crossings are deliberately NOT hard-split here. They are handled
-/// by the DP cost function in `subtitle_layout.rs`, which only splits when a
-/// span exceeds the length budget — preventing mid-sentence fragmentation on
-/// short sentences that merely contain a breath pause.
+/// VAD silence crossings are deliberately NOT hard-split here. Short pauses
+/// are handled by the DP cost function in `subtitle_layout.rs` (only splits
+/// when a span exceeds the length budget — preventing mid-sentence
+/// fragmentation on short sentences that merely contain a breath pause);
+/// pauses ≥ `word_units::PAUSE_SPLIT_SEC` (2s) are hard-split downstream,
+/// snapped to word boundaries (speech-synced rhythm decision).
 pub(super) fn build_split_points_from_hard_boundaries(
     words: &[WordTokenDto],
     profile: &dyn LanguageProfile,

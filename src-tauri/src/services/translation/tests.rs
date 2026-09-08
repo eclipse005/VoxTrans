@@ -1,12 +1,27 @@
 use super::batches::build_batch_windows;
-use super::responses::validate_batch_translation_response;
+use super::responses::{
+    SlotUnitExpectation, SlotValidationContext, UnitFill,
+    validate_sentence_slot_response_with_context,
+};
 use super::segments::normalize_segments;
+use super::slots::{norm_core, proportional_split, repair_slot_boundaries, slot_texts_in_order};
 use super::{TranslationSegmentInput, TranslationTerminologyEntry};
 use serde_json::json;
 
 fn seg(text: &str) -> TranslationSegmentInput {
     TranslationSegmentInput {
         segment: text.to_string(),
+        sentence_id: 0,
+        start: 0.0,
+        end: 1.0,
+        tokens: Vec::new(),
+    }
+}
+
+fn seg_in(text: &str, sentence_id: usize) -> TranslationSegmentInput {
+    TranslationSegmentInput {
+        segment: text.to_string(),
+        sentence_id,
         start: 0.0,
         end: 1.0,
         tokens: Vec::new(),
@@ -30,13 +45,44 @@ fn split_batches_respects_requested_size() {
         "theme",
         &Vec::<TranslationTerminologyEntry>::new(),
     );
+    // No sentence grouping: every segment is its own unit.
     assert_eq!(windows.len(), 3);
-    assert_eq!(windows[0].local_ids, vec![1, 2]);
-    assert_eq!(windows[1].local_ids, vec![1, 2]);
-    assert_eq!(windows[2].local_ids, vec![1]);
     assert_eq!(windows[0].local_to_global, vec![1, 2]);
     assert_eq!(windows[1].local_to_global, vec![3, 4]);
     assert_eq!(windows[2].local_to_global, vec![5]);
+    // Every unit carries exactly its own display slot.
+    assert_eq!(windows[0].unit_slots.as_ref(), &[vec![(1, "One.".to_string())], vec![(2, "Two.".to_string())]]);
+}
+
+#[test]
+fn same_sentence_segments_group_into_one_unit_with_slots() {
+    let normalized = normalize_segments(&[
+        seg_in("Hence", 7),
+        seg_in("this video.", 7),
+        seg_in("Next one.", 8),
+        seg_in("Another cue.", 8),
+    ]);
+    let windows = build_batch_windows(
+        &normalized,
+        8,
+        "en",
+        "zh-CN",
+        "",
+        &Vec::<TranslationTerminologyEntry>::new(),
+    );
+    // Two units: sentence 7 (slots 1,2) and sentence 8 (slots 3,4).
+    assert_eq!(windows.len(), 1);
+    assert_eq!(windows[0].local_to_global, vec![1, 2]);
+    assert_eq!(
+        windows[0].unit_slots.as_ref(),
+        &[
+            vec![(1, "Hence".to_string()), (2, "this video.".to_string())],
+            vec![(3, "Next one.".to_string()), (4, "Another cue.".to_string())],
+        ]
+    );
+    // The unit source is the slot texts joined with language-aware spacing.
+    assert_eq!(windows[0].current_lines[0].text, "Hence this video.");
+    assert_eq!(windows[0].current_lines[1].text, "Next one. Another cue.");
 }
 
 #[test]
@@ -60,7 +106,7 @@ fn context_windows_are_prev_3_next_2() {
 }
 
 #[test]
-fn bilingual_context_renders_known_translations_in_prompt() {
+fn bilingual_context_renders_known_unit_translations_in_prompt() {
     use std::collections::HashMap;
     let normalized = normalize_segments(&[
         seg("One."),
@@ -77,15 +123,15 @@ fn bilingual_context_renders_known_translations_in_prompt() {
         "",
         &Vec::<TranslationTerminologyEntry>::new(),
     );
-    // Window 1 covers Three.,Four. (global ids 3,4); prev = One.,Two. (ids 1,2); next = Five. (id 5).
+    // Window 1 covers units Three.,Four. (global unit ids 3,4); prev = units 1,2; next = unit 5.
     let mut known = HashMap::<usize, String>::new();
     known.insert(1, "甲".to_string());
     known.insert(2, "乙".to_string());
     let prompt = windows[1].build_prompt(&known, &[], &[]);
-    // Known translations render bilingually...
+    // Known unit translations render bilingually...
     assert!(prompt.contains("One. → 甲"), "prompt={prompt}");
     assert!(prompt.contains("Two. → 乙"), "prompt={prompt}");
-    // ...unknown lines stay source-only, and current lines are plain text.
+    // ...unknown units stay source-only, and current units carry slots.
     assert!(prompt.contains("\"Five.\""), "prompt={prompt}");
     assert!(prompt.contains("\"Three.\""), "prompt={prompt}");
     assert!(!prompt.contains("Four. → "), "prompt={prompt}");
@@ -97,188 +143,171 @@ fn bilingual_context_renders_known_translations_in_prompt() {
         !resume_prompt.contains("Five. → 戊"),
         "nextLines must not be bilingual: {resume_prompt}"
     );
-    assert!(resume_prompt.contains("\"Five.\""), "prompt={resume_prompt}");
-    // Without any known translation the context is raw source.
-    let empty_prompt = windows[2].build_prompt(&HashMap::new(), &[], &[]);
-    assert!(empty_prompt.contains("\"Five.\""), "empty prompt must keep raw context");
+    // The currentUnits payload carries display slots with global segment ids.
+    assert!(prompt.contains("\"slots\""), "prompt={prompt}");
+    assert!(prompt.contains("\"sourceText\"") || prompt.contains("\"text\""), "prompt={prompt}");
 }
 
 #[test]
-fn validate_batch_translation_response_rejects_missing_expected_id() {
+fn slot_validator_accepts_complete_protocol_and_orders_slots() {
+    let slots = vec![
+        (1usize, "Hence".to_string()),
+        (2usize, "this video.".to_string()),
+    ];
+    let units = [SlotUnitExpectation {
+        slots: &slots,
+        source: "Hence this video.",
+    }];
     let value = json!({
-        "translations": [
-            { "id": 1, "text": "first" }
+        "units": [
+            { "id": 1, "translation": "因此有了这期视频。",
+              "slots": [
+                  { "id": 2, "text": "有了这期视频。" },
+                  { "id": 1, "text": "因此" }
+              ] }
         ]
     });
-
-    let err =
-        validate_batch_translation_response(value, &[1, 2]).expect_err("should reject missing id");
-    let msg = format!("{err:?}");
-    assert!(msg.contains("missing ids [2]"), "msg={msg}");
-    assert!(msg.contains("got ids [1]"), "msg={msg}");
-    assert!(msg.contains("expected 2 items"), "msg={msg}");
-}
-
-#[test]
-fn validate_batch_translation_response_rejects_empty_translation_text() {
-    let value = json!({
-        "translations": [
-            { "id": 1, "text": "" }
-        ]
-    });
-
-    let err = validate_batch_translation_response(value, &[1])
-        .expect_err("should reject empty translation");
-    let msg = format!("{err:?}");
-    assert!(msg.contains("empty ids [1]"), "msg={msg}");
-    assert!(msg.contains("got ids []"), "msg={msg}");
-}
-
-#[test]
-fn validate_batch_translation_response_aggregates_multiple_issues() {
-    let value = json!({
-        "translations": [
-            { "id": 1, "text": "ok" },
-            { "id": 2, "text": "" },
-            // Conflicting second non-empty after a good first would be duplicate;
-            // here id 2 recovers from empty→non-empty (see dedicated test).
-            { "id": 2, "text": "two" },
-            { "id": 4, "text": "four" },
-            { "id": 4, "text": "four-again" },
-            { "id": 99, "text": "noise" }
-        ]
-    });
-
-    let err = validate_batch_translation_response(value, &[1, 2, 3, 4, 5])
-        .expect_err("should aggregate issues");
-    let msg = format!("{err:?}");
-    // One message reports every problem so a single retry can fix the batch.
-    assert!(msg.contains("missing ids [3,5]"), "msg={msg}");
-    assert!(!msg.contains("empty ids"), "id 2 should recover; msg={msg}");
-    assert!(msg.contains("duplicate ids [4]"), "msg={msg}");
-    assert!(msg.contains("unexpected ids [99]"), "msg={msg}");
-    assert!(msg.contains("got ids [1,2,4]"), "msg={msg}");
-    assert!(msg.contains("expected 5 items"), "msg={msg}");
-}
-
-#[test]
-fn validate_batch_translation_response_prefers_non_empty_over_earlier_empty() {
-    let value = json!({
-        "translations": [
-            { "id": 1, "text": "" },
-            { "id": 1, "text": "recovered" },
-            { "id": 2, "text": "second" }
-        ]
-    });
-
-    let out = validate_batch_translation_response(value, &[1, 2])
-        .expect("empty then non-empty should recover");
-    assert_eq!(out.get(&1).map(String::as_str), Some("recovered"));
-    assert_eq!(out.get(&2).map(String::as_str), Some("second"));
-}
-
-#[test]
-fn validate_batch_translation_response_keeps_first_non_empty_on_conflict() {
-    let value = json!({
-        "translations": [
-            { "id": 1, "text": "first" },
-            { "id": 1, "text": "second" }
-        ]
-    });
-
-    let err = validate_batch_translation_response(value, &[1])
-        .expect_err("two non-empty values are a conflict");
-    let msg = format!("{err:?}");
-    assert!(msg.contains("duplicate ids [1]"), "msg={msg}");
-    assert!(msg.contains("got ids [1]"), "msg={msg}");
-}
-
-#[test]
-fn validate_batch_translation_response_ignores_unexpected_when_complete() {
-    let value = json!({
-        "translations": [
-            { "id": 1, "text": "first" },
-            { "id": 2, "text": "second" },
-            { "id": 99, "text": "extra" }
-        ]
-    });
-
-    let out = validate_batch_translation_response(value, &[1, 2]).expect("extras are non-fatal");
-    assert_eq!(out.get(&1).map(String::as_str), Some("first"));
-    assert_eq!(out.get(&2).map(String::as_str), Some("second"));
-    assert!(!out.contains_key(&99));
-}
-
-#[test]
-fn validate_batch_translation_response_accepts_complete_non_empty_batch() {
-    let value = json!({
-        "translations": [
-            { "id": 1, "text": "first" },
-            { "id": 2, "text": "second" }
-        ]
-    });
-
-    let out = validate_batch_translation_response(value, &[1, 2]).expect("should parse full batch");
-    assert_eq!(out.get(&1).map(String::as_str), Some("first"));
-    assert_eq!(out.get(&2).map(String::as_str), Some("second"));
-}
-
-#[test]
-fn validate_batch_translation_response_finds_ids_inside_any_envelope() {
-    let value = json!({
-        "data": {
-            "items": [
-                { "id": "1", "text": "第一句" },
-                { "id": 2, "translatedText": "第二句" }
-            ]
-        }
-    });
-    let out = validate_batch_translation_response(value, &[1, 2])
-        .expect("id/text pairs must be found regardless of wrapper keys");
-    assert_eq!(out.get(&1).map(String::as_str), Some("第一句"));
-    assert_eq!(out.get(&2).map(String::as_str), Some("第二句"));
-}
-
-#[test]
-fn validate_batch_translation_response_accepts_root_array() {
-    let value = json!([
-        { "id": 1, "text": "第一句" },
-        { "id": 2, "text": "第二句" }
-    ]);
-    let out = validate_batch_translation_response(value, &[1, 2]).expect("root array");
-    assert_eq!(out.get(&1).map(String::as_str), Some("第一句"));
-    assert_eq!(out.get(&2).map(String::as_str), Some("第二句"));
-}
-
-#[test]
-fn validate_batch_translation_response_accepts_map_string_values() {
-    let value = json!({
-        "1": "first",
-        "2": "second"
-    });
-    let out = validate_batch_translation_response(value, &[1, 2]).expect("map strings ok");
-    assert_eq!(out.get(&1).map(String::as_str), Some("first"));
-    assert_eq!(out.get(&2).map(String::as_str), Some("second"));
-}
-
-#[test]
-fn validate_rejects_source_language_paraphrase() {
-    use super::responses::{
-        TranslationValidationContext, validate_batch_translation_response_with_context,
-    };
-    let value = json!({
-        "translations": [
-            { "id": 1, "text": "過去にはいろいろな悩みを抱えてきました" }
-        ]
-    });
-    let err = validate_batch_translation_response_with_context(
+    let out = validate_sentence_slot_response_with_context(
         value,
-        &TranslationValidationContext {
-            expected_ids: &[1],
+        &SlotValidationContext {
+            units: &units,
+            source_lang: "en",
+            target_lang: "zh-CN",
+            enforced_targets: &[],
+            lenient: false,
+        },
+    )
+    .expect("slot protocol complete (order is normalized, not trusted)");
+    match &out[0].fill {
+        UnitFill::Slots(texts) => {
+            // Expected slot order, not the model's emission order.
+            assert_eq!(texts[0], "因此");
+            assert_eq!(texts[1], "有了这期视频。");
+        }
+        other => panic!("expected slots, got {other:?}"),
+    }
+}
+
+#[test]
+fn slot_validator_rejects_missing_unit_and_reports_expected_count() {
+    let slots = vec![(1usize, "a".to_string())];
+    let units = [
+        SlotUnitExpectation { slots: &slots, source: "a" },
+        SlotUnitExpectation { slots: &slots, source: "b" },
+    ];
+    let value = json!({
+        "units": [
+            { "id": 1, "translation": "甲", "slots": [ { "id": 1, "text": "甲" } ] }
+        ]
+    });
+    let err = validate_sentence_slot_response_with_context(
+        value,
+        &SlotValidationContext {
+            units: &units,
+            source_lang: "en",
+            target_lang: "zh-CN",
+            enforced_targets: &[],
+            lenient: false,
+        },
+    )
+    .expect_err("missing unit must fail");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("missing unit ids [2]"), "msg={msg}");
+    assert!(msg.contains("expected 2 units"), "msg={msg}");
+}
+
+#[test]
+fn slot_validator_rejects_slot_concat_mismatch_strictly() {
+    let slots = vec![(1usize, "a".to_string()), (2usize, "b".to_string())];
+    let units = [SlotUnitExpectation { slots: &slots, source: "a b" }];
+    let value = json!({
+        "units": [
+            { "id": 1, "translation": "甲乙丙",
+              "slots": [ { "id": 1, "text": "甲" }, { "id": 2, "text": "乙" } ] }
+        ]
+    });
+    let err = validate_sentence_slot_response_with_context(
+        value,
+        &SlotValidationContext {
+            units: &units,
+            source_lang: "en",
+            target_lang: "zh-CN",
+            enforced_targets: &[],
+            lenient: false,
+        },
+    )
+    .expect_err("concat mismatch must fail strict validation");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("reproduce the unit translation"), "msg={msg}");
+}
+
+#[test]
+fn slot_validator_lenient_mode_salvages_at_ladder_floor() {
+    let slots = vec![(1usize, "a".to_string()), (2usize, "b".to_string())];
+    let units = [SlotUnitExpectation { slots: &slots, source: "a b" }];
+    // Slots incomplete but translation present → TranslationOnly.
+    let value = json!({
+        "units": [
+            { "id": 1, "translation": "甲乙丙", "slots": [ { "id": 1, "text": "甲" } ] }
+        ]
+    });
+    let out = validate_sentence_slot_response_with_context(
+        value,
+        &SlotValidationContext {
+            units: &units,
+            source_lang: "en",
+            target_lang: "zh-CN",
+            enforced_targets: &[],
+            lenient: true,
+        },
+    )
+    .expect("lenient floor salvages the bare translation");
+    match &out[0].fill {
+        UnitFill::TranslationOnly(text) => assert_eq!(text, "甲乙丙"),
+        other => panic!("expected translation-only, got {other:?}"),
+    }
+    // Complete slots with a concat mismatch → soft-kept in lenient mode.
+    let value = json!({
+        "units": [
+            { "id": 1, "translation": "甲乙丙",
+              "slots": [ { "id": 1, "text": "甲" }, { "id": 2, "text": "乙" } ] }
+        ]
+    });
+    let out = validate_sentence_slot_response_with_context(
+        value,
+        &SlotValidationContext {
+            units: &units,
+            source_lang: "en",
+            target_lang: "zh-CN",
+            enforced_targets: &[],
+            lenient: true,
+        },
+    )
+    .expect("lenient floor keeps complete slots");
+    match &out[0].fill {
+        UnitFill::Slots(texts) => assert_eq!(texts.len(), 2),
+        other => panic!("expected slots, got {other:?}"),
+    }
+}
+
+#[test]
+fn slot_validator_still_rejects_source_language_paraphrase() {
+    let slots = vec![(1usize, "a".to_string())];
+    let units = [SlotUnitExpectation { slots: &slots, source: "a" }];
+    let value = json!({
+        "units": [
+            { "id": 1, "translation": "過去にはいろいろな悩みを抱えてきました",
+              "slots": [ { "id": 1, "text": "過去にはいろいろな悩みを抱えてきました" } ] }
+        ]
+    });
+    let err = validate_sentence_slot_response_with_context(
+        value,
+        &SlotValidationContext {
+            units: &units,
             source_lang: "ja",
             target_lang: "zh-CN",
             enforced_targets: &[],
-            source_texts: &[],
+            lenient: false,
         },
     )
     .expect_err("source-language paraphrase must fail");
@@ -287,115 +316,31 @@ fn validate_rejects_source_language_paraphrase() {
 }
 
 #[test]
-fn validate_accepts_enforced_target_with_source_script() {
-    use super::responses::{
-        TranslationValidationContext, validate_batch_translation_response_with_context,
-    };
-    // The term target is enforced verbatim; its kana must not count as a leak.
-    let value = json!({
-        "translations": [
-            { "id": 1, "text": "只能去Last Call（ラストコール）了啊，去Last Call（ラストコール）吧" }
-        ]
-    });
-    let out = validate_batch_translation_response_with_context(
-        value,
-        &TranslationValidationContext {
-            expected_ids: &[1],
-            source_lang: "ja",
-            target_lang: "zh-CN",
-            enforced_targets: &["Last Call（ラストコール）".to_string()],
-            source_texts: &[],
-        },
-    )
-    .expect("enforced kana-bearing target must not trip the leak guard");
-    assert_eq!(out.len(), 1);
+fn proportional_split_covers_all_slots() {
+    let out = proportional_split("因此有了这期视频。", &[5, 5]);
+    assert_eq!(out.join(""), "因此有了这期视频。");
+    assert!(out.iter().all(|t| !t.is_empty()));
 }
 
 #[test]
-fn validate_rejects_adjacent_duplicate_translations_over_different_sources() {
-    use super::responses::{
-        TranslationValidationContext, validate_batch_translation_response_with_context,
-    };
-    // Merge/shift signature: id 3's translation is a copy of id 2's while the
-    // sources differ — the model merged a line and padded the id list.
-    let value = json!({
-        "translations": [
-            { "id": 1, "text": "第一句的译文。" },
-            { "id": 2, "text": "我们在预期季度转换时会关注未平仓合约量" },
-            { "id": 3, "text": "我们在预期季度转换时会关注未平仓合约量" }
-        ]
-    });
-    let sources = vec![
-        "first source line.".to_string(),
-        "We look at open interest when anticipating a quarterly shift.".to_string(),
-        "This is what we're doing in price action, right?".to_string(),
-    ];
-    let err = validate_batch_translation_response_with_context(
-        value,
-        &TranslationValidationContext {
-            expected_ids: &[1, 2, 3],
-            source_lang: "en",
-            target_lang: "zh-CN",
-            enforced_targets: &[],
-            source_texts: &sources,
-        },
-    )
-    .expect_err("adjacent duplicate over different sources must fail");
-    let msg = format!("{err:?}");
-    assert!(msg.contains("adjacent duplicate translations"), "msg={msg}");
+fn slot_texts_in_order_normalizes_model_slot_order() {
+    let expected = vec![(1, "a".to_string()), (2, "b".to_string())];
+    let got = vec![(2, "乙".to_string()), (1, "甲".to_string())];
+    let ordered = slot_texts_in_order(&expected, &got).expect("all slots present");
+    assert_eq!(ordered, vec!["甲".to_string(), "乙".to_string()]);
 }
 
 #[test]
-fn validate_allows_adjacent_duplicates_when_source_repeats_or_text_is_short() {
-    use super::responses::{
-        TranslationValidationContext, validate_batch_translation_response_with_context,
-    };
-    // Same source twice ("Okay?" / "Okay?") -> same translation is legitimate.
-    let value = json!({
-        "translations": [
-            { "id": 1, "text": "市场在这一段里反复震荡整理中" },
-            { "id": 2, "text": "市场在这一段里反复震荡整理中" },
-            { "id": 3, "text": "对吧？" },
-            { "id": 4, "text": "对吧？" }
-        ]
-    });
-    let sources = vec![
-        "The market keeps ranging here, right?".to_string(),
-        "The market keeps ranging here, right?".to_string(),
-        "Okay?".to_string(),
-        "Right?".to_string(),
-    ];
-    let out = validate_batch_translation_response_with_context(
-        value,
-        &TranslationValidationContext {
-            expected_ids: &[1, 2, 3, 4],
-            source_lang: "en",
-            target_lang: "zh-CN",
-            enforced_targets: &[],
-            source_texts: &sources,
-        },
-    )
-    .expect("repeated source lines and short interjections must pass");
-    assert_eq!(out.len(), 4);
+fn boundary_repair_snaps_leading_punctuation_and_keeps_concat() {
+    let mut texts = vec!["用2倍速一口气刷完".to_string(), "、却不真正体验".to_string()];
+    let before = norm_core(&texts.concat());
+    repair_slot_boundaries(&mut texts, "zh-CN");
+    assert_eq!(texts, vec!["用2倍速一口气刷完、", "却不真正体验"]);
+    assert_eq!(norm_core(&texts.concat()), before);
 }
 
 #[test]
-fn merge_local_to_global_ignores_zero_and_out_of_range_ids() {
-    use super::merge_local_to_global;
-    let local_to_global = vec![10, 11, 12];
-    let mut skipped = Vec::new();
-    let merged = merge_local_to_global(
-        &local_to_global,
-        vec![
-            (0, "zero".to_string()),
-            (1, "first".to_string()),
-            (4, "past".to_string()),
-        ],
-        &mut |id| skipped.push(id),
-    );
-    // id 0 previously aliased the first line (saturating_sub); id 4 the last.
-    assert_eq!(merged.len(), 1);
-    assert_eq!(merged.get(&10).map(String::as_str), Some("first"));
-    assert_eq!(skipped, vec![0, 4]);
+fn norm_core_is_punctuation_and_case_insensitive() {
+    assert_eq!(norm_core("因此，有了这期视频。"), norm_core("因此有了这期视频"));
+    assert_eq!(norm_core("Ｈｅｌｌｏ，　Ｗｏｒｌｄ！"), norm_core("hello world"));
 }
-

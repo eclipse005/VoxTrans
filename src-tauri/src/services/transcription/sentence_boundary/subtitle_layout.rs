@@ -25,7 +25,7 @@ use voxtrans_core::subtitle::text_rules::has_break_terminal_punctuation;
 use super::boundary_rules::{
     COMMA_COST, CONNECTOR_COST, FORBIDDEN_COST, GLUE_GAP_SEC, GLUED_WORD_COST, GOOD_SILENCE_SEC,
     WORD_COST,
-    LENGTH_GRACE_CHARS, MIN_FRAGMENT_UNITS, SHORT_SEGMENT_PENALTY,
+    LENGTH_GRACE_CHARS, MIN_FRAGMENT_UNITS, SHORT_SEGMENT_PENALTY, SHORT_SEGMENT_UNITS,
     SOFT_COST, TERMINAL_COST, is_bound_connector, is_closing_punctuation,
     is_case_particle_before_predicate, is_connector_like, is_discourse_marker_comma,
     is_function_word_left, is_japanese_lexical_bind, is_japanese_spoken_end,
@@ -37,6 +37,7 @@ use super::boundary_rules::{
 use super::language::{Advisor, LanguageProfile};
 use super::types::SplitReason;
 use super::vad_align::SpeechSegmentIndex;
+use super::word_units::{aggregate_span_words, hard_pause_chunks};
 
 /// Weight of the length-penalty term relative to boundary base-costs. Kept
 /// small (0.3) so boundary quality dominates: a soft-punctuation cut (cost 1.0)
@@ -169,8 +170,9 @@ fn boundary_base_cost(
     {
         return 2.0 - 0.5 * (gap - GOOD_SILENCE_SEC).min(0.9) / 0.9;
     }
-    // Plain word boundary — least preferred legal cut. The word-segmentation
-    // advisor (jieba for zh) forbids gaps inside a segmented word.
+    // Plain word boundary — least preferred legal cut. The advisor query is
+    // a backstop: word aggregation (L1) already makes every candidate
+    // word-aligned for zh, so `Some(false)` here should never occur.
     match advisor.is_word_boundary(byte_offset) {
         Some(false) => FORBIDDEN_COST,
         _ => lexical_cut_cost(token_gap_sec(Some(left.end), Some(right.start))),
@@ -263,7 +265,18 @@ fn is_quality_cut_boundary(
 }
 
 /// Split overlong semantic spans into subtitle-length segments via DP.
-/// Returns absolute word indices with the dominant `SplitReason` for each cut.
+/// Returns absolute token indices with the dominant `SplitReason` for each
+/// cut.
+///
+/// Token-atomic architecture (L1 → L3): the DP never sees raw ASR tokens —
+/// it cuts a word sequence built by [`aggregate_span_words`], where a word is
+/// a maximal token run the language advisor keeps together (jieba for zh, one
+/// token per word elsewhere). A word-internal cut is therefore not a
+/// representable DP candidate, and every returned cut index maps back to the
+/// last token of its left word, so cues always partition the token stream
+/// exactly. Intra-span speech pauses ≥ `PAUSE_SPLIT_SEC` are hard-split
+/// first (word-snapped, mandatory — each chunk is laid out independently),
+/// then each chunk is DP-laid-out under the length budget.
 pub(super) fn build_subtitle_layout_split_points(
     words: &[WordTokenDto],
     semantic_spans: &[(usize, usize)],
@@ -287,19 +300,58 @@ pub(super) fn build_subtitle_layout_split_points(
         if span_start >= words.len() || span_end >= words.len() || span_start >= span_end {
             continue;
         }
-        if let Some(cuts) = dp_split_span(
-            words,
-            span_start,
-            span_end,
-            profile,
-            limit,
-            char_limit,
-            grace,
-            force_ceiling,
-            vad_index,
-        ) {
-            for cut in cuts {
-                out.push((cut.index, cut.reason));
+        let span_len = span_end - span_start + 1;
+
+        // L1 — aggregate tokens into advisor-aligned words. Byte offsets use
+        // the DP's concat convention so jieba answers in the same coordinate
+        // space the cost query always used.
+        let span_text: String = words[span_start..=span_end]
+            .iter()
+            .map(|w| w.word.as_str())
+            .collect();
+        let advisor = profile.word_boundary_advisor(&span_text);
+        let mut byte_offsets = vec![0usize; span_len + 1];
+        let mut acc = 0usize;
+        for k in 0..span_len {
+            acc += words[span_start + k].word.len();
+            byte_offsets[k + 1] = acc;
+        }
+        let span =
+            aggregate_span_words(&words[span_start..=span_end], &advisor, &byte_offsets);
+
+        // Hard pause split (≥2s, word-snapped, mandatory), then DP per chunk.
+        // Chunk indices are word indices within the span; chunk boundaries
+        // become HardPause cuts, DP cuts map back to the left word's last
+        // token so the cut set always partitions the span's tokens.
+        for (chunk_idx, &(chunk_start, chunk_end)) in
+            hard_pause_chunks(&span, vad_index).iter().enumerate()
+        {
+            if chunk_idx > 0 {
+                let cut_word = chunk_start - 1;
+                out.push((
+                    span_start + span.token_ranges[cut_word].1 - 1,
+                    SplitReason::HardPause,
+                ));
+            }
+            let cuts = dp_split_span(
+                &span.words,
+                chunk_start,
+                chunk_end,
+                profile,
+                &advisor,
+                limit,
+                char_limit,
+                grace,
+                force_ceiling,
+                vad_index,
+            );
+            if let Some(cuts) = cuts {
+                for cut in cuts {
+                    out.push((
+                        span_start + span.token_ranges[cut.index].1 - 1,
+                        cut.reason,
+                    ));
+                }
             }
         }
     }
@@ -343,6 +395,12 @@ impl HardLimits {
 /// DP-split `start..=end` so every resulting segment stays within the hard
 /// limits, minimizing total boundary cost.
 ///
+/// `words` is the L1 word sequence of ONE semantic span (see
+/// [`aggregate_span_words`]); `advisor` was built for the same span at token
+/// level and answers byte-offset queries in the concatenated span text. With
+/// word aggregation upstream every candidate cut is already word-aligned for
+/// zh; the advisor query stays as a cheap invariant backstop.
+///
 /// Returns `None` when the span must be kept intact: under target, or within
 /// the grace band with no linguistically good cut reaching the target.
 fn dp_split_span(
@@ -350,6 +408,7 @@ fn dp_split_span(
     start: usize,
     end: usize,
     profile: &dyn LanguageProfile,
+    advisor: &Advisor,
     limit: f64,
     char_limit: f64,
     grace: f64,
@@ -361,12 +420,7 @@ fn dp_split_span(
         return Some(Vec::new());
     }
 
-    // Word-segmentation advisor for zh (jieba); no-op elsewhere.
-    let span_text: String = words[start..=end]
-        .iter()
-        .map(|w| w.word.as_str())
-        .collect();
-    let advisor = profile.word_boundary_advisor(&span_text);
+    // Byte offsets of each candidate cut in the concatenated segment text.
     let mut byte_offset = vec![0usize; n + 1];
     let mut acc = 0usize;
     for k in 0..n {
@@ -436,6 +490,13 @@ fn dp_split_span(
             if !hard.valid(token_count, seg_units, seg_chars) {
                 continue;
             }
+            // Quality mode never produces flash lines: a "good" cut that
+            // strands ≤ SHORT_SEGMENT_UNITS on one side ("Meaning | that …")
+            // is worse than keeping the slightly-over line. If no candidate
+            // survives, dp[n] stays infinite and the caller keeps the span.
+            if mode == DpMode::Quality && seg_units <= SHORT_SEGMENT_UNITS {
+                continue;
+            }
             if base_cost[j].is_infinite() || dp[j].is_infinite() {
                 continue;
             }
@@ -457,7 +518,7 @@ fn dp_split_span(
             if hard.char_limited() && hard.char > 0.0 {
                 cost += LENGTH_PENALTY_WEIGHT * 0.5 * (seg_chars - hard.char).abs() / hard.char;
             }
-            if seg_units > 0.0 && seg_units <= 2.0 {
+            if seg_units > 0.0 && seg_units <= SHORT_SEGMENT_UNITS {
                 cost += SHORT_SEGMENT_PENALTY; // avoid "台" / "风" alone
             }
             // Tie-break by writing system: Latin → prefer earlier j (balanced

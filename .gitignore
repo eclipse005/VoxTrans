@@ -27,6 +27,9 @@ dist-ssr
 .claude/
 .worktrees/
 
+# WorkBuddy workspace memory
+.workbuddy/
+
 # CodeBuddy Code local guidance
 CODEBUDDY.md
 

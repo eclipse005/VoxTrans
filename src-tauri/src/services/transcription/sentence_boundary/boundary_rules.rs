@@ -17,6 +17,12 @@ pub(super) const GLUED_WORD_COST: f64 = 8.5;
 /// Extra DP cost for candidate segments of 1–2 units ("台" / "风" alone).
 pub(super) const SHORT_SEGMENT_PENALTY: f64 = 3.5;
 
+/// A segment at or below this many units is a flash line. Quality mode never
+/// accepts one as a DP candidate — a "good" cut that strands a lone word
+/// ("Meaning | that …") loses to keeping the slightly-over line; Force mode
+/// may still produce short segments when the hard ceiling demands it.
+pub(super) const SHORT_SEGMENT_UNITS: f64 = 2.0;
+
 /// Units of slack above `limit` before a span must be force-cut; within the
 /// grace band only linguistically good cut points are allowed.
 pub(super) const LENGTH_GRACE_UNITS: f64 = 2.0;

@@ -62,6 +62,12 @@ pub struct BoundaryDecision {
 #[serde(rename_all = "camelCase")]
 pub struct SourceSentence {
     pub sentence_id: usize,
+    /// 1-based id of the SEMANTIC sentence (punctuation-level span) this
+    /// display cue belongs to. Display cues split by DP layout or a hard
+    /// pause share one semantic sentence — the translation unit for the
+    /// two-stage (sentence-translate + slot-backfill) pipeline. Semantic
+    /// sentence ids are unique and monotonic across the cue stream.
+    pub semantic_sentence_id: usize,
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
@@ -84,5 +90,10 @@ pub enum BoundaryDecisionKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SplitReason {
     TerminalPunctuation,
+    /// Intra-sentence speech pause ≥ 2s (word_units::PAUSE_SPLIT_SEC):
+    /// mandatory, word-snapped display cut per the speech-synced rhythm
+    /// decision. Display-oriented — future two-stage translation can regroup
+    /// across it, unlike TerminalPunctuation.
+    HardPause,
     SubtitleLayout,
 }

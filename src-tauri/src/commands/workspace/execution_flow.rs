@@ -315,6 +315,7 @@ async fn execute_srt_translate_task(
             source_text: segment.source_text.clone(),
             translated_text: String::new(),
             source_words: Vec::new(),
+            semantic_sentence_id: segment.semantic_sentence_id,
         })
         .collect();
     let source_text =

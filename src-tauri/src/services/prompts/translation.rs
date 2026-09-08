@@ -6,6 +6,23 @@ pub struct TranslationPromptLine {
     pub text: String,
 }
 
+/// One display slot of a translation unit: `id` is the global segment id the
+/// model must echo back; `text` is the source cue shown on screen.
+#[derive(Debug, Clone, Serialize)]
+pub struct TranslationPromptSlot {
+    pub id: usize,
+    pub text: String,
+}
+
+/// One translation unit: a complete source sentence (`text`) plus the display
+/// slots its translation must be distributed onto.
+#[derive(Debug, Clone, Serialize)]
+pub struct TranslationPromptUnit {
+    pub id: usize,
+    pub text: String,
+    pub slots: Vec<TranslationPromptSlot>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TranslationPromptTerm {
     pub source: String,
@@ -24,18 +41,18 @@ pub fn build_batch_translate_prompt(
     source_lang: &str,
     target_lang: &str,
     style_guide: &str,
-    prev_lines: &[String],
-    current_lines: &[TranslationPromptLine],
-    next_lines: &[String],
+    prev_units: &[String],
+    current_units: &[TranslationPromptUnit],
+    next_units: &[String],
     terms: &[TranslationPromptTerm],
     established_names: &[TranslationNameExample],
 ) -> String {
     let mut instruction = String::from(
-        "Translate currentLines into targetLanguage. currentLines are consecutive subtitle cues from one recording, in order — not independent sentences. Write faithful, fluent, idiomatic targetLanguage: grammar, word order, and convention follow that language, not a calque of the source. previousLines may be \"source → translation\" pairs and nextLines are upcoming source; use them only as context. Return JSON only as {\"translations\":[{\"id\":1,\"text\":\"...\"}]} with every currentLines id in order. Each id is a display slot: fill it with the portion of the natural translation that belongs on screen with that cue. Never merge, split, or drop ids, and do not leave an id empty. Concatenating the translations in order should read as natural targetLanguage for the passage.",
+        "Translate currentUnits into targetLanguage. Each unit is one complete sentence from consecutive subtitle cues of one recording, in order — the units together form one passage. Write faithful, fluent, idiomatic targetLanguage: grammar, word order, and convention follow that language, not a calque of the source. previousLines may be \"source → translation\" pairs and nextLines are upcoming source; use them only as context. After translating a unit as one natural sentence, distribute that translation across the unit's displaySlots: each slot carries the portion of the translation that belongs on screen with its sourceText. Every unit id and every displaySlot id must appear exactly once, and concatenating a unit's displaySlot texts in slot order must reproduce the unit translation (whitespace and punctuation differences aside). A word of targetLanguage must never be split across two slots: each slot text must begin and end at a word boundary of targetLanguage — punctuation may attach to the word. Never merge, split, or drop ids; never leave a unit or a slot empty. Return JSON only as {\"units\":[{\"id\":1,\"translation\":\"...\",\"slots\":[{\"id\":101,\"text\":\"...\"}]}]}.",
     );
     if !terms.is_empty() {
         instruction.push_str(
-            " If a line contains a terminology source, use that target verbatim.",
+            " If a unit contains a terminology source, use that target verbatim.",
         );
     }
     if !established_names.is_empty() {
@@ -47,9 +64,9 @@ pub fn build_batch_translate_prompt(
     let mut obj = serde_json::json!({
         "sourceLanguage": source_lang,
         "targetLanguage": target_lang,
-        "previousLines": prev_lines,
-        "currentLines": current_lines,
-        "nextLines": next_lines,
+        "previousLines": prev_units,
+        "currentUnits": current_units,
+        "nextLines": next_units,
         "instruction": instruction,
     });
     if !style_guide.trim().is_empty() {
@@ -68,11 +85,18 @@ pub fn build_batch_translate_prompt(
 mod tests {
     use super::*;
 
-    fn sample_lines() -> Vec<TranslationPromptLine> {
-        vec![TranslationPromptLine {
-            id: 1,
-            text: "hello".to_string(),
-        }]
+    fn unit(id: usize, text: &str, slots: &[(usize, &str)]) -> TranslationPromptUnit {
+        TranslationPromptUnit {
+            id,
+            text: text.to_string(),
+            slots: slots
+                .iter()
+                .map(|(id, text)| TranslationPromptSlot {
+                    id: *id,
+                    text: text.to_string(),
+                })
+                .collect(),
+        }
     }
 
     #[test]
@@ -82,7 +106,7 @@ mod tests {
             "zh",
             "",
             &[],
-            &sample_lines(),
+            &[unit(1, "Hence this video.", &[(1, "Hence"), (2, "this video.")])],
             &[],
             &[],
             &[],
@@ -114,14 +138,24 @@ mod tests {
             "quality bar is idiomatic target language, not a source calque"
         );
         assert!(parsed.get("establishedNames").is_none());
-        assert_eq!(parsed["currentLines"][0]["text"], "hello");
+        assert_eq!(parsed["currentUnits"][0]["text"], "Hence this video.");
+        assert_eq!(parsed["currentUnits"][0]["slots"][0]["id"], 1);
+        assert_eq!(parsed["currentUnits"][0]["slots"][1]["id"], 2);
         assert!(
-            instruction.contains("consecutive subtitle cues"),
-            "batch is one passage of cues, not isolated sentences"
+            instruction.contains("complete sentence"),
+            "the unit is a whole sentence, not an isolated cue"
         );
         assert!(
-            instruction.contains("display slot"),
-            "each id is a display slot of the natural translation"
+            instruction.contains("displaySlots"),
+            "slots are the display surface of the translation"
+        );
+        assert!(
+            instruction.contains("reproduce the unit translation"),
+            "slot concatenation must equal the unit translation"
+        );
+        assert!(
+            instruction.contains("never be split across two slots"),
+            "word-integrity constraint must be stated"
         );
     }
 
@@ -132,7 +166,7 @@ mod tests {
             "zh",
             "Keep English names. Informal spoken register.",
             &[],
-            &sample_lines(),
+            &[unit(1, "hello", &[(1, "hello")])],
             &[],
             &[],
             &[],
@@ -158,7 +192,7 @@ mod tests {
             "zh",
             "",
             &[],
-            &sample_lines(),
+            &[unit(1, "hello", &[(1, "hello")])],
             &[],
             &[],
             &names,
@@ -168,22 +202,25 @@ mod tests {
     }
 
     #[test]
-    fn batch_is_instructed_as_a_passage_of_cues() {
+    fn units_are_instructed_as_one_passage() {
         let prompt = build_batch_translate_prompt(
             "en",
             "zh-CN",
             "",
             &[],
-            &sample_lines(),
+            &[unit(1, "hello", &[(1, "hello")])],
             &[],
             &[],
             &[],
         );
         let parsed: serde_json::Value = serde_json::from_str(&prompt).unwrap();
         let instruction = parsed["instruction"].as_str().unwrap();
-        assert!(instruction.contains("not independent sentences"));
+        assert!(instruction.contains("one passage"));
         assert!(instruction.contains("not a calque of the source"));
-        assert!(instruction.contains("display slot"));
+        assert!(instruction.contains("never leave a unit or a slot empty"));
+        assert!(
+            instruction.contains("{\"units\":"),
+            "the response contract must be stated verbatim"
+        );
     }
 }
-

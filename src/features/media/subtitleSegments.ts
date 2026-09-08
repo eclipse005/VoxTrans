@@ -37,6 +37,7 @@ export function buildSubtitleSegmentsFromCues(cues: SubtitleCue[]): SubtitleSegm
     sourceText: cue.text || "",
     translatedText: cue.translatedText || "",
     sourceWords: [],
+    semanticSentenceId: cue.semanticSentenceId ?? 0,
   }));
 }
 
@@ -50,6 +51,7 @@ export function buildCueListFromSubtitleSegments(
     endMs: segment.endMs,
     text: segment.sourceText || "",
     translatedText: segment.translatedText || "",
+    semanticSentenceId: segment.semanticSentenceId ?? 0,
   }));
 }
 
@@ -70,6 +72,10 @@ function normalizeSubtitleSegment(segment: unknown): SubtitleSegment | null {
     sourceText: String((segment as { sourceText?: unknown })?.sourceText ?? ""),
     translatedText: String((segment as { translatedText?: unknown })?.translatedText ?? ""),
     sourceWords,
+    semanticSentenceId: Math.max(
+      0,
+      Math.round(Number((segment as { semanticSentenceId?: unknown })?.semanticSentenceId ?? 0)) || 0,
+    ),
   };
 }
 

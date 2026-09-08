@@ -83,6 +83,9 @@ export type SubtitleCue = {
   endMs: number;
   text: string;
   translatedText: string;
+  /** Semantic-sentence id from the boundary stage (0 = none). Preserved
+   * through review round-trips so translation units stay sentence-level. */
+  semanticSentenceId?: number;
 };
 
 export type SubtitleWordAnchor = {
@@ -97,6 +100,7 @@ export type SubtitleSegment = {
   sourceText: string;
   translatedText: string;
   sourceWords: SubtitleWordAnchor[];
+  semanticSentenceId: number;
 };
 
 export type QueueItem = {

@@ -355,6 +355,7 @@ mod tests {
         let segments = vec![
             NormalizedSegment {
                 segment_id: 1,
+                sentence_id: 0,
                 start: 0.0,
                 end: 1.0,
                 source: "プリンセスキャニオンです".to_string(),
@@ -362,6 +363,7 @@ mod tests {
             },
             NormalizedSegment {
                 segment_id: 2,
+                sentence_id: 0,
                 start: 1.0,
                 end: 2.0,
                 source: "またキャニオン".to_string(),
@@ -369,6 +371,7 @@ mod tests {
             },
             NormalizedSegment {
                 segment_id: 3,
+                sentence_id: 0,
                 start: 2.0,
                 end: 3.0,
                 source: "別の名前シンデレラ".to_string(),
@@ -397,6 +400,7 @@ mod tests {
         let segments = vec![
             NormalizedSegment {
                 segment_id: 1,
+                sentence_id: 0,
                 start: 0.0,
                 end: 1.0,
                 source: "キャニオンです".to_string(),
@@ -404,6 +408,7 @@ mod tests {
             },
             NormalizedSegment {
                 segment_id: 2,
+                sentence_id: 0,
                 start: 1.0,
                 end: 2.0,
                 source: "キャニオンだよ".to_string(),
@@ -423,6 +428,7 @@ mod tests {
     fn source_script_passthrough_is_not_propagated() {
         let segments = vec![NormalizedSegment {
             segment_id: 1,
+            sentence_id: 0,
             start: 0.0,
             end: 1.0,
             source: "キャニオンです".to_string(),
@@ -448,6 +454,7 @@ mod tests {
         // source's distinctive script is filtered.
         let segments = vec![NormalizedSegment {
             segment_id: 1,
+            sentence_id: 0,
             start: 0.0,
             end: 1.0,
             source: "ROLANDが登場".to_string(),
@@ -467,6 +474,7 @@ mod tests {
         // The kana span must still become an example, locked to "Baron".
         let segments = vec![NormalizedSegment {
             segment_id: 1,
+            sentence_id: 0,
             start: 0.0,
             end: 1.0,
             source: "バロン（Baron）です".to_string(),
@@ -488,6 +496,7 @@ mod tests {
         // kana really is an untranslated passthrough and must not propagate.
         let segments = vec![NormalizedSegment {
             segment_id: 1,
+            sentence_id: 0,
             start: 0.0,
             end: 1.0,
             source: "バロン（Baron）です".to_string(),
@@ -513,6 +522,7 @@ mod tests {
         for (translation, run) in cases {
             let segments = vec![NormalizedSegment {
                 segment_id: 1,
+                sentence_id: 0,
                 start: 0.0,
                 end: 1.0,
                 source: "バロン（Baron）です".to_string(),
@@ -531,6 +541,7 @@ mod tests {
         // The correct path still locks the declared form.
         let segments = vec![NormalizedSegment {
             segment_id: 1,
+            sentence_id: 0,
             start: 0.0,
             end: 1.0,
             source: "バロン（Baron）です".to_string(),
@@ -555,6 +566,7 @@ mod tests {
         );
         let segments = vec![NormalizedSegment {
             segment_id: 1,
+            sentence_id: 0,
             start: 0.0,
             end: 1.0,
             source: "バロン（Baron）です".to_string(),

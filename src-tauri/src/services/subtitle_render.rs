@@ -436,6 +436,7 @@ mod tests {
             source_text: source.to_string(),
             translated_text: target.to_string(),
             source_words: Vec::new(),
+            semantic_sentence_id: 0,
         }
     }
 

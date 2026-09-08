@@ -12,6 +12,13 @@
 /// being so large that adjacent words get misjudged as crossing a gap.
 pub(super) const CUT_POINT_TOLERANCE_SEC: f64 = 0.100;
 
+/// How far past a silence gap's edge a word may end/start and still count as
+/// attached to the speech segment on its side. Aligner word edges extend into
+/// silence by tens of ms (up to ~200ms observed); a word ending well beyond
+/// that is floating INSIDE the gap — a VAD dead zone where the aligner found
+/// quiet speech the VAD missed — and must not inherit the gap's full width.
+pub(super) const WORD_ATTACH_TOL_SEC: f64 = 0.35;
+
 /// Sorted speech segments `[(start_sec, end_sec)]`. Built once from
 /// fireredvad output (pre-normalized by the caller) and reused for every
 /// word-pair query.
@@ -27,8 +34,8 @@ impl SpeechSegmentIndex {
     }
 
     /// Returns true when the cut point between `left_end_sec` and
-    /// `right_start_sec` falls inside a VAD silence gap — i.e. the two
-    /// words belong to different speech segments. Uses the midpoint of the
+    /// `right_start_sec` falls inside a VAD silence gap AND some of that
+    /// silence actually lies between the two words. Uses the midpoint of the
     /// word-pair gap as the test point (symmetric against aligner drift in
     /// either direction), with `CUT_POINT_TOLERANCE_SEC` of slack on each
     /// edge of the silence.
@@ -40,27 +47,22 @@ impl SpeechSegmentIndex {
         left_end_sec: f64,
         right_start_sec: f64,
     ) -> bool {
-        if self.segments.len() < 2 {
-            return false;
-        }
-        let cut = (left_end_sec + right_start_sec) / 2.0;
-        for window in self.segments.windows(2) {
-            let silence_start = window[0].1;
-            let silence_end = window[1].0;
-            if cut >= silence_start - CUT_POINT_TOLERANCE_SEC
-                && cut <= silence_end + CUT_POINT_TOLERANCE_SEC
-            {
-                return true;
-            }
-        }
-        false
+        self.silence_duration_sec(left_end_sec, right_start_sec) > 0.0
     }
 
-    /// Width (seconds) of the VAD silence gap that the cut point between
-    /// `left_end_sec` and `right_start_sec` falls inside. Returns 0.0 when the
-    /// cut does not cross a silence gap (same tolerance window as
-    /// [`Self::crosses_silence`]). Used to weigh the DP cost: a longer silence
-    /// is a stronger sentence-end signal.
+    /// Width (seconds) of the VAD silence that separates the words around the
+    /// cut point. Returns 0.0 when the cut does not cross a silence gap (same
+    /// tolerance window as [`Self::crosses_silence`]). Used to weigh the DP
+    /// cost and to gate the ≥2s hard-pause split, so the number must be the
+    /// pause BETWEEN THE TWO WORDS, not the width of the containing gap:
+    ///
+    /// - Words attached to opposite speech segments (each within
+    ///   [`WORD_ATTACH_TOL_SEC`] of its side of the gap): the whole gap
+    ///   separates them — aligner edges may stretch into the silence.
+    /// - Otherwise (e.g. both words floating deep inside a long VAD dead
+    ///   zone where the aligner found quiet speech the VAD missed): only the
+    ///   part of the gap lying between the two words counts. Inheriting the
+    ///   dead zone's full width would hard-split slow speech at every word.
     pub(super) fn silence_duration_sec(
         &self,
         left_end_sec: f64,
@@ -76,7 +78,14 @@ impl SpeechSegmentIndex {
             if cut >= silence_start - CUT_POINT_TOLERANCE_SEC
                 && cut <= silence_end + CUT_POINT_TOLERANCE_SEC
             {
-                return (silence_end - silence_start).max(0.0);
+                if left_end_sec <= silence_start + WORD_ATTACH_TOL_SEC
+                    && right_start_sec >= silence_end - WORD_ATTACH_TOL_SEC
+                {
+                    return (silence_end - silence_start).max(0.0);
+                }
+                let overlap =
+                    right_start_sec.min(silence_end) - left_end_sec.max(silence_start);
+                return overlap.max(0.0);
             }
         }
         0.0
@@ -153,9 +162,33 @@ mod tests {
     #[test]
     fn cut_within_tolerance_of_silence_edge_crosses() {
         let i = idx();
-        // Midpoint 2.05 sits 50ms inside the [2.0,3.0] gap start — within
-        // the 100ms tolerance.
-        assert!(i.crosses_silence(2.18, 1.92));
+        // The cut interval [1.98, 2.02] straddles the gap start (2.0); a
+        // sliver of silence lies between the words, inside the tolerance.
+        assert!(i.crosses_silence(1.98, 2.02));
+    }
+
+    #[test]
+    fn dead_zone_words_do_not_inherit_the_silence_width() {
+        // Both words float deep inside the 9s dead zone between the speech
+        // segments (quiet speech the aligner found but VAD did not). The
+        // counted silence is only the part between the words (0.5s), never
+        // the dead zone's full width — otherwise slow speech would hard-split
+        // at every word boundary.
+        let i = SpeechSegmentIndex::new(vec![(0.0, 1.0), (10.0, 11.0)]);
+        assert_eq!(i.silence_duration_sec(4.0, 4.5), 0.5);
+        // A real inter-word pause inside the dead zone still counts at its
+        // own width — wide enough gaps keep their hard-split signal.
+        assert_eq!(i.silence_duration_sec(4.0, 7.5), 3.5);
+    }
+
+    #[test]
+    fn stretched_word_edges_still_attach_to_speech_segments() {
+        // Aligner edges extend up to ~200ms into the silence: the left word
+        // ends past the gap start, the right starts before the gap end, yet
+        // the words attach to opposite segments and the FULL gap counts.
+        let i = SpeechSegmentIndex::new(vec![(0.0, 2.0), (3.0, 5.0), (6.0, 8.0)]);
+        assert_eq!(i.silence_duration_sec(2.2, 2.8), 1.0);
+        assert_eq!(i.silence_duration_sec(5.2, 5.8), 1.0);
     }
 
     #[test]

@@ -24,6 +24,7 @@ pub fn workspace_subtitle_segments_from_step2_segments(
                     word: token.text.clone(),
                 })
                 .collect(),
+            semantic_sentence_id: segment.semantic_sentence_id,
         })
         .collect()
 }
@@ -47,6 +48,9 @@ pub fn workspace_subtitle_segments_from_translation_segments(
                     word: token.text.clone(),
                 })
                 .collect(),
+            // Target SoT rows are final deliverables — sentence grouping was
+            // already consumed when building translation units upstream.
+            semantic_sentence_id: 0,
         })
         .collect()
 }
@@ -73,6 +77,8 @@ pub fn workspace_subtitle_segments_from_translation_outputs(
                     word: token.text.clone(),
                 })
                 .collect(),
+            // Preview-only rows; grouping is not read back from them.
+            semantic_sentence_id: 0,
         })
         .collect()
 }
@@ -104,6 +110,7 @@ pub fn map_step2_segments_for_translate(
         .iter()
         .map(|segment| SourceSegmentForTerminologyCommand {
             segment: segment.segment.clone(),
+            semantic_sentence_id: segment.semantic_sentence_id,
             start: segment.start,
             end: segment.end,
             tokens: segment
@@ -147,6 +154,7 @@ mod tests {
         let segments = vec![
             crate::commands::transcription::GroupedSentenceSegmentCommandDto {
                 segment: "Hello".to_string(),
+                semantic_sentence_id: 0,
                 start: 0.0,
                 end: 1.5,
                 tokens: vec![],
@@ -156,6 +164,8 @@ mod tests {
         assert!(srt.contains("1\n"));
         assert!(srt.contains("00:00:00,000 --> 00:00:01,500\n"));
         assert!(srt.contains("Hello"));
+        let workspace = workspace_subtitle_segments_from_step2_segments(&segments);
+        assert_eq!(workspace[0].semantic_sentence_id, 0);
     }
 
     #[test]
@@ -163,6 +173,7 @@ mod tests {
         let segments = vec![
             crate::commands::transcription::GroupedSentenceSegmentCommandDto {
                 segment: "Test".to_string(),
+                semantic_sentence_id: 0,
                 start: 1.0,
                 end: 2.5,
                 tokens: vec![

@@ -42,6 +42,9 @@ pub fn import_srt_for_task(
             source_text: cue.text.clone(),
             translated_text: String::new(),
             source_words: Vec::new(),
+            // Imported cues have no boundary-stage grouping: each cue
+            // translates as its own unit.
+            semantic_sentence_id: 0,
         })
         .collect();
 
@@ -231,6 +234,7 @@ pub fn load_srt_segments_for_run(
             source_text: cue.text,
             translated_text: String::new(),
             source_words: Vec::new(),
+            semantic_sentence_id: 0,
         })
         .collect())
 }
@@ -242,6 +246,11 @@ pub fn workspace_segments_to_step2(
         .iter()
         .map(|segment| crate::commands::transcription::GroupedSentenceSegmentCommandDto {
             segment: segment.source_text.clone(),
+            // Carry the SoT's semantic-sentence grouping (written by the
+            // boundary stage into the source SoT). 0 = imported cues /
+            // legacy SoT JSON without the field — each cue translates as
+            // its own unit.
+            semantic_sentence_id: segment.semantic_sentence_id,
             start: segment.start_ms as f64 / 1000.0,
             end: segment.end_ms as f64 / 1000.0,
             tokens: Vec::new(),
@@ -261,6 +270,34 @@ pub fn source_text_from_workspace_segments(segments: &[WorkspaceSubtitleSegment]
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_segments_to_step2_preserves_sid() {
+        // The SoT round-trip (execution_flow translates from the SoT, not
+        // raw step2) must keep the boundary stage's semantic-sentence ids —
+        // otherwise every cue degrades to its own translation unit.
+        let segments = vec![
+            WorkspaceSubtitleSegment {
+                start_ms: 0,
+                end_ms: 1000,
+                source_text: "show how".into(),
+                translated_text: String::new(),
+                source_words: vec![],
+                semantic_sentence_id: 1,
+            },
+            WorkspaceSubtitleSegment {
+                start_ms: 1000,
+                end_ms: 2000,
+                source_text: "next sentence.".into(),
+                translated_text: String::new(),
+                source_words: vec![],
+                semantic_sentence_id: 2,
+            },
+        ];
+        let step2 = workspace_segments_to_step2(&segments);
+        assert_eq!(step2[0].semantic_sentence_id, 1);
+        assert_eq!(step2[1].semantic_sentence_id, 2);
+    }
 
     #[test]
     fn resolve_keeps_normal_names() {

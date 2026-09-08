@@ -40,6 +40,7 @@ pub async fn build_source_sentences_with_progress(
         .into_iter()
         .map(|sentence| SourceSentenceCommandDto {
             sentence_id: sentence.sentence_id,
+            semantic_sentence_id: sentence.semantic_sentence_id,
             start_ms: sentence.start_ms,
             end_ms: sentence.end_ms,
             text: sentence.text,
@@ -140,6 +141,7 @@ fn build_grouped_sentence_segments(
         };
         out.push(GroupedSentenceSegmentCommandDto {
             segment,
+            semantic_sentence_id: sentence.semantic_sentence_id,
             start,
             end,
             tokens,
@@ -242,6 +244,7 @@ mod tests {
         let sentences = vec![
             SourceSentenceCommandDto {
                 sentence_id: 1,
+                semantic_sentence_id: 1,
                 start_ms: 0,
                 end_ms: 400,
                 text: "Hello world".to_string(),
@@ -252,6 +255,7 @@ mod tests {
             },
             SourceSentenceCommandDto {
                 sentence_id: 2,
+                semantic_sentence_id: 2,
                 start_ms: 500,
                 end_ms: 800,
                 text: "Again".to_string(),
@@ -300,6 +304,7 @@ mod tests {
         ];
         let sentences = vec![SourceSentenceCommandDto {
             sentence_id: 1,
+            semantic_sentence_id: 1,
             start_ms: 0,
             end_ms: 500,
             text: "   ".to_string(),
@@ -331,6 +336,7 @@ mod tests {
         ];
         let sentences = vec![SourceSentenceCommandDto {
             sentence_id: 1,
+            semantic_sentence_id: 1,
             start_ms: 0,
             end_ms: 400,
             text: "".to_string(),

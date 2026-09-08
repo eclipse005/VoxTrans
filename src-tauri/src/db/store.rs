@@ -349,6 +349,11 @@ impl TaskStore {
                 source_text: s.source_text,
                 translated_text: s.translated_text,
                 source_words: words_by_seg.remove(&s.id).unwrap_or_default(),
+                // The segments table has no semantic-sentence column; the
+                // JSON SoT (task.subtitleSegmentsJson) is the sid-carrying
+                // channel. This row path is only a fallback for tasks whose
+                // JSON SoT is missing — 0 (per-cue units) is correct there.
+                semantic_sentence_id: 0,
             })
             .collect();
         Ok(out)
@@ -1000,6 +1005,7 @@ mod tests {
                     end_ms: 500,
                     word: "hello".into(),
                 }],
+                semantic_sentence_id: 0,
             },
             WorkspaceSubtitleSegment {
                 start_ms: 1000,
@@ -1007,6 +1013,7 @@ mod tests {
                 source_text: "world".into(),
                 translated_text: "世界".into(),
                 source_words: vec![],
+                semantic_sentence_id: 0,
             },
         ]
     }
@@ -1041,6 +1048,7 @@ mod tests {
             source_text: "again".into(),
             translated_text: "再次".into(),
             source_words: vec![],
+            semantic_sentence_id: 0,
         }];
         s.replace_segments("t1", &replacement).await.unwrap();
 
