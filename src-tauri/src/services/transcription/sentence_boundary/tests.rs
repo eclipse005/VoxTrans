@@ -1695,3 +1695,109 @@ fn has_split_digit_counter(text: &str) -> bool {
         w[0].is_ascii_digit() && w[1] == ' ' && w[2].is_ascii_digit() && COUNTERS.contains(&w[3])
     })
 }
+
+/// Real ASR output: the drawn-out sentence-final particle な got its own
+/// zero-duration token WITH a period attached (`な。`, 365-367s in task
+/// d0qjjt). The だ-copula rule split after だ because な was missing from
+/// the line-start kinsoku table, exiling `な。` into a cue with nothing to
+/// translate (it rendered as a bare "。" row in the SRT).
+#[test]
+fn ja_trailing_particle_na_stays_with_copula_sentence() {
+    let raw = vec![
+        ("人気", 365.545, 365.945),
+        ("な", 365.945, 366.105),
+        ("ん", 366.105, 366.185),
+        ("だ", 366.185, 366.345),
+        ("な。", 366.345, 366.345),
+        ("すごい", 366.345, 366.665),
+        ("な。", 367.305, 367.465),
+    ];
+    let words: Vec<WordTokenDto> = raw
+        .into_iter()
+        .map(|(t, s, e)| WordTokenDto { start: s, end: e, word: t.to_string() })
+        .collect();
+
+    let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
+        request_with_lang_and_preset(words, "ja", "standard"),
+        None,
+    ))
+    .expect("pipeline should succeed");
+
+    let texts: Vec<&str> = response
+        .translation_sentences
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert_eq!(texts, ["人気なんだな。", "すごいな。"], "texts: {texts:?}");
+
+    // The trailing particle must share the copula sentence's semantic id.
+    let na_text = response
+        .translation_sentences
+        .iter()
+        .find(|s| s.text == "人気なんだな。")
+        .expect("merged sentence");
+    assert_ne!(
+        response
+            .translation_sentences
+            .iter()
+            .any(|s| s.text.trim() == "な。"),
+        true,
+        "bare particle cue must not exist"
+    );
+    assert!(na_text.semantic_sentence_id > 0);
+}
+
+/// Structural invariant (semantic-layer kinsoku): no semantic sentence may
+/// start with a line-start bound particle. Covers both exiles — the
+/// zero-duration particle tail (`だ` + `な。`) and the odd ASR word order
+/// after a punctuation split (`…う。` + `ます。`, the #885 case in task
+/// kjynvk). Table-driven, so it guards ja / ko / zh alike.
+#[test]
+fn semantic_sentences_never_start_with_bound_particle() {
+    use super::language::profile_for_lang;
+    use super::semantic::{
+        build_split_points_from_hard_boundaries, merge_leading_bound_particle_spans,
+        split_points_to_spans,
+    };
+
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["人気", "な", "ん", "だ", "な。", "すごい", "な。"],
+        vec!["お", "は", "よ", "う。", "ます。"],
+        vec!["今日", "は", "暑い", "ね。", "かな。"],
+    ];
+
+    for case in &cases {
+        let words: Vec<WordTokenDto> = case
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let start = i as f64 * 0.5;
+                WordTokenDto { start, end: start + 0.3, word: t.to_string() }
+            })
+            .collect();
+        let profile = profile_for_lang("ja");
+        let splits = build_split_points_from_hard_boundaries(&words, &*profile);
+        let spans = split_points_to_spans(words.len(), &splits);
+        let spans = merge_leading_bound_particle_spans(&words, &spans);
+        for (n, &(start, end)) in spans.iter().enumerate() {
+            assert!(
+                n == 0
+                    || !super::boundary_rules::is_line_start_bound_particle(
+                        &words[start].word
+                    ),
+                "span #{n} [{start}..={end}] starts with bound particle {:?} (case {case:?})",
+                words[start].word
+            );
+        }
+        // The exile scenario must actually merge, otherwise this test is
+        // vacuous: な。/ ます。 tails belong to the previous sentence.
+        let texts: Vec<String> = spans
+            .iter()
+            .map(|&(s, e)| words[s..=e].iter().map(|w| w.word.as_str()).collect())
+            .collect();
+        assert!(
+            !texts.iter().any(|t| t == "な。" || t == "ます。"),
+            "particle tail exiled as its own span: {texts:?}"
+        );
+    }
+}

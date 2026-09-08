@@ -278,7 +278,10 @@ const JA_NOMINALIZER_TAILS: &[&str] = &["ので", "のに", "のだ", "のです
 const JA_LINE_START_PARTICLES: &[&str] = &[
     "は", "が", "を", "に", "の", "と", "で", "も", "へ", "や", "て", "って",
     "より", "まで", "から", "です", "ます", "だ", "た", "し",
-    "よ", "ね", "さ", "わ", "か", "よね", "かな", "かい", "かしら",
+    // Sentence-final particles: な / なあ are exclamatory tails (だな / よな)
+    // that ASR often emits as their own zero-duration token (な。). Without
+    // them here the だ-copula rule exiles the tail into a cue of its own.
+    "な", "なあ", "よ", "ね", "さ", "わ", "か", "よね", "かな", "かい", "かしら",
     // Conjunctive particles belong on the previous clause, not a new cue.
     "ので", "のに", "なので", "けど", "けれど", "けれども", "ですので", "ですから",
 ];

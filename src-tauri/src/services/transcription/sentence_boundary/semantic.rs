@@ -335,3 +335,39 @@ pub(super) fn split_points_to_spans(
     out.push((cursor, word_total - 1));
     out
 }
+
+/// Semantic-layer kinsoku: a sentence must not START with a bound particle.
+///
+/// Real ASR streams occasionally exile a function-word tail into a sentence
+/// of its own — either a zero-duration trailing particle token (`だ` + `な。`)
+/// or an odd word order after a punctuation split (`…う。` + `ます。`). Left
+/// alone, such a sentence becomes a translation unit with nothing to
+/// translate and renders as a bare "。" row in the SRT. Merge any span whose
+/// head is a line-start bound particle back into its predecessor, so the
+/// illegal state is unrepresentable at the layer that produces sentences
+/// (the same kinsoku principle the display layer already enforces on cues).
+/// The check is table-driven and full-match, so it holds for ja / ko / zh
+/// alike and never touches content words (`ない` ≠ `な`).
+pub(super) fn merge_leading_bound_particle_spans(
+    words: &[WordTokenDto],
+    spans: &[(usize, usize)],
+) -> Vec<(usize, usize)> {
+    use super::boundary_rules::is_line_start_bound_particle;
+
+    let mut out: Vec<(usize, usize)> = Vec::with_capacity(spans.len());
+    for &(start, end) in spans {
+        let merges_back = match out.last() {
+            Some(&(_, prev_end)) => {
+                start == prev_end + 1 && is_line_start_bound_particle(words[start].word.as_str())
+            }
+            None => false,
+        };
+        if merges_back {
+            let (prev_start, _) = out.pop().expect("checked via out.last()");
+            out.push((prev_start, end));
+        } else {
+            out.push((start, end));
+        }
+    }
+    out
+}

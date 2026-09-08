@@ -23,7 +23,10 @@ mod words;
 use assembly::{
     build_boundaries_from_split_points, build_micro_chunks, build_sentences_from_word_spans,
 };
-use semantic::{build_split_points_from_hard_boundaries, split_points_to_spans};
+use semantic::{
+    build_split_points_from_hard_boundaries, merge_leading_bound_particle_spans,
+    split_points_to_spans,
+};
 use subtitle_layout::build_subtitle_layout_split_points;
 use types::SourceSentenceStep2;
 use words::{from_core_words, to_core_words};
@@ -65,6 +68,9 @@ pub async fn build_source_sentences_from_words_with_progress(
     let hard_split_points =
         build_split_points_from_hard_boundaries(&normalized_words, &*profile);
     let semantic_spans = split_points_to_spans(normalized_words.len(), &hard_split_points);
+    // Kinsoku at the semantic layer: no sentence may START with a bound
+    // particle (see merge_leading_bound_particle_spans).
+    let semantic_spans = merge_leading_bound_particle_spans(&normalized_words, &semantic_spans);
     let split_points = merge_split_points(
         hard_split_points,
         build_subtitle_layout_split_points(
