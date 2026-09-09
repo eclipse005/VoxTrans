@@ -12,3 +12,4 @@ pub mod json_guard;
 mod json_validator;
 pub mod port;
 mod retry;
+mod text;

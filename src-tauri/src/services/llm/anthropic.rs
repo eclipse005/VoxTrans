@@ -14,6 +14,7 @@ use std::sync::{Mutex, OnceLock};
 use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
 use super::port::{LlmConfig, LlmTokenUsage};
+use super::text::truncate_chars;
 
 /// `anthropic-version` header required on every Messages API request.
 pub(crate) const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -729,14 +730,6 @@ pub(super) fn api_error(status: u16, retry_after_ms: Option<u64>, body: &str) ->
         status: Some(status),
         retry_after_ms,
     }
-}
-
-fn truncate_chars(input: &str, max_chars: usize) -> String {
-    if input.chars().count() <= max_chars {
-        return input.to_string();
-    }
-    let out: String = input.chars().take(max_chars).collect();
-    format!("{out}...")
 }
 
 // ── Usage ───────────────────────────────────────────────────────────────────

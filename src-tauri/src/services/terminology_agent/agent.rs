@@ -12,12 +12,12 @@ use super::tools::{
 };
 use super::types::{EndReason, GlossaryEntry, ToolKind, TranscriptCue};
 
-pub const DEFAULT_MAX_ROUNDS: u32 = 15;
-pub const MULTI_WINDOW_MAX_ROUNDS: u32 = 12;
-pub const DOOM_SOFT: u32 = 5;
-pub const DOOM_HARD: u32 = 8;
-pub const PROBE_BUDGET_SINGLE: u32 = 12;
-pub const PROBE_BUDGET_MULTI: u32 = 12;
+pub(crate) const DEFAULT_MAX_ROUNDS: u32 = 15;
+pub(crate) const MULTI_WINDOW_MAX_ROUNDS: u32 = 12;
+const DOOM_SOFT: u32 = 5;
+const DOOM_HARD: u32 = 8;
+pub(crate) const PROBE_BUDGET_SINGLE: u32 = 12;
+pub(crate) const PROBE_BUDGET_MULTI: u32 = 12;
 const KEEP_RECENT_TURNS: usize = 3;
 const PROJECT_MAX_CHARS: usize = 220_000;
 const TOOL_ERROR_NUDGE_MAX: u32 = 2;
@@ -35,7 +35,7 @@ const PROSE_ECHO_MAX_CHARS: usize = 2_000;
 const CONSECUTIVE_LLM_ERROR_ABORT: u32 = 3;
 const ESTABLISHED_PROMPT_CAP: usize = 60;
 
-pub fn build_system_prompt(
+fn build_system_prompt(
     title: &str,
     source_lang: &str,
     target_lang: &str,
@@ -133,7 +133,7 @@ Coverage: include one glossary row for EVERY candidate you judge to be a real do
     )
 }
 
-pub fn format_user_terms_block(terms: &[GlossaryEntry]) -> String {
+fn format_user_terms_block(terms: &[GlossaryEntry]) -> String {
     if terms.is_empty() {
         return "(none)".to_string();
     }
@@ -150,10 +150,10 @@ pub fn format_user_terms_block(terms: &[GlossaryEntry]) -> String {
         .join("\n")
 }
 
-pub const TRANSCRIPT_BEGIN: &str = "=== TRANSCRIPT (removed from context after round 1; use tools for evidence later) ===";
-pub const TRANSCRIPT_END: &str = "=== END TRANSCRIPT ===";
+const TRANSCRIPT_BEGIN: &str = "=== TRANSCRIPT (removed from context after round 1; use tools for evidence later) ===";
+const TRANSCRIPT_END: &str = "=== END TRANSCRIPT ===";
 
-pub fn build_user_message(
+fn build_user_message(
     cues: &[TranscriptCue],
     source_lang: &str,
     target_lang: &str,
@@ -175,14 +175,14 @@ pub fn build_user_message(
     )
 }
 
-pub struct WindowRun {
+pub(crate) struct WindowRun {
     pub glossary: Vec<GlossaryEntry>,
     pub style_guide: String,
     pub end_reason: EndReason,
     pub rounds_used: u32,
 }
 
-pub struct AgentRunConfig<'a> {
+pub(crate) struct AgentRunConfig<'a> {
     /// The tool-calling port (request-level retries live inside the client —
     /// kimi-code requester contract). A trait object so tests can script
     /// turn sequences.
@@ -205,7 +205,7 @@ pub struct AgentRunConfig<'a> {
     pub logger: Option<&'a TaskLogger>,
 }
 
-pub async fn run_window_agent(
+pub(crate) async fn run_window_agent(
     cfg: &AgentRunConfig<'_>,
     mut on_round: Option<&mut (dyn FnMut(u32, u32, Option<String>) + Send)>,
 ) -> WindowRun {
@@ -653,7 +653,7 @@ async fn execute_one_tool(
     pre
 }
 
-pub fn project_context(
+fn project_context(
     messages: &[ChatMessage],
     keep_recent_turns: usize,
     max_chars: usize,
@@ -666,7 +666,7 @@ pub fn project_context(
     let mut keep = keep_recent_turns.max(1);
     loop {
         let shaped = project_shape(messages, keep);
-        if keep == 1 || estimate_chars(&shaped) <= max_chars {
+        if keep == 1 || estimate_bytes(&shaped) <= max_chars {
             return prepare_wire(shaped);
         }
         keep -= 1;
@@ -766,7 +766,10 @@ fn prepare_wire(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
         .collect()
 }
 
-fn estimate_chars(messages: &[ChatMessage]) -> usize {
+/// Wire-size estimate in UTF-8 **bytes** (not chars): conservative for CJK,
+/// where byte length exceeds the char count, so context compression triggers
+/// earlier rather than too late.
+fn estimate_bytes(messages: &[ChatMessage]) -> usize {
     messages.iter().map(|m| {
         let mut n = m.content.as_deref().map(str::len).unwrap_or(0);
         n += m.reasoning_content.as_deref().map(str::len).unwrap_or(0);

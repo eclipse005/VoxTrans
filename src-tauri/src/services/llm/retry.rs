@@ -1,4 +1,5 @@
 use super::error::{LlmError, LlmErrorKind};
+use super::text::truncate_chars;
 
 const RETRY_HINT_MAX_CHARS: usize = 320;
 const SEMANTIC_RETRY_HINT_MAX_CHARS: usize = 900;
@@ -184,21 +185,6 @@ fn compact_hint(input: &str, max_chars: usize) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     truncate_chars(&normalized, max_chars)
-}
-
-fn truncate_chars(input: &str, max_chars: usize) -> String {
-    if input.chars().count() <= max_chars {
-        return input.to_string();
-    }
-    let mut out = String::new();
-    for (index, ch) in input.chars().enumerate() {
-        if index >= max_chars {
-            break;
-        }
-        out.push(ch);
-    }
-    out.push_str("...");
-    out
 }
 
 fn strip_prefix_case_insensitive<'a>(input: &'a str, prefix: &str) -> Option<&'a str> {
