@@ -61,7 +61,10 @@ pub(super) enum Script {
     Hebrew,
 }
 
-fn lang_key(lang: &str) -> String {
+/// The module-wide language key: trimmed, primary subtag before `-`/`_`,
+/// lowercased (`"zh-CN"` → `"zh"`). Every target/source-language predicate
+/// in this module parses through here — the idiom lives in exactly one place.
+pub(super) fn lang_key(lang: &str) -> String {
     let trimmed = lang.trim();
     let end = trimmed.find(['-', '_']).unwrap_or(trimmed.len());
     trimmed[..end].to_ascii_lowercase()

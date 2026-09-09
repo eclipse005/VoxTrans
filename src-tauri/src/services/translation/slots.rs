@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 use jieba_rs::{Jieba, TokenizeMode};
 
 use super::batches::normalize_for_match;
+use super::guard::lang_key;
 
 /// Normalized core form: case-folded, fullwidth-folded, alphanumeric
 /// characters only (whitespace and punctuation ignored). Two slot splits are
@@ -290,9 +291,7 @@ fn nearest_space(chars: &[char], from: usize, lo: usize, hi: usize) -> Option<us
 }
 
 fn is_zh_target(target_lang: &str) -> bool {
-    let trimmed = target_lang.trim();
-    let end = trimmed.find(['-', '_']).unwrap_or(trimmed.len());
-    matches!(trimmed[..end].to_ascii_lowercase().as_str(), "zh" | "yue")
+    matches!(lang_key(target_lang).as_str(), "zh" | "yue")
 }
 
 /// Targets whose typography attaches terminal punctuation to the preceding
@@ -302,12 +301,7 @@ fn is_zh_target(target_lang: &str) -> bool {
 /// targets keep the conservative neighbor guard: their convention parks
 /// punctuation on the word, and the walk-back has no word-edge knowledge.
 fn is_attached_punctuation_target(target_lang: &str) -> bool {
-    let trimmed = target_lang.trim();
-    let end = trimmed.find(['-', '_']).unwrap_or(trimmed.len());
-    matches!(
-        trimmed[..end].to_ascii_lowercase().as_str(),
-        "zh" | "yue" | "ja" | "ko"
-    )
+    matches!(lang_key(target_lang).as_str(), "zh" | "yue" | "ja" | "ko")
 }
 
 /// Char offsets of jieba dictionary word edges in `text` (excluding both text
