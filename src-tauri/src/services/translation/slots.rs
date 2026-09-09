@@ -156,6 +156,7 @@ pub(super) fn repair_slot_boundaries(texts: &mut [String], target_lang: &str) {
     } else {
         None
     };
+    let attached_punct_target = is_attached_punctuation_target(target_lang);
 
     let mut new_bounds = bounds.clone();
     for i in 1..texts.len() {
@@ -194,12 +195,19 @@ pub(super) fn repair_slot_boundaries(texts: &mut [String], target_lang: &str) {
         // ④ Punctuation-only slot (行尾禁则 twin of rule ①): a slot whose
         // entire text is punctuation (e.g. the model parked "。" alone on a
         // slot) pulls the preceding word chunk down into itself. Runs after
-        // ② so the word-edge snap cannot undo it. Skipped when the char
-        // crossing the boundary is ASCII-alphanumeric (spaced scripts keep
-        // trailing punctuation attached by a different convention and their
-        // beautify pass never empties such slots anyway).
+        // ② so the word-edge snap cannot undo it.
+        //
+        // Neighbor guard: for spaced-script targets an ASCII-alphanumeric
+        // char before the boundary suppresses the repair — their convention
+        // parks trailing punctuation on the word, and without word-edge
+        // knowledge the walk-back could split "world" into "worl|d.". CJK
+        // targets (attached-punctuation typography) ignore the neighbor's
+        // script: a zh line may end in an ASCII brand name ("…的 YouTube")
+        // while staying a CJK line, and its trailing "。" must still be
+        // absorbed — the guard keys on the TARGET's convention, never on
+        // what the neighboring char happens to be.
         if (b..next_b).all(|k| !is_word_char(chars[k])) && b > prev_b {
-            if !chars[b - 1].is_ascii_alphanumeric() {
+            if attached_punct_target || !chars[b - 1].is_ascii_alphanumeric() {
                 let mut target = None;
                 if let Some(edges) = &jieba_edges {
                     target = edges
@@ -285,6 +293,21 @@ fn is_zh_target(target_lang: &str) -> bool {
     let trimmed = target_lang.trim();
     let end = trimmed.find(['-', '_']).unwrap_or(trimmed.len());
     matches!(trimmed[..end].to_ascii_lowercase().as_str(), "zh" | "yue")
+}
+
+/// Targets whose typography attaches terminal punctuation to the preceding
+/// word with no space (CJK family: GB/T 15834, JIS kinsoku, Korean
+/// orthography). There a punctuation-only slot is always a display defect,
+/// so rule ④ runs regardless of the neighbor's script. Spaced-script
+/// targets keep the conservative neighbor guard: their convention parks
+/// punctuation on the word, and the walk-back has no word-edge knowledge.
+fn is_attached_punctuation_target(target_lang: &str) -> bool {
+    let trimmed = target_lang.trim();
+    let end = trimmed.find(['-', '_']).unwrap_or(trimmed.len());
+    matches!(
+        trimmed[..end].to_ascii_lowercase().as_str(),
+        "zh" | "yue" | "ja" | "ko"
+    )
 }
 
 /// Char offsets of jieba dictionary word edges in `text` (excluding both text
@@ -407,6 +430,25 @@ mod tests {
         let mut texts = vec!["对".to_string(), "。".to_string()];
         repair_slot_boundaries(&mut texts, "zh-CN");
         assert_eq!(texts, vec!["对", "。"]);
+    }
+
+    #[test]
+    fn punctuation_only_slot_after_ascii_brand_repairs_for_cjk_target() {
+        // A zh line may end in an ASCII brand name; the trailing "。" parked
+        // alone must still be absorbed — the neighbor's script is irrelevant
+        // for attached-punctuation targets (r4dcld #97 class failure).
+        let mut texts = vec!["我一直都在看的 YouTube".to_string(), "。".to_string()];
+        repair_slot_boundaries(&mut texts, "zh-CN");
+        assert_eq!(texts, vec!["我一直都在看的", "YouTube。"]);
+    }
+
+    #[test]
+    fn punctuation_only_slot_after_ascii_word_stays_for_spaced_target() {
+        // Spaced-script target keeps the neighbor guard: the walk-back has no
+        // word-edge knowledge and must not split "world" into "worl|d.".
+        let mut texts = vec!["hello world".to_string(), ".".to_string()];
+        repair_slot_boundaries(&mut texts, "en");
+        assert_eq!(texts, vec!["hello world", "."]);
     }
 
     #[test]

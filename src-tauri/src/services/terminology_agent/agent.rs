@@ -103,7 +103,7 @@ Glossary rules (critical for enforcement):\n\
 - When a concept has multiple surfaces, add a short note on the primary/full form listing the variants you identified; downstream translators use this for context.\n\
 - Prefer names, proper nouns, abbreviations, recurring technical phrases.\n\
 - target: consistent rendering in {target_lang} (or keep source form when conventional); user target wins when you include a user concept.\n\
-- Never append the source phrase in its original script to a target (no parenthetical originals): the source is already the row's key, and leftover source script inside a target is rejected downstream as untranslated leakage. Latin-alphabet renderings of names are fine when conventional in {target_lang}.\n\
+- target is enforced VERBATIM on screen: ONE clean rendering in {target_lang}. Never wrap anything in parentheses — no source-script originals (the source is already the row's key) and no explanatory annotations (a note like （意为…） or (i.e. ...) belongs in note, not in a subtitle). Never use variant separators like \"甲/乙\": pick the single best rendering. Annotations, variants and alternates go in note. Latin-alphabet renderings of names are fine when conventional in {target_lang}.\n\
 - note: optional, short.\n\n\
 Style guide rules:\n\
 - ONE plain string, 2–4 sentences, written to guide a {target_lang} translator.\n\

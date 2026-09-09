@@ -714,7 +714,7 @@ pub fn tool_submit_result(args: &Value, ctx: &mut AgentToolContext<'_>) -> ToolO
             return ToolOutcome::err("Error: style_guide must be a string.");
         }
     }
-    let (mut glossary, dropped) = clean_glossary(glossary_val.as_ref());
+    let (mut glossary, dropped, annotations_moved) = clean_glossary(glossary_val.as_ref());
     let mut style = style_val
         .as_ref()
         .and_then(|v| v.as_str())
@@ -896,9 +896,14 @@ pub fn tool_submit_result(args: &Value, ctx: &mut AgentToolContext<'_>) -> ToolO
             } else {
                 format!(" Promoted {promoted} style_guide mapping(s) into glossary row(s).")
             };
+            let annotation_note = if annotations_moved == 0 {
+                String::new()
+            } else {
+                format!(" {annotations_moved} target annotation(s) moved into notes.")
+            };
             return ToolOutcome::submit_ok(format!(
                 "Briefing submitted WITH SALVAGE: dropped {} row(s) from ⚠ pair(s) still unresolved after repeated attempts: {}. \
-                 Exclusion is the safe call for conflicting targets; add them next time via mapping/exclusion notes. glossary={}, style_guide={} chars.{strip_note}{kept_note}{promote_note} Finalizing.",
+                 Exclusion is the safe call for conflicting targets; add them next time via mapping/exclusion notes. glossary={}, style_guide={} chars.{strip_note}{kept_note}{promote_note}{annotation_note} Finalizing.",
                 dropped.len(),
                 dropped.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(", "),
                 glossary.len(),
@@ -965,8 +970,13 @@ pub fn tool_submit_result(args: &Value, ctx: &mut AgentToolContext<'_>) -> ToolO
     } else {
         String::new()
     };
+    let annotation_msg = if annotations_moved > 0 {
+        format!(" ({annotations_moved} target annotation(s) moved into notes)")
+    } else {
+        String::new()
+    };
     ToolOutcome::submit_ok(format!(
-        "Briefing submitted: glossary={}{drop_msg}{promote_msg}, style_guide={} chars. Finalizing.",
+        "Briefing submitted: glossary={}{drop_msg}{promote_msg}{annotation_msg}, style_guide={} chars. Finalizing.",
         glossary.len(),
         style.chars().count()
     ))
@@ -1227,12 +1237,64 @@ fn extract_style_guide_mappings(style: &str) -> Vec<(String, String)> {
     out
 }
 
-pub fn clean_glossary(raw: Option<&Value>) -> (Vec<GlossaryEntry>, usize) {
+/// Target hygiene (submit gate): the glossary `target` is enforced verbatim
+/// on screen, so it must be a single clean rendering. A trailing
+/// parenthetical — full- or half-width, repeatedly, balanced — is an
+/// annotation by typographic convention, never part of an enforced
+/// rendering; it moves to `note`. Script-neutral and material-independent:
+/// no language tables, no term knowledge. Unbalanced or non-trailing
+/// parentheses are left untouched (conservative).
+fn split_target_annotations(target: &str) -> (String, Vec<String>) {
+    let mut notes: Vec<String> = Vec::new();
+    let mut chars: Vec<char> = target.chars().collect();
+    loop {
+        let Some(&close) = chars.last() else { break };
+        let open = match close {
+            ')' => '(',
+            '）' => '（',
+            _ => break,
+        };
+        let mut depth = 0usize;
+        let mut open_idx = None;
+        for (idx, &c) in chars.iter().enumerate().rev() {
+            if c == close {
+                depth += 1;
+            } else if c == open {
+                depth -= 1;
+                if depth == 0 {
+                    open_idx = Some(idx);
+                    break;
+                }
+            }
+        }
+        let Some(open_idx) = open_idx else { break };
+        let inner: String = chars[open_idx + 1..chars.len() - 1].iter().collect();
+        if !inner.trim().is_empty() {
+            notes.push(inner.trim().to_string());
+        }
+        chars.truncate(open_idx);
+        while chars.last().is_some_and(|c| c.is_whitespace()) {
+            chars.pop();
+        }
+    }
+    // Stripping runs right-to-left; notes read naturally left-to-right.
+    notes.reverse();
+    (
+        chars.into_iter().collect::<String>().trim().to_string(),
+        notes,
+    )
+}
+
+/// Parse and clean the submitted glossary rows. Returns the cleaned rows,
+/// how many rows were dropped (invalid/duplicate), and how many target
+/// annotations were moved into notes.
+pub fn clean_glossary(raw: Option<&Value>) -> (Vec<GlossaryEntry>, usize, usize) {
     let Some(Value::Array(arr)) = raw else {
-        return (Vec::new(), 0);
+        return (Vec::new(), 0, 0);
     };
     let mut cleaned = Vec::new();
     let mut dropped = 0usize;
+    let mut annotations_moved = 0usize;
     let mut seen = std::collections::HashSet::new();
     for item in arr {
         let Some(obj) = item.as_object() else {
@@ -1250,6 +1312,8 @@ pub fn clean_glossary(raw: Option<&Value>) -> (Vec<GlossaryEntry>, usize) {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim();
+        let (tgt, annotations) = split_target_annotations(tgt);
+        annotations_moved += annotations.len();
         if src.is_empty() || tgt.is_empty() {
             dropped += 1;
             continue;
@@ -1259,7 +1323,7 @@ pub fn clean_glossary(raw: Option<&Value>) -> (Vec<GlossaryEntry>, usize) {
             dropped += 1;
             continue;
         }
-        let note = obj
+        let mut note = obj
             .get("note")
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -1267,13 +1331,21 @@ pub fn clean_glossary(raw: Option<&Value>) -> (Vec<GlossaryEntry>, usize) {
             .chars()
             .take(200)
             .collect::<String>();
+        if !annotations.is_empty() {
+            let annex = annotations.join(" / ");
+            if note.is_empty() {
+                note = annex;
+            } else {
+                note = format!("{note} / {annex}");
+            }
+        }
         cleaned.push(GlossaryEntry::new(src, tgt, note));
         if cleaned.len() >= MAX_GLOSSARY_ROWS {
             dropped += arr.len().saturating_sub(cleaned.len() + dropped);
             break;
         }
     }
-    (cleaned, dropped)
+    (cleaned, dropped, annotations_moved)
 }
 
 /// Keep only rows whose source appears in the transcript (agent rows).
@@ -1765,7 +1837,7 @@ mod tests {
 
     #[test]
     fn clean_glossary_accepts_origin_alias_and_dedupes() {
-        let (g, dropped) = clean_glossary(Some(&json!([
+        let (g, dropped, _moved) = clean_glossary(Some(&json!([
             {"origin":"A","target":"甲"},
             {"source":"a","target":"乙"},
             {"source":"","target":"x"}
@@ -1773,6 +1845,45 @@ mod tests {
         assert_eq!(g.len(), 1);
         assert_eq!(g[0].target, "甲");
         assert_eq!(dropped, 2);
+    }
+
+    #[test]
+    fn clean_glossary_moves_trailing_annotations_into_note() {
+        // Target hygiene: the target is enforced verbatim on screen, so a
+        // trailing annotation is meta-information — it moves to note, in
+        // both full- and half-width parens, repeatedly.
+        let (g, _dropped, moved) = clean_glossary(Some(&json!([
+            {"source":"foo bar","target":"第一频道（节目名）"},
+            {"source":"baz qux","target":"会馆 (feat. X) (live)"},
+            {"source":"quux","target":"称号","note":"already noted"}
+        ])));
+        assert_eq!(moved, 3);
+        assert_eq!(g[0].target, "第一频道");
+        assert_eq!(g[0].note, "节目名");
+        assert_eq!(g[1].target, "会馆");
+        assert_eq!(g[1].note, "feat. X / live");
+        assert_eq!(g[2].target, "称号");
+        assert_eq!(g[2].note, "already noted");
+    }
+
+    #[test]
+    fn clean_glossary_drops_row_whose_target_is_only_annotation() {
+        let (g, dropped, _moved) = clean_glossary(Some(&json!([
+            {"source":"foo bar","target":"（注）"}
+        ])));
+        assert!(g.is_empty());
+        assert_eq!(dropped, 1);
+    }
+
+    #[test]
+    fn clean_glossary_keeps_unbalanced_parens_untouched() {
+        // Conservative: an unbalanced trailing paren is not provably an
+        // annotation — the row passes through unchanged.
+        let (g, _dropped, moved) = clean_glossary(Some(&json!([
+            {"source":"foo bar","target":"凸(悲"}
+        ])));
+        assert_eq!(moved, 0);
+        assert_eq!(g[0].target, "凸(悲");
     }
 
     #[test]

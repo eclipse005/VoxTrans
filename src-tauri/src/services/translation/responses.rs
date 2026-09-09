@@ -384,6 +384,82 @@ mod tests {
     }
 
     #[test]
+    fn rejects_bare_punctuation_slot_rendering() {
+        // Front-loaded distribution: the model parks the sentence-final
+        // punctuation alone on a slot whose source has content. The concat
+        // gate passes (content is all there), the bare-slot invariant must
+        // still bounce the unit back.
+        let slots = vec![(101, "甲乙".to_string()), (102, "丙丁".to_string())];
+        let units = [unit_expectation(&slots, "甲乙丙丁。")];
+        let value = serde_json::json!({
+            "units": [
+                { "id": 1, "translation": "甲乙丙丁。",
+                  "slots": [ { "id": 101, "text": "甲乙丙丁" },
+                             { "id": 102, "text": "。" } ] }
+            ]
+        });
+        let err = validate_sentence_slot_response_with_context(value, &ctx(&units, false))
+            .expect_err("bare punctuation slot must fail strict validation");
+        let msg = format!("{err:?}");
+        assert!(msg.contains("bare punctuation"), "msg={msg}");
+        assert!(msg.contains("102"), "msg={msg}");
+    }
+
+    #[test]
+    fn rejects_single_slot_unit_rendered_as_punctuation() {
+        // Single-slot unit: no boundary exists for the deterministic repair
+        // to move, so validation is the only layer that can fix it.
+        let slots = vec![(101, "丙丁".to_string())];
+        let units = [unit_expectation(&slots, "丙丁。")];
+        let value = serde_json::json!({
+            "units": [
+                { "id": 1, "translation": "。",
+                  "slots": [ { "id": 101, "text": "。" } ] }
+            ]
+        });
+        let err = validate_sentence_slot_response_with_context(value, &ctx(&units, false))
+            .expect_err("contentless rendering of a content-bearing unit must fail");
+        let msg = format!("{err:?}");
+        assert!(msg.contains("bare punctuation"), "msg={msg}");
+    }
+
+    #[test]
+    fn lenient_mode_keeps_bare_punctuation_slot() {
+        let slots = vec![(101, "甲乙".to_string()), (102, "丙丁".to_string())];
+        let units = [unit_expectation(&slots, "甲乙丙丁。")];
+        let value = serde_json::json!({
+            "units": [
+                { "id": 1, "translation": "甲乙丙丁。",
+                  "slots": [ { "id": 101, "text": "甲乙丙丁" },
+                             { "id": 102, "text": "。" } ] }
+            ]
+        });
+        let out = validate_sentence_slot_response_with_context(value, &ctx(&units, true))
+            .expect("lenient floor keeps complete slots");
+        match &out[0].fill {
+            UnitFill::Slots(texts) => assert_eq!(texts.len(), 2),
+            other => panic!("expected slots, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn contentless_source_slot_may_render_as_punctuation() {
+        // A source slot with no speakable content (ellipsis row) imposes no
+        // rendering requirement — the invariant is directional.
+        let slots = vec![(101, "……".to_string())];
+        let units = [unit_expectation(&slots, "……")];
+        let value = serde_json::json!({
+            "units": [
+                { "id": 1, "translation": "……",
+                  "slots": [ { "id": 101, "text": "……" } ] }
+            ]
+        });
+        let out = validate_sentence_slot_response_with_context(value, &ctx(&units, false))
+            .expect("contentless source slot imposes no requirement");
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
     fn lenient_mode_accepts_concat_mismatch() {
         let slots = vec![(101, "a".to_string()), (102, "b".to_string())];
         let units = [unit_expectation(&slots, "a b")];
