@@ -146,6 +146,7 @@ async fn run() -> Result<(), String> {
         .iter()
         .map(|seg| TranslationSegmentInput {
             segment: seg.source_text.clone(),
+            sentence_id: seg.semantic_sentence_id,
             start: seg.start_ms as f64 / 1000.0,
             end: seg.end_ms as f64 / 1000.0,
             tokens: seg

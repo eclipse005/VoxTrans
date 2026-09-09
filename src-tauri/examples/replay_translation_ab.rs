@@ -32,7 +32,7 @@
 //! Settings JSON (camelCase), same shape as replay_terminology:
 //!   taskId, sourceLang, targetLang, translateApiKey, translateBaseUrl,
 //!   translateModel, srtPath, mediaPath, title
-//!   optional: userTerms, anysearchApiKey, llmConcurrency, batchSize
+//!   optional: userTerms, llmConcurrency, batchSize
 //!
 //! Cost note: one replay = TWO full translations of the video.
 
@@ -78,8 +78,6 @@ struct ReplaySettings {
     title: String,
     #[serde(default)]
     user_terms: Vec<ReplayUserTerm>,
-    #[serde(default)]
-    anysearch_api_key: String,
     #[serde(default)]
     llm_concurrency: Option<u32>,
     #[serde(default)]
@@ -184,6 +182,8 @@ async fn translate_arm(
         .iter()
         .map(|c| TranslationSegmentInput {
             segment: c.text.clone(),
+            // 0 = no grouping: each replayed cue is its own unit.
+            sentence_id: 0,
             start: c.start_ms as f64 / 1000.0,
             end: c.start_ms as f64 / 1000.0 + 2.0,
             tokens: Vec::new(),
@@ -256,7 +256,7 @@ fn parse_agent_log(task_id: &str, media_path: &str) -> Option<AgentStats> {
     let mut stats = AgentStats::default();
     let mut event = String::new();
     let mut payload = String::new();
-    let mut flush = |event: &str, payload: &str, stats: &mut AgentStats| {
+    let flush = |event: &str, payload: &str, stats: &mut AgentStats| {
         let v: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
         match event {
             "agent.round" => {
@@ -401,7 +401,6 @@ async fn run() -> Result<(), String> {
                 api_key: settings.translate_api_key.clone(),
                 base_url: settings.translate_base_url.clone(),
                 model: settings.translate_model.clone(),
-                anysearch_api_key: settings.anysearch_api_key.clone(),
                 store: None,
             },
             |win, nwin, round, max, tool| {

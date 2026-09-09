@@ -8,6 +8,8 @@
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
@@ -20,11 +22,13 @@ pub(crate) const ANTHROPIC_VERSION: &str = "2023-06-01";
 const TRANSLATION_TEMPERATURE: f64 = 0.2;
 /// Terminology-agent tool turns run slightly hotter.
 const AGENT_TEMPERATURE: f64 = 0.3;
-/// Output budget for models we cannot classify as Claude. Third-party
-/// Anthropic-compatible endpoints may reject large `max_tokens`, so this is
-/// deliberately conservative — kimi-code falls back to 128000 because it only
-/// talks to real Claude models; our users mostly point at compatible vendors.
-const FALLBACK_MAX_TOKENS: u32 = 8_192;
+/// Output budget for models we cannot classify as Claude. kimi-code falls
+/// back to 128000 because it only talks to real Claude models; our users
+/// mostly point at compatible vendors whose caps are unknown. The generous
+/// value is safe because [`post_messages_adaptive`] degrades on rejection:
+/// an endpoint that caps `max_tokens` gets a one-time 400, the halved value
+/// is memoized per (base_url, model), and every later request starts there.
+const FALLBACK_MAX_TOKENS: u32 = 16_384;
 
 // ── Internal message model (moved verbatim from the old OpenAI transport) ──
 
@@ -117,6 +121,23 @@ pub struct AssistantTurn {
     pub tool_calls: Vec<ToolCall>,
     pub reasoning_content: Option<String>,
     pub usage: LlmTokenUsage,
+    /// Raw provider `stop_reason` (`max_tokens` / `end_turn` / `tool_use` /
+    /// `stop_sequence` / vendor-specific), `None` when the endpoint omitted
+    /// it. kimi-code FinishReason: the harness needs to know a turn was cut
+    /// by the output cap — truncated prose without tool calls is a
+    /// recoverable condition, not a silent protocol failure.
+    pub stop_reason: Option<String>,
+}
+
+impl AssistantTurn {
+    /// Did this turn end because the output budget ran out? Normalizes the
+    /// Anthropic (`max_tokens`) and OpenAI-style (`length`) spellings.
+    pub fn is_truncated(&self) -> bool {
+        matches!(
+            self.stop_reason.as_deref().map(str::trim),
+            Some("max_tokens") | Some("length")
+        )
+    }
 }
 
 // ── Endpoints ────────────────────────────────────────────────────────────────
@@ -230,12 +251,76 @@ fn output_ceiling(family: &str, major: u32, minor: Option<u32>) -> Option<u32> {
 }
 
 /// Resolve the mandatory `max_tokens` for a request: the family ceiling for
-/// known Claude models, the conservative fallback otherwise (compatible
-/// endpoints may reject large values).
+/// known Claude models, the generous fallback otherwise (see
+/// [`post_messages_adaptive`] for how rejections degrade).
 pub(super) fn resolve_max_tokens(model: &str) -> u32 {
     parse_claude_version(model)
         .and_then(|(family, major, minor)| output_ceiling(family, major, minor))
         .unwrap_or(FALLBACK_MAX_TOKENS)
+}
+
+// ── max_tokens adaptive degrade (kimi-code degrade strategy) ────────────────
+
+/// Endpoints that already rejected a `max_tokens` value once, remembered per
+/// (normalized base_url, model): later requests start from the lower value
+/// instead of eating the same 400 on every call (project's global-mutex
+/// pattern, same shape as `STRUCTURED_OUTPUT_UNSUPPORTED` in client.rs).
+static MAX_TOKENS_OVERRIDE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+
+fn override_key(base_url: &str, model: &str) -> String {
+    format!("{}\u{1}{model}", normalize_base_url(base_url))
+}
+
+/// The `max_tokens` a request should carry: the recorded degrade value when
+/// this endpoint+model rejected a larger one before, the family ceiling
+/// otherwise.
+pub(super) fn effective_max_tokens(base_url: &str, model: &str) -> u32 {
+    MAX_TOKENS_OVERRIDE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&override_key(base_url, model)).copied())
+        .unwrap_or_else(|| resolve_max_tokens(model))
+}
+
+fn record_max_tokens_override(base_url: &str, model: &str, value: u32) {
+    if let Ok(mut map) = MAX_TOKENS_OVERRIDE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        map.insert(override_key(base_url, model), value);
+    }
+}
+
+/// Does this error mean "your `max_tokens` exceeds this endpoint's cap"?
+/// Only schema-shaped 400/422s qualify; unrelated bad requests keep failing
+/// loudly. Vendor messages vary ("max_tokens is too large", "supports at
+/// most N completion tokens", "maximum output token limit"), so the match
+/// is kept token-flavored and generous — a false positive only costs one
+/// extra attempt at half the budget before the error surfaces again.
+fn is_max_tokens_rejection(err: &LlmError) -> bool {
+    if !matches!(err.status, Some(400) | Some(422)) {
+        return false;
+    }
+    let message = err.message.to_ascii_lowercase();
+    message.contains("max_token")
+        || (message.contains("token")
+            && [
+                "maximum",
+                "too large",
+                "at most",
+                "exceed",
+            ]
+            .iter()
+            .any(|word| message.contains(word)))
+}
+
+/// Next rung on the degrade ladder: half the budget, floored at 1024.
+/// `None` once the floor is reached — the endpoint keeps rejecting even the
+/// smallest sane budget, so the original error must surface.
+fn halve_max_tokens(current: u32) -> Option<u32> {
+    let halved = (current / 2).max(1024);
+    (halved < current).then_some(halved)
 }
 
 /// Claude-family detection for the thinking echo rules below. Unsigned
@@ -488,13 +573,16 @@ struct MessageCallParams<'a> {
     stream: bool,
     tools: Option<Vec<Value>>,
     output_schema: Option<&'a Value>,
+    /// Resolved output budget — callers pass [`effective_max_tokens`] so the
+    /// adaptive degrade can rebuild the body with a lowered value.
+    max_tokens: u32,
 }
 
 fn build_request_body(params: &MessageCallParams<'_>) -> Value {
     let mut body = json!({
         "model": params.model,
         // Mandatory on the Messages API.
-        "max_tokens": resolve_max_tokens(params.model),
+        "max_tokens": params.max_tokens,
         "temperature": params.temperature,
         "stream": params.stream,
         "messages": params.messages,
@@ -589,6 +677,35 @@ async fn post_messages(
     Ok(response)
 }
 
+/// [`post_messages`] with the kimi-code degrade strategy for output caps:
+/// when an endpoint rejects `max_tokens` with a 400/422, the budget halves
+/// and the request rebuilds immediately (no backoff — the refusal is
+/// deterministic, not transient). The lowered value is memoized per
+/// (base_url, model), so the cost is paid once per endpoint+model, ever.
+async fn post_messages_adaptive(
+    http: &reqwest::Client,
+    config: &LlmConfig,
+    build_body: impl Fn(u32) -> Value,
+) -> Result<reqwest::Response, LlmError> {
+    let mut max_tokens = effective_max_tokens(&config.base_url, &config.model);
+    loop {
+        match post_messages(http, config, &build_body(max_tokens)).await {
+            Ok(response) => return Ok(response),
+            Err(err) if is_max_tokens_rejection(&err) => {
+                let Some(lowered) = halve_max_tokens(max_tokens) else {
+                    return Err(err);
+                };
+                eprintln!(
+                    "[warn] endpoint rejected max_tokens={max_tokens} ({err}); retrying with {lowered}"
+                );
+                record_max_tokens_override(&config.base_url, &config.model, lowered);
+                max_tokens = lowered;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
 /// Build an [`LlmError`] from a non-2xx response body, parsing the
 /// `{type:"error", error:{type,message}}` envelope when present and carrying
 /// the status code plus Retry-After override for the retry loop.
@@ -668,16 +785,19 @@ pub(super) async fn call_message(
     output_schema: Option<&Value>,
 ) -> Result<(String, LlmTokenUsage), LlmError> {
     let conv = convert_messages(&[ChatMessage::user(user_prompt)], &config.model);
-    let body = build_request_body(&MessageCallParams {
-        model: &config.model,
-        system: conv.system,
-        messages: conv.messages,
-        temperature: TRANSLATION_TEMPERATURE,
-        stream: false,
-        tools: None,
-        output_schema,
-    });
-    let response = post_messages(http, config, &body).await?;
+    let response = post_messages_adaptive(http, config, |max_tokens| {
+        build_request_body(&MessageCallParams {
+            model: &config.model,
+            system: conv.system.clone(),
+            messages: conv.messages.clone(),
+            temperature: TRANSLATION_TEMPERATURE,
+            stream: false,
+            tools: None,
+            output_schema,
+            max_tokens,
+        })
+    })
+    .await?;
     let payload: Value = response.json().await.map_err(|err| {
         LlmError::new(
             LlmErrorKind::Http,
@@ -730,16 +850,19 @@ pub(super) async fn call_message_stream(
     mut on_delta: Option<&mut (dyn FnMut(&str) + Send)>,
 ) -> Result<(String, LlmTokenUsage), LlmError> {
     let conv = convert_messages(&[ChatMessage::user(user_prompt)], &config.model);
-    let body = build_request_body(&MessageCallParams {
-        model: &config.model,
-        system: conv.system,
-        messages: conv.messages,
-        temperature: TRANSLATION_TEMPERATURE,
-        stream: true,
-        tools: None,
-        output_schema,
-    });
-    let response = post_messages(http, config, &body).await?;
+    let response = post_messages_adaptive(http, config, |max_tokens| {
+        build_request_body(&MessageCallParams {
+            model: &config.model,
+            system: conv.system.clone(),
+            messages: conv.messages.clone(),
+            temperature: TRANSLATION_TEMPERATURE,
+            stream: true,
+            tools: None,
+            output_schema,
+            max_tokens,
+        })
+    })
+    .await?;
 
     let mut byte_stream = response.bytes_stream();
     let mut line_buf = String::new();
@@ -979,16 +1102,19 @@ pub(super) async fn call_message_tools(
     temperature: Option<f64>,
 ) -> Result<AssistantTurn, LlmError> {
     let conv = convert_messages(messages, &config.model);
-    let body = build_request_body(&MessageCallParams {
-        model: &config.model,
-        system: conv.system,
-        messages: conv.messages,
-        temperature: temperature.unwrap_or(AGENT_TEMPERATURE),
-        stream: false,
-        tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
-        output_schema: None,
-    });
-    let response = post_messages(http, config, &body).await?;
+    let response = post_messages_adaptive(http, config, |max_tokens| {
+        build_request_body(&MessageCallParams {
+            model: &config.model,
+            system: conv.system.clone(),
+            messages: conv.messages.clone(),
+            temperature: temperature.unwrap_or(AGENT_TEMPERATURE),
+            stream: false,
+            tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
+            output_schema: None,
+            max_tokens,
+        })
+    })
+    .await?;
     let payload: Value = response.json().await.map_err(|err| {
         LlmError::new(
             LlmErrorKind::Http,
@@ -1064,6 +1190,13 @@ fn parse_assistant_turn(payload: &Value, model: &str) -> Result<AssistantTurn, L
         ));
     }
     let joined_thinking = thinkings.join("\n");
+    // kimi-code FinishInfo: the raw provider finish reason rides along so
+    // the harness can tell a clean end from a `max_tokens` truncation.
+    let stop_reason = payload
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     Ok(AssistantTurn {
         content,
         tool_calls,
@@ -1076,6 +1209,7 @@ fn parse_assistant_turn(payload: &Value, model: &str) -> Result<AssistantTurn, L
             .get("usage")
             .map(usage_from_anthropic)
             .unwrap_or_default(),
+        stop_reason,
     })
 }
 
@@ -1352,6 +1486,7 @@ mod tests {
             stream: false,
             tools,
             output_schema: schema,
+            max_tokens: resolve_max_tokens("claude-sonnet-5"),
         })
     }
 
@@ -1534,6 +1669,104 @@ mod tests {
         let err = parse_assistant_turn(&json!({"content":[]}), "claude-sonnet-5")
             .expect_err("empty content must error");
         assert!(err.message.contains("missing assistant text"), "{}", err.message);
+    }
+
+    #[test]
+    fn assistant_turn_carries_stop_reason() {
+        let truncated = parse_assistant_turn(
+            &json!({"content":[{"type":"text","text":"partial analysis"}],"stop_reason":"max_tokens"}),
+            "claude-sonnet-5",
+        )
+        .unwrap();
+        assert_eq!(truncated.stop_reason.as_deref(), Some("max_tokens"));
+        assert!(truncated.is_truncated());
+
+        // OpenAI-style spelling normalizes too.
+        let length = parse_assistant_turn(
+            &json!({"content":[{"type":"text","text":"x"}],"stop_reason":"length"}),
+            "deepseek-v4",
+        )
+        .unwrap();
+        assert!(length.is_truncated());
+
+        let clean = parse_assistant_turn(
+            &json!({"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}),
+            "claude-sonnet-5",
+        )
+        .unwrap();
+        assert!(!clean.is_truncated());
+
+        // Absent / null stop_reason (compatible endpoints) → None.
+        let absent = parse_assistant_turn(
+            &json!({"content":[{"type":"text","text":"x"}]}),
+            "glm-4.6",
+        )
+        .unwrap();
+        assert_eq!(absent.stop_reason, None);
+        assert!(!absent.is_truncated());
+    }
+
+    // ── max_tokens adaptive degrade ─────────────────────────────────────
+
+    fn rejection(status: u16, msg: &str) -> LlmError {
+        let mut err = LlmError::new(LlmErrorKind::Http, msg.to_string());
+        err.status = Some(status);
+        err
+    }
+
+    #[test]
+    fn max_tokens_rejection_detection() {
+        assert!(is_max_tokens_rejection(&rejection(
+            400,
+            "http status 400: max_tokens is too large: 16384. This model supports at most 8192"
+        )));
+        assert!(is_max_tokens_rejection(&rejection(
+            400,
+            "http status 400: output token limit exceeded"
+        )));
+        assert!(is_max_tokens_rejection(&rejection(
+            422,
+            "http status 422: maximum completion tokens is 4096"
+        )));
+        // Unrelated 400s and non-client statuses never trigger the degrade.
+        assert!(!is_max_tokens_rejection(&rejection(
+            400,
+            "http status 400: invalid model id"
+        )));
+        assert!(!is_max_tokens_rejection(&rejection(
+            429,
+            "http status 429: max_tokens quota exhausted"
+        )));
+        assert!(!is_max_tokens_rejection(&rejection(
+            500,
+            "http status 500: token service exploded"
+        )));
+    }
+
+    #[test]
+    fn max_tokens_halving_ladder_floors_at_1024() {
+        assert_eq!(halve_max_tokens(16_384), Some(8_192));
+        assert_eq!(halve_max_tokens(2_048), Some(1_024));
+        // Floor reached: no further degrade, the error must surface.
+        assert_eq!(halve_max_tokens(1_024), None);
+        assert_eq!(halve_max_tokens(512), None);
+    }
+
+    #[test]
+    fn max_tokens_override_memo_is_per_endpoint_and_model() {
+        let base = format!("http://maxtok-test.local/{}", line!());
+        let model_a = "probe-a";
+        let model_b = "probe-b";
+        assert_eq!(effective_max_tokens(&base, model_a), FALLBACK_MAX_TOKENS);
+        record_max_tokens_override(&base, model_a, 4_096);
+        assert_eq!(effective_max_tokens(&base, model_a), 4_096);
+        // Same base, different model: unaffected.
+        assert_eq!(effective_max_tokens(&base, model_b), FALLBACK_MAX_TOKENS);
+        // Same model, different base: unaffected.
+        assert_eq!(
+            effective_max_tokens("http://maxtok-other.local", model_a),
+            FALLBACK_MAX_TOKENS
+        );
     }
 
     // ── api_error ───────────────────────────────────────────────────────

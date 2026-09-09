@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::services::llm::client::AnthropicLlmClient;
+use crate::services::llm::client::ToolTurnCaller;
 use crate::services::llm::{ChatMessage, ToolCall};
 use crate::services::task_log::{event, TaskLogger};
 use crate::services::task_usage::{record_llm_usage_best_effort, LlmTokenUsage as TaskUsage};
@@ -21,6 +21,17 @@ pub const PROBE_BUDGET_MULTI: u32 = 12;
 const KEEP_RECENT_TURNS: usize = 3;
 const PROJECT_MAX_CHARS: usize = 220_000;
 const TOOL_ERROR_NUDGE_MAX: u32 = 2;
+/// Pure-prose rounds tolerated before giving up (kimi-code remind pattern):
+/// a reply with no tool call is bounced back with a HARNESS nudge up to
+/// this many times; only then the window fails with NoToolCalls. Transient
+/// protocol slips (a chatty analysis, a truncated preamble) recover here
+/// instead of killing the whole glossary.
+const PROSE_NUDGE_MAX: u32 = 2;
+/// Cap on the assistant echo kept in context when a prose-only round is
+/// bounced. The prose itself is never needed again (the model wrote it), and
+/// a `max_tokens`-truncated preamble can be huge — re-shipping it on every
+/// later call buys nothing.
+const PROSE_ECHO_MAX_CHARS: usize = 2_000;
 const CONSECUTIVE_LLM_ERROR_ABORT: u32 = 3;
 const ESTABLISHED_PROMPT_CAP: usize = 60;
 
@@ -82,6 +93,7 @@ Reuse these targets for the same concept — including singular/plural and abbre
 Downstream translators will receive your glossary as an enforced term table and your style guide as styleGuide. Maximize translation consistency and fluency — do NOT translate the full transcript.\n\n\
 TITLE: {title}\n\
 LANG: {source_lang} → {target_lang}\n\n\
+COMMUNICATION CONTRACT (harness-enforced): EVERY reply must contain at least one tool call — use count/search/read/flag_pair/web_search while researching and submit_result when done. A reply that is only prose is a protocol violation: it is bounced back with a nudge and wastes one of your rounds.\n\n\
 USER TERMS (optional candidates; include only if relevant; may be noisy — not a dump):\n\
 {user_terms_block}\n\
 {established_block}\n\
@@ -171,7 +183,10 @@ pub struct WindowRun {
 }
 
 pub struct AgentRunConfig<'a> {
-    pub client: &'a AnthropicLlmClient,
+    /// The tool-calling port (request-level retries live inside the client —
+    /// kimi-code requester contract). A trait object so tests can script
+    /// turn sequences.
+    pub client: &'a dyn ToolTurnCaller,
     pub title: &'a str,
     pub source_lang: &'a str,
     pub target_lang: &'a str,
@@ -215,6 +230,7 @@ pub async fn run_window_agent(
     let mut messages = vec![ChatMessage::system(system), ChatMessage::user(user)];
     let mut consecutive_verify = 0u32;
     let mut tool_error_nudges = 0u32;
+    let mut prose_nudges = 0u32;
     let mut consecutive_llm_errors = 0u32;
     let mut probe_count = 0u32;
 
@@ -237,7 +253,7 @@ pub async fn run_window_agent(
             cb(round, cfg.max_rounds, None);
         }
         let projected = project_context(&messages, KEEP_RECENT_TURNS, PROJECT_MAX_CHARS);
-        let turn = match cfg.client.call_tools(&projected, &tools, Some(0.3)).await {
+        let turn = match cfg.client.call_turn(&projected, &tools, Some(0.3)).await {
             Ok(t) => {
                 consecutive_llm_errors = 0;
                 t
@@ -280,6 +296,8 @@ pub async fn run_window_agent(
         );
 
         let tool_calls = turn.tool_calls.clone();
+        let truncated = turn.is_truncated();
+        let stop_reason = turn.stop_reason.clone();
         log_agent(
             cfg.logger,
             event::AGENT_ROUND,
@@ -287,6 +305,7 @@ pub async fn run_window_agent(
                 "window": window_n,
                 "round": round,
                 "maxRounds": cfg.max_rounds,
+                "stopReason": stop_reason,
                 "usage": {
                     "promptTokens": turn.usage.prompt_tokens,
                     "completionTokens": turn.usage.completion_tokens,
@@ -301,22 +320,62 @@ pub async fn run_window_agent(
                 })).collect::<Vec<_>>(),
             }),
         );
+        let prose_only = tool_calls.is_empty();
+        let echo_content = if prose_only && turn.content.chars().count() > PROSE_ECHO_MAX_CHARS {
+            // A bounced (often max_tokens-truncated) essay: keep a bounded
+            // echo for turn continuity instead of re-shipping the whole blob
+            // on every later call.
+            Some(format!(
+                "{}…[clipped by harness: reply carried no tool call]",
+                turn.content.chars().take(PROSE_ECHO_MAX_CHARS).collect::<String>()
+            ))
+        } else if turn.content.trim().is_empty() {
+            None
+        } else {
+            Some(turn.content.clone())
+        };
         messages.push(ChatMessage::assistant_tools(
-            if turn.content.trim().is_empty() {
-                None
-            } else {
-                Some(turn.content.clone())
-            },
+            echo_content,
             tool_calls.clone(),
             turn.reasoning_content.clone(),
         ));
 
-        if tool_calls.is_empty() {
+        if prose_only {
             // final_glossary/final_style are only ever set on the
             // submit_ok termination path, which breaks out of this loop
             // before reaching here — so no SubmitOk can be pending.
-            end_reason = EndReason::NoToolCalls;
-            break;
+            // kimi-code remind pattern: bounce the prose round back with a
+            // HARNESS nudge instead of dying; only abort once the nudge
+            // budget is spent.
+            prose_nudges += 1;
+            log_agent(
+                cfg.logger,
+                event::AGENT_HARNESS,
+                json!({
+                    "window": window_n,
+                    "round": round,
+                    "kind": "prose_no_tool_call",
+                    "truncated": truncated,
+                    "stopReason": stop_reason,
+                    "nudge": prose_nudges,
+                }),
+            );
+            if prose_nudges > PROSE_NUDGE_MAX {
+                end_reason = EndReason::NoToolCalls;
+                break;
+            }
+            let trunc_note = if truncated {
+                " It was also cut off by the output cap — skip the long analysis and act through tools."
+            } else {
+                ""
+            };
+            messages.push(ChatMessage::user(format!(
+                "[HARNESS] Your last reply contained no tool call.{trunc_note} \
+                 Every reply must end with a tool call. If the glossary and style guide are ready, \
+                 call submit_result ALONE with glossary + style_guide; otherwise keep researching \
+                 with count/search/read/flag_pair/web_search."
+            )));
+            continue;
         }
 
         let called: Vec<String> = tool_calls
@@ -732,7 +791,13 @@ fn one_line(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::llm::{ToolCall, ToolCallFunction};
+    use crate::services::llm::client::ToolTurnCaller;
+    use crate::services::llm::error::{LlmError, LlmErrorKind};
+    use crate::services::llm::port::LlmTokenUsage;
+    use crate::services::llm::{AssistantTurn, ToolCall, ToolCallFunction};
+    use async_trait::async_trait;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
 
     fn tool_call(id: &str, name: &str) -> ToolCall {
         ToolCall {
@@ -841,5 +906,175 @@ mod tests {
         assert_eq!(parse_logged_args(""), serde_json::json!({}));
         let clipped = parse_logged_args(&"not-json-".repeat(80));
         assert!(clipped.as_str().unwrap().ends_with('…'));
+    }
+
+    // ── prose-only rounds: kimi-code remind pattern ─────────────────────
+
+    struct FakeTurns {
+        script: Mutex<VecDeque<Result<AssistantTurn, LlmError>>>,
+        received: Mutex<Vec<Vec<ChatMessage>>>,
+    }
+
+    impl FakeTurns {
+        fn new(script: Vec<Result<AssistantTurn, LlmError>>) -> Self {
+            Self {
+                script: Mutex::new(script.into()),
+                received: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn histories(&self) -> Vec<Vec<ChatMessage>> {
+            self.received.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl ToolTurnCaller for FakeTurns {
+        async fn call_turn(
+            &self,
+            messages: &[ChatMessage],
+            _tools: &[Value],
+            _temperature: Option<f64>,
+        ) -> Result<AssistantTurn, LlmError> {
+            self.received.lock().unwrap().push(messages.to_vec());
+            self.script
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Err(LlmError::new(LlmErrorKind::Http, "script exhausted")))
+        }
+    }
+
+    fn prose_turn(text: &str, stop_reason: Option<&str>) -> Result<AssistantTurn, LlmError> {
+        Ok(AssistantTurn {
+            content: text.to_string(),
+            tool_calls: vec![],
+            reasoning_content: None,
+            usage: LlmTokenUsage::default(),
+            stop_reason: stop_reason.map(str::to_string),
+        })
+    }
+
+    fn tool_turn(name: &str) -> Result<AssistantTurn, LlmError> {
+        Ok(AssistantTurn {
+            content: String::new(),
+            tool_calls: vec![tool_call("c1", name)],
+            reasoning_content: None,
+            usage: LlmTokenUsage::default(),
+            stop_reason: Some("tool_use".into()),
+        })
+    }
+
+    fn test_config<'a>(
+        client: &'a dyn ToolTurnCaller,
+        cues: &'a [TranscriptCue],
+        max_rounds: u32,
+    ) -> AgentRunConfig<'a> {
+        AgentRunConfig {
+            client,
+            title: "test title",
+            source_lang: "en",
+            target_lang: "zh",
+            window_cues: cues,
+            all_cues: cues,
+            user_terms: &[],
+            established_terms: &[],
+            candidates_block: "",
+            confusable_pairs: &[],
+            max_rounds,
+            probe_budget: 3,
+            window_label: None,
+            task_id: "test-task",
+            store: None,
+            web_search: None,
+            logger: None,
+        }
+    }
+
+    fn cues() -> Vec<TranscriptCue> {
+        vec![TranscriptCue {
+            index: 1,
+            start_ms: 0,
+            text: "order block here".into(),
+        }]
+    }
+
+    #[tokio::test]
+    async fn prose_round_is_bounced_with_nudge_not_fatal() {
+        // Two prose rounds, then the round budget ends the window. The key
+        // assertions: the loop did NOT die on the first prose round, and the
+        // follow-up request carries the HARNESS nudge.
+        let fake = FakeTurns::new(vec![prose_turn("let me think about the terms", None); 2]);
+        let cues = cues();
+        let cfg = test_config(&fake, &cues, 2);
+        let result = run_window_agent(&cfg, None).await;
+        assert_eq!(result.rounds_used, 2);
+        let histories = fake.histories();
+        assert_eq!(histories.len(), 2, "first prose round must not abort");
+        let bounced = histories[1]
+            .iter()
+            .filter(|m| m.role == "user")
+            .filter_map(|m| m.content.as_deref())
+            .any(|c| c.contains("[HARNESS] Your last reply contained no tool call."));
+        assert!(bounced, "second request must carry the nudge: {histories:?}");
+        // The assistant echo stays in the conversation for continuity.
+        assert!(histories[1].iter().any(|m| m.role == "assistant"));
+    }
+
+    #[tokio::test]
+    async fn prose_nudge_budget_exhausts_to_no_tool_calls() {
+        // Endless prose: after PROSE_NUDGE_MAX bounces the window must fail
+        // with NoToolCalls instead of burning the whole round budget.
+        let fake = FakeTurns::new(vec![prose_turn("chatting, no tools", Some("end_turn")); 4]);
+        let cues = cues();
+        let cfg = test_config(&fake, &cues, 4);
+        let result = run_window_agent(&cfg, None).await;
+        assert_eq!(result.end_reason, EndReason::NoToolCalls);
+        // 1 initial prose + 2 nudged retries, then the budget kills it —
+        // round 4 of the scripted 4 is never consumed.
+        assert_eq!(result.rounds_used, 3);
+        assert_eq!(fake.histories().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn truncated_prose_echo_is_clipped() {
+        let essay = "analysis ".repeat(400); // 3200 chars, above the echo cap
+        let fake = FakeTurns::new(vec![
+            prose_turn(&essay, Some("max_tokens")),
+            prose_turn("more", None),
+        ]);
+        let cues = cues();
+        let cfg = test_config(&fake, &cues, 2);
+        let _ = run_window_agent(&cfg, None).await;
+        let histories = fake.histories();
+        let echo = histories[1]
+            .iter()
+            .find(|m| m.role == "assistant")
+            .and_then(|m| m.content.as_deref())
+            .expect("assistant echo kept in context");
+        assert!(echo.contains("[clipped by harness"), "{echo}");
+        assert!(
+            echo.chars().count() < PROSE_ECHO_MAX_CHARS + 60,
+            "echo must be bounded, got {} chars",
+            echo.chars().count()
+        );
+    }
+
+    #[tokio::test]
+    async fn model_recovers_via_tool_round_between_prose_rounds() {
+        // Nudge → the model complies with a real tool call → research
+        // proceeds; the prose budget is not consumed by tool rounds.
+        let fake = FakeTurns::new(vec![
+            prose_turn("thinking out loud", None),
+            tool_turn("search_transcript"),
+            prose_turn("still pondering", None),
+        ]);
+        let cues = cues();
+        let cfg = test_config(&fake, &cues, 3);
+        let result = run_window_agent(&cfg, None).await;
+        assert_eq!(result.rounds_used, 3);
+        // Round 3 got a fresh nudge (budget spent: 2) rather than an abort.
+        let histories = fake.histories();
+        assert_eq!(histories.len(), 3);
     }
 }

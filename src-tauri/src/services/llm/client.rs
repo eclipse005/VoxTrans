@@ -211,6 +211,104 @@ pub struct AnthropicLlmClient {
     config: LlmConfig,
     http: reqwest::Client,
     transport: Arc<dyn LlmCallOnce>,
+    /// Wire seam for tool turns; the retry loop lives in the
+    /// [`ToolTurnCaller`] impl below.
+    tool_transport: Arc<dyn ToolTurnOnce>,
+}
+
+/// One tool-calling turn against the wire, no retries — the seam the retry
+/// loop in [`AnthropicLlmClient`]'s [`ToolTurnCaller`] impl and tests
+/// delegate to.
+#[async_trait]
+trait ToolTurnOnce: Send + Sync {
+    async fn call_tools_once(
+        &self,
+        http: &reqwest::Client,
+        config: &LlmConfig,
+        messages: &[ChatMessage],
+        tools: &[Value],
+        temperature: Option<f64>,
+    ) -> Result<AssistantTurn, LlmError>;
+
+    /// Delay (ms) before the next attempt, or `None` to proceed
+    /// immediately — the last attempt, or no backoff wanted.
+    fn backoff_ms(&self, attempt: u32, max_attempts: u32) -> Option<u64> {
+        retry_backoff_ms(attempt, max_attempts)
+    }
+}
+
+struct HttpToolTurn;
+
+#[async_trait]
+impl ToolTurnOnce for HttpToolTurn {
+    async fn call_tools_once(
+        &self,
+        http: &reqwest::Client,
+        config: &LlmConfig,
+        messages: &[ChatMessage],
+        tools: &[Value],
+        temperature: Option<f64>,
+    ) -> Result<AssistantTurn, LlmError> {
+        call_message_tools(http, config, messages, tools, temperature).await
+    }
+}
+
+/// The agent-facing tool-calling port (kimi-code requester contract): the
+/// caller gets ONE logical turn; retryable failures — 408/409/429/5xx,
+/// transport errors, and empty responses — back off and re-request inside
+/// the port instead of consuming an agent round. Non-retryable statuses
+/// (400 bad request, 401/403 auth, 404 model) fail fast. Server-advised
+/// `Retry-After` wins over the default backoff, capped as usual.
+#[async_trait]
+pub trait ToolTurnCaller: Send + Sync {
+    async fn call_turn(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[Value],
+        temperature: Option<f64>,
+    ) -> Result<AssistantTurn, LlmError>;
+}
+
+#[async_trait]
+impl ToolTurnCaller for AnthropicLlmClient {
+    async fn call_turn(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[Value],
+        temperature: Option<f64>,
+    ) -> Result<AssistantTurn, LlmError> {
+        let max_attempts = self.config.max_retries.saturating_add(1).max(1);
+        let mut last_err: Option<LlmError> = None;
+        for attempt in 1..=max_attempts {
+            match self
+                .tool_transport
+                .call_tools_once(&self.http, &self.config, messages, tools, temperature)
+                .await
+            {
+                Ok(turn) => return Ok(turn),
+                Err(err) => {
+                    let feedback = feedback_from_llm_error(&err);
+                    if !feedback.retryable {
+                        return Err(err);
+                    }
+                    eprintln!(
+                        "[terminology-llm] tools turn attempt {attempt}/{max_attempts} failed ({err}); retrying"
+                    );
+                    if let Some(delay) = self
+                        .tool_transport
+                        .backoff_ms(attempt, max_attempts)
+                        .map(|default| effective_backoff_ms(default, err.retry_after_ms))
+                    {
+                        sleep(Duration::from_millis(delay)).await;
+                    }
+                    last_err = Some(err);
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            LlmError::new(LlmErrorKind::Http, "tools turn failed with no recorded error")
+        }))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -244,6 +342,7 @@ impl AnthropicLlmClient {
             config,
             http,
             transport: Arc::new(HttpCallOnce),
+            tool_transport: Arc::new(HttpToolTurn),
         })
     }
 
@@ -266,16 +365,7 @@ impl AnthropicLlmClient {
             .await
     }
 
-    /// Anthropic tool-calling turn for the terminology agent.
-    pub async fn call_tools(
-        &self,
-        messages: &[ChatMessage],
-        tools: &[serde_json::Value],
-        temperature: Option<f64>,
-    ) -> Result<AssistantTurn, LlmError> {
-        call_message_tools(&self.http, &self.config, messages, tools, temperature).await
-    }
-
+    /// JSON-validated call for translation batches (retry loop inside).
     pub async fn call_json_validated<T, F>(
         &self,
         context: &LlmCallContext,
@@ -674,6 +764,7 @@ mod tests {
             config,
             http: reqwest::Client::new(),
             transport,
+            tool_transport: Arc::new(HttpToolTurn),
         }
     }
 
@@ -991,6 +1082,167 @@ mod tests {
         let mut err = LlmError::new(LlmErrorKind::Http, format!("http status {status}: {detail}"));
         err.status = Some(status);
         err
+    }
+
+    // ── tool-turn retry (terminology agent path) ────────────────────────
+
+    use crate::services::llm::{ToolCall, ToolCallFunction};
+
+    /// Fake tool transport: plays back a scripted turn sequence and records
+    /// the message histories it received.
+    struct ScriptedToolTurn {
+        script: Mutex<VecDeque<Result<AssistantTurn, LlmError>>>,
+        calls: Mutex<usize>,
+        backoff: fn(u32, u32) -> Option<u64>,
+    }
+
+    impl ScriptedToolTurn {
+        fn new(script: Vec<Result<AssistantTurn, LlmError>>) -> Self {
+            Self {
+                script: Mutex::new(script.into()),
+                calls: Mutex::new(0),
+                backoff: |_, _| Some(1),
+            }
+        }
+
+        fn with_backoff(mut self, backoff: fn(u32, u32) -> Option<u64>) -> Self {
+            self.backoff = backoff;
+            self
+        }
+
+        fn call_count(&self) -> usize {
+            *self.calls.lock().unwrap()
+        }
+
+        fn turn(text: &str, tool_names: &[&str]) -> AssistantTurn {
+            AssistantTurn {
+                content: text.to_string(),
+                tool_calls: tool_names
+                    .iter()
+                    .map(|name| ToolCall {
+                        id: format!("c-{name}"),
+                        type_: "function".into(),
+                        function: ToolCallFunction {
+                            name: (*name).to_string(),
+                            arguments: "{}".into(),
+                        },
+                    })
+                    .collect(),
+                reasoning_content: None,
+                usage: LlmTokenUsage::default(),
+                stop_reason: None,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ToolTurnOnce for ScriptedToolTurn {
+        async fn call_tools_once(
+            &self,
+            _http: &reqwest::Client,
+            _config: &LlmConfig,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _temperature: Option<f64>,
+        ) -> Result<AssistantTurn, LlmError> {
+            *self.calls.lock().unwrap() += 1;
+            self.script
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Err(LlmError::new(LlmErrorKind::Http, "tool script exhausted")))
+        }
+
+        fn backoff_ms(&self, attempt: u32, max_attempts: u32) -> Option<u64> {
+            (self.backoff)(attempt, max_attempts)
+        }
+    }
+
+    fn tool_client(tool: Arc<ScriptedToolTurn>, max_retries: u32) -> AnthropicLlmClient {
+        let mut config =
+            LlmConfig::new("http://test.local".into(), "test-key".into(), "test-model".into());
+        config.max_retries = max_retries;
+        AnthropicLlmClient {
+            config,
+            http: reqwest::Client::new(),
+            transport: Arc::new(ScriptedTransport::new(vec![])),
+            tool_transport: tool,
+        }
+    }
+
+    #[tokio::test]
+    async fn tools_turn_retries_transient_http_then_succeeds() {
+        let tool = Arc::new(
+            ScriptedToolTurn::new(vec![
+                Err(http_err(503, "overloaded")),
+                Ok(ScriptedToolTurn::turn("ok", &["count_transcript"])),
+            ])
+            .with_backoff(|_, _| Some(1)),
+        );
+        let client = tool_client(tool.clone(), 3);
+        let turn = client
+            .call_turn(&[ChatMessage::user("go")], &[], None)
+            .await
+            .expect("second attempt must succeed");
+        assert_eq!(turn.tool_calls.len(), 1);
+        assert_eq!(tool.call_count(), 2, "exactly one retry after the 503");
+    }
+
+    #[tokio::test]
+    async fn tools_turn_treats_empty_response_as_retryable() {
+        // kimi-code `empty_response` semantics: a turn with neither text nor
+        // tool calls surfaces as a transport-shaped error (no status) and
+        // must retry inside the port instead of killing an agent round.
+        let tool = Arc::new(
+            ScriptedToolTurn::new(vec![
+                Err(LlmError::new(
+                    LlmErrorKind::Http,
+                    "response missing assistant text and tool_use",
+                )),
+                Ok(ScriptedToolTurn::turn("recovered", &["submit_result"])),
+            ])
+            .with_backoff(|_, _| Some(1)),
+        );
+        let client = tool_client(tool.clone(), 3);
+        let turn = client
+            .call_turn(&[ChatMessage::user("go")], &[], None)
+            .await
+            .expect("empty response must be retried, not fatal");
+        assert_eq!(turn.tool_calls[0].function.name, "submit_result");
+        assert_eq!(tool.call_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn tools_turn_fails_fast_on_bad_request() {
+        let tool = Arc::new(
+            ScriptedToolTurn::new(vec![Err(http_err(400, "invalid request"))])
+                .with_backoff(|_, _| Some(3_000)),
+        );
+        let client = tool_client(tool.clone(), 3);
+        let started = Instant::now();
+        let err = client
+            .call_turn(&[ChatMessage::user("go")], &[], None)
+            .await
+            .expect_err("400 must fail fast");
+        assert!(
+            started.elapsed().as_millis() < 1_000,
+            "400 must not burn the backoff budget"
+        );
+        assert!(err.message.contains("400"), "{}", err.message);
+        assert_eq!(tool.call_count(), 1, "no retries after a 400");
+    }
+
+    #[tokio::test]
+    async fn tools_turn_reports_last_error_after_exhausting_retries() {
+        let script = (0..4).map(|_| Err(http_err(503, "still down"))).collect();
+        let tool = Arc::new(ScriptedToolTurn::new(script).with_backoff(|_, _| Some(1)));
+        let client = tool_client(tool.clone(), 3);
+        let err = client
+            .call_turn(&[ChatMessage::user("go")], &[], None)
+            .await
+            .expect_err("all attempts must fail");
+        assert!(err.message.contains("still down"), "{}", err.message);
+        assert_eq!(tool.call_count(), 4, "1 initial + 3 retries");
     }
 
     #[test]

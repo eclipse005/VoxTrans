@@ -41,8 +41,6 @@ struct ReplaySettings {
     title: String,
     #[serde(default)]
     user_terms: Vec<ReplayUserTerm>,
-    #[serde(default)]
-    anysearch_api_key: String,
 }
 
 #[tokio::main]
@@ -132,7 +130,6 @@ async fn run() -> Result<(), String> {
             api_key: settings.translate_api_key.clone(),
             base_url: settings.translate_base_url.clone(),
             model: settings.translate_model.clone(),
-            anysearch_api_key: settings.anysearch_api_key.clone(),
             store: None,
         },
         |win, nwin, round, max, tool| {
