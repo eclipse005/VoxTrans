@@ -291,8 +291,10 @@ impl ToolTurnCaller for AnthropicLlmClient {
                     if !feedback.retryable {
                         return Err(err);
                     }
+                    let last_attempt = attempt == max_attempts;
                     eprintln!(
-                        "[terminology-llm] tools turn attempt {attempt}/{max_attempts} failed ({err}); retrying"
+                        "[terminology-llm] tools turn attempt {attempt}/{max_attempts} failed ({err}){}",
+                        if last_attempt { "; giving up" } else { "; retrying" }
                     );
                     if let Some(delay) = self
                         .tool_transport

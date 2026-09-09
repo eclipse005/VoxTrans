@@ -651,6 +651,24 @@ pub(crate) fn add_auth_headers(
         .header("Authorization", format!("Bearer {api_key}"))
 }
 
+/// reqwest's Display stops at "error sending request for url (...)" and hides
+/// the actual root cause — dns failure, connection refused, TLS, timeout —
+/// deeper in the `source()` chain. That root cause is exactly what tells a
+/// local network blip from a dead endpoint, so append it to the message.
+fn transport_error_message(err: &reqwest::Error) -> String {
+    let mut message = format!("http request failed: {err}");
+    let mut source = std::error::Error::source(err);
+    let mut root = None;
+    while let Some(cause) = source {
+        root = Some(cause.to_string());
+        source = cause.source();
+    }
+    if let Some(cause) = root {
+        message.push_str(&format!(" [{cause}]"));
+    }
+    message
+}
+
 async fn post_messages(
     http: &reqwest::Client,
     config: &LlmConfig,
@@ -662,7 +680,7 @@ async fn post_messages(
         &config.next_api_key(),
     );
     let response = request.json(body).send().await.map_err(|err| {
-        LlmError::new(LlmErrorKind::Http, format!("http request failed: {err}"))
+        LlmError::new(LlmErrorKind::Http, transport_error_message(&err))
     })?;
     let status = response.status();
     if !status.is_success() {
