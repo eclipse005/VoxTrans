@@ -138,6 +138,31 @@ pub(super) fn validate_sentence_slot_response_with_context(
             continue;
         }
 
+        // Strict-mode content invariant: a slot whose source carries speakable
+        // content must render words, not punctuation alone. The concat gate
+        // cannot see this — the content is all present, just parked in another
+        // slot — and the deterministic repair pass can only move a boundary,
+        // never re-fill a slot the model emptied. Slots whose source has no
+        // speakable content (an ellipsis row, a bare "?") are exempt.
+        if !ctx.lenient {
+            let bare_slot_ids: Vec<usize> = expected
+                .slots
+                .iter()
+                .zip(slot_texts.iter())
+                .filter(|((_, source), text)| {
+                    !norm_core(source).is_empty() && norm_core(text).is_empty()
+                })
+                .map(|((slot_id, _), _)| *slot_id)
+                .collect();
+            if !bare_slot_ids.is_empty() {
+                issues.push(format!(
+                    "unit {unit_id}: bare punctuation for slot ids [{}] whose source carries content — every content-bearing slot must render words, not punctuation alone; re-split the translation across the slots",
+                    format_id_list(&bare_slot_ids)
+                ));
+                continue;
+            }
+        }
+
         out.push(ValidatedUnit {
             translation: translation.clone(),
             fill: UnitFill::Slots(slot_texts),
