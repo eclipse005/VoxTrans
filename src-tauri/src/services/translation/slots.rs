@@ -56,23 +56,56 @@ pub(super) fn proportional_split(text: &str, weights: &[usize]) -> Vec<String> {
         // Even split by slot count when nothing is known about the slots.
         return even_split(&chars, weights.len());
     }
-    let total_w: usize = weights.iter().sum();
-    let mut cuts = Vec::with_capacity(weights.len() + 1);
-    cuts.push(0usize);
-    let mut acc_w = 0usize;
-    for i in 0..weights.len() - 1 {
-        acc_w += weights[i];
-        let ideal = ((acc_w as f64) * (n as f64) / (total_w as f64)).round() as usize;
-        // This slot keeps ≥1 char; every remaining slot keeps ≥1 char.
-        let min_cut = cuts[i] + 1;
-        let max_cut = n.saturating_sub(weights.len() - 1 - i);
-        let cut = ideal.clamp(min_cut, max_cut.max(min_cut));
-        cuts.push(cut);
+    // Largest-remainder apportionment: each slot's exact share of the text is
+    // `n * w_i / Σw`; integer characters go to the floor, and the ones left
+    // over go to the largest fractional parts (ties to the earlier slot).
+    // Cumulative rounding used to decide this instead, which let the rounding
+    // order — not the weights — pick the split: [1,1,1,1] over six characters
+    // came out as 2/1/2/1 rather than the even 2/2/1/1.
+    let total_w: f64 = weights.iter().map(|w| *w as f64).sum();
+    let mut counts: Vec<usize> = Vec::with_capacity(weights.len());
+    let mut remainders: Vec<(f64, usize)> = Vec::with_capacity(weights.len());
+    for (index, weight) in weights.iter().enumerate() {
+        let exact = n as f64 * (*weight as f64) / total_w;
+        let floored = exact.floor() as usize;
+        counts.push(floored);
+        remainders.push((exact - floored as f64, index));
     }
-    cuts.push(n);
-    (0..weights.len())
-        .map(|i| chars[cuts[i]..cuts[i + 1]].iter().collect())
-        .collect()
+    let mut leftover = n - counts.iter().sum::<usize>();
+    remainders.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.1.cmp(&b.1))
+    });
+    for (_, index) in remainders {
+        if leftover == 0 {
+            break;
+        }
+        counts[index] += 1;
+        leftover -= 1;
+    }
+    // Every slot keeps at least one character: a zero-weight or badly rounded
+    // slot borrows from the longest one (ties take from the earlier slot).
+    while let Some(empty) = counts.iter().position(|count| *count == 0) {
+        let donor = counts
+            .iter()
+            .enumerate()
+            .filter(|(index, count)| *index != empty && **count > 1)
+            .max_by_key(|(index, count)| (**count, std::cmp::Reverse(*index)))
+            .map(|(index, _)| index);
+        let Some(donor) = donor else {
+            break;
+        };
+        counts[donor] -= 1;
+        counts[empty] += 1;
+    }
+    let mut out = Vec::with_capacity(counts.len());
+    let mut cursor = 0usize;
+    for count in counts {
+        out.push(chars[cursor..cursor + count].iter().collect());
+        cursor += count;
+    }
+    out
 }
 
 fn even_split(chars: &[char], parts: usize) -> Vec<String> {
@@ -352,9 +385,14 @@ mod tests {
 
     #[test]
     fn norm_core_ignores_whitespace_and_punctuation() {
-        assert_eq!(norm_core("因此有了这期视频。"), norm_core("因此有 这期视频"));
+        // Same words, different spacing/punctuation → identical core.
+        assert_eq!(norm_core("因此有了这期视频。"), norm_core("因此有了 这期视频"));
         assert_eq!(norm_core("Hello, world!"), norm_core("hello world"));
         assert_eq!(norm_core("Ｌａｓｔ Ｃａｌｌ。"), norm_core("last call"));
+        // …but the words themselves still count: dropping one character must
+        // change the core, or every "content preserved" check built on this
+        // helper would be vacuous.
+        assert_ne!(norm_core("因此有了这期视频"), norm_core("因此有这期视频"));
     }
 
     #[test]
