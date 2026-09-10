@@ -172,7 +172,43 @@ fn align_cuts_to_words(
         }
         kept.push((index, reason));
     }
-    kept
+
+    // Content: a cue whose words are all punctuation or bound particles has
+    // nothing to read. Which way it merges is not ours to guess — the engine's
+    // binding predicates know whether the fragment opens the next word
+    // (ASR splits はい as は + いじゃあ: merge forward) or closes the previous
+    // clause (ます: merge backward). Deciding this on token text alone is what
+    // tore はい apart.
+    use self::boundary_rules::{is_japanese_lexical_bind, is_line_start_bound_particle, strip_token};
+    let contentless = |start: usize, end: usize| {
+        start <= end
+            && words[start..=end].iter().all(|word| {
+                let core = strip_token(&word.word);
+                core.is_empty() || is_line_start_bound_particle(&word.word)
+            })
+    };
+    let mut resolved: Vec<(usize, types::SplitReason)> = Vec::with_capacity(kept.len());
+    for (index, reason) in kept {
+        let cue_start = resolved
+            .last()
+            .map(|(previous, _)| previous + 1)
+            .unwrap_or(0);
+        if resolved.is_empty() || !contentless(cue_start, index) {
+            resolved.push((index, reason));
+            continue;
+        }
+        let opens_next_word = index + 1 < words.len()
+            && is_japanese_lexical_bind(&words[index].word, &words[index + 1].word);
+        if opens_next_word {
+            // Merge forward: drop this boundary so the fragment joins the word
+            // it starts.
+            continue;
+        }
+        // Merge backward: drop the previous boundary, keep this one.
+        resolved.pop();
+        resolved.push((index, reason));
+    }
+    resolved
 }
 
 fn split_reason_priority(reason: types::SplitReason) -> u8 {
