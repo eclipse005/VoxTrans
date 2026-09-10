@@ -55,8 +55,10 @@ pub(super) fn aggregate_span_words(
         let same_word_as_next =
             !is_last && matches!(advisor.is_word_boundary(byte_offsets[k + 1]), Some(false));
         if is_last || !same_word_as_next {
-            let text: String =
-                tokens[word_start..=k].iter().map(|w| w.word.as_str()).collect();
+            let text: String = tokens[word_start..=k]
+                .iter()
+                .map(|w| w.word.as_str())
+                .collect();
             words.push(WordTokenDto {
                 start: tokens[word_start].start,
                 end: tokens[k].end,
@@ -66,7 +68,10 @@ pub(super) fn aggregate_span_words(
             word_start = k + 1;
         }
     }
-    SpanWords { words, token_ranges }
+    SpanWords {
+        words,
+        token_ranges,
+    }
 }
 
 /// Split a span's words at speech pauses ≥ [`PAUSE_SPLIT_SEC`]. Returns
@@ -94,7 +99,38 @@ pub(super) fn hard_pause_chunks(
         }
     }
     chunks.push((start, n - 1));
-    chunks
+
+    // A pause cut must never manufacture a cue with nothing to read. The
+    // semantic layer already merges pure function tails back into their
+    // predecessor, but this is the layer that actually creates cue
+    // boundaries — a ≥2 s pause right before a stranded particle used to
+    // re-split exactly what that guard had just merged (real case: 今回 |
+    // の | シンデレラ across three 6 s pauses). Enforce the same invariant
+    // here, where the cut is made.
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(chunks.len());
+    for (chunk_start, chunk_end) in chunks {
+        match merged.last().copied() {
+            Some((prev_start, prev_end))
+                if chunk_start == prev_end + 1
+                    && is_contentless_chunk(span, chunk_start, chunk_end) =>
+            {
+                merged.pop();
+                merged.push((prev_start, chunk_end));
+            }
+            _ => merged.push((chunk_start, chunk_end)),
+        }
+    }
+    merged
+}
+
+/// Every word strips to punctuation or a bound particle — the chunk would
+/// render as a bare particle row with no content to translate.
+fn is_contentless_chunk(span: &SpanWords, start: usize, end: usize) -> bool {
+    use super::boundary_rules::{is_line_start_bound_particle, strip_token};
+    (start..=end).all(|k| {
+        let core = strip_token(&span.words[k].word);
+        core.is_empty() || is_line_start_bound_particle(&span.words[k].word)
+    })
 }
 
 #[cfg(test)]
@@ -102,7 +138,11 @@ mod tests {
     use super::*;
 
     fn tok(text: &str, start: f64, end: f64) -> WordTokenDto {
-        WordTokenDto { start, end, word: text.to_string() }
+        WordTokenDto {
+            start,
+            end,
+            word: text.to_string(),
+        }
     }
 
     fn span_of(tokens: &[WordTokenDto]) -> SpanWords {
@@ -178,10 +218,10 @@ mod tests {
         let span = SpanWords {
             words: vec![
                 tok("a", 0.0, 1.0),
-                tok("b", 1.5, 2.0),  // gap 0.5s
-                tok("c", 4.5, 5.0),  // gap 2.5s → split
-                tok("d", 5.1, 6.0),  // gap 0.1s
-                tok("e", 7.5, 8.0),  // gap 1.5s → no split
+                tok("b", 1.5, 2.0), // gap 0.5s
+                tok("c", 4.5, 5.0), // gap 2.5s → split
+                tok("d", 5.1, 6.0), // gap 0.1s
+                tok("e", 7.5, 8.0), // gap 1.5s → no split
             ],
             token_ranges: vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)],
         };
