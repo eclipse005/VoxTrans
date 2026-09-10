@@ -135,10 +135,12 @@ mod tests {
     #[test]
     fn jieba_aggregation_keeps_partition() {
         use super::super::language::profile_for_lang;
+        // 0.2s tokens: the fixture has to match the cadence the timing
+        // assertions below assume (last token of "因为" ends at 0.4).
         let tokens: Vec<WordTokenDto> = ["因", "为", "想", "去", "，", "就", "去"]
             .iter()
             .enumerate()
-            .map(|(k, s)| tok(s, k as f64, k as f64 + 0.2))
+            .map(|(k, s)| tok(s, k as f64 * 0.2, k as f64 * 0.2 + 0.2))
             .collect();
         let profile = profile_for_lang("zh");
         let span_text: String = tokens.iter().map(|w| w.word.as_str()).collect();
@@ -185,7 +187,17 @@ mod tests {
         };
         let vad = SpeechSegmentIndex::new(Vec::new());
         let chunks = hard_pause_chunks(&span, &vad);
-        assert_eq!(chunks, vec![(0, 1), (2, 3), (4, 4)]);
+        // Only the 2.5s gap splits; c/d/e stay one chunk because their gaps
+        // (0.1s and 1.5s) are under the threshold. The result must also be a
+        // partition of every word.
+        assert_eq!(chunks, vec![(0, 1), (2, 4)]);
+        let mut cursor = 0usize;
+        for (start, end) in &chunks {
+            assert_eq!(*start, cursor);
+            assert!(*end >= *start);
+            cursor = *end + 1;
+        }
+        assert_eq!(cursor, span.words.len());
     }
 
     /// VAD silence ≥ threshold splits even when the raw token gap is tiny

@@ -1330,13 +1330,13 @@ fn short_sentence_with_vad_pause_stays_intact() {
             word: "pause".to_string(),
         },
         WordTokenDto {
-            start: 2.8,
-            end: 3.0,
+            start: 1.6,
+            end: 1.8,
             word: "after".to_string(),
         },
         WordTokenDto {
-            start: 3.1,
-            end: 3.3,
+            start: 1.9,
+            end: 2.1,
             word: "pause".to_string(),
         },
     ];
@@ -1346,8 +1346,12 @@ fn short_sentence_with_vad_pause_stays_intact() {
             words,
             "en",
             "short",
-            // VAD detects a silence gap [0.5, 2.8] between "pause" and "after".
-            vec![(0.0, 0.5), (2.8, 3.3)],
+            // VAD detects a silence gap [0.5, 1.6] (1.1s) between "pause" and
+            // "after" — under the hard-pause threshold, so the short-sentence
+            // budget still wins and the sentence stays intact. (A pause at or
+            // above PAUSE_SPLIT_SEC splits regardless of the budget; that rule
+            // is covered in word_units::hard_pause_splits_only_over_threshold.)
+            vec![(0.0, 0.5), (1.6, 2.1)],
         ),
         None,
     ))
