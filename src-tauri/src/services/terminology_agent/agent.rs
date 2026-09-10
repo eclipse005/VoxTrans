@@ -93,7 +93,7 @@ Reuse these targets for the same concept — including singular/plural and abbre
 Downstream translators will receive your glossary as an enforced term table and your style guide as styleGuide. Maximize translation consistency and fluency — do NOT translate the full transcript.\n\n\
 TITLE: {title}\n\
 LANG: {source_lang} → {target_lang}\n\n\
-COMMUNICATION CONTRACT (harness-enforced): EVERY reply must contain at least one tool call — use count/search/read/flag_pair/web_search while researching and submit_result when done. A reply that is only prose is a protocol violation: it is bounced back with a nudge and wastes one of your rounds.\n\n\
+COMMUNICATION CONTRACT (harness-enforced): EVERY reply must contain at least one tool call — use {tools} while researching and submit_result when done. A reply that is only prose is a protocol violation: it is bounced back with a nudge and wastes one of your rounds.\n\n\
 USER TERMS (optional candidates; include only if relevant; may be noisy — not a dump):\n\
 {user_terms_block}\n\
 {established_block}\n\
