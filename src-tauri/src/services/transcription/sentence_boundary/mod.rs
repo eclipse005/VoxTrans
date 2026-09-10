@@ -81,6 +81,12 @@ pub async fn build_source_sentences_from_words_with_progress(
             &vad_index,
         ),
     );
+    // Word atomicity, enforced once over the merged cut list: every boundary
+    // falls *between* words. The layout's DP already cuts between words, but
+    // punctuation and pause boundaries are token-index based and may land
+    // inside one — which is how 「はい」 (tokenised は + いじゃあ) can be torn
+    // apart. Word units come from the same aggregation the layout uses.
+    let split_points = align_cuts_to_words(&normalized_words, &*profile, &semantic_spans, split_points);
     let spans = split_points_to_spans(normalized_words.len(), &split_points);
     if spans.is_empty() {
         return Err("failed to build sentence spans".to_string());
@@ -112,6 +118,61 @@ fn merge_split_points(
     base.sort_by_key(|(index, reason)| (*index, split_reason_priority(*reason)));
     base.dedup_by_key(|(index, _)| *index);
     base
+}
+
+/// Word atomicity over the merged cut list.
+///
+/// A cut may only fall after a token that ends a word, where "word" is the
+/// same advisor-aligned aggregation the layout lays out. A cut that would fall
+/// inside one is dropped, which merges the fragments back into that word —
+/// rather than pulling a particle across, which is what a content-only rule
+/// does and why it must not run without this one.
+fn align_cuts_to_words(
+    words: &[crate::services::transcribe::WordTokenDto],
+    profile: &dyn language::LanguageProfile,
+    semantic_spans: &[(usize, usize)],
+    points: Vec<(usize, types::SplitReason)>,
+) -> Vec<(usize, types::SplitReason)> {
+    use word_units::aggregate_span_words;
+
+    let mut word_final = vec![false; words.len()];
+    for &(span_start, span_end) in semantic_spans {
+        if span_start >= words.len() || span_end >= words.len() || span_start >= span_end {
+            continue;
+        }
+        let span_text: String = words[span_start..=span_end]
+            .iter()
+            .map(|word| word.word.as_str())
+            .collect();
+        let advisor = profile.word_boundary_advisor(&span_text);
+        let span_len = span_end - span_start + 1;
+        let mut byte_offsets = vec![0usize; span_len + 1];
+        let mut acc = 0usize;
+        for k in 0..span_len {
+            acc += words[span_start + k].word.len();
+            byte_offsets[k + 1] = acc;
+        }
+        let span = aggregate_span_words(&words[span_start..=span_end], &advisor, &byte_offsets);
+        for &(_, token_end) in &span.token_ranges {
+            // `token_end` is exclusive and relative to the span.
+            let absolute = span_start + token_end - 1;
+            if absolute < word_final.len() {
+                word_final[absolute] = true;
+            }
+        }
+    }
+
+    let mut kept: Vec<(usize, types::SplitReason)> = Vec::with_capacity(points.len());
+    for (index, reason) in points {
+        let inside_word = index >= word_final.len() || !word_final[index];
+        // The leading boundary has nothing before it to merge with; leaving it
+        // alone keeps the first cue intact.
+        if inside_word && !kept.is_empty() {
+            continue;
+        }
+        kept.push((index, reason));
+    }
+    kept
 }
 
 fn split_reason_priority(reason: types::SplitReason) -> u8 {
