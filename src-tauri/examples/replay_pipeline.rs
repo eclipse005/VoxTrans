@@ -188,7 +188,7 @@ async fn run() -> Result<(), String> {
             translate_base_url: settings.translate_base_url.clone(),
             translate_model: settings.translate_model.clone(),
             llm_concurrency: settings.llm_concurrency,
-            batch_size: 20,
+            batch_size: voxtrans::services::translation::DEFAULT_BATCH_SIZE,
             unit_store: Some(unit_store),
         },
         Some(on_progress),

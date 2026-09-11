@@ -132,5 +132,5 @@ pub fn default_llm_concurrency() -> u32 {
 }
 
 pub fn default_batch_size() -> usize {
-    20
+    crate::services::translation::DEFAULT_BATCH_SIZE
 }

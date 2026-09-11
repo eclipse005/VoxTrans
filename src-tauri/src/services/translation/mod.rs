@@ -92,10 +92,15 @@ pub use types::{
 };
 pub(crate) use types::BuildTranslationLayerResponse;
 
-/// Units per batch: whole semantic sentences (two-stage pipeline). The pilot
-/// (ep6, 392 sentences) showed 8 keeps prompts compact while the chained
-/// context carries cross-sentence continuity.
-const DEFAULT_BATCH_SIZE: usize = 8;
+/// Units per batch: whole semantic sentences (two-stage pipeline).
+///
+/// The pilot (ep6, 392 sentences) showed 8 keeps prompts compact while the
+/// chained context carries cross-sentence continuity. This is the single
+/// definition of "how many units per call": the command DTO default, the
+/// workspace pipeline step and the replay examples all reference it, so no
+/// caller hard-codes its own number again. A request that passes 0 also
+/// resolves to this value.
+pub const DEFAULT_BATCH_SIZE: usize = 8;
 const MAX_BATCH_SIZE: usize = 40;
 const PREV_CONTEXT_LINES: usize = 3;
 const NEXT_CONTEXT_LINES: usize = 2;

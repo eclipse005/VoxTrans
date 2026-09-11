@@ -112,7 +112,10 @@ impl PipelineStep for Step4TranslationPipelineStep {
                 translate_base_url: self.translate_base_url.clone(),
                 translate_model: self.translate_model.clone(),
                 llm_concurrency: self.llm_concurrency,
-                batch_size: 20,
+                // One source of truth for units-per-call (see the service
+                // constant); passing 0 would also mean "use the default", but
+                // naming it here keeps the value visible at the call site.
+                batch_size: crate::services::translation::DEFAULT_BATCH_SIZE,
             },
             Some(on_progress),
             Some(unit_store),
