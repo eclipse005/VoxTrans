@@ -1,3 +1,18 @@
+//! Two-stage translation: whole-sentence translation + display-slot backfill.
+//!
+//! The model translates complete sentences (units); a deterministic layer
+//! redistributes that translation onto the display cues (slots) under a
+//! content-preserving accept gate. A bad answer is retried, split (8→4→2→1)
+//! or salvaged at the ladder floor — never shown.
+//!
+//! **Contract:** see `README.md` in this directory for the unit/slot
+//! definitions, the accept-gate table, the four repair rules, the ladder and
+//! the invariants this module must keep. Read it before changing anything
+//! here; change it first if the contract changes.
+//!
+//! End-to-end sample from a real 49-minute task lives in
+//! `testdata/ep6_slot_units.json` and is exercised by `tests.rs`.
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
