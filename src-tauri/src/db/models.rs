@@ -113,6 +113,9 @@ pub struct SubtitleSegmentRow {
     pub end_ms: u64,
     pub source_text: String,
     pub translated_text: String,
+    /// Semantic-sentence grouping (0 = none). Stored as SQLite INTEGER; the
+    /// domain type is `usize` (see `WorkspaceSubtitleSegment`).
+    pub semantic_sentence_id: i64,
     pub updated_at: i64,
 }
 

@@ -64,19 +64,27 @@ pub async fn init_pool(app: &tauri::AppHandle) -> Result<SqlitePool, String> {
         .await
         .map_err(|e| format!("failed to apply schema: {e}"))?;
 
-    // Hand-written idempotent ALTERs for columns added after the initial
-    // schema. SQLite doesn't support `ADD COLUMN IF NOT EXISTS`, so we use
-    // `PRAGMA table_info(<table>)` to skip columns that already exist.
+    apply_migration_alters(&pool).await?;
+
+    Ok(pool)
+}
+
+/// Hand-written idempotent ALTERs for columns added after the initial schema.
+///
+/// SQLite doesn't support `ADD COLUMN IF NOT EXISTS`, so each entry is skipped
+/// when `PRAGMA table_info(<table>)` already lists its column. Split out of
+/// `init_pool` so an existing database can be migrated without a Tauri handle
+/// (and so the legacy-schema path has a regression test).
+pub(crate) async fn apply_migration_alters(pool: &SqlitePool) -> Result<(), String> {
     for mig in MIGRATION_ALTERS {
-        if has_table_column(&pool, mig.table, mig.column).await? {
+        if has_table_column(pool, mig.table, mig.column).await? {
             continue;
         }
-        if let Err(e) = sqlx::query(mig.sql).execute(&pool).await {
+        if let Err(e) = sqlx::query(mig.sql).execute(pool).await {
             return Err(format!("failed to apply migration `{}`: {e}", mig.sql));
         }
     }
-
-    Ok(pool)
+    Ok(())
 }
 
 struct MigrationAlter {
@@ -150,6 +158,11 @@ const MIGRATION_ALTERS: &[MigrationAlter] = &[
         column: "enable_terminology_agent",
         sql: "ALTER TABLE tasks ADD COLUMN enable_terminology_agent INTEGER NOT NULL DEFAULT 0",
     },
+    MigrationAlter {
+        table: "subtitle_segments",
+        column: "semantic_sentence_id",
+        sql: "ALTER TABLE subtitle_segments ADD COLUMN semantic_sentence_id INTEGER NOT NULL DEFAULT 0",
+    },
 ];
 
 /// Check whether `table` already has a column named `column_name`.
@@ -162,6 +175,7 @@ async fn has_table_column(
     let pragma = match table {
         "settings" => "PRAGMA table_info(settings)",
         "tasks" => "PRAGMA table_info(tasks)",
+        "subtitle_segments" => "PRAGMA table_info(subtitle_segments)",
         other => {
             return Err(format!("migration targets unsupported table: {other}"));
         }
@@ -187,4 +201,58 @@ fn connect_options(path: PathBuf) -> Result<SqliteConnectOptions, String> {
         .synchronous(SqliteSynchronous::Normal);
 
     Ok(options)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Upgrade path for databases created before `semantic_sentence_id`
+    /// existed: the column must be added in place (defaulting to 0), and a
+    /// re-run must be a no-op. Hydration rebuilds each task's JSON source of
+    /// truth from these rows, so a missing column silently un-groups cues and
+    /// degrades the two-stage translation back to per-cue units.
+    #[tokio::test]
+    async fn migration_adds_semantic_sentence_id_to_a_legacy_database() {
+        let pool = crate::db::store::test_pool().await;
+        // Pre-migration shape: the three tables, none of the ALTER columns.
+        for ddl in [
+            "CREATE TABLE settings (id INTEGER PRIMARY KEY)",
+            "CREATE TABLE tasks (id TEXT PRIMARY KEY)",
+            "CREATE TABLE subtitle_segments (\
+             id TEXT PRIMARY KEY, task_id TEXT NOT NULL, idx INTEGER NOT NULL, \
+             start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, \
+             source_text TEXT NOT NULL DEFAULT '', translated_text TEXT NOT NULL DEFAULT '', \
+             updated_at INTEGER NOT NULL)",
+        ] {
+            sqlx::query(ddl)
+                .execute(&pool)
+                .await
+                .expect("create legacy table");
+        }
+        sqlx::query(
+            "INSERT INTO subtitle_segments \
+             (id, task_id, idx, start_ms, end_ms, source_text, translated_text, updated_at) \
+             VALUES ('s1', 't1', 0, 0, 1000, 'hi', '你好', 0)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert legacy row");
+
+        apply_migration_alters(&pool)
+            .await
+            .expect("migrate a legacy database");
+        // Idempotent: a second run must skip every column, not fail on it.
+        apply_migration_alters(&pool)
+            .await
+            .expect("re-running the migration is a no-op");
+
+        let sid: i64 = sqlx::query_scalar(
+            "SELECT semantic_sentence_id FROM subtitle_segments WHERE id = 's1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("column exists after migration");
+        assert_eq!(sid, 0, "legacy rows keep per-cue semantics");
+    }
 }

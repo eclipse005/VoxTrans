@@ -264,7 +264,8 @@ impl TaskStore {
             let (seg_row, word_rows) = row_from_segment(task_id, idx as i32, seg);
             sqlx::query(
                 "INSERT INTO subtitle_segments (id, task_id, idx, start_ms, end_ms, \
-                 source_text, translated_text, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                 source_text, translated_text, semantic_sentence_id, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&seg_row.id)
             .bind(&seg_row.task_id)
@@ -273,6 +274,7 @@ impl TaskStore {
             .bind(seg_row.end_ms as i64)
             .bind(&seg_row.source_text)
             .bind(&seg_row.translated_text)
+            .bind(seg_row.semantic_sentence_id)
             .bind(seg_row.updated_at)
             .execute(&mut *tx)
             .await
@@ -307,7 +309,8 @@ impl TaskStore {
         use std::collections::HashMap;
 
         let seg_rows: Vec<SubtitleSegmentRow> = sqlx::query_as(
-            "SELECT id, task_id, idx, start_ms, end_ms, source_text, translated_text, updated_at \
+            "SELECT id, task_id, idx, start_ms, end_ms, source_text, translated_text, \
+             semantic_sentence_id, updated_at \
              FROM subtitle_segments WHERE task_id = ? ORDER BY idx",
         )
         .bind(task_id)
@@ -347,11 +350,10 @@ impl TaskStore {
                 source_text: s.source_text,
                 translated_text: s.translated_text,
                 source_words: words_by_seg.remove(&s.id).unwrap_or_default(),
-                // The segments table has no semantic-sentence column; the
-                // JSON SoT (task.subtitleSegmentsJson) is the sid-carrying
-                // channel. This row path is only a fallback for tasks whose
-                // JSON SoT is missing — 0 (per-cue units) is correct there.
-                semantic_sentence_id: 0,
+                // Durable grouping: the column is the source of truth and the
+                // JSON SoT is rebuilt from these rows on hydration. Legacy
+                // rows migrated in with 0 keep their old per-cue semantics.
+                semantic_sentence_id: s.semantic_sentence_id.max(0) as usize,
             })
             .collect();
         Ok(out)
@@ -991,6 +993,9 @@ mod tests {
     }
 
     fn sample_segments() -> Vec<WorkspaceSubtitleSegment> {
+        // Both cues are display slots of ONE sentence (sid 7) — the grouping
+        // the two-stage translation depends on. The round-trip test asserts it
+        // survives the row path, not just the JSON SoT.
         vec![
             WorkspaceSubtitleSegment {
                 start_ms: 0,
@@ -1002,7 +1007,7 @@ mod tests {
                     end_ms: 500,
                     word: "hello".into(),
                 }],
-                semantic_sentence_id: 0,
+                semantic_sentence_id: 7,
             },
             WorkspaceSubtitleSegment {
                 start_ms: 1000,
@@ -1010,7 +1015,7 @@ mod tests {
                 source_text: "world".into(),
                 translated_text: "世界".into(),
                 source_words: vec![],
-                semantic_sentence_id: 0,
+                semantic_sentence_id: 7,
             },
         ]
     }
@@ -1032,10 +1037,14 @@ mod tests {
         assert_eq!(loaded[0].source_words[0].word, "hello");
         assert_eq!(loaded[0].source_words[0].start_ms, 0);
         assert_eq!(loaded[0].source_words[0].end_ms, 500);
+        // Sentence grouping is durable: hydration rebuilds the JSON SoT from
+        // these rows, so losing the column would silently un-group the cues.
+        assert_eq!(loaded[0].semantic_sentence_id, 7);
         // Segment 1 has no words.
         assert_eq!(loaded[1].source_text, "world");
         assert_eq!(loaded[1].translated_text, "世界");
         assert!(loaded[1].source_words.is_empty());
+        assert_eq!(loaded[1].semantic_sentence_id, 7);
 
         // Replace with a shorter list — verifies CASCADE: old segment 1 and
         // segment 0's words are deleted, then fresh inserts succeed.
@@ -1045,7 +1054,7 @@ mod tests {
             source_text: "again".into(),
             translated_text: "再次".into(),
             source_words: vec![],
-            semantic_sentence_id: 0,
+            semantic_sentence_id: 9,
         }];
         s.replace_segments("t1", &replacement).await.unwrap();
 
@@ -1053,6 +1062,7 @@ mod tests {
         assert_eq!(loaded2.len(), 1);
         assert_eq!(loaded2[0].source_text, "again");
         assert!(loaded2[0].source_words.is_empty());
+        assert_eq!(loaded2[0].semantic_sentence_id, 9);
 
         // No orphan words from the previous "hello" segment remain.
         let word_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM subtitle_words")

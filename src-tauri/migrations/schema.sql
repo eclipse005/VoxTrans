@@ -126,6 +126,12 @@ CREATE TABLE IF NOT EXISTS subtitle_segments (
     end_ms INTEGER NOT NULL,
     source_text TEXT NOT NULL DEFAULT '',
     translated_text TEXT NOT NULL DEFAULT '',
+    -- Semantic-sentence grouping (0 = none): cues sharing a non-zero id are
+    -- the display slots of ONE sentence-level translation unit. Durable here,
+    -- not only in the task JSON SoT: hydration rebuilds that JSON from these
+    -- rows, so a restart must not silently degrade the two-stage translation
+    -- back to per-cue units.
+    semantic_sentence_id INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL
 );
 

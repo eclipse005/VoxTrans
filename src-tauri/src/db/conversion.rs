@@ -104,6 +104,7 @@ pub fn row_from_segment(
         end_ms: seg.end_ms,
         source_text: seg.source_text.clone(),
         translated_text: seg.translated_text.clone(),
+        semantic_sentence_id: seg.semantic_sentence_id as i64,
         updated_at: now,
     };
     let word_rows: Vec<SubtitleWordRow> = seg
