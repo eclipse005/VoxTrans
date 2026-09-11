@@ -1,4 +1,4 @@
-use super::batches::build_batch_windows;
+use super::batches::{build_batch_windows, split_chunk_size, split_window};
 use super::responses::{
     SlotUnitExpectation, SlotValidationContext, UnitFill,
     validate_sentence_slot_response_with_context,
@@ -343,4 +343,297 @@ fn boundary_repair_snaps_leading_punctuation_and_keeps_concat() {
 fn norm_core_is_punctuation_and_case_insensitive() {
     assert_eq!(norm_core("因此，有了这期视频。"), norm_core("因此有了这期视频"));
     assert_eq!(norm_core("Ｈｅｌｌｏ，　Ｗｏｒｌｄ！"), norm_core("hello world"));
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end sample from a real task (ep6 slot pilot, 49-minute episode).
+// The unit grouping, the slot texts and the accept gate are pinned against
+// data a real run produced, not against hand-written examples.
+// ---------------------------------------------------------------------------
+
+const EP6_SAMPLE: &str = include_str!("testdata/ep6_slot_units.json");
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SampleFixture {
+    units: Vec<SampleUnit>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SampleUnit {
+    sentence_id: usize,
+    unit_translation: String,
+    slots: Vec<SampleSlot>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SampleSlot {
+    segment: String,
+    translation: String,
+}
+
+struct Sample {
+    segments: Vec<TranslationSegmentInput>,
+    /// Per unit: (global slot id, cue source) in display order.
+    slot_lists: Vec<Vec<(usize, String)>>,
+    /// Per unit: the recorded slot translations, aligned with `slot_lists`.
+    slot_texts: Vec<Vec<String>>,
+    /// Per unit: the recorded whole-sentence translation.
+    translations: Vec<String>,
+    /// Per unit: the concatenated source cues (what the model saw as one unit).
+    sources: Vec<String>,
+}
+
+impl Sample {
+    fn load() -> Self {
+        let fixture: SampleFixture = serde_json::from_str(EP6_SAMPLE).expect("fixture parses");
+        let mut segments = Vec::new();
+        let mut slot_lists = Vec::new();
+        let mut slot_texts = Vec::new();
+        let mut translations = Vec::new();
+        let mut sources = Vec::new();
+        let mut next_slot_id = 1usize;
+        for unit in &fixture.units {
+            let mut slots = Vec::new();
+            let mut texts = Vec::new();
+            let mut source = String::new();
+            for slot in &unit.slots {
+                segments.push(TranslationSegmentInput {
+                    segment: slot.segment.clone(),
+                    sentence_id: unit.sentence_id,
+                    start: 0.0,
+                    end: 1.0,
+                    tokens: Vec::new(),
+                });
+                slots.push((next_slot_id, slot.segment.clone()));
+                texts.push(slot.translation.clone());
+                source.push_str(&slot.segment);
+                next_slot_id += 1;
+            }
+            slot_lists.push(slots);
+            slot_texts.push(texts);
+            translations.push(unit.unit_translation.clone());
+            sources.push(source);
+        }
+        Self {
+            segments,
+            slot_lists,
+            slot_texts,
+            translations,
+            sources,
+        }
+    }
+
+    fn expectations(&self) -> Vec<SlotUnitExpectation<'_>> {
+        self.slot_lists
+            .iter()
+            .zip(self.sources.iter())
+            .map(|(slots, source)| SlotUnitExpectation {
+                slots,
+                source: source.as_str(),
+            })
+            .collect()
+    }
+
+    /// The recorded run's answer, as the model would have returned it for a
+    /// single window holding every unit (unit ids are local, 1-based).
+    fn response(&self) -> serde_json::Value {
+        let units: Vec<serde_json::Value> = self
+            .slot_lists
+            .iter()
+            .zip(self.slot_texts.iter())
+            .zip(self.translations.iter())
+            .enumerate()
+            .map(|(index, ((slots, texts), translation))| {
+                let slots: Vec<serde_json::Value> = slots
+                    .iter()
+                    .map(|(id, _)| *id)
+                    .zip(texts.iter())
+                    .map(|(id, text)| json!({ "id": id, "text": text }))
+                    .collect();
+                json!({ "id": index + 1, "translation": translation, "slots": slots })
+            })
+            .collect();
+        json!({ "units": units })
+    }
+}
+
+fn validate_sample(
+    sample: &Sample,
+    value: serde_json::Value,
+    lenient: bool,
+) -> Result<Vec<super::responses::ValidatedUnit>, crate::services::llm::client::LlmSemanticValidationError> {
+    let expectations = sample.expectations();
+    validate_sentence_slot_response_with_context(
+        value,
+        &SlotValidationContext {
+            units: &expectations,
+            source_lang: "en",
+            target_lang: "zh-CN",
+            enforced_targets: &[],
+            lenient,
+        },
+    )
+}
+
+#[test]
+fn ep6_sample_groups_cues_into_sentence_units_with_global_slot_ids() {
+    let sample = Sample::load();
+    let normalized = normalize_segments(&sample.segments);
+    let windows = build_batch_windows(
+        &normalized,
+        8,
+        "en",
+        "zh-CN",
+        "",
+        &Vec::<TranslationTerminologyEntry>::new(),
+    );
+    // 13 cues, 5 sentence units: one batch, and the cue count per unit is the
+    // pilot's real distribution (3/2/5/2/1).
+    assert_eq!(windows.len(), 1);
+    let window = &windows[0];
+    assert_eq!(window.local_to_global, vec![1, 2, 3, 4, 5]);
+    let slot_counts: Vec<usize> = window.unit_slots.iter().map(|slots| slots.len()).collect();
+    assert_eq!(slot_counts, vec![3, 2, 5, 2, 1]);
+    // Slot ids are the global cue ids, in display order, and each unit owns
+    // exactly its own cues (no duplication, no gaps).
+    let ids: Vec<usize> = window
+        .unit_slots
+        .iter()
+        .flatten()
+        .map(|(id, _)| *id)
+        .collect();
+    assert_eq!(ids, (1..=13).collect::<Vec<_>>());
+}
+
+#[test]
+fn ep6_sample_recorded_response_passes_the_strict_gate() {
+    let sample = Sample::load();
+    let units = validate_sample(&sample, sample.response(), false).expect("recorded answer accepted");
+    assert_eq!(units.len(), sample.translations.len());
+    for (index, unit) in units.iter().enumerate() {
+        match &unit.fill {
+            UnitFill::Slots(texts) => assert_eq!(
+                norm_core(&texts.concat()),
+                norm_core(&sample.translations[index]),
+                "unit {} must concat back to its sentence translation",
+                index + 1
+            ),
+            other => panic!("unit {} expected slots, got {other:?}", index + 1),
+        }
+    }
+}
+
+#[test]
+fn strict_gate_rejects_a_dropped_slot_and_the_floor_salvages_it() {
+    let sample = Sample::load();
+    let mut value = sample.response();
+    let _ = value["units"][0]["slots"].as_array_mut().unwrap().pop();
+
+    let err = validate_sample(&sample, value.clone(), false).expect_err("strict must bounce it");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("displaySlots incomplete"), "msg={msg}");
+
+    let salvaged = validate_sample(&sample, value, true).expect("floor salvages the unit");
+    match &salvaged[0].fill {
+        UnitFill::TranslationOnly(text) => {
+            assert_eq!(norm_core(text), norm_core(&sample.translations[0]));
+        }
+        other => panic!("expected translation-only at the floor, got {other:?}"),
+    }
+}
+
+#[test]
+fn strict_gate_rejects_bare_punctuation_on_a_content_bearing_slot() {
+    let sample = Sample::load();
+    let mut value = sample.response();
+    // The real defect shape: the model front-loads a slot's semantics into the
+    // next slot and parks punctuation on the slot it emptied. The concat still
+    // reproduces the translation, so only the strict content invariant sees it.
+    let merged = format!("{}{}", sample.slot_texts[0][1], sample.slot_texts[0][2]);
+    value["units"][0]["slots"][2]["text"] = json!(merged);
+    value["units"][0]["slots"][1]["text"] = json!("，");
+
+    let err = validate_sample(&sample, value.clone(), false).expect_err("strict must bounce it");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("bare punctuation"), "msg={msg}");
+
+    let lenient = validate_sample(&sample, value, true).expect("lenient keeps the slots");
+    match &lenient[0].fill {
+        UnitFill::Slots(texts) => assert_eq!(texts[1], "，"),
+        other => panic!("expected slots in lenient mode, got {other:?}"),
+    }
+}
+
+#[test]
+fn strict_gate_rejects_concat_mismatch_but_lenient_keeps_the_slots() {
+    let sample = Sample::load();
+    let mut value = sample.response();
+    value["units"][1]["translation"] = json!(format!("{}哦", sample.translations[1]));
+
+    let err = validate_sample(&sample, value.clone(), false).expect_err("strict must bounce it");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("reproduce the unit translation"), "msg={msg}");
+
+    let lenient = validate_sample(&sample, value, true).expect("lenient keeps complete slots");
+    match &lenient[1].fill {
+        UnitFill::Slots(texts) => assert_eq!(texts.concat(), sample.slot_texts[1].concat()),
+        other => panic!("expected slots in lenient mode, got {other:?}"),
+    }
+}
+
+#[test]
+fn ladder_splits_eight_units_to_one_without_losing_global_ids() {
+    let segments: Vec<TranslationSegmentInput> = (1..=8)
+        .map(|i| seg_in(&format!("Sentence {i}."), i))
+        .collect();
+    let normalized = normalize_segments(&segments);
+    let windows = build_batch_windows(
+        &normalized,
+        8,
+        "en",
+        "zh-CN",
+        "",
+        &Vec::<TranslationTerminologyEntry>::new(),
+    );
+    assert_eq!(windows.len(), 1);
+    let full = windows.into_iter().next().unwrap();
+    assert_eq!(full.local_to_global, (1..=8).collect::<Vec<_>>());
+
+    // The ladder is 8 → 4 → 2 → 1, then the lenient floor (no further split).
+    assert_eq!(split_chunk_size(8), Some(4));
+    assert_eq!(split_chunk_size(4), Some(2));
+    assert_eq!(split_chunk_size(2), Some(1));
+    assert_eq!(split_chunk_size(1), None);
+
+    let halves = split_window(&full, 4);
+    assert_eq!(halves.len(), 2);
+    assert_eq!(halves[0].local_to_global, vec![1, 2, 3, 4]);
+    assert_eq!(halves[1].local_to_global, vec![5, 6, 7, 8]);
+    // Context is recomputed per part: the tail keeps the three units before it.
+    assert!(halves[0].prev_lines.is_empty());
+    let first_next: Vec<usize> = halves[0].next_lines.iter().map(|(id, _)| *id).collect();
+    assert_eq!(first_next, vec![5, 6]);
+    let second_prev: Vec<usize> = halves[1].prev_lines.iter().map(|(id, _)| *id).collect();
+    assert_eq!(second_prev, vec![2, 3, 4]);
+    assert!(halves[1].next_lines.is_empty());
+    // Local ids renumber for the model; the global slot id follows its unit.
+    assert_eq!(halves[1].current_lines[0].id, 1);
+    assert_eq!(
+        halves[1].unit_slots[0],
+        vec![(5usize, "Sentence 5.".to_string())]
+    );
+
+    // Walking the whole ladder must cover every unit exactly once, in order.
+    let mut queue: std::collections::VecDeque<_> = halves.into();
+    let mut seen: Vec<usize> = Vec::new();
+    while let Some(part) = queue.pop_front() {
+        match split_chunk_size(part.local_to_global.len()) {
+            Some(chunk) => queue.extend(split_window(&part, chunk)),
+            None => seen.push(part.local_to_global[0]),
+        }
+    }
+    assert_eq!(seen, (1..=8).collect::<Vec<_>>());
 }

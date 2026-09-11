@@ -1,0 +1,91 @@
+{
+  "provenance": {
+    "task": "CRT 2026 Mentorship EP 6 - ep6-slot-pilot-v2 (49-minute Japanese-free pilot run)",
+    "source": "output/ep6-slot-pilot-v2/result.json + units.md, trimmed to the first 5 sentence units",
+    "note": "Real cues and translations. The pilot defines a unit's translation as the concatenation of its slot translations, which is exactly what the strict accept gate re-checks; keep this file small and real."
+  },
+  "units": [
+    {
+      "sentenceId": 4,
+      "unitTranslation": "好的，所以无论是公开课程的学生还是私人课程的学生，这都是一次你能拥有真正实体纸质版、非常限量出版书籍的机会。",
+      "slots": [
+        {
+          "segment": "Alright, so both public and private students,",
+          "translation": "好的，所以无论是公开课程的学生还是私人课程的学生，"
+        },
+        {
+          "segment": "this is a chance for you to own an actual physical",
+          "translation": "这都是一次你能拥有真正实体纸质版、"
+        },
+        {
+          "segment": "copy of a very limited edition book.",
+          "translation": "非常限量出版书籍的机会。"
+        }
+      ]
+    },
+    {
+      "sentenceId": 7,
+      "unitTranslation": "因此有这期视频。",
+      "slots": [
+        {
+          "segment": "Hence",
+          "translation": "因此有"
+        },
+        {
+          "segment": "this video.",
+          "translation": "这期视频。"
+        }
+      ]
+    },
+    {
+      "sentenceId": 10,
+      "unitTranslation": "所以如果你是那种人，如果你是想用2倍速一口气刷完、却不真正体验视频里每一刻的人，那我还能怎么告诉你呢？",
+      "slots": [
+        {
+          "segment": "So if you're the,",
+          "translation": "所以如果你是那种人，"
+        },
+        {
+          "segment": "if you're the kind of person who's gonna try and",
+          "translation": "如果你是想"
+        },
+        {
+          "segment": "binge watch them at 2X",
+          "translation": "用2倍速一口气刷完"
+        },
+        {
+          "segment": "and not live every single moment of the videos,",
+          "translation": "、却不真正体验视频里每一刻的人，"
+        },
+        {
+          "segment": "then what can I tell you?",
+          "translation": "那我还能怎么告诉你呢？"
+        }
+      ]
+    },
+    {
+      "sentenceId": 12,
+      "unitTranslation": "好了，所以请确保每一秒都专注观看，手里拿着笔记本。",
+      "slots": [
+        {
+          "segment": "Alright, so make sure to watch them attentively every single second",
+          "translation": "好了，所以请确保每一秒都专注观看"
+        },
+        {
+          "segment": "with a notepad in hand.",
+          "translation": "，手里拿着笔记本。"
+        }
+      ]
+    },
+    {
+      "sentenceId": 13,
+      "unitTranslation": "如果你真想从这些视频中获得最大收获的话。",
+      "slots": [
+        {
+          "segment": "If you want to make the most out of them.",
+          "translation": "如果你真想从这些视频中获得最大收获的话。"
+        }
+      ]
+    }
+  ]
+}

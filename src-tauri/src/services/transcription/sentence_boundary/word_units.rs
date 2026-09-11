@@ -68,6 +68,11 @@ pub(super) fn aggregate_span_words(
             word_start = k + 1;
         }
     }
+    // A word is a *token range*: the ranges must be contiguous, non-empty and
+    // cover the span exactly. Every downstream cut rule relies on this — if it
+    // ever breaks, a cue can be cut inside a word (the はい / は+いじゃあ bug).
+    #[cfg(debug_assertions)]
+    debug_assert_word_partition(tokens.len(), &token_ranges);
     SpanWords {
         words,
         token_ranges,
@@ -82,6 +87,11 @@ pub(super) fn hard_pause_chunks(
     vad_index: &SpeechSegmentIndex,
 ) -> Vec<(usize, usize)> {
     let n = span.words.len();
+    if n == 0 {
+        // No words → no chunks. Guarding here keeps `n - 1` below from
+        // underflowing on an empty span.
+        return Vec::new();
+    }
     let mut chunks = Vec::new();
     let mut start = 0usize;
     for k in 0..n.saturating_sub(1) {
@@ -120,7 +130,36 @@ pub(super) fn hard_pause_chunks(
             _ => merged.push((chunk_start, chunk_end)),
         }
     }
+    // The pause cuts (plus the contentless merge above) must partition every
+    // word: contiguous, in order, covering the span exactly.
+    #[cfg(debug_assertions)]
+    debug_assert_partition(&merged, n);
     merged
+}
+
+/// Debug-only: `ranges` must be an exact partition of `len` (contiguous,
+/// non-empty, full coverage, in order).
+#[cfg(debug_assertions)]
+fn debug_assert_word_partition(len: usize, ranges: &[(usize, usize)]) {
+    let mut cursor = 0usize;
+    for (start, end) in ranges {
+        debug_assert_eq!(*start, cursor, "word ranges must be contiguous");
+        debug_assert!(*end > *start, "word ranges must be non-empty");
+        cursor = *end;
+    }
+    debug_assert_eq!(cursor, len, "word ranges must cover every token exactly once");
+}
+
+/// Debug-only: inclusive `chunks` must be an exact partition of `0..len`.
+#[cfg(debug_assertions)]
+fn debug_assert_partition(chunks: &[(usize, usize)], len: usize) {
+    let mut cursor = 0usize;
+    for (start, end) in chunks {
+        debug_assert_eq!(*start, cursor, "chunks must be contiguous");
+        debug_assert!(*end >= *start, "chunks must be non-empty");
+        cursor = *end + 1;
+    }
+    debug_assert_eq!(cursor, len, "chunks must cover every word exactly once");
 }
 
 /// Every word strips to punctuation or a bound particle — the chunk would
@@ -257,5 +296,36 @@ mod tests {
         let vad = SpeechSegmentIndex::new(vec![(0.0, 1.0), (4.0, 5.0)]);
         let chunks = hard_pause_chunks(&span, &vad);
         assert_eq!(chunks, vec![(0, 0), (1, 2)]);
+    }
+
+    /// Regression (pause-cut fix): a ≥2s pause must not manufacture a cue with
+    /// nothing to read. Real case: 今回 | の | シンデレラ across long pauses —
+    /// the bare の cue merged back instead of being re-split by the pause.
+    #[test]
+    fn a_pause_cut_never_manufactures_a_contentless_cue() {
+        let span = SpanWords {
+            words: vec![
+                tok("今回", 0.0, 0.5),
+                tok("の", 6.0, 6.3),           // 5.5s pause before it
+                tok("シンデレラ", 12.0, 12.8), // 5.7s pause before it
+            ],
+            token_ranges: vec![(0, 1), (1, 2), (2, 3)],
+        };
+        let vad = SpeechSegmentIndex::new(Vec::new());
+        let chunks = hard_pause_chunks(&span, &vad);
+        // Three pause cuts would give [(0,0),(1,1),(2,2)]; the contentless の
+        // chunk merges, so no cue is left with nothing to read.
+        assert_eq!(chunks, vec![(0, 1), (2, 2)]);
+    }
+
+    /// The pause-cut pass guards `n - 1`; an empty span must be inert.
+    #[test]
+    fn empty_span_yields_no_pause_chunks() {
+        let span = SpanWords {
+            words: Vec::new(),
+            token_ranges: Vec::new(),
+        };
+        let vad = SpeechSegmentIndex::new(Vec::new());
+        assert!(hard_pause_chunks(&span, &vad).is_empty());
     }
 }

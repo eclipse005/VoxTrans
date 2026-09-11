@@ -1602,14 +1602,22 @@ fn overlong_split_survives_fragment_absorption() {
     }
 }
 
+/// Manual replay of a captured ASR dump. The dump is large and
+/// machine-specific, so it is not checked in and this test is ignored by
+/// default — run it explicitly:
+///
+/// ```text
+/// $env:VOXTRANS_REPLAY_ASR_JSON = "C:\path\to\asr_dump.json"
+/// cargo test -j 1 replay_saved_asr -- --ignored
+/// ```
 #[test]
+#[ignore = "manual replay: needs VOXTRANS_REPLAY_ASR_JSON pointing at an ASR dump"]
 fn replay_saved_asr_applies_digit_glue_and_blocks_open_genitive() {
-    let path = std::env::var("VOXTRANS_REPLAY_ASR_JSON").unwrap_or_else(|_| {
-        r"C:\Users\ADMIN\AppData\Local\Temp\vt_asr_mfkge5.json".to_string()
-    });
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return;
-    };
+    let path = std::env::var("VOXTRANS_REPLAY_ASR_JSON").expect(
+        "set VOXTRANS_REPLAY_ASR_JSON to an ASR dump path, then run with `-- --ignored`",
+    );
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("read ASR dump {path}: {err}"));
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct AsrDump {
@@ -1618,9 +1626,7 @@ fn replay_saved_asr_applies_digit_glue_and_blocks_open_genitive() {
         vad_speech_segments: Vec<(f64, f64)>,
     }
     let dump: AsrDump = serde_json::from_str(&raw).expect("asr dump json");
-    if dump.words.is_empty() {
-        return;
-    }
+    assert!(!dump.words.is_empty(), "ASR dump has no words: {path}");
     let response = tauri::async_runtime::block_on(build_source_sentences_from_words_with_progress(
         super::SentenceBoundaryRequest {
             task_id: "replay".to_string(),
@@ -1804,4 +1810,88 @@ fn semantic_sentences_never_start_with_bound_particle() {
             "particle tail exiled as its own span: {texts:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Cut-alignment regressions. The merged cut list is where cue boundaries are
+// finally decided; all three fixes below shipped without a test, so these
+// pin the contracts they established.
+// ---------------------------------------------------------------------------
+
+/// Word atomicity: a cut that lands inside an advisor-aligned word is dropped,
+/// so the fragments merge back into the word they belong to (the はい bug).
+#[test]
+fn cut_inside_a_jieba_word_is_dropped() {
+    use super::language::profile_for_lang;
+    use super::types::SplitReason;
+
+    // Jieba reads 甲 | 因为 | 想: token 1 (因) is not a word end, so the cut
+    // after it would tear 因为 apart. The cut after 想 is a real word edge.
+    let words: Vec<WordTokenDto> = ["甲", "因", "为", "想"]
+        .iter()
+        .enumerate()
+        .map(|(k, t)| w(k, t))
+        .collect();
+    let profile = profile_for_lang("zh");
+    let points = vec![
+        (0usize, SplitReason::TerminalPunctuation),
+        (1usize, SplitReason::HardPause),
+        (2usize, SplitReason::TerminalPunctuation),
+    ];
+    let kept = super::align_cuts_to_words(&words, profile.as_ref(), &[(0, 3)], points);
+    assert_eq!(
+        kept.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+        vec![0, 2]
+    );
+}
+
+/// A contentless fragment that opens the next word merges FORWARD: the
+/// boundary is dropped, so は stays with いじゃあ (not pulled into そうは).
+#[test]
+fn contentless_fragment_that_opens_the_next_word_merges_forward() {
+    use super::language::profile_for_lang;
+    use super::types::SplitReason;
+
+    // ASR splits そうはいじゃあ as そう | は | いじゃあ.
+    let words: Vec<WordTokenDto> = ["そう", "は", "いじゃあ"]
+        .iter()
+        .enumerate()
+        .map(|(k, t)| w(k, t))
+        .collect();
+    let profile = profile_for_lang("ja");
+    let points = vec![
+        (0usize, SplitReason::TerminalPunctuation),
+        (1usize, SplitReason::TerminalPunctuation),
+    ];
+    let kept = super::align_cuts_to_words(&words, profile.as_ref(), &[(0, 2)], points);
+    assert_eq!(
+        kept.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+        vec![0]
+    );
+}
+
+/// A contentless tail that does not open a new word merges BACKWARD: the
+/// previous boundary is dropped so です/ます/よ land at the end of the
+/// preceding cue instead of forming bare-particle cues of their own.
+#[test]
+fn contentless_tail_merges_backward() {
+    use super::language::profile_for_lang;
+    use super::types::SplitReason;
+
+    let words: Vec<WordTokenDto> = ["ペン", "です", "ます", "よ"]
+        .iter()
+        .enumerate()
+        .map(|(k, t)| w(k, t))
+        .collect();
+    let profile = profile_for_lang("ja");
+    let points = vec![
+        (0usize, SplitReason::TerminalPunctuation),
+        (2usize, SplitReason::HardPause),
+        (3usize, SplitReason::TerminalPunctuation),
+    ];
+    let kept = super::align_cuts_to_words(&words, profile.as_ref(), &[(0, 3)], points);
+    assert_eq!(
+        kept.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+        vec![3]
+    );
 }
