@@ -117,7 +117,9 @@ pub async fn build_translation_layer_with_progress(
     }
 
     // HTTP retries live on the client. JSON/semantic failures return here and
-    // split currentLines (20→10→5→1) with the same translate prompt.
+    // re-split the failed window with the same translate prompt: windows over
+    // 4 units become 4-unit windows, then 2, then 1 (see README.md §5). A
+    // single-unit window is the lenient floor.
     let llm_client = AnthropicLlmClient::new(LlmConfig::new(
         request.translate_base_url.clone(),
         request.translate_api_key.clone(),

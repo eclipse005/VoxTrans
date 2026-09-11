@@ -9,8 +9,8 @@
 |---|---|---|
 | **slot（显示槽）** | 一条上屏字幕（SoT 的一行），全片唯一的全局 id = 1-based segment id | `types::BatchWindow::unit_slots` |
 | **unit（翻译单元）** | 一个完整语义句：相邻且 `sentence_id` 相同的 segment 组成一个 unit；`sentence_id == 0` 时每条字幕自成一个 unit | `batches::build_translation_units` |
-| **window（批次窗口）** | 一次 LLM 调用发送的最多 `DEFAULT_BATCH_SIZE = 8` 个 unit | `batches::build_batch_windows` |
-| **ladder（降级阶梯）** | 窗口失败后的切分序列 8→4→2→1；1 个 unit 的窗口进入 lenient 模式 | `batches::split_chunk_size`、`mod::translate_window_with_split` |
+| **window（批次窗口）** | 一次 LLM 调用发送的 unit 集合。大小 = 调用方的 `batch_size`；未给（0）时用 `DEFAULT_BATCH_SIZE = 8`，上限 `MAX_BATCH_SIZE = 40`。桌面端当前传 **20** | `batches::build_batch_windows` |
+| **ladder（降级阶梯）** | 窗口失败后的切分：>4 个 unit 切成每片 4，>2 切成每片 2，2 切成每片 1；1 个 unit 的窗口进入 lenient 模式。桌面端的 20 单元窗口第一次失败直接落到 4/片 | `batches::split_chunk_size`、`mod::translate_window_with_split` |
 | **lenient floor** | 阶梯最底层：不再重试，能救则救（槽位完整就保留，只有整句就按比例回填） | `responses::validate_sentence_slot_response_with_context` |
 
 ## 2. 一次调用的流程
