@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use crate::services::llm::batch::run_indexed_chained_idempotent;
-use crate::services::llm::client::AnthropicLlmClient;
+use crate::services::llm::client::LlmClient;
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 use crate::services::task_log::TaskLogger;
 
@@ -125,7 +125,7 @@ pub async fn build_translation_layer_with_progress(
     // re-split the failed window with the same translate prompt: windows over
     // 4 units become 4-unit windows, then 2, then 1 (see README.md §5). A
     // single-unit window is the lenient floor.
-    let llm_client = AnthropicLlmClient::new(LlmConfig::new(
+    let llm_client = LlmClient::new(LlmConfig::new(
         request.translate_base_url.clone(),
         request.translate_api_key.clone(),
         request.translate_model.clone(),
@@ -362,7 +362,7 @@ pub async fn build_translation_layer_with_progress(
 
 #[derive(Clone)]
 struct TranslateCall {
-    llm_client: AnthropicLlmClient,
+    llm_client: LlmClient,
     context: LlmCallContext,
     segments: Arc<Vec<types::NormalizedSegment>>,
     known_translations: Arc<Mutex<HashMap<usize, String>>>,

@@ -2,7 +2,7 @@ use super::translate_types::{
     ListLlmModelsRequest, ListLlmModelsResponse, LlmModelInfoDto, TestTranslateLlmRequest,
     TestTranslateLlmResponse,
 };
-use crate::services::llm::client::AnthropicLlmClient;
+use crate::services::llm::client::LlmClient;
 use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::{ANTHROPIC_VERSION, add_auth_headers, models_endpoint};
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort, next_llm_request_id};
@@ -26,7 +26,7 @@ pub async fn test_translate_llm(
 
     cleanup_connectivity_test_artifacts();
 
-    let client = AnthropicLlmClient::new(
+    let client = LlmClient::new(
         LlmConfig::new(
             request.base_url.trim().to_string(),
             request.api_key.trim().to_string(),

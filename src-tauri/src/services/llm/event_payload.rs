@@ -4,9 +4,8 @@ use crate::services::task_log::TaskLogger;
 
 use super::base_url::normalize_base_url;
 use super::port::{LlmCallContext, LlmConfig, LlmTokenUsage};
+use super::protocol::resolve_protocol;
 
-const LLM_PROVIDER: &str = "anthropic";
-const LLM_TRANSPORT: &str = "messages";
 const EPHEMERAL_PHASE_CONNECTIVITY_TEST: &str = "connectivity_test";
 const ATTEMPT_PAYLOAD_KEYS: &[&str] = &[
     "attempt",
@@ -47,13 +46,17 @@ pub(super) fn attempt_base_payload(
     max_attempts: u32,
     user_prompt: &str,
 ) -> Value {
+    // Record the dialect actually in use, not a fixed label: the same profile
+    // can resolve to either one, and a task log that says "anthropic" for a
+    // chat-completions call sends debugging in the wrong direction.
+    let protocol = resolve_protocol(&config.base_url, &config.model);
     json!({
         "attempt": attempt,
         "maxAttempts": max_attempts,
         "model": &config.model,
         "baseUrl": normalize_base_url(&config.base_url),
-        "provider": LLM_PROVIDER,
-        "transport": LLM_TRANSPORT,
+        "provider": protocol.provider_id(),
+        "transport": protocol.transport_id(),
         "phase": &context.phase,
         "llmId": request_id,
         "request": {
@@ -164,6 +167,52 @@ pub(super) fn http_error_attempt_payload(
             "backoffMs": backoff_ms,
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context() -> LlmCallContext {
+        LlmCallContext {
+            task_id: "log-label-test".to_string(),
+            media_path: None,
+            phase: "translate".to_string(),
+            store: None,
+            output_schema: None,
+        }
+    }
+
+    #[test]
+    fn attempt_payload_labels_follow_the_resolved_dialect() {
+        // Same log shape for both dialects — only the labels move, so a task
+        // log never claims "anthropic" for a chat-completions call.
+        let messages_url = format!("http://log-label.local/anthropic/{}", line!());
+        let config = LlmConfig::new(messages_url, "k".to_string(), "claude-sonnet-5".to_string());
+        let payload = attempt_base_payload(&config, &context(), "req-1", 1, 3, "hi");
+        assert_eq!(payload["provider"], json!("anthropic"));
+        assert_eq!(payload["transport"], json!("messages"));
+
+        // A URL that carries the OpenAI route outright resolves there.
+        let config = LlmConfig::new(
+            "http://log-label-chat.local/v1/chat/completions".to_string(),
+            "k".to_string(),
+            "deepseek/oss-model".to_string(),
+        );
+        let payload = attempt_base_payload(&config, &context(), "req-2", 1, 3, "hi");
+        assert_eq!(payload["provider"], json!("openai"));
+        assert_eq!(payload["transport"], json!("chat_completions"));
+        assert_eq!(payload["model"], json!("deepseek/oss-model"));
+        assert_eq!(payload["request"]["userPrompt"], json!("hi"));
+    }
+
+    #[test]
+    fn connectivity_test_phase_is_never_written_to_a_task_log() {
+        let mut ctx = context();
+        ctx.task_id = "settings-llm-test".to_string();
+        ctx.phase = "connectivity_test".to_string();
+        assert!(logger_for_context(&ctx).is_none());
+    }
 }
 
 

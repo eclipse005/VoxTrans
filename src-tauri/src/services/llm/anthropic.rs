@@ -1,145 +1,28 @@
 //! Anthropic Messages wire transport (`POST {base}/v1/messages`).
 //!
 //! Protocol boundary only: the internal [`ChatMessage`]/[`ToolCall`] models
-//! stay provider-neutral (the terminology agent keeps using them), and
-//! conversion to Anthropic content blocks happens here — kimi-code
-//! `convertMessage` strategy. Callers in `client.rs` keep their public API.
+//! live in `port.rs` and stay provider-neutral (the terminology agent keeps
+//! using them), and conversion to Anthropic content blocks happens here —
+//! kimi-code `convertMessage` strategy. Callers in `client.rs` keep their
+//! public API. Its OpenAI counterpart is `openai.rs`.
 
-use futures_util::StreamExt;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
 
 use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
-use super::port::{LlmConfig, LlmTokenUsage};
+use super::http::{api_error, drive_sse, json_u64, transport_error_message};
+use super::max_tokens::{
+    effective_max_tokens, halve_max_tokens, is_max_tokens_rejection, parse_claude_version,
+    record_max_tokens_override,
+};
+use super::port::{
+    AGENT_TEMPERATURE, AssistantTurn, ChatMessage, LlmConfig, LlmTokenUsage,
+    TRANSLATION_TEMPERATURE, ToolCall, ToolCallFunction,
+};
 use super::text::truncate_chars;
 
 /// `anthropic-version` header required on every Messages API request.
 pub(crate) const ANTHROPIC_VERSION: &str = "2023-06-01";
-/// Sampling temperature for translation/connectivity requests (parity with
-/// the previous OpenAI-compatible transport).
-const TRANSLATION_TEMPERATURE: f64 = 0.2;
-/// Terminology-agent tool turns run slightly hotter.
-const AGENT_TEMPERATURE: f64 = 0.3;
-/// Output budget for models we cannot classify as Claude. kimi-code falls
-/// back to 128000 because it only talks to real Claude models; our users
-/// mostly point at compatible vendors whose caps are unknown. The generous
-/// value is safe because [`post_messages_adaptive`] degrades on rejection:
-/// an endpoint that caps `max_tokens` gets a one-time 400, the halved value
-/// is memoized per (base_url, model), and every later request starts there.
-const FALLBACK_MAX_TOKENS: u32 = 16_384;
-
-// ── Internal message model (moved verbatim from the old OpenAI transport) ──
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub role: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_content: Option<String>,
-}
-
-impl ChatMessage {
-    pub fn system(content: impl Into<String>) -> Self {
-        Self {
-            role: "system".to_string(),
-            content: Some(content.into()),
-            tool_calls: None,
-            tool_call_id: None,
-            reasoning_content: None,
-        }
-    }
-
-    pub fn user(content: impl Into<String>) -> Self {
-        Self {
-            role: "user".to_string(),
-            content: Some(content.into()),
-            tool_calls: None,
-            tool_call_id: None,
-            reasoning_content: None,
-        }
-    }
-
-    pub fn assistant_text(content: impl Into<String>) -> Self {
-        Self {
-            role: "assistant".to_string(),
-            content: Some(content.into()),
-            tool_calls: None,
-            tool_call_id: None,
-            reasoning_content: None,
-        }
-    }
-
-    pub fn assistant_tools(
-        content: Option<String>,
-        tool_calls: Vec<ToolCall>,
-        reasoning_content: Option<String>,
-    ) -> Self {
-        Self {
-            role: "assistant".to_string(),
-            content: content.filter(|s| !s.trim().is_empty()),
-            tool_calls: Some(tool_calls),
-            tool_call_id: None,
-            reasoning_content,
-        }
-    }
-
-    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self {
-            role: "tool".to_string(),
-            content: Some(content.into()),
-            tool_calls: None,
-            tool_call_id: Some(tool_call_id.into()),
-            reasoning_content: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub type_: String,
-    pub function: ToolCallFunction,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCallFunction {
-    pub name: String,
-    pub arguments: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct AssistantTurn {
-    pub content: String,
-    pub tool_calls: Vec<ToolCall>,
-    pub reasoning_content: Option<String>,
-    pub usage: LlmTokenUsage,
-    /// Raw provider `stop_reason` (`max_tokens` / `end_turn` / `tool_use` /
-    /// `stop_sequence` / vendor-specific), `None` when the endpoint omitted
-    /// it. kimi-code FinishReason: the harness needs to know a turn was cut
-    /// by the output cap — truncated prose without tool calls is a
-    /// recoverable condition, not a silent protocol failure.
-    pub stop_reason: Option<String>,
-}
-
-impl AssistantTurn {
-    /// Did this turn end because the output budget ran out? Normalizes the
-    /// Anthropic (`max_tokens`) and OpenAI-style (`length`) spellings.
-    pub fn is_truncated(&self) -> bool {
-        matches!(
-            self.stop_reason.as_deref().map(str::trim),
-            Some("max_tokens") | Some("length")
-        )
-    }
-}
 
 // ── Endpoints ────────────────────────────────────────────────────────────────
 
@@ -150,178 +33,6 @@ fn messages_endpoint(base_url: &str) -> String {
     } else {
         format!("{normalized}/v1/messages")
     }
-}
-
-/// `GET {base}/v1/models` for the settings model picker. Shares the join rule
-/// with [`messages_endpoint`] so a base ending in `/v1` never doubles up.
-pub fn models_endpoint(base_url: &str) -> String {
-    let normalized = normalize_base_url(base_url);
-    if normalized.ends_with("/v1") {
-        format!("{normalized}/models")
-    } else {
-        format!("{normalized}/v1/models")
-    }
-}
-
-// ── max_tokens resolution (kimi-code family table, conservative fallback) ──
-
-/// Parse `(family, major, minor)` from a model name. Handles both
-/// `claude-sonnet-4-5` and `claude-3-5-sonnet` orderings; 8+ digit tokens are
-/// date stamps and never read as versions. Any family-word hit counts as a
-/// Claude-shaped model (wire-path parity with kimi-code).
-fn parse_claude_version(model: &str) -> Option<(&'static str, u32, Option<u32>)> {
-    const FAMILIES: [&str; 5] = ["fable", "mythos", "opus", "sonnet", "haiku"];
-    let normalized = model.to_ascii_lowercase();
-    let tokens: Vec<&str> = normalized
-        .split(['-', '_', '.'])
-        .filter(|t| !t.is_empty())
-        .collect();
-    let fam_idx = tokens.iter().position(|t| FAMILIES.contains(t))?;
-    let family: &'static str = match tokens[fam_idx] {
-        "fable" => "fable",
-        "mythos" => "mythos",
-        "opus" => "opus",
-        "sonnet" => "sonnet",
-        _ => "haiku",
-    };
-    // 1–2 digit version; longer digit runs are dates like `-20250929`.
-    let version = |t: &str| -> Option<u32> {
-        if t.len() <= 2 && t.chars().all(|c| c.is_ascii_digit()) {
-            t.parse().ok()
-        } else {
-            None
-        }
-    };
-    // family-first: sonnet-4-5 / opus-4
-    if let Some(major) = tokens.get(fam_idx + 1).copied().and_then(version) {
-        let minor = tokens.get(fam_idx + 2).copied().and_then(version);
-        return Some((family, major, minor));
-    }
-    // version-first: claude-3-5-sonnet / claude-3-sonnet
-    if fam_idx >= 2
-        && let Some(major) = version(tokens[fam_idx - 2])
-    {
-        let minor = version(tokens[fam_idx - 1]);
-        return Some((family, major, minor));
-    }
-    // bare major: claude-3-opus / sonnet-3 (one version token before family)
-    if fam_idx >= 1
-        && let Some(major) = version(tokens[fam_idx - 1])
-    {
-        return Some((family, major, None));
-    }
-    None
-}
-
-/// Max-output ceiling per family/major/minor. Tables descend so an unknown
-/// future minor inherits from its nearest known sibling, then the family-major
-/// baseline (kimi-code `lookupClaudeCeiling` walk).
-fn output_ceiling(family: &str, major: u32, minor: Option<u32>) -> Option<u32> {
-    const K128: u32 = 128_000;
-    const K64: u32 = 64_000;
-    let walk = |minor: Option<u32>, table: &[(u32, u32)], baseline: u32| -> u32 {
-        if let Some(m) = minor {
-            for (floor, value) in table {
-                if m >= *floor {
-                    return *value;
-                }
-            }
-        }
-        baseline
-    };
-    match (family, major) {
-        ("fable", 5) | ("mythos", 5) => Some(K128),
-        ("opus", 4) => Some(walk(
-            minor,
-            &[(8, K128), (7, K128), (6, K128), (5, K64), (1, 32_000), (0, 32_000)],
-            32_000,
-        )),
-        ("opus", 3) => Some(walk(minor, &[(7, 8_192), (5, 8_192), (1, 8_192), (0, 4_096)], 4_096)),
-        ("sonnet", 5) => Some(K128),
-        ("sonnet", 4) => Some(walk(
-            minor,
-            &[(6, K128), (5, K64), (4, K64), (3, K64), (2, K64), (1, K64), (0, K64)],
-            K64,
-        )),
-        ("sonnet", 3) => Some(walk(minor, &[(7, 8_192), (5, 8_192), (1, 8_192), (0, 4_096)], 4_096)),
-        // haiku-4-5 and haiku-4 share the same cap.
-        ("haiku", 4) => Some(K64),
-        ("haiku", 3) => Some(walk(minor, &[(5, 8_192), (0, 4_096)], 4_096)),
-        _ => None,
-    }
-}
-
-/// Resolve the mandatory `max_tokens` for a request: the family ceiling for
-/// known Claude models, the generous fallback otherwise (see
-/// [`post_messages_adaptive`] for how rejections degrade).
-pub(super) fn resolve_max_tokens(model: &str) -> u32 {
-    parse_claude_version(model)
-        .and_then(|(family, major, minor)| output_ceiling(family, major, minor))
-        .unwrap_or(FALLBACK_MAX_TOKENS)
-}
-
-// ── max_tokens adaptive degrade (kimi-code degrade strategy) ────────────────
-
-/// Endpoints that already rejected a `max_tokens` value once, remembered per
-/// (normalized base_url, model): later requests start from the lower value
-/// instead of eating the same 400 on every call (project's global-mutex
-/// pattern, same shape as `STRUCTURED_OUTPUT_UNSUPPORTED` in client.rs).
-static MAX_TOKENS_OVERRIDE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
-
-fn override_key(base_url: &str, model: &str) -> String {
-    format!("{}\u{1}{model}", normalize_base_url(base_url))
-}
-
-/// The `max_tokens` a request should carry: the recorded degrade value when
-/// this endpoint+model rejected a larger one before, the family ceiling
-/// otherwise.
-pub(super) fn effective_max_tokens(base_url: &str, model: &str) -> u32 {
-    MAX_TOKENS_OVERRIDE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .ok()
-        .and_then(|map| map.get(&override_key(base_url, model)).copied())
-        .unwrap_or_else(|| resolve_max_tokens(model))
-}
-
-fn record_max_tokens_override(base_url: &str, model: &str, value: u32) {
-    if let Ok(mut map) = MAX_TOKENS_OVERRIDE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-    {
-        map.insert(override_key(base_url, model), value);
-    }
-}
-
-/// Does this error mean "your `max_tokens` exceeds this endpoint's cap"?
-/// Only schema-shaped 400/422s qualify; unrelated bad requests keep failing
-/// loudly. Vendor messages vary ("max_tokens is too large", "supports at
-/// most N completion tokens", "maximum output token limit"), so the match
-/// is kept token-flavored and generous — a false positive only costs one
-/// extra attempt at half the budget before the error surfaces again.
-fn is_max_tokens_rejection(err: &LlmError) -> bool {
-    if !matches!(err.status, Some(400) | Some(422)) {
-        return false;
-    }
-    let message = err.message.to_ascii_lowercase();
-    message.contains("max_token")
-        || (message.contains("token")
-            && [
-                "maximum",
-                "too large",
-                "at most",
-                "exceed",
-            ]
-            .iter()
-            .any(|word| message.contains(word)))
-}
-
-/// Next rung on the degrade ladder: half the budget, floored at 1024.
-/// `None` once the floor is reached — the endpoint keeps rejecting even the
-/// smallest sane budget, so the original error must surface.
-fn halve_max_tokens(current: u32) -> Option<u32> {
-    let halved = (current / 2).max(1024);
-    (halved < current).then_some(halved)
 }
 
 /// Claude-family detection for the thinking echo rules below. Unsigned
@@ -651,24 +362,6 @@ pub(crate) fn add_auth_headers(
         .header("Authorization", format!("Bearer {api_key}"))
 }
 
-/// reqwest's Display stops at "error sending request for url (...)" and hides
-/// the actual root cause — dns failure, connection refused, TLS, timeout —
-/// deeper in the `source()` chain. That root cause is exactly what tells a
-/// local network blip from a dead endpoint, so append it to the message.
-fn transport_error_message(err: &reqwest::Error) -> String {
-    let mut message = format!("http request failed: {err}");
-    let mut source = std::error::Error::source(err);
-    let mut root = None;
-    while let Some(cause) = source {
-        root = Some(cause.to_string());
-        source = cause.source();
-    }
-    if let Some(cause) = root {
-        message.push_str(&format!(" [{cause}]"));
-    }
-    message
-}
-
 async fn post_messages(
     http: &reqwest::Client,
     config: &LlmConfig,
@@ -684,12 +377,7 @@ async fn post_messages(
     })?;
     let status = response.status();
     if !status.is_success() {
-        let retry_after_ms = response
-            .headers()
-            .get("retry-after")
-            .and_then(|value| value.to_str().ok())
-            .and_then(|raw| raw.trim().parse::<u64>().ok())
-            .map(|secs| secs.saturating_mul(1000));
+        let retry_after_ms = super::http::retry_after_ms(&response);
         let text = response.text().await.unwrap_or_default();
         return Err(api_error(status.as_u16(), retry_after_ms, &text));
     }
@@ -725,49 +413,7 @@ async fn post_messages_adaptive(
     }
 }
 
-/// Build an [`LlmError`] from a non-2xx response body, parsing the
-/// `{type:"error", error:{type,message}}` envelope when present and carrying
-/// the status code plus Retry-After override for the retry loop.
-pub(super) fn api_error(status: u16, retry_after_ms: Option<u64>, body: &str) -> LlmError {
-    let parsed: Option<Value> = serde_json::from_str(body).ok();
-    let detail = parsed
-        .as_ref()
-        .filter(|value| {
-            value.get("type").and_then(Value::as_str) == Some("error")
-                || value.get("error").is_some_and(Value::is_object)
-        })
-        .and_then(|value| value.pointer("/error/message"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| truncate_chars(body.trim(), 300));
-    LlmError {
-        kind: LlmErrorKind::Http,
-        message: format!("http status {status}: {detail}"),
-        status: Some(status),
-        retry_after_ms,
-    }
-}
-
 // ── Usage ───────────────────────────────────────────────────────────────────
-
-fn json_u64(value: Option<&Value>) -> Option<u64> {
-    let value = value?;
-    if let Some(n) = value.as_u64() {
-        return Some(n);
-    }
-    if let Some(n) = value.as_i64() {
-        return Some(n.max(0) as u64);
-    }
-    if let Some(n) = value.as_f64() {
-        return Some(n.max(0.0) as u64);
-    }
-    if let Some(s) = value.as_str() {
-        return s.trim().parse().ok();
-    }
-    None
-}
 
 /// Anthropic usage → internal usage. `prompt_tokens` keeps the historical
 /// meaning of *all* input tokens (uncached + cache-write + cache-read); the
@@ -875,49 +521,13 @@ pub(super) async fn call_message_stream(
     })
     .await?;
 
-    let mut byte_stream = response.bytes_stream();
-    let mut line_buf = String::new();
-    let mut frames = SseFrameParser::new();
     let mut acc = String::new();
     let mut parts = UsageParts::default();
 
-    // Pull complete SSE lines out of the buffer, refilling from the network
-    // until EOF (a trailing partial line still counts as one final line).
-    loop {
-        let next_line = line_buf.find('\n').map(|nl| {
-            let line = line_buf[..nl].trim_end_matches('\r').to_string();
-            line_buf.drain(..nl + 1);
-            line
-        });
-        let Some(line) = next_line else {
-            match byte_stream.next().await {
-                Some(Ok(chunk)) => {
-                    line_buf.push_str(&String::from_utf8_lossy(&chunk));
-                    continue;
-                }
-                Some(Err(err)) => {
-                    return Err(LlmError::new(
-                        LlmErrorKind::Http,
-                        format!("http stream read failed: {err}"),
-                    ));
-                }
-                None => {
-                    let rest = std::mem::take(&mut line_buf);
-                    let rest = rest.trim_end_matches('\r');
-                    if let Some((event, data)) = frames.feed_line(rest) {
-                        apply_stream_frame(event.as_deref(), &data, &mut acc, &mut parts, &mut on_delta)?;
-                    }
-                    break;
-                }
-            }
-        };
-        if let Some((event, data)) = frames.feed_line(&line) {
-            let stop = apply_stream_frame(event.as_deref(), &data, &mut acc, &mut parts, &mut on_delta)?;
-            if stop {
-                break;
-            }
-        }
-    }
+    drive_sse(response, |event, data| {
+        apply_stream_frame(event, data, &mut acc, &mut parts, &mut on_delta)
+    })
+    .await?;
     finish_stream(acc, parts, &mut on_delta)
 }
 
@@ -943,43 +553,6 @@ fn finish_stream(
         );
     }
     Ok((acc, parts.finish()))
-}
-
-/// Accumulates SSE lines into named frames (`event:` … `data:` … blank line).
-struct SseFrameParser {
-    event: Option<String>,
-    data: String,
-}
-
-impl SseFrameParser {
-    fn new() -> Self {
-        Self {
-            event: None,
-            data: String::new(),
-        }
-    }
-
-    /// Feed one complete line; returns `(event, data)` when a frame closes on
-    /// the blank separator line.
-    fn feed_line(&mut self, line: &str) -> Option<(Option<String>, String)> {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            if self.event.is_none() && self.data.is_empty() {
-                return None;
-            }
-            return Some((self.event.take(), std::mem::take(&mut self.data)));
-        }
-        if let Some(rest) = trimmed.strip_prefix("event:") {
-            self.event = Some(rest.trim().to_string());
-        } else if let Some(rest) = trimmed.strip_prefix("data:") {
-            if !self.data.is_empty() {
-                self.data.push('\n');
-            }
-            self.data.push_str(rest.trim_start());
-        }
-        // `:` comments and unknown field lines are ignored.
-        None
-    }
 }
 
 /// Apply one decoded SSE frame. Returns `Ok(true)` when `message_stop` was
@@ -1227,6 +800,7 @@ fn parse_assistant_turn(payload: &Value, model: &str) -> Result<AssistantTurn, L
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::max_tokens::resolve_max_tokens;
 
     // ── endpoints ───────────────────────────────────────────────────────
 
@@ -1244,8 +818,6 @@ mod tests {
             messages_endpoint("https://x.example.com/v1"),
             "https://x.example.com/v1/messages"
         );
-        assert_eq!(models_endpoint("https://api.anthropic.com"), "https://api.anthropic.com/v1/models");
-        assert_eq!(models_endpoint("https://x.example.com/v1"), "https://x.example.com/v1/models");
     }
 
     #[test]
@@ -1265,60 +837,6 @@ mod tests {
             .unwrap();
         assert!(request.headers().get("x-api-key").is_none());
         assert!(request.headers().get("Authorization").is_none());
-    }
-
-    // ── max_tokens resolution ───────────────────────────────────────────
-
-    #[test]
-    fn max_tokens_known_models() {
-        let r = |m: &str| resolve_max_tokens(m);
-        assert_eq!(r("claude-fable-5"), 128_000);
-        assert_eq!(r("claude-mythos-5"), 128_000);
-        assert_eq!(r("claude-opus-4-8"), 128_000);
-        assert_eq!(r("claude-opus-4-5"), 64_000);
-        assert_eq!(r("claude-opus-4-1"), 32_000);
-        assert_eq!(r("claude-sonnet-5"), 128_000);
-        assert_eq!(r("claude-sonnet-4-6"), 128_000);
-        assert_eq!(r("claude-sonnet-4-5"), 64_000);
-        assert_eq!(r("claude-haiku-4-5"), 64_000);
-        assert_eq!(r("claude-3-7-sonnet-latest"), 8_192);
-        assert_eq!(r("claude-3-5-haiku-20241022"), 8_192); // date token ignored
-        assert_eq!(r("claude-3-opus"), 4_096);
-    }
-
-    #[test]
-    fn max_tokens_unknown_and_non_claude_fallback() {
-        // Compatible-endpoint model names get the conservative fallback.
-        assert_eq!(resolve_max_tokens("deepseek-v4-flash"), FALLBACK_MAX_TOKENS);
-        assert_eq!(resolve_max_tokens("kimi-k2-thinking"), FALLBACK_MAX_TOKENS);
-        assert_eq!(resolve_max_tokens(""), FALLBACK_MAX_TOKENS);
-        // Unknown claude-shaped name still parses as Claude but has no ceiling.
-        assert_eq!(resolve_max_tokens("sonnet-latest"), FALLBACK_MAX_TOKENS);
-        assert_eq!(resolve_max_tokens("glm-4.6"), FALLBACK_MAX_TOKENS);
-    }
-
-    #[test]
-    fn version_parser_forms() {
-        assert_eq!(
-            parse_claude_version("Claude-Sonnet-4.5"),
-            Some(("sonnet", 4, Some(5)))
-        );
-        assert_eq!(
-            parse_claude_version("claude-3-5-sonnet-20241022"),
-            Some(("sonnet", 3, Some(5)))
-        );
-        assert_eq!(parse_claude_version("opus-4"), Some(("opus", 4, None)));
-        assert_eq!(parse_claude_version("kimi-k2-thinking"), None);
-        // Bare family word carries no version at all.
-        assert_eq!(parse_claude_version("haiku-latest"), None);
-        // Bare major before the family.
-        assert_eq!(parse_claude_version("claude-3-opus"), Some(("opus", 3, None)));
-    }
-
-    #[test]
-    fn haiku_latest_inherits_baseline() {
-        // haiku with no usable major falls back conservatively.
-        assert_eq!(resolve_max_tokens("haiku-latest"), FALLBACK_MAX_TOKENS);
     }
 
     // ── message conversion ──────────────────────────────────────────────
@@ -1562,18 +1080,6 @@ mod tests {
     // ── SSE parsing ─────────────────────────────────────────────────────
 
     #[test]
-    fn sse_parser_cross_chunk_frames() {
-        let mut parser = SseFrameParser::new();
-        assert!(parser.feed_line("event: content_block_delta").is_none());
-        assert!(parser.feed_line("data: {\"type\":\"content_block_delta\"}").is_none());
-        let frame = parser.feed_line("").expect("frame closes on blank line");
-        assert_eq!(frame.0.as_deref(), Some("content_block_delta"));
-        assert_eq!(frame.1, "{\"type\":\"content_block_delta\"}");
-        // Comments and stray fields are ignored.
-        assert!(parser.feed_line(": keep-alive comment").is_none());
-    }
-
-    #[test]
     fn stream_frames_accumulate_text_and_usage() {
         let mut acc = String::new();
         let mut parts = UsageParts::default();
@@ -1719,38 +1225,20 @@ mod tests {
 
     // ── max_tokens adaptive degrade ─────────────────────────────────────
 
-    fn rejection(status: u16, msg: &str) -> LlmError {
-        let mut err = LlmError::new(LlmErrorKind::Http, msg.to_string());
-        err.status = Some(status);
-        err
-    }
-
     #[test]
     fn max_tokens_rejection_detection() {
+        fn rejection(status: u16, msg: &str) -> LlmError {
+            let mut err = LlmError::new(LlmErrorKind::Http, msg.to_string());
+            err.status = Some(status);
+            err
+        }
         assert!(is_max_tokens_rejection(&rejection(
             400,
             "http status 400: max_tokens is too large: 16384. This model supports at most 8192"
         )));
-        assert!(is_max_tokens_rejection(&rejection(
-            400,
-            "http status 400: output token limit exceeded"
-        )));
-        assert!(is_max_tokens_rejection(&rejection(
-            422,
-            "http status 422: maximum completion tokens is 4096"
-        )));
-        // Unrelated 400s and non-client statuses never trigger the degrade.
         assert!(!is_max_tokens_rejection(&rejection(
             400,
             "http status 400: invalid model id"
-        )));
-        assert!(!is_max_tokens_rejection(&rejection(
-            429,
-            "http status 429: max_tokens quota exhausted"
-        )));
-        assert!(!is_max_tokens_rejection(&rejection(
-            500,
-            "http status 500: token service exploded"
         )));
     }
 
@@ -1761,41 +1249,5 @@ mod tests {
         // Floor reached: no further degrade, the error must surface.
         assert_eq!(halve_max_tokens(1_024), None);
         assert_eq!(halve_max_tokens(512), None);
-    }
-
-    #[test]
-    fn max_tokens_override_memo_is_per_endpoint_and_model() {
-        let base = format!("http://maxtok-test.local/{}", line!());
-        let model_a = "probe-a";
-        let model_b = "probe-b";
-        assert_eq!(effective_max_tokens(&base, model_a), FALLBACK_MAX_TOKENS);
-        record_max_tokens_override(&base, model_a, 4_096);
-        assert_eq!(effective_max_tokens(&base, model_a), 4_096);
-        // Same base, different model: unaffected.
-        assert_eq!(effective_max_tokens(&base, model_b), FALLBACK_MAX_TOKENS);
-        // Same model, different base: unaffected.
-        assert_eq!(
-            effective_max_tokens("http://maxtok-other.local", model_a),
-            FALLBACK_MAX_TOKENS
-        );
-    }
-
-    // ── api_error ───────────────────────────────────────────────────────
-
-    #[test]
-    fn api_error_envelope_retry_after_and_truncation() {
-        let err = api_error(429, Some(12_000), r#"{"type":"error","error":{"type":"rate_limit_error","message":"Slow down"}}"#);
-        assert_eq!(err.kind, LlmErrorKind::Http);
-        assert_eq!(err.status, Some(429));
-        assert_eq!(err.retry_after_ms, Some(12_000));
-        assert!(err.message.contains("http status 429"), "{}", err.message);
-        assert!(err.message.contains("Slow down"), "{}", err.message);
-
-        // Non-JSON bodies fall back to a truncated raw excerpt.
-        let long_body = "x".repeat(500);
-        let err = api_error(500, None, &long_body);
-        assert_eq!(err.retry_after_ms, None);
-        assert!(err.message.ends_with("..."));
-        assert!(err.message.chars().count() < 400);
     }
 }

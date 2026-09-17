@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -8,6 +9,12 @@ use super::error::LlmError;
 use super::json_guard::JsonResponseValidator;
 
 static LLM_REQUEST_SEQ: AtomicU64 = AtomicU64::new(1);
+
+/// Sampling temperature for translation/connectivity requests. Shared by both
+/// wire dialects so a protocol switch never changes translation behavior.
+pub(super) const TRANSLATION_TEMPERATURE: f64 = 0.2;
+/// Terminology-agent tool turns run slightly hotter.
+pub(super) const AGENT_TEMPERATURE: f64 = 0.3;
 
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
@@ -71,6 +78,121 @@ pub struct LlmTokenUsage {
     /// Both are also included in `prompt_tokens`.
     pub cache_creation_tokens: u64,
     pub cache_read_tokens: u64,
+}
+
+// ── Internal message model ──────────────────────────────────────────────────
+//
+// Provider-neutral: this is the OpenAI-shaped conversation the agent harness
+// and the translation pipeline both speak. `anthropic.rs` converts it to
+// content blocks; `openai.rs` serializes it as-is. Kept here (rather than in
+// either wire module) so neither dialect owns it.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+}
+
+impl ChatMessage {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system".to_string(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
+    }
+
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
+    }
+
+    pub fn assistant_text(content: impl Into<String>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
+    }
+
+    pub fn assistant_tools(
+        content: Option<String>,
+        tool_calls: Vec<ToolCall>,
+        reasoning_content: Option<String>,
+    ) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: content.filter(|s| !s.trim().is_empty()),
+            tool_calls: Some(tool_calls),
+            tool_call_id: None,
+            reasoning_content,
+        }
+    }
+
+    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: Some(content.into()),
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.into()),
+            reasoning_content: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub function: ToolCallFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallFunction {
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssistantTurn {
+    pub content: String,
+    pub tool_calls: Vec<ToolCall>,
+    pub reasoning_content: Option<String>,
+    pub usage: LlmTokenUsage,
+    /// Raw provider `stop_reason` (`max_tokens` / `end_turn` / `tool_use` /
+    /// `stop_sequence` / vendor-specific), `None` when the endpoint omitted
+    /// it. kimi-code FinishReason: the harness needs to know a turn was cut
+    /// by the output cap — truncated prose without tool calls is a
+    /// recoverable condition, not a silent protocol failure.
+    pub stop_reason: Option<String>,
+}
+
+impl AssistantTurn {
+    /// Did this turn end because the output budget ran out? Normalizes the
+    /// Anthropic (`max_tokens`) and OpenAI-style (`length`) spellings.
+    pub fn is_truncated(&self) -> bool {
+        matches!(
+            self.stop_reason.as_deref().map(str::trim),
+            Some("max_tokens") | Some("length")
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
