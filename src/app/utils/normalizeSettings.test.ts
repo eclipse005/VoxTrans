@@ -24,7 +24,6 @@ function baseDefaults(): SavedSettings {
     terminologyGroups: [DEFAULT_GROUP],
     activeTerminologyGroupId: "",
     enableSubtitleBeautify: true,
-    enableTerminologyAgent: false,
     enableClickSound: true,
     autoBurnHardSubtitle: false,
     defaultReviewSource: false,
@@ -425,16 +424,6 @@ describe("normalizeSettings", () => {
     );
     expect(result.enableSubtitleBeautify).toBe(false);
     expect(result.enableClickSound).toBe(false);
-  });
-
-  it("defaults enableTerminologyAgent to false when missing", () => {
-    const defaults = baseDefaults();
-    const partial = {
-      ...defaults,
-      enableTerminologyAgent: undefined,
-    } as unknown as SavedSettings;
-    const result = normalizeSettings(partial, defaults);
-    expect(result.enableTerminologyAgent).toBe(false);
   });
 
   it("falls back to default subtitleRenderStyle when missing or non-object", () => {

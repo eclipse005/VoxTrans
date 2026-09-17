@@ -358,10 +358,6 @@ pub struct SavedSettings {
     pub active_terminology_group_id: String,
     #[serde(default = "default_true")]
     pub enable_subtitle_beautify: bool,
-    /// Opt-in terminology Agent (harness + tools) before translation.
-    /// Frozen per task at enqueue. Fail-open: agent errors skip to translation.
-    #[serde(default)]
-    pub enable_terminology_agent: bool,
     #[serde(default = "default_true")]
     pub enable_click_sound: bool,
     #[serde(default)]

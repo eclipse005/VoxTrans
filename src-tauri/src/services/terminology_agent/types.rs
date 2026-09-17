@@ -35,23 +35,26 @@ pub struct TranscriptCue {
     pub text: String,
 }
 
+/// Why the windowed extraction loop ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EndReason {
-    SubmitOk,
-    MaxRounds,
+    /// Every cue was processed.
+    Completed,
+    /// Stopped early: consecutive windows produced nothing new — the domain
+    /// vocabulary has saturated.
+    EarlyExit,
+    /// Aborted: the endpoint kept failing even at the minimum window width.
     LlmError,
-    NoToolCalls,
     Skipped,
 }
 
 impl EndReason {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::SubmitOk => "submit_ok",
-            Self::MaxRounds => "max_rounds",
+            Self::Completed => "completed",
+            Self::EarlyExit => "early_exit",
             Self::LlmError => "llm_error",
-            Self::NoToolCalls => "no_tool_calls",
             Self::Skipped => "skipped",
         }
     }
@@ -81,63 +84,14 @@ impl TerminologyBriefing {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolKind {
-    Ok,
-    Error,
-    SubmitOk,
-    Blocked,
-}
-
-#[derive(Debug, Clone)]
-pub struct ToolOutcome {
-    pub ok: bool,
-    pub terminate: bool,
-    pub kind: ToolKind,
-    pub repairable: bool,
-    pub message: String,
-}
-
-impl ToolOutcome {
-    pub fn ok_msg(message: impl Into<String>) -> Self {
-        Self {
-            ok: true,
-            terminate: false,
-            kind: ToolKind::Ok,
-            repairable: false,
-            message: message.into(),
-        }
-    }
-
-    pub fn err(message: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            terminate: false,
-            kind: ToolKind::Error,
-            repairable: true,
-            message: message.into(),
-        }
-    }
-
-    pub fn submit_ok(message: impl Into<String>) -> Self {
-        Self {
-            ok: true,
-            terminate: true,
-            kind: ToolKind::SubmitOk,
-            repairable: false,
-            message: message.into(),
-        }
-    }
-
-    pub fn blocked(message: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            terminate: false,
-            kind: ToolKind::Blocked,
-            repairable: false,
-            message: message.into(),
-        }
-    }
+/// One ASR-mishear verdict from a window: `wrong` is the transcript spelling,
+/// `right` the corrected one (or the same term when adjudicated as intended).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MisheardPair {
+    pub wrong: String,
+    pub right: String,
+    #[serde(default)]
+    pub note: String,
 }
 
 pub fn normalize_term_key(source: &str) -> String {

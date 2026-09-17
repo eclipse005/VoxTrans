@@ -1,16 +1,6 @@
 use super::types::{normalize_term_key, GlossaryEntry, TranscriptCue};
 
-const SINGLE_WINDOW_MAX_CHARS: usize = 100_000;
-const WINDOW_MAX_CHARS: usize = 50_000;
-const WINDOW_OVERLAP_CUES: usize = 2;
 const STYLE_GUIDE_MAX_CHARS: usize = 1_200;
-
-pub fn transcript_plain(cues: &[TranscriptCue]) -> String {
-    cues.iter()
-        .map(|c| format!("[{}] {}", c.index, c.text))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
 
 pub fn transcript_haystack(cues: &[TranscriptCue]) -> String {
     cues.iter()
@@ -194,26 +184,6 @@ pub fn merge_glossary_user_priority(
     merged
 }
 
-pub fn union_glossaries(parts: &[Vec<GlossaryEntry>]) -> Vec<GlossaryEntry> {
-    let mut out = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for part in parts {
-        for g in part {
-            let src = g.source.trim();
-            let tgt = g.target.trim();
-            if src.is_empty() || tgt.is_empty() {
-                continue;
-            }
-            let key = normalize_term_key(src);
-            if key.is_empty() || !seen.insert(key) {
-                continue;
-            }
-            out.push(GlossaryEntry::new(src, tgt, g.note.trim()));
-        }
-    }
-    out
-}
-
 pub fn merge_style_guides(styles: &[String], glossary: &[GlossaryEntry], target_lang: &str) -> String {
     let cleaned: Vec<&str> = styles
         .iter()
@@ -361,42 +331,26 @@ fn prefix_chars(s: &str, n: usize) -> &str {
     }
 }
 
-pub fn split_cues_windows(cues: &[TranscriptCue]) -> Vec<Vec<TranscriptCue>> {
-    if cues.is_empty() {
-        return vec![Vec::new()];
-    }
-    // One agent over the whole transcript beats splitting: no cross-window
-    // term conflicts and the transcript is sent once. Only long videos chunk.
-    let total: usize = cues.iter().map(|c| c.text.chars().count() + 24).sum();
-    if total <= SINGLE_WINDOW_MAX_CHARS {
-        return vec![cues.to_vec()];
-    }
+/// Pack cues into consecutive windows of at most `max_chars` text characters.
+/// Greedy, no overlap: every cue lands in exactly one window, so the caller's
+/// position cursor (`cue index`) can drive the ladder and the resume logic.
+/// A single cue longer than `max_chars` still forms its own window.
+pub fn split_small_windows(cues: &[TranscriptCue], max_chars: usize) -> Vec<(usize, usize)> {
     let mut windows = Vec::new();
-    let mut i = 0;
-    let n = cues.len();
-    while i < n {
-        let mut chunk = Vec::new();
+    let mut i = 0usize;
+    while i < cues.len() {
         let mut chars = 0usize;
         let mut j = i;
-        while j < n {
-            let add = cues[j].text.chars().count() + 24;
-            if !chunk.is_empty() && chars + add > WINDOW_MAX_CHARS {
+        while j < cues.len() {
+            let add = cues[j].text.chars().count() + 1;
+            if j > i && chars + add > max_chars {
                 break;
             }
-            chunk.push(cues[j].clone());
             chars += add;
             j += 1;
         }
-        if chunk.is_empty() {
-            chunk.push(cues[i].clone());
-            j = i + 1;
-        }
-        windows.push(chunk);
-        if j >= n {
-            break;
-        }
-        let nxt = j.saturating_sub(WINDOW_OVERLAP_CUES);
-        i = (i + 1).max(nxt);
+        windows.push((i, j));
+        i = j;
     }
     windows
 }
@@ -466,57 +420,29 @@ mod tests {
     }
 
     #[test]
-    fn union_first_seen_wins() {
-        let a = vec![GlossaryEntry::new("A", "甲", "")];
-        let b = vec![GlossaryEntry::new("A", "乙", ""), GlossaryEntry::new("B", "丙", "")];
-        let u = union_glossaries(&[a, b]);
-        assert_eq!(u.len(), 2);
-        assert_eq!(u[0].target, "甲");
-        assert_eq!(u[1].source, "B");
-    }
-
-    #[test]
-    fn short_transcript_is_one_window() {
-        let cues: Vec<TranscriptCue> = (1..=3)
-            .map(|i| TranscriptCue {
-                index: i,
-                start_ms: 0,
-                text: "hello".into(),
-            })
-            .collect();
-        let windows = split_cues_windows(&cues);
-        assert_eq!(windows.len(), 1);
-        assert_eq!(windows[0].len(), 3);
-    }
-
-    #[test]
-    fn mid_length_transcript_stays_single_window() {
-        // ~72k chars (the forex course size) must not chunk anymore.
-        let cues: Vec<TranscriptCue> = (1..=800)
+    fn small_windows_pack_greedily_and_cover_all_cues() {
+        let cues: Vec<TranscriptCue> = (1..=7)
             .map(|i| TranscriptCue {
                 index: i,
                 start_ms: 0,
                 text: "a".repeat(90),
             })
             .collect();
-        let windows = split_cues_windows(&cues);
-        assert_eq!(windows.len(), 1);
-        assert_eq!(windows[0].len(), 800);
-    }
+        // 4 cues × 91 chars = 364 ≤ 400; 5 would exceed.
+        let windows = split_small_windows(&cues, 400);
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0], (0, 4));
+        assert_eq!(windows[1], (4, 7));
 
-    #[test]
-    fn very_long_transcript_chunks_at_window_limit() {
-        let cues: Vec<TranscriptCue> = (1..=3000)
-            .map(|i| TranscriptCue {
-                index: i,
-                start_ms: 0,
-                text: "a".repeat(90),
-            })
-            .collect();
-        let windows = split_cues_windows(&cues);
-        assert!(windows.len() > 1);
-        let covered: usize = windows.iter().map(|w| w.len()).sum();
-        assert!(covered >= 3000); // overlap means sum exceeds cue count
+        // A single cue longer than the cap still gets its own window.
+        let huge = vec![TranscriptCue {
+            index: 1,
+            start_ms: 0,
+            text: "a".repeat(500),
+        }];
+        let windows = split_small_windows(&huge, 400);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0], (0, 1));
     }
 
     #[test]

@@ -1,48 +1,38 @@
-//! Terminology Agent: harness (loop + tools + grounding) that produces a
-//! per-task glossary + style guide for the batched translator.
+//! Terminology briefing via sequential windowed extraction.
 //!
-//! Fail-open by design: any agent error — including a panic — returns a
-//! skipped briefing so translation still runs (user glossary only).
+//! One small non-streaming JSON call per window (prompt ~1-1.5K tokens — a
+//! shape every endpoint can serve, including small-TPM free tiers). Each
+//! window receives the established glossary as compact context and reports
+//! only NEW terms; a width ladder (halve on failure) is built into the loop.
+//!
+//! Fail-open by design: any error — including a panic — returns a skipped
+//! briefing so translation still runs (user glossary only).
 
-mod agent;
-mod candidates;
 mod ground;
-mod tools;
 mod types;
+mod windowed;
 
 pub use ground::{merge_glossary_user_priority, source_grounded_in_text};
-pub use types::{EndReason, GlossaryEntry, TerminologyBriefing, TranscriptCue};
+pub use types::{EndReason, GlossaryEntry, MisheardPair, TerminologyBriefing, TranscriptCue};
 
-/// For examples/replay tooling: deterministic candidate list as prompt block.
-pub fn debug_candidates_block(cues: &[TranscriptCue]) -> String {
-    let cands = candidates::extract_candidates(cues);
-    let pairs = candidates::find_confusable_pairs(&cands);
-    candidates::format_candidates_block(&cands, &pairs)
-        + &candidates::format_pair_evidence(&pairs, cues)
-}
-
-use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::db::store::TaskStore;
-use crate::services::llm::client::LlmClient;
-use crate::services::llm::port::LlmConfig;
+use crate::services::llm::client::{LlmClient, LlmSemanticValidationError};
+use crate::services::llm::json_guard::JsonResponseValidator;
+use crate::services::llm::port::{LlmCallContext, LlmConfig};
 use crate::services::task_log::{event, TaskLogger};
 
-use agent::{
-    run_window_agent, AgentRunConfig, DEFAULT_MAX_ROUNDS, MULTI_WINDOW_MAX_ROUNDS,
-    PROBE_BUDGET_MULTI, PROBE_BUDGET_SINGLE,
-};
-use ground::{
-    ground_glossary, merge_style_guides, split_cues_windows, transcript_haystack,
-    union_glossaries,
-};
+use ground::{ground_glossary, merge_style_guides, transcript_haystack};
+use windowed::{TermJsonCaller, WindowExtraction, WindowedParams};
 
-/// Merged briefing and per-window checkpoints share this prefix.
-pub const TERMINOLOGY_ARTIFACT_PREFIX: &str = "step_03_terminology";
+/// Merged briefing artifacts share this prefix. The `_v2` suffix invalidates
+/// caches written by the old agent implementation; review-flow artifact
+/// cleanup matches on the same prefix, so deletion still reaches them.
+pub const TERMINOLOGY_ARTIFACT_PREFIX: &str = "step_03_terminology_v2";
 
-fn window_artifact_name(index: usize) -> String {
-    format!("{TERMINOLOGY_ARTIFACT_PREFIX}_w{index}")
-}
+const WINDOW_START_CHARS: usize = 4000;
+const WINDOW_MIN_CHARS: usize = 1200;
 
 #[derive(Debug, Clone)]
 pub struct TerminologyAgentInput {
@@ -59,21 +49,40 @@ pub struct TerminologyAgentInput {
     pub store: Option<TaskStore>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct WindowCheckpoint {
-    glossary: Vec<GlossaryEntry>,
-    style_guide: String,
+/// Production [`TermJsonCaller`]: routes every window through the shared
+/// `LlmClient`, so retry budget, the JSON repair chain, protocol reroute and
+/// usage accounting (llm.log `llm.call` lines with `phase="terminology"`,
+/// plus task_usage rows) are all inherited unchanged.
+struct LlmTermCaller<'a> {
+    client: &'a LlmClient,
+    context: LlmCallContext,
 }
 
-/// Run the terminology Agent. Never returns Err — failures become `skipped`,
-/// and even a panic inside the agent is caught so translation always
-/// continues with just the user's own glossary.
+#[async_trait::async_trait]
+impl TermJsonCaller for LlmTermCaller<'_> {
+    async fn call_window(&self, request_id: &str, prompt: &str) -> Result<WindowExtraction, crate::services::llm::error::LlmError> {
+        let validator = JsonResponseValidator::with_required_keys(&["terms"]);
+        let result = self
+            .client
+            .call_json_validated(&self.context, request_id, prompt, Some(&validator), |value| {
+                serde_json::from_value::<WindowExtraction>(value).map_err(|err| {
+                    LlmSemanticValidationError::retryable(format!("window extraction shape: {err}"))
+                })
+            })
+            .await?;
+        Ok(result.value)
+    }
+}
+
+/// Run the terminology extraction. Never returns Err — failures become
+/// `skipped`, and even a panic inside the extraction is caught so translation
+/// always continues with just the user's own glossary.
 pub async fn run_terminology_briefing<F>(
     input: TerminologyAgentInput,
     mut on_progress: F,
 ) -> TerminologyBriefing
 where
-    F: FnMut(usize, usize, u32, u32, Option<&str>) + Send,
+    F: FnMut(usize, usize, usize) + Send,
 {
     let task_id = input.task_id.clone();
     let media_path = input.media_path.clone();
@@ -90,13 +99,13 @@ where
                 .map(|s| s.to_string())
                 .or_else(|| payload.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "unknown panic".to_string());
-            format!("agent panicked: {detail}")
+            format!("terminology extraction panicked: {detail}")
         }
     };
-    eprintln!("[terminology-agent] skipped: {skipped_reason}");
-    TaskLogger::agent_with_media(task_id, media_path).event(
-        event::AGENT_SKIP,
-        Some(&serde_json::json!({ "reason": skipped_reason })),
+    eprintln!("[terminology] skipped: {skipped_reason}");
+    TaskLogger::main_with_media(task_id, media_path).event(
+        event::TERMINOLOGY_AGENT_SKIP,
+        Some(&json!({ "reason": skipped_reason })),
     );
     TerminologyBriefing::skipped(skipped_reason)
 }
@@ -106,31 +115,30 @@ async fn run_terminology_briefing_inner<F>(
     on_progress: &mut F,
 ) -> Result<TerminologyBriefing, String>
 where
-    F: FnMut(usize, usize, u32, u32, Option<&str>) + Send,
+    F: FnMut(usize, usize, usize) + Send,
 {
     let main_logger = TaskLogger::main_with_media(input.task_id.clone(), input.media_path.clone());
-    let agent_logger = TaskLogger::agent_with_media(input.task_id.clone(), input.media_path.clone());
     if input.cues.is_empty() {
-        agent_logger.event(
-            event::AGENT_SKIP,
-            Some(&serde_json::json!({ "reason": "no subtitle cues" })),
+        main_logger.event(
+            event::TERMINOLOGY_AGENT_SKIP,
+            Some(&json!({ "reason": "no subtitle cues" })),
         );
         return Ok(TerminologyBriefing::skipped("no subtitle cues"));
     }
+
+    // Merged-briefing cache: a completed run (or a previous partial with the
+    // same width) is reused verbatim on restart.
     if let Some(store) = &input.store {
-        if let Some(json) = store.load_artifact(&input.task_id, TERMINOLOGY_ARTIFACT_PREFIX).await? {
+        if let Some(json) = store
+            .load_artifact(&input.task_id, TERMINOLOGY_ARTIFACT_PREFIX)
+            .await?
+        {
             if let Ok(cached) = serde_json::from_str::<TerminologyBriefing>(&json) {
                 if !cached.skipped {
                     main_logger.event(
                         event::TERMINOLOGY_AGENT_RESUMED,
-                        Some(&serde_json::json!({
+                        Some(&json!({
                             "taskId": input.task_id,
-                            "glossary": cached.glossary.len(),
-                        })),
-                    );
-                    agent_logger.event(
-                        event::AGENT_RESUMED,
-                        Some(&serde_json::json!({
                             "glossary": cached.glossary.len(),
                             "styleChars": cached.style_guide.chars().count(),
                             "windows": cached.windows,
@@ -150,177 +158,57 @@ where
     ))
     .map_err(|e| format!("llm client: {e}"))?;
 
-    let windows = split_cues_windows(&input.cues);
-    let n_win = windows.len().max(1);
-    let (max_rounds, probe_budget) = if n_win > 1 {
-        (MULTI_WINDOW_MAX_ROUNDS, PROBE_BUDGET_MULTI)
-    } else {
-        (DEFAULT_MAX_ROUNDS, PROBE_BUDGET_SINGLE)
-    };
-    let cands = candidates::extract_candidates(&input.cues);
-    let confusable_pairs = candidates::find_confusable_pairs(&cands);
-    let candidates_block = candidates::format_candidates_block(&cands, &confusable_pairs)
-        + &candidates::format_pair_evidence(&confusable_pairs, &input.cues);
-    let web_search_provider = tools::web_search_provider();
-
     main_logger.event(
         event::TERMINOLOGY_AGENT_START,
-        Some(&serde_json::json!({
+        Some(&json!({
             "taskId": input.task_id,
-            "windows": n_win,
             "cues": input.cues.len(),
-            "maxRounds": max_rounds,
+            "windowChars": WINDOW_START_CHARS,
             "userTerms": input.user_terms.len(),
-        })),
-    );
-    agent_logger.event(
-        event::AGENT_START,
-        Some(&serde_json::json!({
-            "title": input.title,
-            "sourceLang": input.source_lang,
-            "targetLang": input.target_lang,
-            "windows": n_win,
-            "cues": input.cues.len(),
-            "maxRounds": max_rounds,
-            "userTerms": input.user_terms.len(),
-            "webSearch": web_search_provider.is_some(),
             "model": input.model,
         })),
     );
 
-    let mut glo_parts: Vec<Vec<GlossaryEntry>> = Vec::new();
-    let mut styles: Vec<String> = Vec::new();
-    let mut last_reason = EndReason::NoToolCalls;
-
-    for (wi, win) in windows.iter().enumerate() {
-        if win.is_empty() {
-            continue;
-        }
-        if let Some(store) = &input.store {
-            if let Some(json) = store
-                .load_artifact(&input.task_id, &window_artifact_name(wi))
-                .await?
-            {
-                if let Ok(cp) = serde_json::from_str::<WindowCheckpoint>(&json) {
-                    agent_logger.event(
-                        event::AGENT_WINDOW_CHECKPOINT,
-                        Some(&serde_json::json!({
-                            "window": wi + 1,
-                            "windows": n_win,
-                            "glossary": cp.glossary.len(),
-                            "styleChars": cp.style_guide.chars().count(),
-                        })),
-                    );
-                    glo_parts.push(cp.glossary);
-                    if !cp.style_guide.is_empty() {
-                        styles.push(cp.style_guide);
-                    }
-                    last_reason = EndReason::SubmitOk;
-                    continue;
-                }
-            }
-        }
-
-        let window_label = if n_win > 1 {
-            Some((wi + 1, n_win))
-        } else {
-            None
-        };
-        let mut on_round = |round, max, tool: Option<String>| {
-            on_progress(wi + 1, n_win, round, max, tool.as_deref());
-        };
-        agent_logger.event(
-            event::AGENT_WINDOW_START,
-            Some(&serde_json::json!({
-                "window": wi + 1,
-                "windows": n_win,
-                "cues": win.len(),
-                "fromIndex": win.first().map(|c| c.index),
-                "toIndex": win.last().map(|c| c.index),
-            })),
-        );
-        let established = union_glossaries(&glo_parts);
-        let cfg = AgentRunConfig {
-            client: &client,
-            title: &input.title,
-            source_lang: &input.source_lang,
-            target_lang: &input.target_lang,
-            window_cues: win,
-            all_cues: &input.cues,
-            user_terms: &input.user_terms,
-            established_terms: &established,
-            candidates_block: &candidates_block,
-            confusable_pairs: &confusable_pairs,
-            max_rounds,
-            probe_budget,
-            window_label,
-            task_id: &input.task_id,
+    let caller = LlmTermCaller {
+        client: &client,
+        context: LlmCallContext {
+            task_id: input.task_id.clone(),
+            media_path: Some(input.media_path.clone()),
+            phase: "terminology".to_string(),
             store: input.store.clone(),
-            web_search: web_search_provider.as_ref(),
-            logger: Some(&agent_logger),
-        };
-        let result = run_window_agent(&cfg, Some(&mut on_round)).await;
-        last_reason = result.end_reason;
-        if result.end_reason == EndReason::LlmError && n_win == 1 {
-            let briefing = TerminologyBriefing::skipped(format!(
-                "agent llm error after {} rounds",
-                result.rounds_used
-            ));
-            main_logger.event(
-                event::TERMINOLOGY_AGENT_END,
-                Some(&serde_json::json!({
-                    "taskId": input.task_id,
-                    "ok": false,
-                    "endReason": "llm_error",
-                    "skipped": true,
-                })),
-            );
-            agent_logger.event(
-                event::AGENT_END,
-                Some(&serde_json::json!({
-                    "ok": false,
-                    "endReason": "llm_error",
-                    "skipped": true,
-                    "rounds": result.rounds_used,
-                })),
-            );
-            return Ok(briefing);
-        }
-        if result.end_reason == EndReason::SubmitOk
-            || !result.glossary.is_empty()
-            || !result.style_guide.is_empty()
-        {
-            glo_parts.push(result.glossary.clone());
-            if !result.style_guide.is_empty() {
-                styles.push(result.style_guide.clone());
-            }
-            if let Some(store) = &input.store {
-                let cp = WindowCheckpoint {
-                    glossary: result.glossary,
-                    style_guide: result.style_guide,
-                };
-                if let Ok(json) = serde_json::to_string(&cp) {
-                    let _ = store
-                        .save_artifact(&input.task_id, &window_artifact_name(wi), &json)
-                        .await;
-                }
-            }
-        }
-    }
+            output_schema: None,
+        },
+    };
 
-    let glossary = union_glossaries(&glo_parts);
+    let mut on_progress_ref = |done: usize, est: usize, width: usize| {
+        on_progress(done, est, width);
+    };
+    let outcome = windowed::run_windowed_extraction(WindowedParams {
+        cues: &input.cues,
+        user_terms: &input.user_terms,
+        source_lang: &input.source_lang,
+        target_lang: &input.target_lang,
+        start_window_chars: WINDOW_START_CHARS,
+        min_window_chars: WINDOW_MIN_CHARS,
+        caller: &caller,
+        on_progress: &mut on_progress_ref,
+    })
+    .await;
+
+    // Ground every entry against the full transcript; ungrounded rows are
+    // hallucinations or formatting debris and must not reach the translator.
     let hay = transcript_haystack(&input.cues);
-    let grounded = ground_glossary(&glossary, &hay);
-    let style = merge_style_guides(&styles, &grounded, &input.target_lang);
-    let skipped = grounded.is_empty() && style.is_empty() && last_reason != EndReason::SubmitOk;
+    let grounded = ground_glossary(&outcome.glossary, &hay);
+    let style = merge_style_guides(std::slice::from_ref(&outcome.style_guide), &grounded, &input.target_lang);
+    let skipped = grounded.is_empty() && style.is_empty();
     let briefing = TerminologyBriefing {
         glossary: grounded,
         style_guide: style,
-        windows: n_win,
-        end_reason: if skipped { EndReason::Skipped } else { last_reason },
+        windows: outcome.windows_done,
+        end_reason: if skipped { EndReason::Skipped } else { outcome.end_reason },
         skipped,
         skip_reason: if skipped {
-            Some(format!("agent ended: {}", last_reason.as_str()))
+            Some(format!("terminology extraction ended: {}", outcome.end_reason.as_str()))
         } else {
             None
         },
@@ -338,32 +226,18 @@ where
 
     main_logger.event(
         event::TERMINOLOGY_AGENT_END,
-        Some(&serde_json::json!({
+        Some(&json!({
             "taskId": input.task_id,
             "ok": !briefing.skipped,
             "endReason": briefing.end_reason.as_str(),
             "glossary": briefing.glossary.len(),
             "styleChars": briefing.style_guide.chars().count(),
             "windows": briefing.windows,
-        })),
-    );
-    agent_logger.event(
-        event::AGENT_END,
-        Some(&serde_json::json!({
-            "ok": !briefing.skipped,
-            "endReason": briefing.end_reason.as_str(),
-            "skipReason": briefing.skip_reason,
-            "windows": briefing.windows,
-            "glossary": briefing.glossary.len(),
-            "styleChars": briefing.style_guide.chars().count(),
-            "styleGuide": briefing.style_guide,
+            "misheard": outcome.misheard.len(),
             "terms": briefing
                 .glossary
                 .iter()
-                .map(|g| serde_json::json!({
-                    "source": g.source,
-                    "target": g.target,
-                }))
+                .map(|g| json!({"source": g.source, "target": g.target}))
                 .collect::<Vec<_>>(),
         })),
     );

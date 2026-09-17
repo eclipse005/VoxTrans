@@ -35,8 +35,8 @@ pub(super) async fn execute_translate_steps(
 ) -> WorkspaceResult<()> {
     let step_context = StepContext { task_id, store };
 
-    // Frozen user glossary is always-on. The optional terminology Agent
-    // (fail-open) may add grounded rows + a style_guide for this video.
+    // Frozen user glossary is always-on. The windowed terminology extraction
+    // (mandatory, fail-open) may add grounded rows + a style_guide for this video.
     let (terminology_entries, style_guide) = resolve_terminology_for_translation(
         app,
         task_id,
@@ -145,9 +145,6 @@ async fn resolve_terminology_for_translation(
     String,
 ) {
     let user_entries = runtime.terminology_entries.clone();
-    if !record.frozen.enable_terminology_agent {
-        return (user_entries, String::new());
-    }
 
     let _ = report_task_stage(app, task_id, TaskStage::Terminology, "", 0, 0).await;
     let cues: Vec<TranscriptCue> = step2_segments
@@ -185,19 +182,15 @@ async fn resolve_terminology_for_translation(
             model: runtime.translate_model.clone(),
             store: Some(store.clone()),
         },
-        move |win, nwin, round, max, _tool| {
-            let detail = if nwin > 1 {
-                format!("{win}/{nwin} {round}/{max}")
-            } else {
-                format!("{round}/{max}")
-            };
+        move |done, est, width| {
+            let detail = format!("window {done}/{est} ({width} chars)");
             let report = report_task_stage(
                 &app_for_progress,
                 &task_id_owned,
                 TaskStage::Terminology,
                 detail,
-                round,
-                max,
+                done as u32,
+                est as u32,
             );
             block_on_runtime_worker(report);
         },

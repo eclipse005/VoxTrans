@@ -71,7 +71,6 @@ export function normalizeSettings(raw: SavedSettings, defaults: SavedSettings): 
     terminologyGroups: normalizeTerminologyGroups(raw.terminologyGroups ?? []),
     activeTerminologyGroupId: String(raw.activeTerminologyGroupId ?? ""),
     enableSubtitleBeautify: raw.enableSubtitleBeautify ?? true,
-    enableTerminologyAgent: Boolean(raw.enableTerminologyAgent),
     enableClickSound: raw.enableClickSound ?? true,
     autoBurnHardSubtitle: Boolean(raw.autoBurnHardSubtitle),
     defaultReviewSource: Boolean(raw.defaultReviewSource),

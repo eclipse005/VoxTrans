@@ -1,14 +1,10 @@
-//! Replay the terminology agent against an existing SRT transcript.
-//! Not invoked by the app; used to A/B agent changes (rounds, tokens,
-//! glossary quality) without re-running ASR.
+//! Replay the terminology extraction against an existing SRT transcript.
+//! Not invoked by the app; used to A/B changes (windows, tokens, glossary
+//! quality) without re-running ASR.
 //!
 //! Settings JSON (camelCase):
 //!   taskId, sourceLang, targetLang, translateApiKey, translateBaseUrl,
 //!   translateModel, srtPath, mediaPath (for log placement), title
-//!
-//! After the run it prints the agent log path; sum usage from agent.round
-//! events there. Pass --candidates-only to skip the LLM and just dump the
-//! deterministic candidate list.
 
 use std::fs;
 use std::path::PathBuf;
@@ -99,18 +95,6 @@ async fn run() -> Result<(), String> {
         settings.srt_path
     );
 
-    if std::env::args().any(|a| a == "--candidates-only") {
-        let media = PathBuf::from(&settings.media_path);
-        let out = media
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .join("candidates_dump.txt");
-        let block = voxtrans::services::terminology_agent::debug_candidates_block(&cues);
-        fs::write(&out, &block).map_err(|e| e.to_string())?;
-        eprintln!("wrote {}", out.display());
-        return Ok(());
-    }
-
     let user_terms: Vec<GlossaryEntry> = settings
         .user_terms
         .iter()
@@ -132,11 +116,8 @@ async fn run() -> Result<(), String> {
             model: settings.translate_model.clone(),
             store: None,
         },
-        |win, nwin, round, max, tool| {
-            eprintln!(
-                "window {win}/{nwin} round {round}/{max} {}",
-                tool.unwrap_or_default()
-            );
+        |done, est, width| {
+            eprintln!("window {done}/{est} ({width} chars)");
         },
     )
     .await;

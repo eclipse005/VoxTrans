@@ -17,16 +17,15 @@
 //!   - A→B improvements: lines the baseline missed and the treatment hit.
 //!   - Treatment misses / review cases: lines the treatment missed — either
 //!     translator deviation or a bad glossary row; human review decides which.
-//!   - Agent behavior stats parsed from agent.log (rounds, tool calls,
-//!     flag_pair usage, submit rejections, salvage, tokens) — only when the
-//!     agent was run live by this invocation.
+//!   - Agent behavior stats parsed from llm.log (windowed terminology calls
+//!     and tokens) — only when the extraction was run live by this invocation.
 //!
 //! Briefing source precedence:
-//!   1. --briefing <path>   inject a saved briefing JSON (agent NOT run);
+//!   1. --briefing <path>   inject a saved briefing JSON (extraction NOT run);
 //!      accepts a raw TerminologyBriefing or a replay_terminology dump
 //!      ("glossary" + "styleGuide" keys).
 //!   2. <media dir>/briefing_replay.json  (written by replay_terminology).
-//!   3. Otherwise the terminology agent is run live (agent.log is cleared
+//!   3. Otherwise the terminology extraction is run live (llm.log is cleared
 //!      first so behavior stats reflect this run).
 //!
 //! Settings JSON (camelCase), same shape as replay_terminology:
@@ -147,7 +146,7 @@ fn load_briefing_file(path: &Path) -> Result<TerminologyBriefing, String> {
         glossary,
         style_guide,
         windows: 0,
-        end_reason: EndReason::SubmitOk,
+        end_reason: EndReason::Completed,
         skipped: false,
         skip_reason: None,
     })
@@ -232,22 +231,20 @@ async fn translate_arm(
 
 #[derive(Default)]
 struct AgentStats {
-    rounds: usize,
+    calls: usize,
+    prompt_tokens: u64,
+    completion_tokens: u64,
     total_tokens: u64,
-    tool_calls: BTreeMap<String, usize>,
-    flag_pair_calls: usize,
-    submit_rejections: usize,
-    salvage: usize,
-    harness: BTreeMap<String, usize>,
-    end_reason: String,
 }
 
-/// Parse agent.log entries: "[YYYY-MM-DD HH:MM:SS] event.type\n<pretty json>".
+/// Parse llm.log entries: "[YYYY-MM-DD HH:MM:SS] event.type\n<pretty json>".
+/// Only `llm.call` rows with `phase == "terminology"` count — the A/B arms'
+/// translate calls share the same file and must not pollute the stats.
 fn parse_agent_log(task_id: &str, media_path: &str) -> Option<AgentStats> {
     let content = logs::read_task_log(ReadTaskLogRequest {
         task_id: task_id.to_string(),
         media_path: Some(media_path.to_string()),
-        channel: "agent".to_string(),
+        channel: "llm".to_string(),
     })
     .ok()?;
     if content.trim().is_empty() {
@@ -257,46 +254,32 @@ fn parse_agent_log(task_id: &str, media_path: &str) -> Option<AgentStats> {
     let mut event = String::new();
     let mut payload = String::new();
     let flush = |event: &str, payload: &str, stats: &mut AgentStats| {
-        let v: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
-        match event {
-            "agent.round" => {
-                stats.rounds += 1;
-                stats.total_tokens += v
-                    .pointer("/usage/totalTokens")
-                    .and_then(|t| t.as_u64())
-                    .unwrap_or(0);
-            }
-            "agent.tool" => {
-                let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-                *stats.tool_calls.entry(name.to_string()).or_default() += 1;
-                if name == "flag_pair" {
-                    stats.flag_pair_calls += 1;
-                }
-                if name == "submit_result" {
-                    if v.get("ok").and_then(|o| o.as_bool()) == Some(false) {
-                        stats.submit_rejections += 1;
-                    }
-                    if v.get("result")
-                        .and_then(|r| r.as_str())
-                        .is_some_and(|r| r.contains("SALVAGE"))
-                    {
-                        stats.salvage += 1;
-                    }
-                }
-            }
-            "agent.harness" => {
-                let kind = v.get("kind").and_then(|k| k.as_str()).unwrap_or("?");
-                *stats.harness.entry(kind.to_string()).or_default() += 1;
-            }
-            "agent.end" => {
-                stats.end_reason = v
-                    .get("endReason")
-                    .and_then(|r| r.as_str())
-                    .unwrap_or("")
-                    .to_string();
-            }
-            _ => {}
+        if event != "llm.call" {
+            return;
         }
+        let v: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
+        if v.get("phase").and_then(|p| p.as_str()) != Some("terminology") {
+            return;
+        }
+        if let Some(status) = v.get("status").and_then(|s| s.as_str()) {
+            if status != "ok" {
+                return;
+            }
+        }
+        stats.calls += 1;
+        let usage = v.get("usage");
+        stats.prompt_tokens += usage
+            .and_then(|u| u.get("promptTokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        stats.completion_tokens += usage
+            .and_then(|u| u.get("completionTokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        stats.total_tokens += usage
+            .and_then(|u| u.get("totalTokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
     };
     for line in content.lines() {
         let is_entry_head = line.starts_with('[')
@@ -382,13 +365,13 @@ async fn run() -> Result<(), String> {
             format!("cache: {}", cache_path.display()),
         )
     } else {
-        // Clear the agent log so behavior stats reflect this run only.
+        // Clear the llm log so behavior stats reflect this run only.
         let _ = logs::clear_task_logs(ClearTaskLogsRequest {
             task_id: settings.task_id.clone(),
             media_path: Some(settings.media_path.clone()),
-            channel: Some("agent".to_string()),
+            channel: Some("llm".to_string()),
         });
-        eprintln!("no briefing found — running terminology agent live");
+        eprintln!("no briefing found — running terminology extraction live");
         let briefing = run_terminology_briefing(
             TerminologyAgentInput {
                 task_id: settings.task_id.clone(),
@@ -403,8 +386,8 @@ async fn run() -> Result<(), String> {
                 model: settings.translate_model.clone(),
                 store: None,
             },
-            |win, nwin, round, max, tool| {
-                eprintln!("agent window {win}/{nwin} round {round}/{max} {}", tool.unwrap_or_default());
+            |done, est, width| {
+                eprintln!("terminology window {done}/{est} ({width} chars)");
             },
         )
         .await;
@@ -531,16 +514,11 @@ async fn run() -> Result<(), String> {
     );
     println!("style guide: {} chars", briefing.style_guide.chars().count());
     if let Some(s) = &agent_stats {
-        println!("\n--- Agent behavior (this run) ---");
-        println!("rounds: {}   tokens: {}   end: {}", s.rounds, s.total_tokens, s.end_reason);
-        println!("tool calls: {:?}", s.tool_calls);
+        println!("\n--- Terminology extraction (this run) ---");
         println!(
-            "flag_pair: {}   submit rejections: {}   salvage: {}",
-            s.flag_pair_calls, s.submit_rejections, s.salvage
+            "calls: {}   prompt: {}   completion: {}   total: {}",
+            s.calls, s.prompt_tokens, s.completion_tokens, s.total_tokens
         );
-        if !s.harness.is_empty() {
-            println!("harness events: {:?}", s.harness);
-        }
     }
     println!("\n--- Term Target Hit Rate (enforcement, not correctness) ---");
     println!("baseline  A: {total_a}/{total_lines} = {a_rate:.1}%");
@@ -584,14 +562,10 @@ async fn run() -> Result<(), String> {
             "styleGuideChars": briefing.style_guide.chars().count(),
         },
         "agent": agent_stats.as_ref().map(|s| json!({
-            "rounds": s.rounds,
+            "calls": s.calls,
+            "promptTokens": s.prompt_tokens,
+            "completionTokens": s.completion_tokens,
             "totalTokens": s.total_tokens,
-            "endReason": s.end_reason,
-            "toolCalls": s.tool_calls,
-            "flagPairCalls": s.flag_pair_calls,
-            "submitRejections": s.submit_rejections,
-            "salvage": s.salvage,
-            "harness": s.harness,
         })),
         "hitRate": {
             "baseline": { "hits": total_a, "lines": total_lines, "rate": a_rate },

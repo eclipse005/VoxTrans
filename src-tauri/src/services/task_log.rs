@@ -9,17 +9,9 @@ pub mod event {
     pub const TASK_FAILED: &str = "task.failed";
     pub const TERMINOLOGY_AGENT_START: &str = "terminology.agent.start";
     pub const TERMINOLOGY_AGENT_END: &str = "terminology.agent.end";
+    pub const TERMINOLOGY_AGENT_SKIP: &str = "terminology.agent.skip";
     pub const TERMINOLOGY_AGENT_RESUMED: &str = "terminology.agent.resumed";
-    pub const AGENT_START: &str = "agent.start";
-    pub const AGENT_END: &str = "agent.end";
-    pub const AGENT_SKIP: &str = "agent.skip";
-    pub const AGENT_RESUMED: &str = "agent.resumed";
-    pub const AGENT_WINDOW_START: &str = "agent.window.start";
-    pub const AGENT_WINDOW_CHECKPOINT: &str = "agent.window.checkpoint";
-    pub const AGENT_WINDOW_END: &str = "agent.window.end";
-    pub const AGENT_ROUND: &str = "agent.round";
-    pub const AGENT_TOOL: &str = "agent.tool";
-    pub const AGENT_HARNESS: &str = "agent.harness";
+    pub const TERMINOLOGY_WINDOW_END: &str = "terminology.window.end";
 }
 
 #[derive(Debug, Clone)]
@@ -89,16 +81,6 @@ impl TaskLogger {
     pub fn llm(task_id: impl Into<String>) -> Self {
         Self {
             target: TaskLogTarget::llm(task_id),
-        }
-    }
-
-    pub fn agent_with_media(task_id: impl Into<String>, media_path: impl Into<String>) -> Self {
-        Self {
-            target: TaskLogTarget {
-                task_id: task_id.into(),
-                media_path: Some(media_path.into()),
-                channel: "agent".to_string(),
-            },
         }
     }
 

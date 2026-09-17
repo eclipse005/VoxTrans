@@ -45,9 +45,7 @@
     "fetchModels": "获取模型",
     "fetchingModels": "获取中…",
     "test": "测试",
-    "concurrency": "并发数",
-    "terminologyAgent": "术语 Agent",
-    "terminologyAgentDesc": "翻译前自动提取本片术语，统一全片译名"
+    "concurrency": "并发数"
   },
   "subtitle": {
     "length": "字幕长度",

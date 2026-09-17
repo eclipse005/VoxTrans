@@ -942,7 +942,6 @@ mod tests {
             terminology_groups: Vec::new(),
             active_terminology_group_id: String::new(),
             enable_subtitle_beautify: true,
-            enable_terminology_agent: false,
             enable_click_sound: true,
             auto_burn_hard_subtitle: false,
             default_review_source: false,
@@ -1113,7 +1112,6 @@ mod tests {
             max_retries: 2,
             subtitle_length_preset: "long".to_string(),
             enable_subtitle_beautify: false,
-            enable_terminology_agent: false,
             terminology_groups_json: r#"[{"id":"g","name":"x","terms":[]}]"#.to_string(),
             enqueue_seq: 0,
         };
@@ -1365,7 +1363,6 @@ mod tests {
             max_retries: 0,
             subtitle_length_preset: "default".into(),
             enable_subtitle_beautify: true,
-            enable_terminology_agent: false,
             terminology_groups_json:
                 r#"[{"id":"frozen-grp","name":"frozen-name","terms":[]}]"#.into(),
             enqueue_seq: 0,

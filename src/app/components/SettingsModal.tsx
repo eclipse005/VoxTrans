@@ -474,23 +474,6 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                       />
                     </div>
                   </div>
-                  <div className="form-row terminology-agent-row">
-                    <div className="form-group">
-                      <label className="setting-toggle" htmlFor="enable-terminology-agent">
-                        <input
-                          id="enable-terminology-agent"
-                          type="checkbox"
-                          checked={ctx.form.enableTerminologyAgent}
-                          onChange={(e) => ctx.setForm((prev) => ({ ...prev, enableTerminologyAgent: e.target.checked }))}
-                        />
-                        <div className="toggle-label">
-                          <span className="toggle-title">{t("settings:translate.terminologyAgent")}</span>
-                          <span className="toggle-desc">{t("settings:translate.terminologyAgentDesc")}</span>
-                        </div>
-                        <span className="toggle-switch" />
-                      </label>
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>

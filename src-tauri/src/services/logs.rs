@@ -74,11 +74,7 @@ pub fn clear_task_logs(request: ClearTaskLogsRequest) -> Result<(), String> {
     let channels = if let Some(channel) = request.channel.as_deref() {
         vec![channel.to_string()]
     } else {
-        vec![
-            "main".to_string(),
-            "llm".to_string(),
-            "agent".to_string(),
-        ]
+        vec!["main".to_string(), "llm".to_string()]
     };
 
     for channel in channels {
@@ -115,8 +111,7 @@ fn log_file_name(channel: &str) -> Result<&'static str, String> {
     match channel.trim() {
         "main" => Ok("main.log"),
         "llm" => Ok("llm.log"),
-        "agent" => Ok("agent.log"),
-        _ => Err("channel must be main, llm, or agent".to_string()),
+        _ => Err("channel must be main or llm".to_string()),
     }
 }
 
@@ -128,17 +123,14 @@ mod tests {
     fn known_channels_map_to_files() {
         assert_eq!(log_file_name("main").unwrap(), "main.log");
         assert_eq!(log_file_name("llm").unwrap(), "llm.log");
-        assert_eq!(log_file_name("agent").unwrap(), "agent.log");
         assert!(log_file_name("other").is_err());
     }
 
     #[test]
-    fn agent_log_lives_next_to_main_and_llm() {
-        let agent = task_log_path("task-1", None, "agent").unwrap();
-        assert_eq!(agent.file_name().unwrap(), "agent.log");
+    fn llm_log_lives_next_to_main() {
         assert_eq!(
             task_log_path("task-1", None, "main").unwrap().parent(),
-            agent.parent()
+            task_log_path("task-1", None, "llm").unwrap().parent()
         );
     }
 }

@@ -15,7 +15,6 @@ use crate::services::preferences_types::{Provider, SubtitleLengthPreset, Termino
 pub struct FrozenSettings {
     pub subtitle_length_preset: SubtitleLengthPreset,
     pub enable_subtitle_beautify: bool,
-    pub enable_terminology_agent: bool,
     pub terminology_groups: Vec<TerminologyGroup>,
 }
 
@@ -43,7 +42,6 @@ impl FrozenSettings {
         Self {
             subtitle_length_preset: saved.subtitle_length_preset,
             enable_subtitle_beautify: saved.enable_subtitle_beautify,
-            enable_terminology_agent: saved.enable_terminology_agent,
             terminology_groups,
         }
     }
@@ -99,8 +97,7 @@ pub fn resolve_runtime_settings(
     }
 
     // Frozen settings (subtitle_length_preset, enable_subtitle_beautify,
-    // enable_terminology_agent, terminology_groups) are NOT copied into
-    // PipelineRuntimeSettings —
+    // terminology_groups) are NOT copied into PipelineRuntimeSettings —
     // callers read them from the `frozen: &FrozenSettings` argument
     // directly, keeping a single source of truth and preventing the
     // "live vs frozen" drift bug where the two could disagree.
@@ -158,7 +155,6 @@ mod tests {
         let frozen = FrozenSettings {
             subtitle_length_preset: SubtitleLengthPreset::Loose,
             enable_subtitle_beautify: false,
-            enable_terminology_agent: false,
             terminology_groups: Vec::new(),
         };
         let settings = resolve_runtime_settings(&dummy_store(), &frozen, false)
@@ -168,7 +164,6 @@ mod tests {
         // runtime settings no longer carry a duplicate.
         assert_eq!(frozen.subtitle_length_preset, SubtitleLengthPreset::Loose);
         assert!(!frozen.enable_subtitle_beautify);
-        assert!(!frozen.enable_terminology_agent);
         assert!(settings.terminology_entries.is_empty());
     }
 
@@ -177,7 +172,6 @@ mod tests {
         let frozen = FrozenSettings {
             subtitle_length_preset: SubtitleLengthPreset::Standard,
             enable_subtitle_beautify: true,
-            enable_terminology_agent: false,
             terminology_groups: vec![TerminologyGroup {
                 id: "g1".to_string(),
                 name: "Default".to_string(),
