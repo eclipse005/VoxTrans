@@ -51,7 +51,7 @@ The aligner aligns the ASR transcript with the audio to produce word-level times
 
 | Model | Size | Notes |
 |------|------|------|
-| **htdemucs_ft** | ~349 MB | Hybrid Transformer Demucs v4; separates background music from vocals before transcription to reduce recognition errors caused by BGM |
+| **htdemucs_ft** | ~336 MB | Hybrid Transformer Demucs v4; separates background music from vocals before transcription to reduce recognition errors caused by BGM |
 
 ## Usage
 

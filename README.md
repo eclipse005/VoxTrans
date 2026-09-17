@@ -51,7 +51,7 @@ VoxTrans 当前 UI 启用 11 种源语言（中英粤日韩德意西葡法俄）
 
 | 模型 | 体积 | 说明 |
 |------|------|------|
-| **htdemucs_ft** | ~349 MB | Hybrid Transformer Demucs v4，可在转录前分离背景音乐与人声，降低背景音乐导致的识别错误 |
+| **htdemucs_ft** | ~336 MB | Hybrid Transformer Demucs v4，可在转录前分离背景音乐与人声，降低背景音乐导致的识别错误 |
 
 ## 使用
 1. 设置 → 模型下载，下载 ASR 模型和对齐模型（首次使用推荐 Qwen3-ASR-0.6B + Qwen3-ForcedAligner-0.6B）

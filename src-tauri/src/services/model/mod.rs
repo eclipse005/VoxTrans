@@ -96,7 +96,10 @@ pub(crate) const REQUIRED_MMS_CTC_ALIGNER_MODEL_FILES: [&str; 3] = [
 pub(crate) const DEMUCS_MODEL_DOWNLOAD_FILES: [(&str, &str, u64); 1] = [(
     "htdemucs_ft.safetensors",
     "https://modelscope.cn/models/eclipse005/htdemucs/resolve/master/htdemucs_ft.safetensors",
-    349_312_000,
+    // Byte-exact size at the hub's current revision (verified against the
+    // ModelScope file listing; the old 349_312_000 predates a re-upload).
+    // Drives download progress only — completion is judged by the file landing.
+    336_125_008,
 )];
 
 pub(crate) fn runtime_for_target(
