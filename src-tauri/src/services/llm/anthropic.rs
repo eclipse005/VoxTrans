@@ -370,7 +370,7 @@ async fn post_messages(
     let endpoint = messages_endpoint(&config.base_url);
     let request = add_auth_headers(
         http.post(&endpoint).header("anthropic-version", ANTHROPIC_VERSION),
-        &config.next_api_key(),
+        config.next_api_key(),
     );
     let response = request.json(body).send().await.map_err(|err| {
         LlmError::new(LlmErrorKind::Http, transport_error_message(&err))
@@ -1234,7 +1234,7 @@ mod tests {
         }
         assert!(is_max_tokens_rejection(&rejection(
             400,
-            "http status 400: max_tokens is too large: 16384. This model supports at most 8192"
+            "http status 400: max_tokens is too large: 12800. This model supports at most 8192"
         )));
         assert!(!is_max_tokens_rejection(&rejection(
             400,

@@ -15,11 +15,13 @@ use super::error::LlmError;
 
 /// Output budget for models we cannot classify as Claude. kimi-code falls
 /// back to 128000 because it only talks to real Claude models; our users
-/// mostly point at compatible vendors whose caps are unknown. The generous
-/// value is safe because the adaptive post below degrades on rejection:
-/// an endpoint that caps `max_tokens` gets a one-time 400, the halved value
-/// is memoized per (base_url, model), and every later request starts there.
-pub(super) const FALLBACK_MAX_TOKENS: u32 = 16_384;
+/// mostly point at compatible vendors whose caps are unknown, so the fallback
+/// stays modest: 12800 covers a full terminology window or a translation
+/// batch with room to spare, without asking a small-context endpoint for more
+/// than it can serve. The adaptive post below degrades on rejection: an
+/// endpoint that caps `max_tokens` gets a one-time 400, the halved value is
+/// memoized per (base_url, model), and every later request starts there.
+pub(super) const FALLBACK_MAX_TOKENS: u32 = 12_800;
 
 /// Parse `(family, major, minor)` from a model name. Handles both
 /// `claude-sonnet-4-5` and `claude-3-5-sonnet` orderings; 8+ digit tokens are
@@ -245,7 +247,7 @@ mod tests {
     fn max_tokens_rejection_detection() {
         assert!(is_max_tokens_rejection(&rejection(
             400,
-            "http status 400: max_tokens is too large: 16384. This model supports at most 8192"
+            "http status 400: max_tokens is too large: 12800. This model supports at most 8192"
         )));
         assert!(is_max_tokens_rejection(&rejection(
             400,

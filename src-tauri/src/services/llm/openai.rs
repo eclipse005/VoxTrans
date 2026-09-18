@@ -524,11 +524,11 @@ mod tests {
 
     #[test]
     fn body_uses_messages_shape_not_output_config() {
-        let body = body(false, None, None, 16_384);
+        let body = body(false, None, None, 12_800);
         assert_eq!(body["model"], json!("deepseek/deepseek-v4-flash-fast"));
         assert_eq!(body["messages"][0]["role"], json!("user"));
         assert_eq!(body["messages"][0]["content"], json!("hi"));
-        assert_eq!(body["max_tokens"], json!(16_384));
+        assert_eq!(body["max_tokens"], json!(12_800));
         assert_eq!(body["stream"], json!(false));
         // Anthropic-only fields must never leak into this dialect.
         assert!(body.get("output_config").is_none());
