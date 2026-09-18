@@ -296,6 +296,7 @@ fn run_ytdlp_download(
         .arg("-o")
         .arg("%(title).200B.%(ext)s")
         .arg(url)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(ffmpeg_dir) = resolve_ffmpeg_dir() {
@@ -490,11 +491,16 @@ fn proxy_env_summary() -> String {
 ///
 /// `Command::output()` waits forever, so a wedged network leaves the invoke
 /// pending and the UI silent. This deadline turns that into a reported error.
+/// stdin is null rather than inherited: a GUI process has no usable console
+/// handle to hand down, and `Command::output()` behaves the same way.
 fn run_command_with_timeout(
     command: &mut Command,
     timeout: Duration,
 ) -> Result<std::process::Output, String> {
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|err| format!("Failed to start yt-dlp: {err}"))?;
