@@ -642,6 +642,35 @@ impl LlmClient {
             .await
     }
 
+    /// Shared failure bookkeeping for one retry attempt: fold `err` into the
+    /// loop state (`last_error` / `last_feedback`) and compute the inter-attempt
+    /// backoff. A server `Retry-After` wins over the default step but is capped
+    /// (see `effective_backoff_ms`); JSON/schema/semantic errors carry none, so
+    /// every failure source shares one exponential sequence. Returns the derived
+    /// feedback plus the backoff — `None` on the final attempt or a non-retryable
+    /// failure, which is how callers decide `break` vs `sleep`.
+    fn register_failure(
+        &self,
+        last_error: &mut String,
+        last_feedback: &mut Option<RetryFeedback>,
+        err: &LlmError,
+        attempt: u32,
+        max_attempts: u32,
+    ) -> (RetryFeedback, Option<u64>) {
+        let feedback = feedback_from_llm_error(err);
+        let backoff_ms = feedback
+            .retryable
+            .then(|| {
+                self.transport
+                    .backoff_ms(attempt, max_attempts)
+                    .map(|default| effective_backoff_ms(default, err.retry_after_ms))
+            })
+            .flatten();
+        *last_error = feedback.detail.clone();
+        *last_feedback = Some(feedback.clone());
+        (feedback, backoff_ms)
+    }
+
     /// JSON-validated call for translation batches (retry loop inside).
     pub async fn call_json_validated<T, F>(
         &self,
@@ -755,14 +784,13 @@ impl LlmClient {
                     let parsed = match extract_and_repair_json_with_outcome(&raw_text) {
                         Ok(v) => v,
                         Err(err) => {
-                            let feedback = feedback_from_llm_error(&err);
-                            last_error = feedback.detail.clone();
-                            last_feedback = Some(feedback.clone());
-                            let backoff_ms = if feedback.retryable {
-                                self.transport.backoff_ms(attempt, max_attempts)
-                            } else {
-                                None
-                            };
+                            let (feedback, backoff_ms) = self.register_failure(
+                                &mut last_error,
+                                &mut last_feedback,
+                                &err,
+                                attempt,
+                                max_attempts,
+                            );
                             log_llm_call(
                                 logger.as_ref(),
                                 failed_attempt_payload(
@@ -789,14 +817,13 @@ impl LlmClient {
                     if let Some(validator) = response_validator
                         && let Err(err) = validator.validate(&parsed.value)
                     {
-                        let feedback = feedback_from_llm_error(&err);
-                        last_error = feedback.detail.clone();
-                        last_feedback = Some(feedback.clone());
-                        let backoff_ms = if feedback.retryable {
-                            self.transport.backoff_ms(attempt, max_attempts)
-                        } else {
-                            None
-                        };
+                        let (feedback, backoff_ms) = self.register_failure(
+                            &mut last_error,
+                            &mut last_feedback,
+                            &err,
+                            attempt,
+                            max_attempts,
+                        );
                         log_llm_call(
                             logger.as_ref(),
                             failed_attempt_payload(
@@ -836,14 +863,13 @@ impl LlmClient {
                         }
                         Err(LlmSemanticValidationError::Retryable(message)) => {
                             let err = LlmError::new(LlmErrorKind::InvalidSemantic, message);
-                            let feedback = feedback_from_llm_error(&err);
-                            last_error = feedback.detail.clone();
-                            last_feedback = Some(feedback.clone());
-                            let backoff_ms = if feedback.retryable {
-                                self.transport.backoff_ms(attempt, max_attempts)
-                            } else {
-                                None
-                            };
+                            let (feedback, backoff_ms) = self.register_failure(
+                                &mut last_error,
+                                &mut last_feedback,
+                                &err,
+                                attempt,
+                                max_attempts,
+                            );
                             log_llm_call(
                                 logger.as_ref(),
                                 invalid_semantic_attempt_payload(
@@ -867,18 +893,13 @@ impl LlmClient {
                     }
                 }
                 Err(err) => {
-                    let feedback = feedback_from_llm_error(&err);
-                    last_error = feedback.detail.clone();
-                    last_feedback = Some(feedback.clone());
-                    let backoff_ms = if feedback.retryable {
-                        // Server-advised wait wins, capped at the sequence
-                        // plateau (policy lives in retry.rs).
-                        self.transport
-                            .backoff_ms(attempt, max_attempts)
-                            .map(|default| effective_backoff_ms(default, err.retry_after_ms))
-                    } else {
-                        None
-                    };
+                    let (feedback, backoff_ms) = self.register_failure(
+                        &mut last_error,
+                        &mut last_feedback,
+                        &err,
+                        attempt,
+                        max_attempts,
+                    );
                     log_llm_call(
                         logger.as_ref(),
                         http_error_attempt_payload(
