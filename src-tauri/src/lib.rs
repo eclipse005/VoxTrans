@@ -7,3 +7,6 @@ pub mod commands;
 pub mod db;
 pub mod domain;
 pub mod services;
+
+#[cfg(test)]
+mod layering;
