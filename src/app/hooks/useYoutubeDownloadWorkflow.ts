@@ -32,10 +32,10 @@ import {
   createYoutubePlaceholderTask,
   decodeYoutubeUrlFromPath,
   encodeYoutubePlaceholderPath,
-  isCancelledMessage,
   isYoutubePlaceholderPath,
   normalizeTitle,
   parseSizeToBytes,
+  youtubePlaceholderName,
 } from "../../features/media/youtubeUtils";
 
 type DispatchState = (action: AppAction) => void;
@@ -401,9 +401,11 @@ export function useYoutubeDownloadWorkflow({
         }
       } catch (error) {
         const message = toUserErrorMessage(error, t("toasts:youtube.downloadFailed"));
-        const cancelled =
-          isCancelledMessage(message) ||
-          youtubeRemovedTaskIdsRef.current.has(taskId);
+        // Only deleting/clearing this task counts as a cancellation. Sniffing
+        // the message for "cancel" also swallowed genuine failures, because
+        // localized Windows errors ("操作被用户取消。") read the same way — and
+        // a swallowed failure is a download that appears to do nothing at all.
+        const cancelled = youtubeRemovedTaskIdsRef.current.has(taskId);
         if (!cancelled && isTaskPresent(taskId)) {
           patchQueueItem(dispatch, taskId, (item) => ({
             ...item,
@@ -457,6 +459,19 @@ export function useYoutubeDownloadWorkflow({
       youtubeTrackedTaskIdsRef.current.add(taskId);
       youtubeTaskUrlRef.current.set(taskId, trimmed);
 
+      // Land the row immediately. Resolving the video info happens inside
+      // yt-dlp and can stall behind an unreachable network; while it does, the
+      // list used to stay empty and the whole click looked like a no-op.
+      addQueueItems(dispatch, [
+        createYoutubePlaceholderTask(
+          taskId,
+          encodeYoutubePlaceholderPath(taskId, trimmed),
+          youtubePlaceholderName(trimmed),
+          0,
+          0,
+        ),
+      ]);
+
       setYoutubeDownloadQueue((prev) => [
         ...prev,
         {
@@ -469,7 +484,7 @@ export function useYoutubeDownloadWorkflow({
       pushToast(t("toasts:youtube.addedToQueue"), "info");
       return Promise.resolve();
     },
-    [pushToast, t],
+    [dispatch, pushToast, t],
   );
 
   const enqueueYoutubeRetry = useCallback(
@@ -540,7 +555,7 @@ export function useYoutubeDownloadWorkflow({
       enqueueYoutubeRetry(item.id, "transcribe");
       return true;
     },
-    [enqueueYoutubeRetry, pushToast, restoreYoutubeDeferredCompletion],
+    [enqueueYoutubeRetry, pushToast, restoreYoutubeDeferredCompletion, t],
   );
 
   const processSingleTranscribeTranslate = useCallback(
@@ -570,7 +585,7 @@ export function useYoutubeDownloadWorkflow({
       enqueueYoutubeRetry(item.id, "transcribe_translate");
       return true;
     },
-    [enqueueYoutubeRetry, pushToast, restoreYoutubeDeferredCompletion],
+    [enqueueYoutubeRetry, pushToast, restoreYoutubeDeferredCompletion, t],
   );
 
   const removeItem = useCallback(

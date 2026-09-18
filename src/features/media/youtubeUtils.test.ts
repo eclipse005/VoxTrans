@@ -4,10 +4,10 @@ import {
   createYoutubePlaceholderTask,
   decodeYoutubeUrlFromPath,
   encodeYoutubePlaceholderPath,
-  isCancelledMessage,
   isYoutubePlaceholderPath,
   normalizeTitle,
   parseSizeToBytes,
+  youtubePlaceholderName,
 } from "./youtubeUtils";
 
 describe("encodeYoutubePlaceholderPath", () => {
@@ -61,15 +61,25 @@ describe("normalizeTitle", () => {
   });
 });
 
-describe("isCancelledMessage", () => {
-  it("detects cancel keywords", () => {
-    expect(isCancelledMessage("操作已取消")).toBe(true);
-    expect(isCancelledMessage("operation cancelled")).toBe(true);
-    expect(isCancelledMessage("CANCELLED")).toBe(true);
+describe("youtubePlaceholderName", () => {
+  it("labels the row with the video id", () => {
+    expect(youtubePlaceholderName("https://youtu.be/D-1VO3VLkA0?si=abc")).toBe(
+      "YouTube · D-1VO3VLkA0",
+    );
+    expect(youtubePlaceholderName("https://www.youtube.com/watch?v=D-1VO3VLkA0")).toBe(
+      "YouTube · D-1VO3VLkA0",
+    );
+    expect(youtubePlaceholderName("https://www.youtube.com/shorts/D-1VO3VLkA0")).toBe(
+      "YouTube · D-1VO3VLkA0",
+    );
   });
 
-  it("returns false for unrelated messages", () => {
-    expect(isCancelledMessage("success")).toBe(false);
+  it("falls back to the bare url", () => {
+    expect(youtubePlaceholderName("https://example.com/a")).toBe("example.com/a");
+  });
+
+  it("falls back for empty input", () => {
+    expect(youtubePlaceholderName("")).toBe("YouTube");
   });
 });
 
