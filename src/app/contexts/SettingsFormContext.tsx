@@ -30,6 +30,9 @@ type SettingsFormContextValue = {
   startModelDownload: (target: "asr" | "align" | "demucs", model?: string) => void | Promise<void>;
   cancelModelDownload: (target: "asr" | "align" | "demucs", model?: string) => void | Promise<void>;
   refreshModelStatus: () => Promise<void>;
+  /** App-level: opens the folder holding the process-wide error log. Not scoped
+   *  to a task, so it is reachable before anything has run. */
+  openAppLogDir: () => void | Promise<void>;
 };
 
 export const SettingsFormContext = createContext<SettingsFormContextValue | null>(null);

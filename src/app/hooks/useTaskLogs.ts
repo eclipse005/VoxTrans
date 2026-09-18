@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { channelLabel, clearTaskLogs, getTaskTotalTokens, readTaskLog, type LogChannel } from "../api/logs";
-import { openAppLogDir as openAppLogDirApi, openTaskLogDir } from "../api/system";
+import { openTaskLogDir } from "../api/system";
 import type { QueueItem } from "../../features/media/types";
 import type { AppAction } from "../state/appReducer";
 import type { ToastTone } from "../types";
@@ -128,17 +128,6 @@ export function useTaskLogs({
     }
   }, [logTaskContext, pushToast, t]);
 
-  // App-scoped, unlike the task log dir: reachable even when the task context
-  // is missing, which is exactly when a user reports a problem.
-  const openAppLogDir = useCallback(async () => {
-    try {
-      await openAppLogDirApi();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t("tasks:logs.openAppDirFailed");
-      pushToast(message, "error");
-    }
-  }, [pushToast, t]);
-
   useEffect(() => {
     if (!showLogs || !logTaskContext) return;
     void loadLogs();
@@ -162,6 +151,5 @@ export function useTaskLogs({
     openLogs,
     clearLogs,
     openLogDir,
-    openAppLogDir,
   };
 }

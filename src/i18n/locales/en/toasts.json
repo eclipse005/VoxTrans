@@ -4,6 +4,7 @@
     "unsupported": "The current source language is no longer supported by the new model combination, switched to {{label}}"
   },
   "settings": {
+    "openLogDirFailed": "Failed to open the app log folder",
     "chunkMustBeNumber": "Chunk duration must be a number",
     "concurrencyMustBeNumber": "Concurrency must be a number",
     "saved": "Settings saved (takes effect on next task)",

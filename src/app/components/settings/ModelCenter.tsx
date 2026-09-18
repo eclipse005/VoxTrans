@@ -74,6 +74,30 @@ export function ModelCenter({
         </div>
       </section>
 
+      {/* App-scoped diagnostics. Deliberately not part of the model storage
+          card: the error log is not a model artifact, and a user reporting a
+          problem needs it reachable before any task has run. */}
+      <section className="model-section model-dir-card" aria-label={t("settings:models.logDir")}>
+        <span className="model-dir-icon" aria-hidden="true">
+          🧾
+        </span>
+        <div className="model-dir-main">
+          <span className="model-section-label">{t("settings:models.logDir")}</span>
+          <span className="model-dir-path">{t("settings:models.logDirHint")}</span>
+        </div>
+        <div className="model-dir-actions">
+          <button
+            type="button"
+            className="nav-button model-dir-btn"
+            onClick={() => {
+              void ctx.openAppLogDir();
+            }}
+          >
+            {t("settings:models.logDirOpen")}
+          </button>
+        </div>
+      </section>
+
       <section className="model-section model-panel" aria-labelledby="model-asr-heading">
         <header className="model-panel-head">
           <div className="model-panel-titles">

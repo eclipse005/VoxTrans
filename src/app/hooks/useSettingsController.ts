@@ -6,6 +6,7 @@ import {
   testTranslateLlmConnection,
   type FetchLlmModelsResult,
 } from "../api/settings";
+import { openAppLogDir as openAppLogDirApi } from "../api/system";
 import type {
   AlignModel,
   AsrModel,
@@ -379,11 +380,21 @@ export function useSettingsController({
     }
   }, [form.llmProfiles, form.activeLlmProfileId, pushToast, t]);
 
+  const openAppLogDir = useCallback(async () => {
+    try {
+      await openAppLogDirApi();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("toasts:settings.openLogDirFailed");
+      pushToast(message, "error");
+    }
+  }, [pushToast, t]);
+
   return {
     openSettings,
     saveSettings,
     saveTerminologyGroups,
     testTranslateConnection,
+    openAppLogDir,
     fetchLlmModels,
     selectLlmProvider,
     updateActiveLlmProfile,

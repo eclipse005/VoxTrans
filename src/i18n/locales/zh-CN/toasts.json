@@ -4,6 +4,7 @@
     "unsupported": "当前源语言不再被新模型组合支持，已切换为 {{label}}"
   },
   "settings": {
+    "openLogDirFailed": "打开程序日志目录失败",
     "chunkMustBeNumber": "分段时长必须是数字",
     "concurrencyMustBeNumber": "并发数必须是数字",
     "saved": "设置已保存（后续任务生效）",

@@ -105,7 +105,6 @@
     "openDir": "Open logs directory",
     "openAppDir": "Open app log directory",
     "openAppDirAria": "Open app log directory",
-    "openAppDirFailed": "Failed to open the app log directory",
     "refresh": "Refresh",
     "refreshAria": "Refresh logs",
     "clear": "Clear",
