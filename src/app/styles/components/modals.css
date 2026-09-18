@@ -47,6 +47,14 @@
   gap: 6px;
   cursor: default;
   transition: border-color var(--apple-transition-fast), background var(--apple-transition-fast), box-shadow var(--apple-transition-fast);
+  /* A task can hold well over a thousand cues and every row is mounted (there is
+     no virtual list). Let the browser skip style/layout/paint for rows that are
+     off screen — this is presentation only and involves no behaviour.
+     `contain-intrinsic-size: auto <h>` keeps the scroll height honest while a
+     skipped row has no measured size, and `auto` replaces the guess with the
+     real size once the row has been rendered, so the list cannot jump. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 132px;
 }
 
 .subtitle-row-card:hover {
