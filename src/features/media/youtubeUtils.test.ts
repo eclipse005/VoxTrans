@@ -7,7 +7,6 @@ import {
   isYoutubePlaceholderPath,
   normalizeTitle,
   parseSizeToBytes,
-  youtubePlaceholderName,
 } from "./youtubeUtils";
 
 describe("encodeYoutubePlaceholderPath", () => {
@@ -58,28 +57,6 @@ describe("normalizeTitle", () => {
 
   it("handles forward slashes", () => {
     expect(normalizeTitle("folder\\video.mkv")).toBe("video");
-  });
-});
-
-describe("youtubePlaceholderName", () => {
-  it("labels the row with the video id", () => {
-    expect(youtubePlaceholderName("https://youtu.be/D-1VO3VLkA0?si=abc")).toBe(
-      "YouTube · D-1VO3VLkA0",
-    );
-    expect(youtubePlaceholderName("https://www.youtube.com/watch?v=D-1VO3VLkA0")).toBe(
-      "YouTube · D-1VO3VLkA0",
-    );
-    expect(youtubePlaceholderName("https://www.youtube.com/shorts/D-1VO3VLkA0")).toBe(
-      "YouTube · D-1VO3VLkA0",
-    );
-  });
-
-  it("falls back to the bare url", () => {
-    expect(youtubePlaceholderName("https://example.com/a")).toBe("example.com/a");
-  });
-
-  it("falls back for empty input", () => {
-    expect(youtubePlaceholderName("")).toBe("YouTube");
   });
 });
 

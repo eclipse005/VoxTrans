@@ -62,29 +62,6 @@ export function createYoutubePlaceholderTask(
   };
 }
 
-const YOUTUBE_VIDEO_ID_PATTERNS = [
-  /youtu\.be\/([A-Za-z0-9_-]{6,})/,
-  /[?&]v=([A-Za-z0-9_-]{6,})/,
-  /\/(?:shorts|embed|live|v)\/([A-Za-z0-9_-]{6,})/,
-];
-
-/**
- * Label for a download whose metadata has not arrived yet.
- *
- * The task row is now added the moment the button is pressed, so it needs a
- * name before yt-dlp reports the real title; the video id is the most useful
- * thing available at that point.
- */
-export function youtubePlaceholderName(url: string): string {
-  const raw = (url || "").trim();
-  if (!raw) return "YouTube";
-  for (const pattern of YOUTUBE_VIDEO_ID_PATTERNS) {
-    const matched = raw.match(pattern);
-    if (matched?.[1]) return `YouTube · ${matched[1]}`;
-  }
-  return raw.replace(/^https?:\/\//i, "");
-}
-
 export function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value)));

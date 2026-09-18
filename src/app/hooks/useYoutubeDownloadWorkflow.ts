@@ -35,7 +35,6 @@ import {
   isYoutubePlaceholderPath,
   normalizeTitle,
   parseSizeToBytes,
-  youtubePlaceholderName,
 } from "../../features/media/youtubeUtils";
 
 type DispatchState = (action: AppAction) => void;
@@ -459,19 +458,6 @@ export function useYoutubeDownloadWorkflow({
       youtubeTrackedTaskIdsRef.current.add(taskId);
       youtubeTaskUrlRef.current.set(taskId, trimmed);
 
-      // Land the row immediately. Resolving the video info happens inside
-      // yt-dlp and can stall behind an unreachable network; while it does, the
-      // list used to stay empty and the whole click looked like a no-op.
-      addQueueItems(dispatch, [
-        createYoutubePlaceholderTask(
-          taskId,
-          encodeYoutubePlaceholderPath(taskId, trimmed),
-          youtubePlaceholderName(trimmed),
-          0,
-          0,
-        ),
-      ]);
-
       setYoutubeDownloadQueue((prev) => [
         ...prev,
         {
@@ -484,7 +470,7 @@ export function useYoutubeDownloadWorkflow({
       pushToast(t("toasts:youtube.addedToQueue"), "info");
       return Promise.resolve();
     },
-    [dispatch, pushToast, t],
+    [pushToast, t],
   );
 
   const enqueueYoutubeRetry = useCallback(

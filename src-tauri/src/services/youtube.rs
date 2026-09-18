@@ -38,6 +38,20 @@ const YTDLP_LOG_FILE: &str = "yt-dlp.log";
 /// Keep a few verbose lines per run: enough to see which proxy yt-dlp picked
 /// and which config files it loaded, without dumping an entire session.
 const DEBUG_LINE_LIMIT: usize = 12;
+/// Environment variables that carry a proxy yt-dlp should use.
+const PROXY_ENV_KEYS: [&str; 6] = [
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+];
+const NO_PROXY_ENV_KEYS: [&str; 2] = ["NO_PROXY", "no_proxy"];
+/// yt-dlp inherits the Windows code page, so a task folder with non-ASCII
+/// characters comes back as GBK and is not valid UTF-8. Force UTF-8 instead of
+/// decoding lossily — the titles are usually CJK.
+const PYTHON_IO_ENCODING: (&str, &str) = ("PYTHONIOENCODING", "utf-8");
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -288,7 +302,11 @@ fn run_ytdlp_download(
     log_ytdlp(
         output_root,
         task_id,
-        &format!("download start | dir={} | url={url}", output_dir.display()),
+        &format!(
+            "download start | dir={} | env_proxy_keys={} | url={url}",
+            output_dir.display(),
+            proxy_env_summary()
+        ),
     );
 
     let mut child = command.spawn().map_err(|err| {
@@ -415,7 +433,53 @@ fn build_yt_dlp_command(working_dir: &Path) -> Command {
     // download). A GUI process is handed whatever cwd the shell decided, so it
     // must not be left to chance.
     command.current_dir(working_dir);
+    command.env(PYTHON_IO_ENCODING.0, PYTHON_IO_ENCODING.1);
+    clear_stray_no_proxy(&mut command);
     command
+}
+
+fn env_is_set(key: &str) -> bool {
+    std::env::var(key)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// Drop a `no_proxy` that only serves to switch the system proxy off.
+///
+/// `urllib.request.getproxies()` is `getproxies_environment() or
+/// getproxies_registry()`, and `no_proxy` also ends in `_proxy`, so a *single*
+/// non-empty `no_proxy` makes the environment branch truthy —
+/// `{'no': 'localhost,127.0.0.1,::1'}` — and the registry is never consulted.
+/// yt-dlp then has no proxy at all, which on a filtered network is a hang
+/// rather than an error, while a plain `yt-dlp.bat` that passes `--proxy`
+/// keeps working. A bypass list only means something next to a proxy that
+/// comes from the environment, so when the environment carries none, this
+/// variable is removed and the system setting wins; the system's own bypass
+/// list already covers localhost and 127.*.
+fn clear_stray_no_proxy(command: &mut Command) {
+    if PROXY_ENV_KEYS.iter().any(|key| env_is_set(key)) {
+        return;
+    }
+    for key in NO_PROXY_ENV_KEYS {
+        if env_is_set(key) {
+            command.env(key, "");
+        }
+    }
+}
+
+/// Names only — never values, since a proxy URL may embed credentials.
+fn proxy_env_summary() -> String {
+    let keys: Vec<&str> = PROXY_ENV_KEYS
+        .iter()
+        .chain(NO_PROXY_ENV_KEYS.iter())
+        .filter(|key| env_is_set(key))
+        .copied()
+        .collect();
+    if keys.is_empty() {
+        "none".to_string()
+    } else {
+        keys.join(",")
+    }
 }
 
 /// Run a command with a hard deadline, capturing both streams.
@@ -489,6 +553,18 @@ fn fetch_youtube_metadata(
         .arg("--skip-download")
         .arg("--dump-single-json")
         .arg(url);
+
+    // Logged before the spawn, so a call that never returns still leaves a
+    // record of what the process saw.
+    log_ytdlp(
+        output_root,
+        task_id,
+        &format!(
+            "metadata start | cwd={} | env_proxy_keys={}",
+            output_root.display(),
+            proxy_env_summary()
+        ),
+    );
 
     let output = match run_command_with_timeout(&mut command, METADATA_TIMEOUT) {
         Ok(output) => output,
@@ -662,13 +738,34 @@ fn resolve_ffmpeg_dir() -> Option<PathBuf> {
     None
 }
 
+/// Read a child stream line by line without ever stopping early.
+///
+/// `BufRead::lines()` yields an error for any byte sequence that is not valid
+/// UTF-8, and `map_while(Result::ok)` ends the loop right there — which also
+/// drops the read handle, so the child's next write hits a broken pipe and the
+/// process dies without printing anything. yt-dlp writes the output path in
+/// the Windows code page, so any non-ASCII task folder used to kill the
+/// download exactly this way: exit 1 after ~1s, zero output, no explanation.
 fn spawn_line_reader(
     stream: impl std::io::Read + Send + 'static,
     tx: mpsc::Sender<String>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        for line in BufReader::new(stream).lines().map_while(Result::ok) {
-            let _ = tx.send(line);
+        let mut reader = BufReader::new(stream);
+        let mut buffer = Vec::new();
+        loop {
+            buffer.clear();
+            match reader.read_until(b'\n', &mut buffer) {
+                Ok(0) => return,
+                Ok(_) => {
+                    let line = String::from_utf8_lossy(&buffer);
+                    let line = line.trim_end_matches(['\r', '\n']);
+                    if tx.send(line.to_string()).is_err() {
+                        return;
+                    }
+                }
+                Err(_) => return,
+            }
         }
     })
 }
@@ -957,10 +1054,11 @@ fn command_output_text(output: &std::process::Output) -> String {
 mod tests {
     use std::collections::VecDeque;
     use std::path::Path;
+    use std::sync::mpsc;
 
     use super::{
         DEBUG_LINE_LIMIT, clamp_message, collect_ytdlp_debug, extract_path_from_line,
-        parse_after_marker, parse_download_percent, stalled_message, tail_lines,
+        parse_after_marker, parse_download_percent, spawn_line_reader, stalled_message, tail_lines,
     };
 
     const YOUTUBE_RS: &str = include_str!("youtube.rs");
@@ -1019,6 +1117,31 @@ mod tests {
         let text = "[debug] noise\n\nERROR: boom\nERROR: last\n";
 
         assert_eq!(tail_lines(text, 2), "ERROR: boom | ERROR: last");
+    }
+
+    #[test]
+    fn line_reader_survives_bytes_that_are_not_utf8() {
+        // yt-dlp writes the Windows code page, so a task folder holding a CJK
+        // title produces GBK bytes on the first stderr line. The reader used to
+        // stop there, which closed the pipe and killed the child mid-download
+        // with no output at all.
+        let payload = b"[debug] Destination: \x81\x40\x82\xa0\r\n[download]  50.0%\n".to_vec();
+        let (tx, rx) = mpsc::channel();
+        let handle = spawn_line_reader(std::io::Cursor::new(payload), tx);
+        let _ = handle.join();
+        let lines: Vec<String> = rx.try_iter().collect();
+
+        assert_eq!(lines.len(), 2, "both lines must survive: {lines:?}");
+        assert!(lines[0].starts_with("[debug] Destination:"));
+        assert!(!lines[0].ends_with('\r'));
+        assert!(lines[1].contains("50.0%"));
+    }
+
+    #[test]
+    fn yt_dlp_gets_utf8_output_and_no_stray_no_proxy() {
+        assert!(YOUTUBE_RS.contains("PYTHONIOENCODING"));
+        assert!(YOUTUBE_RS.contains("clear_stray_no_proxy(&mut command)"));
+        assert!(YOUTUBE_RS.contains("env_proxy_keys="));
     }
 
     #[test]
