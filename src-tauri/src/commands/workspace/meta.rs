@@ -5,7 +5,7 @@ use super::{WorkspaceQueueItem, WorkspaceTaskRecord};
 use crate::db::conversion::TaskMetaExtras;
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
-use crate::domain::task::runtime_settings::FrozenSettings;
+use crate::commands::workspace::runtime_settings::FrozenSettings;
 use crate::services::workspace_subtitle::serialize_segments;
 
 pub(super) async fn ensure_workspace_hydrated_from_db(app: &AppHandle) -> WorkspaceResult<()> {

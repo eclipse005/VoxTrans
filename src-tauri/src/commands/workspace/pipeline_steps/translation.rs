@@ -8,7 +8,7 @@ use crate::commands::translate_types::{
     BuildTranslationLayerCommandRequest, BuildTranslationLayerCommandResponse,
     SourceSegmentForTerminologyCommand, TranslateTerminologyEntryCommand,
 };
-use crate::domain::task::adapters::workspace_subtitle_segments_from_translation_outputs;
+use crate::commands::workspace::adapters::workspace_subtitle_segments_from_translation_outputs;
 use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 use crate::services::translation::TranslationProgress;
 

@@ -7,14 +7,14 @@
 
 use sqlx::SqlitePool;
 
-use crate::commands::workspace::WorkspaceQueueItem;
+use crate::domain::workspace::WorkspaceQueueItem;
 use crate::db::conversion::{
     TaskMetaExtras, row_from_segment, row_from_settings, row_from_task, settings_from_row,
     task_from_row,
 };
 use crate::db::models::{SettingsRow, SubtitleSegmentRow, SubtitleWordRow, TaskRow};
 use crate::services::preferences_normalize::default_settings;
-use crate::services::preferences_types::SavedSettings;
+use crate::domain::preferences_types::SavedSettings;
 
 fn now_ms() -> i64 {
     crate::db::now_ms()
@@ -62,7 +62,7 @@ impl TaskStore {
             .map_err(|e| format!("load flat_srt_items: {e}"))?;
         settings.flat_srt_items = items
             .iter()
-            .map(|s| crate::services::preferences_types::SubtitleBurnMode::parse(s))
+            .map(|s| crate::domain::preferences_types::SubtitleBurnMode::parse(s))
             .collect();
 
         // Compose terminology_groups + terms.
@@ -197,9 +197,9 @@ impl TaskStore {
 
     async fn load_terminology_groups_internal(
         &self,
-    ) -> Result<Vec<crate::services::preferences_types::TerminologyGroup>, String> {
+    ) -> Result<Vec<crate::domain::preferences_types::TerminologyGroup>, String> {
         use crate::db::models::{TerminologyGroupRow, TerminologyTermRow};
-        use crate::services::preferences_types::{TerminologyGroup, TerminologyTerm};
+        use crate::domain::preferences_types::{TerminologyGroup, TerminologyTerm};
         use std::collections::HashMap;
 
         let group_rows: Vec<TerminologyGroupRow> =
@@ -251,7 +251,7 @@ impl TaskStore {
     pub async fn replace_segments(
         &self,
         task_id: &str,
-        segments: &[crate::services::workspace_subtitle::WorkspaceSubtitleSegment],
+        segments: &[crate::domain::workspace_subtitle::WorkspaceSubtitleSegment],
     ) -> Result<(), String> {
         let mut tx = self.pool.begin().await.map_err(|e| format!("begin tx: {e}"))?;
         // CASCADE on subtitle_segments deletes words too.
@@ -305,7 +305,7 @@ impl TaskStore {
     pub async fn load_segments(
         &self,
         task_id: &str,
-    ) -> Result<Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment>, String> {
+    ) -> Result<Vec<crate::domain::workspace_subtitle::WorkspaceSubtitleSegment>, String> {
         use std::collections::HashMap;
 
         let seg_rows: Vec<SubtitleSegmentRow> = sqlx::query_as(
@@ -330,11 +330,11 @@ impl TaskStore {
 
         let mut words_by_seg: HashMap<
             String,
-            Vec<crate::services::workspace_subtitle::WorkspaceSubtitleWord>,
+            Vec<crate::domain::workspace_subtitle::WorkspaceSubtitleWord>,
         > = HashMap::new();
         for w in word_rows {
             words_by_seg.entry(w.segment_id).or_default().push(
-                crate::services::workspace_subtitle::WorkspaceSubtitleWord {
+                crate::domain::workspace_subtitle::WorkspaceSubtitleWord {
                     start_ms: w.start_ms,
                     end_ms: w.end_ms,
                     word: w.word,
@@ -344,7 +344,7 @@ impl TaskStore {
 
         let out = seg_rows
             .into_iter()
-            .map(|s| crate::services::workspace_subtitle::WorkspaceSubtitleSegment {
+            .map(|s| crate::domain::workspace_subtitle::WorkspaceSubtitleSegment {
                 start_ms: s.start_ms,
                 end_ms: s.end_ms,
                 source_text: s.source_text,
@@ -892,11 +892,11 @@ pub async fn test_pool_with_migrations() -> SqlitePool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::workspace::{WorkspaceTaskProgressState, WorkspaceTaskStageState};
-    use crate::services::preferences_types::{
+    use crate::domain::workspace::{WorkspaceTaskProgressState, WorkspaceTaskStageState};
+    use crate::domain::preferences_types::{
         SavedSettings, SubtitleRenderStyle, TerminologyGroup, TerminologyTerm,
     };
-    use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, WorkspaceSubtitleWord};
+    use crate::domain::workspace_subtitle::{WorkspaceSubtitleSegment, WorkspaceSubtitleWord};
 
     async fn store() -> TaskStore {
         let pool = super::test_pool_with_migrations().await;
@@ -926,12 +926,12 @@ mod tests {
 
     fn sample_settings() -> SavedSettings {
         let mut s = SavedSettings {
-            provider: crate::services::preferences_types::Provider::Cpu,
+            provider: crate::domain::preferences_types::Provider::Cpu,
             chunk_target_seconds: 60,
-            subtitle_length_preset: crate::services::preferences_types::SubtitleLengthPreset::Standard,
-            asr_model: crate::services::preferences_types::AsrModel::Qwen3Asr06B,
-            align_model: crate::services::preferences_types::AlignModel::Qwen3ForcedAligner06B,
-            demucs_model: crate::services::preferences_types::DemucsModel::HtdemucsFt,
+            subtitle_length_preset: crate::domain::preferences_types::SubtitleLengthPreset::Standard,
+            asr_model: crate::domain::preferences_types::AsrModel::Qwen3Asr06B,
+            align_model: crate::domain::preferences_types::AlignModel::Qwen3ForcedAligner06B,
+            demucs_model: crate::domain::preferences_types::DemucsModel::HtdemucsFt,
             enable_vocal_separation: true,
             translate_api_key: "k".into(),
             translate_base_url: "https://api.example.com".into(),
@@ -946,14 +946,14 @@ mod tests {
             auto_burn_hard_subtitle: false,
             default_review_source: false,
             default_review_target: false,
-            subtitle_burn_mode: crate::services::preferences_types::SubtitleBurnMode::BilingualSourceFirst,
+            subtitle_burn_mode: crate::domain::preferences_types::SubtitleBurnMode::BilingualSourceFirst,
             subtitle_render_style: SubtitleRenderStyle::default(),
             flat_srt_output: false,
             flat_srt_items: Vec::new(),
-            locale: crate::services::preferences_types::Locale::ZhCn,
+            locale: crate::domain::preferences_types::Locale::ZhCn,
             models_dir: None,
         };
-        s.flat_srt_items = vec![crate::services::preferences_types::SubtitleBurnMode::Source, crate::services::preferences_types::SubtitleBurnMode::Target];
+        s.flat_srt_items = vec![crate::domain::preferences_types::SubtitleBurnMode::Source, crate::domain::preferences_types::SubtitleBurnMode::Target];
         s.terminology_groups = vec![TerminologyGroup {
             id: "g1".into(),
             name: "Default".into(),
@@ -972,7 +972,7 @@ mod tests {
         let s = store().await;
         let settings = s.load_settings().await.expect("load");
         // Default has flat_srt_items from defaults; assert provider default
-        assert_eq!(settings.provider, crate::services::preferences_types::Provider::Cpu);
+        assert_eq!(settings.provider, crate::domain::preferences_types::Provider::Cpu);
     }
 
     #[tokio::test]

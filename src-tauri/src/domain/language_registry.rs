@@ -1,4 +1,4 @@
-use crate::services::preferences_types::{AlignModel, AsrModel};
+use crate::domain::models::{AlignModel, AsrModel};
 
 use super::language::{LanguageMetadata, LanguageTag, ALL_SOURCE_LANGUAGES};
 

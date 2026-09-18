@@ -9,7 +9,7 @@ use crate::services::pipeline::StepContext;
 use crate::services::preferences_types::{AlignModel, AsrModel};
 use crate::services::task_log::{TaskLogger, event};
 
-use crate::domain::task::runtime_settings::resolve_runtime_settings;
+use crate::commands::workspace::runtime_settings::resolve_runtime_settings;
 
 use super::pipeline_steps::block_on_runtime_worker;
 

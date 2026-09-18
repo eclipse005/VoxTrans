@@ -14,7 +14,7 @@ use voxtrans::commands::transcription::{
 use voxtrans::db::open_pool_at;
 use voxtrans::db::store::TaskStore;
 use voxtrans::domain::pipeline::UnitStore;
-use voxtrans::domain::task::adapters::workspace_subtitle_segments_from_step2_segments;
+use voxtrans::commands::workspace::adapters::workspace_subtitle_segments_from_step2_segments;
 use voxtrans::services::subtitle_beautify::{
     beautify_workspace_segments, beautify_workspace_text,
 };

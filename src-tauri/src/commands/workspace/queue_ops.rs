@@ -2,7 +2,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
-use crate::domain::task::runtime_settings::FrozenSettings;
+use crate::commands::workspace::runtime_settings::FrozenSettings;
 
 use super::execution_flow::execute_single_task;
 use super::meta::{ensure_workspace_hydrated_from_db, persist_task_meta, remove_task_meta};

@@ -1,9 +1,10 @@
 use tauri::{AppHandle, Emitter, Manager};
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
-use crate::domain::task::runtime_settings::FrozenSettings;
+use crate::commands::workspace::runtime_settings::FrozenSettings;
 use crate::domain::task::stage::TaskStage;
 
+pub mod adapters;
 mod execution_flow;
 mod log_payload;
 mod meta;
@@ -14,6 +15,7 @@ mod preview;
 mod progress;
 mod queue_ops;
 mod review_flow;
+mod runtime_settings;
 mod store;
 mod task_logs;
 mod translation_flow;

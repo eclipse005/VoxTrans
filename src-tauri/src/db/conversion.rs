@@ -3,15 +3,15 @@
 //! `from_business` and `to_business` are pure functions, tested in isolation.
 //! They do not touch the database.
 
-use crate::commands::workspace::{
+use crate::domain::workspace::{
     WorkspaceQueueItem, WorkspaceTaskProgressState, WorkspaceTaskStageState,
 };
 use crate::db::models::{SettingsRow, SubtitleSegmentRow, SubtitleWordRow, TaskRow};
-use crate::services::preferences_types::{
+use crate::domain::preferences_types::{
     AlignModel, AsrModel, DemucsModel, LlmProfile, Locale, Provider, SavedSettings,
     SubtitleBurnMode, SubtitleLengthPreset,
 };
-use crate::services::workspace_subtitle::WorkspaceSubtitleSegment;
+use crate::domain::workspace_subtitle::WorkspaceSubtitleSegment;
 
 pub fn settings_from_row(row: SettingsRow) -> SavedSettings {
     let llm_profiles: Vec<LlmProfile> = if row.llm_profiles_json.trim().is_empty() {
@@ -233,7 +233,7 @@ pub fn row_from_task(item: &WorkspaceQueueItem, extras: &TaskMetaExtras) -> Task
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::preferences_types::{
+    use crate::domain::preferences_types::{
         AlignModel, AsrModel, DemucsModel, Provider, SubtitleBurnMode, SubtitleLengthPreset,
         SubtitleRenderStyle,
     };

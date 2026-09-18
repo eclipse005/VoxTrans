@@ -1,7 +1,7 @@
 //! Shared time-conversion helpers.
 //!
 //! `seconds_to_millis` was previously duplicated with subtly different
-//! NaN/overflow handling (see domain::task::adapters and
+//! NaN/overflow handling (see commands::workspace::adapters and
 //! services::transcription::sentence_boundary::timing). Centralizing here
 //! ensures the same timestamp produces the same millisecond value across
 //! pipeline steps.

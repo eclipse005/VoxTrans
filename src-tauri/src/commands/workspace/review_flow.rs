@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager};
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::services::terminology_agent::TERMINOLOGY_ARTIFACT_PREFIX;
-use crate::domain::task::adapters::{
+use crate::commands::workspace::adapters::{
     step2_segments_to_srt, workspace_subtitle_segments_from_step2_segments,
     workspace_subtitle_segments_from_translation_segments,
 };

@@ -4,7 +4,7 @@
 //! the manual `r.get::<i64, _>("col") as u32` boilerplate. Conversions to
 //! business objects live in `super::conversion`.
 
-use crate::services::preferences_types::SubtitleRenderStyle;
+use crate::domain::preferences_types::SubtitleRenderStyle;
 
 /// One row of the `settings` table (singleton, id=1).
 ///
