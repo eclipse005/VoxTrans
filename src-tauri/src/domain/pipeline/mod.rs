@@ -184,6 +184,11 @@ impl<'a> StepContext<'a> {
 pub struct StepExecution<T> {
     pub output: T,
     pub source: StepSource,
+    /// Set when a cached artifact could not be reused (schema drift, corruption)
+    /// and the step was recomputed instead. This layer must not record it — that
+    /// would point its dependencies outward at `services` — so it reports the
+    /// condition as a value and the caller logs it.
+    pub cache_discarded: Option<String>,
 }
 
 #[async_trait]
@@ -221,28 +226,31 @@ where
 {
     match step.policy() {
         CheckpointPolicy::SkipIfExists => {
+            let mut cache_discarded = None;
             if let Some(json) = store.load_artifact(ctx.task_id, step.name()).await? {
                 match serde_json::from_str::<S::Output>(&json) {
                     Ok(cached) => {
                         return Ok(StepExecution {
                             output: cached,
                             source: StepSource::Cache,
+                            cache_discarded: None,
                         });
                     }
                     Err(err) => {
-                        // Schema drift or corrupt artifact — log and fall
-                        // through to recompute. Silently dropping the cache
-                        // here would hide a real problem (e.g. a deploy
-                        // changed a struct without bumping the artifact key).
-                        eprintln!(
-                            "[warn] artifact {} for task {} failed to deserialize: {err}; recomputing",
+                        // Schema drift or corrupt artifact — recompute, but carry
+                        // the reason out instead of dropping the cache silently
+                        // (e.g. a deploy changed a struct without bumping the
+                        // artifact key). Reporting it is this layer's job;
+                        // recording it is the caller's.
+                        cache_discarded = Some(format!(
+                            "artifact {} for task {} failed to deserialize: {err}",
                             step.name(),
                             ctx.task_id
-                        );
+                        ));
                     }
                 }
             }
-            run_and_persist(step, ctx, store).await
+            run_and_persist(step, ctx, store, cache_discarded).await
         }
     }
 }
@@ -251,6 +259,7 @@ async fn run_and_persist<S>(
     step: &S,
     ctx: &StepContext<'_>,
     store: &TaskStore,
+    cache_discarded: Option<String>,
 ) -> Result<StepExecution<S::Output>, String>
 where
     S: PipelineStep + Send + Sync,
@@ -265,5 +274,6 @@ where
     Ok(StepExecution {
         output,
         source: StepSource::Computed,
+        cache_discarded,
     })
 }
