@@ -11,6 +11,8 @@ use serde_json::Value;
 
 use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
+use super::max_tokens::{halve_max_tokens, is_max_tokens_rejection, record_max_tokens_override};
+use super::port::LlmConfig;
 use super::text::truncate_chars;
 
 /// reqwest's Display stops at "error sending request for url (...)" and hides
@@ -69,6 +71,48 @@ pub(super) fn api_error(status: u16, retry_after_ms: Option<u64>, body: &str) ->
         status: Some(status),
         retry_after_ms,
     }
+}
+
+/// Send a fully-built request and normalize the response: transport failures
+/// become an `Http` error carrying the root cause; a non-2xx status becomes an
+/// `api_error` with the server's `Retry-After` (if any). Both wire dialects
+/// share this tail — they differ only in the endpoint and auth headers they
+/// bake into the builder before handing it here.
+pub(super) async fn send_and_check(
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, LlmError> {
+    let response = request
+        .send()
+        .await
+        .map_err(|err| LlmError::new(LlmErrorKind::Http, transport_error_message(&err)))?;
+    let status = response.status();
+    if !status.is_success() {
+        let retry_after = retry_after_ms(&response);
+        let text = response.text().await.unwrap_or_default();
+        return Err(api_error(status.as_u16(), retry_after, &text));
+    }
+    Ok(response)
+}
+
+/// The output-cap degrade decision, shared by both dialects' retry loops. A
+/// `max_tokens` rejection is deterministic (not transient), so the budget
+/// halves and the caller rebuilds the request immediately — no backoff. The
+/// lowered value is memoized per (base_url, model), so the halving is paid once
+/// per endpoint+model, ever. Returns the new budget to retry with, or `None` to
+/// stop — either the error isn't a `max_tokens` rejection or the budget is
+/// already at the floor.
+pub(super) fn degrade_max_tokens_after_rejection(
+    err: &LlmError,
+    config: &LlmConfig,
+    current: u32,
+) -> Option<u32> {
+    if !is_max_tokens_rejection(err) {
+        return None;
+    }
+    let lowered = halve_max_tokens(current)?;
+    eprintln!("[warn] endpoint rejected max_tokens={current} ({err}); retrying with {lowered}");
+    record_max_tokens_override(&config.base_url, &config.model, lowered);
+    Some(lowered)
 }
 
 /// `GET {base}/v1/models` for the settings model picker. Both dialects serve

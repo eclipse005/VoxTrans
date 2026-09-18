@@ -10,11 +10,8 @@ use serde_json::{Value, json};
 
 use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
-use super::http::{api_error, drive_sse, json_u64, transport_error_message};
-use super::max_tokens::{
-    effective_max_tokens, halve_max_tokens, is_max_tokens_rejection, parse_claude_version,
-    record_max_tokens_override,
-};
+use super::http::{drive_sse, json_u64};
+use super::max_tokens::{effective_max_tokens, parse_claude_version};
 use super::port::{
     AGENT_TEMPERATURE, AssistantTurn, ChatMessage, LlmConfig, LlmTokenUsage,
     TRANSLATION_TEMPERATURE, ToolCall, ToolCallFunction,
@@ -372,23 +369,12 @@ async fn post_messages(
         http.post(&endpoint).header("anthropic-version", ANTHROPIC_VERSION),
         config.next_api_key(),
     );
-    let response = request.json(body).send().await.map_err(|err| {
-        LlmError::new(LlmErrorKind::Http, transport_error_message(&err))
-    })?;
-    let status = response.status();
-    if !status.is_success() {
-        let retry_after_ms = super::http::retry_after_ms(&response);
-        let text = response.text().await.unwrap_or_default();
-        return Err(api_error(status.as_u16(), retry_after_ms, &text));
-    }
-    Ok(response)
+    super::http::send_and_check(request.json(body)).await
 }
 
-/// [`post_messages`] with the kimi-code degrade strategy for output caps:
-/// when an endpoint rejects `max_tokens` with a 400/422, the budget halves
-/// and the request rebuilds immediately (no backoff — the refusal is
-/// deterministic, not transient). The lowered value is memoized per
-/// (base_url, model), so the cost is paid once per endpoint+model, ever.
+/// [`post_messages`] with the shared output-cap degrade strategy (see
+/// [`super::http::degrade_max_tokens_after_rejection`]): halve and rebuild on a
+/// `max_tokens` rejection, otherwise propagate.
 async fn post_messages_adaptive(
     http: &reqwest::Client,
     config: &LlmConfig,
@@ -398,17 +384,15 @@ async fn post_messages_adaptive(
     loop {
         match post_messages(http, config, &build_body(max_tokens)).await {
             Ok(response) => return Ok(response),
-            Err(err) if is_max_tokens_rejection(&err) => {
-                let Some(lowered) = halve_max_tokens(max_tokens) else {
+            Err(err) => {
+                if let Some(lowered) =
+                    super::http::degrade_max_tokens_after_rejection(&err, config, max_tokens)
+                {
+                    max_tokens = lowered;
+                } else {
                     return Err(err);
-                };
-                eprintln!(
-                    "[warn] endpoint rejected max_tokens={max_tokens} ({err}); retrying with {lowered}"
-                );
-                record_max_tokens_override(&config.base_url, &config.model, lowered);
-                max_tokens = lowered;
+                }
             }
-            Err(err) => return Err(err),
         }
     }
 }
@@ -800,7 +784,9 @@ fn parse_assistant_turn(payload: &Value, model: &str) -> Result<AssistantTurn, L
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::max_tokens::resolve_max_tokens;
+    use super::super::max_tokens::{
+        halve_max_tokens, is_max_tokens_rejection, resolve_max_tokens,
+    };
 
     // ── endpoints ───────────────────────────────────────────────────────
 

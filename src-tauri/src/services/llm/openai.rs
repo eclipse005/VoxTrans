@@ -17,10 +17,8 @@ use serde_json::{Value, json};
 
 use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
-use super::http::{api_error, drive_sse, json_u64, retry_after_ms, transport_error_message};
-use super::max_tokens::{
-    effective_max_tokens, halve_max_tokens, is_max_tokens_rejection, record_max_tokens_override,
-};
+use super::http::{drive_sse, json_u64};
+use super::max_tokens::effective_max_tokens;
 use super::port::{
     AGENT_TEMPERATURE, AssistantTurn, ChatMessage, LlmConfig, LlmTokenUsage, TRANSLATION_TEMPERATURE,
     ToolCall, ToolCallFunction,
@@ -105,26 +103,14 @@ async fn post_chat_completions(
     body: &Value,
 ) -> Result<reqwest::Response, LlmError> {
     let endpoint = chat_completions_endpoint(&config.base_url);
-    let response = http
+    let request = http
         .post(&endpoint)
-        .bearer_auth(config.next_api_key())
-        .json(body)
-        .send()
-        .await
-        .map_err(|err| LlmError::new(LlmErrorKind::Http, transport_error_message(&err)))?;
-    let status = response.status();
-    if !status.is_success() {
-        let retry_after = retry_after_ms(&response);
-        let text = response.text().await.unwrap_or_default();
-        return Err(api_error(status.as_u16(), retry_after, &text));
-    }
-    Ok(response)
+        .bearer_auth(config.next_api_key());
+    super::http::send_and_check(request.json(body)).await
 }
 
-/// [`post_chat_completions`] with the same output-cap degrade the Messages
-/// path uses: a 400/422 naming `max_tokens` halves the budget and rebuilds
-/// the request immediately (the refusal is deterministic, not transient),
-/// and the lowered value is memoized per (base_url, model).
+/// [`post_chat_completions`] with the shared output-cap degrade strategy (see
+/// [`super::http::degrade_max_tokens_after_rejection`]).
 async fn post_chat_adaptive(
     http: &reqwest::Client,
     config: &LlmConfig,
@@ -134,17 +120,15 @@ async fn post_chat_adaptive(
     loop {
         match post_chat_completions(http, config, &build_body(max_tokens)).await {
             Ok(response) => return Ok(response),
-            Err(err) if is_max_tokens_rejection(&err) => {
-                let Some(lowered) = halve_max_tokens(max_tokens) else {
+            Err(err) => {
+                if let Some(lowered) =
+                    super::http::degrade_max_tokens_after_rejection(&err, config, max_tokens)
+                {
+                    max_tokens = lowered;
+                } else {
                     return Err(err);
-                };
-                eprintln!(
-                    "[warn] endpoint rejected max_tokens={max_tokens} ({err}); retrying with {lowered}"
-                );
-                record_max_tokens_override(&config.base_url, &config.model, lowered);
-                max_tokens = lowered;
+                }
             }
-            Err(err) => return Err(err),
         }
     }
 }
