@@ -182,8 +182,8 @@ async fn resolve_terminology_for_translation(
             model: runtime.translate_model.clone(),
             store: Some(store.clone()),
         },
-        move |done, est, width| {
-            let detail = format!("window {done}/{est} ({width} chars)");
+        move |done, est, _width| {
+            let detail = format!("{done}/{est}");
             let report = report_task_stage(
                 &app_for_progress,
                 &task_id_owned,

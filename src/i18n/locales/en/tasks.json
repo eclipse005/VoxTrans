@@ -101,7 +101,6 @@
     "restoreAria": "Restore window size",
     "channelToggle": "Log channel",
     "channelMain": "Main",
-    "channelAgent": "Agent",
     "channelLlm": "LLM",
     "openDir": "Open logs directory",
     "refresh": "Refresh",

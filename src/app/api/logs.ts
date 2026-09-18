@@ -1,9 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export const LOG_CHANNELS = ["main", "agent", "llm"] as const;
+export const LOG_CHANNELS = ["main", "llm"] as const;
 export type LogChannel = (typeof LOG_CHANNELS)[number];
 
-/** Key suffix for `tasks:logs.channel${...}` translations (Main/Agent/Llm). */
+/** Key suffix for `tasks:logs.channel${...}` translations (Main/Llm). */
 export function channelLabel(channel: LogChannel): string {
   return channel.charAt(0).toUpperCase() + channel.slice(1);
 }

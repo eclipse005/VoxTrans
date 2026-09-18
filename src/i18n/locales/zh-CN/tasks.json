@@ -101,7 +101,6 @@
     "restoreAria": "还原窗口大小",
     "channelToggle": "日志频道",
     "channelMain": "主日志",
-    "channelAgent": "Agent",
     "channelLlm": "LLM",
     "openDir": "打开日志目录",
     "refresh": "刷新",
