@@ -7,14 +7,14 @@
 
 use sqlx::SqlitePool;
 
-use crate::domain::workspace::WorkspaceQueueItem;
 use crate::db::conversion::{
     TaskMetaExtras, row_from_segment, row_from_settings, row_from_task, settings_from_row,
     task_from_row,
 };
 use crate::db::models::{SettingsRow, SubtitleSegmentRow, SubtitleWordRow, TaskRow};
-use crate::services::preferences_normalize::default_settings;
+use crate::domain::preferences_normalize::default_settings;
 use crate::domain::preferences_types::SavedSettings;
+use crate::domain::workspace::WorkspaceQueueItem;
 
 fn now_ms() -> i64 {
     crate::db::now_ms()
@@ -635,7 +635,7 @@ impl TaskStore {
     pub async fn load_asr_transcripts(
         &self,
         task_id: &str,
-    ) -> Result<Vec<crate::services::pipeline::AsrTranscriptRow>, String> {
+    ) -> Result<Vec<crate::domain::pipeline::AsrTranscriptRow>, String> {
         let rows: Vec<AsrTranscriptInternalRow> = sqlx::query_as(
             "SELECT segment_index, text FROM asr_transcripts \
              WHERE task_id = ? ORDER BY segment_index",
@@ -647,7 +647,7 @@ impl TaskStore {
 
         Ok(rows
             .into_iter()
-            .map(|r| crate::services::pipeline::AsrTranscriptRow {
+            .map(|r| crate::domain::pipeline::AsrTranscriptRow {
                 segment_index: r.segment_index as usize,
                 text: r.text,
             })
@@ -657,7 +657,7 @@ impl TaskStore {
     pub async fn save_asr_transcript(
         &self,
         task_id: &str,
-        row: &crate::services::pipeline::AsrTranscriptRow,
+        row: &crate::domain::pipeline::AsrTranscriptRow,
     ) -> Result<(), String> {
         sqlx::query(
             "INSERT INTO asr_transcripts (task_id, segment_index, text) \
@@ -681,7 +681,7 @@ impl TaskStore {
         &self,
         task_id: &str,
         align_model: &str,
-    ) -> Result<Vec<crate::services::pipeline::AlignmentResultRow>, String> {
+    ) -> Result<Vec<crate::domain::pipeline::AlignmentResultRow>, String> {
         let rows: Vec<AlignmentInternalRow> = sqlx::query_as(
             "SELECT segment_index, result_json FROM alignment_results \
              WHERE task_id = ? ORDER BY segment_index",
@@ -696,7 +696,7 @@ impl TaskStore {
         for r in rows {
             match parse_alignment_cache_payload(&r.result_json) {
                 Some((cached_model, items)) if cached_model == want && !items.is_empty() => {
-                    out.push(crate::services::pipeline::AlignmentResultRow {
+                    out.push(crate::domain::pipeline::AlignmentResultRow {
                         segment_index: r.segment_index as usize,
                         items,
                     });
@@ -713,7 +713,7 @@ impl TaskStore {
         &self,
         task_id: &str,
         align_model: &str,
-        row: &crate::services::pipeline::AlignmentResultRow,
+        row: &crate::domain::pipeline::AlignmentResultRow,
     ) -> Result<(), String> {
         let payload = AlignmentCachePayload {
             align_model: align_model.trim().to_string(),
@@ -740,7 +740,7 @@ impl TaskStore {
     pub async fn load_translation_batches(
         &self,
         task_id: &str,
-    ) -> Result<Vec<crate::services::pipeline::TranslationBatchRow>, String> {
+    ) -> Result<Vec<crate::domain::pipeline::TranslationBatchRow>, String> {
         let rows: Vec<TranslationBatchInternalRow> = sqlx::query_as(
             "SELECT batch_index, segment_translations FROM translation_batch_results \
              WHERE task_id = ? ORDER BY batch_index",
@@ -755,7 +755,7 @@ impl TaskStore {
             let segment_translations: std::collections::HashMap<usize, String> =
                 serde_json::from_str(&r.segment_translations)
                     .map_err(|e| format!("deserialize translation batch: {e}"))?;
-            out.push(crate::services::pipeline::TranslationBatchRow {
+            out.push(crate::domain::pipeline::TranslationBatchRow {
                 batch_index: r.batch_index as usize,
                 segment_translations,
             });
@@ -766,7 +766,7 @@ impl TaskStore {
     pub async fn save_translation_batch(
         &self,
         task_id: &str,
-        row: &crate::services::pipeline::TranslationBatchRow,
+        row: &crate::domain::pipeline::TranslationBatchRow,
     ) -> Result<(), String> {
         let json = serde_json::to_string(&row.segment_translations)
             .map_err(|e| format!("serialize translation batch: {e}"))?;
@@ -936,7 +936,7 @@ mod tests {
             translate_api_key: "k".into(),
             translate_base_url: "https://api.example.com".into(),
             translate_model: "gpt-4o".into(),
-            llm_profiles: crate::services::preferences_normalize::default_llm_profiles(),
+            llm_profiles: crate::domain::preferences_normalize::default_llm_profiles(),
             active_llm_profile_id: "deepseek".into(),
             llm_concurrency: 4,
             terminology_groups: Vec::new(),
