@@ -48,9 +48,12 @@ const PROXY_ENV_KEYS: [&str; 6] = [
     "all_proxy",
 ];
 const NO_PROXY_ENV_KEYS: [&str; 2] = ["NO_PROXY", "no_proxy"];
-/// yt-dlp inherits the Windows code page, so a task folder with non-ASCII
-/// characters comes back as GBK and is not valid UTF-8. Force UTF-8 instead of
-/// decoding lossily — the titles are usually CJK.
+/// yt-dlp picks the Windows code page for its own output even when stdio is a
+/// pipe — `--verbose` reports `out gbk` — so a CJK title arrived as GBK bytes
+/// and decayed into U+FFFD replacement characters once decoded. `--encoding` is
+/// yt-dlp's own switch for this; the environment variable still covers anything
+/// printed before the options are parsed, such as a bootloader failure.
+const YTDLP_OUTPUT_ENCODING: &str = "utf-8";
 const PYTHON_IO_ENCODING: (&str, &str) = ("PYTHONIOENCODING", "utf-8");
 
 #[derive(Debug, Clone, Serialize)]
@@ -434,6 +437,7 @@ fn build_yt_dlp_command(working_dir: &Path) -> Command {
     // must not be left to chance.
     command.current_dir(working_dir);
     command.env(PYTHON_IO_ENCODING.0, PYTHON_IO_ENCODING.1);
+    command.arg("--encoding").arg(YTDLP_OUTPUT_ENCODING);
     clear_stray_no_proxy(&mut command);
     command
 }
@@ -795,8 +799,7 @@ fn handle_ytdlp_line(
     if let Some(path) = extract_path_from_line(line, output_dir)
         && path.extension().is_some() {
             state.final_path = Some(path.clone());
-            let title = media_name(&path);
-            if !title.is_empty() {
+            if let Some(title) = title_from_download_path(&path) {
                 snapshot.title = title;
             }
         }
@@ -1003,6 +1006,21 @@ fn media_name(path: &Path) -> String {
         .to_string()
 }
 
+/// Title taken from a `Destination:` line, ignored when it cannot be trusted.
+///
+/// A path that was decoded from a code page we do not read contains U+FFFD, and
+/// such a title must never overwrite the real one the metadata call already
+/// delivered — the row would flip from proper Japanese to replacement
+/// characters the moment the download starts.
+fn title_from_download_path(path: &Path) -> Option<String> {
+    let title = media_name(path);
+    if title.is_empty() || title.contains('\u{FFFD}') {
+        None
+    } else {
+        Some(title)
+    }
+}
+
 fn new_progress(task_id: &str, phase: &str, message: &str) -> YoutubeDownloadProgressResponse {
     YoutubeDownloadProgressResponse {
         task_id: task_id.to_string(),
@@ -1059,6 +1077,7 @@ mod tests {
     use super::{
         DEBUG_LINE_LIMIT, clamp_message, collect_ytdlp_debug, extract_path_from_line,
         parse_after_marker, parse_download_percent, spawn_line_reader, stalled_message, tail_lines,
+        title_from_download_path,
     };
 
     const YOUTUBE_RS: &str = include_str!("youtube.rs");
@@ -1142,6 +1161,27 @@ mod tests {
         assert!(YOUTUBE_RS.contains("PYTHONIOENCODING"));
         assert!(YOUTUBE_RS.contains("clear_stray_no_proxy(&mut command)"));
         assert!(YOUTUBE_RS.contains("env_proxy_keys="));
+    }
+
+    #[test]
+    fn yt_dlp_output_encoding_is_pinned_to_utf8() {
+        // Without this, a CJK title comes back as GBK and the row shows
+        // replacement characters once the download progress takes over.
+        assert!(YOUTUBE_RS.contains(".arg(\"--encoding\")"));
+        assert!(YOUTUBE_RS.contains("YTDLP_OUTPUT_ENCODING"));
+    }
+
+    #[test]
+    fn a_mojibake_title_never_replaces_a_good_one() {
+        let good = Path::new("C:\\out\\【HOSTCALL #012】.f137.mp4");
+        let broken = Path::new("C:\\out\\\u{FFFD}\u{FFFD}d3\u{FFFD}.f137.mp4");
+
+        // The `.f137` suffix stays: the frontend's normalizeTitle strips it.
+        assert_eq!(
+            title_from_download_path(good).as_deref(),
+            Some("【HOSTCALL #012】.f137")
+        );
+        assert_eq!(title_from_download_path(broken), None);
     }
 
     #[test]
