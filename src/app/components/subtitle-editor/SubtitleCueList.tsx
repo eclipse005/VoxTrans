@@ -1,13 +1,28 @@
 import {
   memo,
   useCallback,
+  useMemo,
   type MouseEvent,
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type { SubtitleCue } from "../../../features/media/types";
 import { AlertIcon, TrashIcon } from "../Icons";
 import { TimeField } from "./TimeField";
+
+/// Labels a row needs that do not depend on the row. Resolved once per list
+/// instead of once per row: a task can hold well over a thousand cues, and the
+/// profiler put i18n key parsing (`formatLanguageCode`, `extractFromKey`) at the
+/// top of the mount cost. Keys that interpolate the row index stay on `t`.
+type SubtitleRowLabels = {
+  select: string;
+  startTime: string;
+  endTime: string;
+  delete: string;
+  textPlaceholder: string;
+  translationPlaceholder: string;
+};
 
 type SubtitleCueListProps = {
   canEdit: boolean;
@@ -45,6 +60,10 @@ type SubtitleCueRowProps = {
   isFindCurrent: boolean;
   warnings: string[] | undefined;
   timeError: string;
+  /// Resolved once by the list; see `SubtitleRowLabels`.
+  labels: SubtitleRowLabels;
+  /// Still needed for the keys that interpolate this row's index.
+  t: TFunction;
   registerCardRef: (cueId: string, node: HTMLElement | null) => void;
   onCueClick: (cueId: string, event: MouseEvent<HTMLElement>) => void;
   onEnsureSelected: (cueId: string) => void;
@@ -71,6 +90,8 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
   isFindCurrent,
   warnings,
   timeError,
+  labels,
+  t,
   registerCardRef,
   onCueClick,
   onEnsureSelected,
@@ -82,7 +103,6 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
   onClearTimeError,
   onUpdateCue,
 }: SubtitleCueRowProps) {
-  const { t } = useTranslation(["subtitles", "common"]);
   const warningList = warnings ?? [];
   const timeErrorId = timeError ? `subtitle-time-error-${cue.id}` : undefined;
 
@@ -136,7 +156,7 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
           <button
             type="button"
             className="subtitle-row-index"
-            title={t("subtitles:cue.select")}
+            title={labels.select}
             aria-label={t("subtitles:cue.selectAria", { n: index + 1 })}
             aria-pressed={isSelected}
             onClick={(event) => {
@@ -148,7 +168,7 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
           </button>
           <TimeField
             valueMs={cue.startMs}
-            label={t("subtitles:cue.startTime")}
+            label={labels.startTime}
             canEdit={canEdit}
             invalid={Boolean(timeError)}
             describedBy={timeErrorId}
@@ -162,7 +182,7 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
           </span>
           <TimeField
             valueMs={cue.endMs}
-            label={t("subtitles:cue.endTime")}
+            label={labels.endTime}
             canEdit={canEdit}
             invalid={Boolean(timeError)}
             describedBy={timeErrorId}
@@ -185,8 +205,8 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
           <button
             type="button"
             className="subtitle-icon-btn subtitle-icon-btn-danger"
-            title={t("subtitles:cue.delete")}
-            aria-label={t("subtitles:cue.delete")}
+            title={labels.delete}
+            aria-label={labels.delete}
             onClick={(e) => {
               e.stopPropagation();
               onDeleteCue(cue.id);
@@ -210,7 +230,7 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
         onChange={(e) => onUpdateCue(cue.id, { text: e.target.value })}
         onClick={stopCardClick}
         onFocus={handleFocusCue}
-        placeholder={t("subtitles:cue.textPlaceholder")}
+        placeholder={labels.textPlaceholder}
         aria-label={t("subtitles:cue.textAria", { n: index + 1 })}
         readOnly={!canEdit}
         rows={1}
@@ -221,7 +241,7 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
         onChange={(e) => onUpdateCue(cue.id, { translatedText: e.target.value })}
         onClick={stopCardClick}
         onFocus={handleFocusCue}
-        placeholder={t("subtitles:cue.translationPlaceholder")}
+        placeholder={labels.translationPlaceholder}
         aria-label={t("subtitles:cue.translationAria", { n: index + 1 })}
         readOnly={!canEdit}
         rows={1}
@@ -262,6 +282,24 @@ function SubtitleCueList({
     [cardRefs],
   );
 
+  const { t } = useTranslation(["subtitles", "common"]);
+
+  // Resolved once per list rather than once per row (see SubtitleRowLabels), and
+  // the selection is turned into a Set once: `selectedCueIds` is an array, so the
+  // per-row `includes` was O(rows x selected) on every render.
+  const rowLabels = useMemo<SubtitleRowLabels>(
+    () => ({
+      select: t("subtitles:cue.select"),
+      startTime: t("subtitles:cue.startTime"),
+      endTime: t("subtitles:cue.endTime"),
+      delete: t("subtitles:cue.delete"),
+      textPlaceholder: t("subtitles:cue.textPlaceholder"),
+      translationPlaceholder: t("subtitles:cue.translationPlaceholder"),
+    }),
+    [t],
+  );
+  const selectedIdSet = useMemo(() => new Set(selectedCueIds), [selectedCueIds]);
+
   return (
     <div
       ref={listContainerRef}
@@ -282,11 +320,13 @@ function SubtitleCueList({
             index={idx}
             canEdit={canEdit}
             cuesLength={cues.length}
-            isSelected={selectedCueIds.includes(cue.id)}
+            isSelected={selectedIdSet.has(cue.id)}
             hasFindHit={matchedCueIds.has(cue.id)}
             isFindCurrent={currentMatchCueId === cue.id}
             warnings={cueWarningsById[cue.id]}
             timeError={timeErrorByCue[cue.id] ?? ""}
+            labels={rowLabels}
+            t={t}
             registerCardRef={registerCardRef}
             onCueClick={onCueClick}
             onEnsureSelected={onEnsureSelected}
