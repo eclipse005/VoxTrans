@@ -1,7 +1,7 @@
 // The preset enum is defined once in `preferences_types` (the serde/ts-rs
 // source of truth) and reused here so the domain limits logic and the DB/
 // settings layer can never drift apart. Re-exported for call-site locality.
-pub use crate::services::preferences_types::SubtitleLengthPreset;
+pub use crate::domain::preferences_types::SubtitleLengthPreset;
 
 /// Parse a preset from its lowercase string id. Thin wrapper over the
 /// canonical enum's `parse` so there is a single mapping to maintain.

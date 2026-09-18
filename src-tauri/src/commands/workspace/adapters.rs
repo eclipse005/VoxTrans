@@ -3,7 +3,7 @@ use crate::commands::translate_types::{
     SourceSegmentForTerminologyCommand,
 };
 use crate::services::translation::TranslationSegmentOutput;
-use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, WorkspaceSubtitleWord};
+use crate::domain::workspace_subtitle::{WorkspaceSubtitleSegment, WorkspaceSubtitleWord};
 
 pub fn workspace_subtitle_segments_from_step2_segments(
     segments: &[crate::commands::transcription::GroupedSentenceSegmentCommandDto],

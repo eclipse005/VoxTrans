@@ -7,7 +7,7 @@ use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::services::preferences::load_saved_settings_from_default_path;
 use crate::services::subtitle_render::{BurnHardSubtitleRequest, burn_hard_subtitle};
 use crate::services::task_log::TaskLogger;
-use crate::services::workspace_subtitle::{
+use crate::domain::workspace_subtitle::{
     WorkspaceSubtitleSegment, serialize_segments,
 };
 
@@ -17,7 +17,7 @@ use super::TaskStage;
 
 fn parse_segments(
     json: &str,
-) -> Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> {
+) -> Vec<crate::domain::workspace_subtitle::WorkspaceSubtitleSegment> {
     serde_json::from_str(json).unwrap_or_default()
 }
 

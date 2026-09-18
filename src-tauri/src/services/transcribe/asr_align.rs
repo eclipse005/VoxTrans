@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use crate::domain::language::LanguageTag;
 use crate::domain::language_registry::LanguageRegistry;
-use crate::services::preferences_types::{AlignModel, AsrModel};
+use crate::domain::preferences_types::{AlignModel, AsrModel};
 use moss_transcribe_diarize_rs::{
     AsrInference as MossAsrInference, Backend as MossBackend,
 };

@@ -168,7 +168,7 @@ pub async fn save_subtitle_editor(
         // result_srt + segments_json while the DB segments table silently
         // stays stale -- a restart hydrate then resets segments to empty.
         let store = app.state::<TaskStore>().inner().clone();
-        let segments: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
+        let segments: Vec<crate::domain::workspace_subtitle::WorkspaceSubtitleSegment> =
             serde_json::from_str(&subtitle_segments_json).unwrap_or_default();
         store
             .replace_segments(task_id, &segments)

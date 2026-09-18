@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::commands::translate_types::TranslateTerminologyEntryCommand;
 use crate::db::store::TaskStore;
-use crate::services::preferences_types::{Provider, SubtitleLengthPreset, TerminologyGroup};
+use crate::domain::preferences_types::{Provider, SubtitleLengthPreset, TerminologyGroup};
 
 /// Task-frozen settings: captured at enqueue time and never read live from
 /// the saved settings row during execution. These all affect "what the
@@ -143,7 +143,7 @@ pub fn resolve_runtime_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::preferences_types::{SubtitleLengthPreset, TerminologyTerm};
+    use crate::domain::preferences_types::{SubtitleLengthPreset, TerminologyTerm};
 
     fn dummy_store() -> TaskStore {
         let pool = tauri::async_runtime::block_on(crate::db::store::test_pool_with_migrations());

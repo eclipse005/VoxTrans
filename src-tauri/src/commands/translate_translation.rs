@@ -21,7 +21,7 @@ pub async fn build_translation_layer_with_progress_and_unit_store(
     app: AppHandle,
     mut request: BuildTranslationLayerCommandRequest,
     on_progress: Option<Arc<dyn Fn(crate::services::translation::TranslationProgress) + Send + Sync>>,
-    unit_store: Option<crate::services::pipeline::UnitStore>,
+    unit_store: Option<crate::domain::pipeline::UnitStore>,
 ) -> Result<BuildTranslationLayerCommandResponse, String> {
     if request.task_id.trim().is_empty() {
         return Err("taskId is required".to_string());

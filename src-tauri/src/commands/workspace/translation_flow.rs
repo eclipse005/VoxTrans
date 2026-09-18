@@ -4,7 +4,7 @@ use crate::db::store::TaskStore;
 use crate::domain::error::WorkspaceResult;
 use crate::commands::workspace::adapters::map_step2_segments_for_translate;
 use crate::commands::workspace::runtime_settings::{resolve_runtime_settings, PipelineRuntimeSettings};
-use crate::services::pipeline::{StepContext, StepSource};
+use crate::domain::pipeline::{StepContext, StepSource};
 
 use crate::services::terminology_agent::{
     merge_glossary_user_priority, run_terminology_briefing, GlossaryEntry, TerminologyAgentInput,

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::domain::language::LanguageTag;
 use crate::domain::language_registry::LanguageRegistry;
 use crate::domain::AlignedSpan;
-use crate::services::preferences_types::AlignModel;
+use crate::domain::preferences_types::AlignModel;
 
 /// Both variants are boxed: the engines are 4KB (Qwen) and 800B (CTC), and an
 /// `AlignEngine` is moved around per segment.

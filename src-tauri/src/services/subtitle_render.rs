@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::services::binary::{configure_background_command, resolve_bundled_or_path};
-use crate::services::preferences_types::{
+use crate::domain::preferences_types::{
     SubtitleBorderStyle, SubtitleBurnMode, SubtitleLineStyle, SubtitleRenderStyle,
 };
 use crate::services::task_path::{sanitize_filename_component, task_output_dir};
-use crate::services::workspace_subtitle::WorkspaceSubtitleSegment;
+use crate::domain::workspace_subtitle::WorkspaceSubtitleSegment;
 
 pub struct BurnHardSubtitleRequest {
     pub task_id: String,

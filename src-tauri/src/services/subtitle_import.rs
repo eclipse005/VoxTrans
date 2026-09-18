@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::services::subtitle_srt::is_reserved_task_srt_basename;
 use crate::services::task_path::{sanitize_filename_component, task_output_dir};
-use crate::services::workspace_subtitle::{
+use crate::domain::workspace_subtitle::{
     WorkspaceSubtitleSegment, serialize_segments,
 };
 

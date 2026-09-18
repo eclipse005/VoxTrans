@@ -1,7 +1,7 @@
 use crate::db::store::TaskStore;
 use crate::services::model::set_models_root_override;
 use crate::services::preferences;
-use crate::services::preferences_types::{
+use crate::domain::preferences_types::{
     DefaultSettingsResponse, SaveAppSettingsRequest, UserPreferencesResponse,
 };
 use std::path::PathBuf;
@@ -35,7 +35,7 @@ pub async fn save_app_settings(
 #[tauri::command]
 pub fn get_default_settings() -> DefaultSettingsResponse {
     DefaultSettingsResponse {
-        settings: crate::services::preferences_normalize::default_settings(),
+        settings: crate::domain::preferences_normalize::default_settings(),
     }
 }
 

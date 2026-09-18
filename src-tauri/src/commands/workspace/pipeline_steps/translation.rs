@@ -9,7 +9,7 @@ use crate::commands::translate_types::{
     SourceSegmentForTerminologyCommand, TranslateTerminologyEntryCommand,
 };
 use crate::commands::workspace::adapters::workspace_subtitle_segments_from_translation_outputs;
-use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
+use crate::domain::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 use crate::services::translation::TranslationProgress;
 
 use super::super::preview::update_subtitle_preview;

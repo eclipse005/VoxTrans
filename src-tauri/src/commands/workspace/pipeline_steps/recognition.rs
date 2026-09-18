@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use crate::services::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
+use crate::domain::pipeline::{CheckpointPolicy, PipelineStep, StepContext};
 
 use super::super::progress::report_task_stage;
 use super::super::TaskStage;
@@ -133,7 +133,7 @@ impl PipelineStep for Step1AsrPipelineStep {
                             segment_index,
                             text,
                         }) => {
-                            let row = crate::services::pipeline::AsrTranscriptRow {
+                            let row = crate::domain::pipeline::AsrTranscriptRow {
                                 segment_index,
                                 text,
                             };
@@ -152,7 +152,7 @@ impl PipelineStep for Step1AsrPipelineStep {
                             segment_index,
                             items,
                         }) => {
-                            let row = crate::services::pipeline::AlignmentResultRow {
+                            let row = crate::domain::pipeline::AlignmentResultRow {
                                 segment_index,
                                 items,
                             };

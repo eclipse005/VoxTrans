@@ -1,6 +1,6 @@
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
-use crate::services::pipeline::{PipelineStep, StepContext, StepExecution, execute_step};
+use crate::domain::pipeline::{PipelineStep, StepContext, StepExecution, execute_step};
 
 pub(super) async fn execute_workspace_step<S>(
     step: &S,

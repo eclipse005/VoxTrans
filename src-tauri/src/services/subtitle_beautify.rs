@@ -1,5 +1,5 @@
 use crate::services::subtitle_srt::SubtitleSrtSegment;
-use crate::services::workspace_subtitle::WorkspaceSubtitleSegment;
+use crate::domain::workspace_subtitle::WorkspaceSubtitleSegment;
 
 pub fn beautify_subtitle_srt_segments(
     segments: &mut [SubtitleSrtSegment],

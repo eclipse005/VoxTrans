@@ -1,6 +1,6 @@
 use tokio::runtime::Handle;
 
-pub use super::preferences_types::{
+pub use crate::domain::preferences_types::{
     SaveAppSettingsRequest, SavedSettings, SubtitleLayoutStyle, SubtitleLineStyle,
     SubtitleRenderStyle, TerminologyGroup, TerminologyTerm, UserPreferencesResponse,
 };
@@ -11,7 +11,7 @@ pub async fn load_user_preferences(
     let settings = store.load_settings().await?;
     // Ensure multi-profile slots exist for pre-profile DBs and keep translate_*
     // denormalized from the active profile for pipeline consumers.
-    let settings = super::preferences_normalize::normalize_saved_settings(settings);
+    let settings = crate::domain::preferences_normalize::normalize_saved_settings(settings);
     Ok(UserPreferencesResponse { settings })
 }
 
@@ -19,7 +19,7 @@ pub async fn save_app_settings(
     store: &crate::db::store::TaskStore,
     request: &SaveAppSettingsRequest,
 ) -> Result<(), String> {
-    let normalized = super::preferences_normalize::normalize_saved_settings(request.settings.clone());
+    let normalized = crate::domain::preferences_normalize::normalize_saved_settings(request.settings.clone());
     store.save_settings(&normalized).await
 }
 
@@ -45,5 +45,5 @@ pub fn load_saved_settings_from_default_path(
         }
         _ => tauri::async_runtime::block_on(load),
     }?;
-    Ok(super::preferences_normalize::normalize_saved_settings(settings))
+    Ok(crate::domain::preferences_normalize::normalize_saved_settings(settings))
 }

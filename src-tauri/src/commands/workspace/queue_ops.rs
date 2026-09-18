@@ -145,7 +145,7 @@ pub(super) async fn register_task_upload_internal(
                 .map(|task| task.item.clone())
                 .ok_or_else(|| WorkspaceError::TaskNotFound(id.to_string()))?
         };
-        let segs: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
+        let segs: Vec<crate::domain::workspace_subtitle::WorkspaceSubtitleSegment> =
             serde_json::from_str(&item_snapshot.subtitle_segments_json).unwrap_or_default();
         if !segs.is_empty() {
             store
@@ -345,7 +345,7 @@ pub(super) async fn enqueue_task_run_internal(
     if queued_item.media_kind.trim() == "subtitle"
         || crate::services::subtitle_import::is_srt_path(&queued_item.path)
     {
-        let segs: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
+        let segs: Vec<crate::domain::workspace_subtitle::WorkspaceSubtitleSegment> =
             serde_json::from_str(&queued_item.subtitle_segments_json).unwrap_or_default();
         if !segs.is_empty() {
             db_store
@@ -715,12 +715,12 @@ fn apply_enqueue_request(
 }
 
 fn clear_translations_in_segments_json(raw: &str) -> String {
-    let mut segments: Vec<crate::services::workspace_subtitle::WorkspaceSubtitleSegment> =
+    let mut segments: Vec<crate::domain::workspace_subtitle::WorkspaceSubtitleSegment> =
         serde_json::from_str(raw).unwrap_or_default();
     for segment in &mut segments {
         segment.translated_text.clear();
     }
-    crate::services::workspace_subtitle::serialize_segments(&segments)
+    crate::domain::workspace_subtitle::serialize_segments(&segments)
 }
 
 /// Snapshot the user-frozen subset of the current saved settings. Tasks

@@ -5,8 +5,8 @@ use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::domain::language::LanguageTag;
 use crate::domain::language_registry::LanguageRegistry;
-use crate::services::pipeline::StepContext;
-use crate::services::preferences_types::{AlignModel, AsrModel};
+use crate::domain::pipeline::StepContext;
+use crate::domain::preferences_types::{AlignModel, AsrModel};
 use crate::services::task_log::{TaskLogger, event};
 
 use crate::commands::workspace::runtime_settings::resolve_runtime_settings;
@@ -307,7 +307,7 @@ async fn execute_srt_translate_task(
     // Clear prior translations in the live preview, keep source cues.
     let source_only: Vec<_> = workspace_segments
         .iter()
-        .map(|segment| crate::services::workspace_subtitle::WorkspaceSubtitleSegment {
+        .map(|segment| crate::domain::workspace_subtitle::WorkspaceSubtitleSegment {
             start_ms: segment.start_ms,
             end_ms: segment.end_ms,
             source_text: segment.source_text.clone(),
@@ -321,7 +321,7 @@ async fn execute_srt_translate_task(
     update_subtitle_preview(app, task_id, &source_text, source_only.clone()).await?;
 
     // Persist source SoT so source review can edit before terminology.
-    let source_json = crate::services::workspace_subtitle::serialize_segments(&source_only);
+    let source_json = crate::domain::workspace_subtitle::serialize_segments(&source_only);
     super::output_completion::persist_workspace_segments(app, task_id, &source_json).await?;
     patch_task_item(app, task_id, |task| {
         task.item.subtitle_segments_json = source_json;

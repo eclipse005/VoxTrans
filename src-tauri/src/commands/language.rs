@@ -3,7 +3,7 @@ use ts_rs::TS;
 
 use crate::domain::language::LanguageTag;
 use crate::domain::language_registry::LanguageRegistry;
-use crate::services::preferences_types::{AlignModel, AsrModel};
+use crate::domain::preferences_types::{AlignModel, AsrModel};
 
 #[derive(Serialize, TS)]
 #[ts(export)]

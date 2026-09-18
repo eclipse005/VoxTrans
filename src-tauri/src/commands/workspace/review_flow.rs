@@ -9,7 +9,7 @@ use crate::commands::workspace::adapters::{
     step2_segments_to_srt, workspace_subtitle_segments_from_step2_segments,
     workspace_subtitle_segments_from_translation_segments,
 };
-use crate::services::workspace_subtitle::{
+use crate::domain::workspace_subtitle::{
     WorkspaceSubtitleSegment, serialize_segments,
 };
 

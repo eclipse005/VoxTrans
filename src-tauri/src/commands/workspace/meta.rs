@@ -6,7 +6,7 @@ use crate::db::conversion::TaskMetaExtras;
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
 use crate::commands::workspace::runtime_settings::FrozenSettings;
-use crate::services::workspace_subtitle::serialize_segments;
+use crate::domain::workspace_subtitle::serialize_segments;
 
 pub(super) async fn ensure_workspace_hydrated_from_db(app: &AppHandle) -> WorkspaceResult<()> {
     let store = app.state::<TaskStore>().inner().clone();
@@ -77,7 +77,7 @@ async fn hydrate_workspace_from_db(store: &TaskStore) -> WorkspaceResult<()> {
         let target_lang = item.target_lang.clone();
         item.subtitle_segments_json = serialize_segments(&segments);
         let frozen = FrozenSettings {
-            subtitle_length_preset: crate::services::preferences_types::SubtitleLengthPreset::parse(&extras.subtitle_length_preset),
+            subtitle_length_preset: crate::domain::preferences_types::SubtitleLengthPreset::parse(&extras.subtitle_length_preset),
             enable_subtitle_beautify: extras.enable_subtitle_beautify,
             terminology_groups: serde_json::from_str(&extras.terminology_groups_json)
                 .unwrap_or_default(),

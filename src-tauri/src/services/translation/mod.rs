@@ -226,7 +226,7 @@ pub async fn build_translation_layer_with_progress(
             async move {
                 if let Some(ref us) = store {
                     us.save_translation_batch(
-                        &crate::services::pipeline::TranslationBatchRow {
+                        &crate::domain::pipeline::TranslationBatchRow {
                             batch_index: idx,
                             segment_translations: val.1.segment_translations,
                         },

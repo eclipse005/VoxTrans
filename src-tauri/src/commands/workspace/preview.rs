@@ -1,7 +1,7 @@
 use tauri::AppHandle;
 
 use crate::domain::error::WorkspaceResult;
-use crate::services::workspace_subtitle::{WorkspaceSubtitleSegment, serialize_segments};
+use crate::domain::workspace_subtitle::{WorkspaceSubtitleSegment, serialize_segments};
 
 use super::patch_task_item;
 
