@@ -9,7 +9,7 @@ use crate::services::prompts::translation::{TranslationPromptLine, TranslationPr
 use crate::services::transcription::join_words;
 
 use super::types::{BatchWindow, NormalizedSegment, TranslationTerminologyEntry, UnitSlot};
-use super::{MAX_TERMS_PER_BATCH, NEXT_CONTEXT_LINES, PREV_CONTEXT_LINES};
+use super::{NEXT_CONTEXT_LINES, PREV_CONTEXT_LINES};
 
 /// Next split size after a window of `len` units fails.
 /// 8→4, 4→2, 2→1. `None` means this window cannot split (1 unit).
@@ -194,7 +194,7 @@ pub(super) fn build_batch_windows(
         // Terminology matched against this batch's unit texts.
         let batch_unit_texts: Vec<&str> =
             unit_range.clone().map(|i| unit_sources[i].as_str()).collect();
-        let terms = select_batch_terms(&batch_unit_texts, terminology_entries, MAX_TERMS_PER_BATCH);
+        let terms = select_batch_terms(&batch_unit_texts, terminology_entries);
         let prompt_terms = terms
             .iter()
             .map(|term| TranslationPromptTerm {
@@ -224,7 +224,6 @@ pub(super) fn build_batch_windows(
 fn select_batch_terms(
     unit_sources: &[&str],
     entries: &[TranslationTerminologyEntry],
-    max_terms: usize,
 ) -> Vec<TranslationTerminologyEntry> {
     if entries.is_empty() {
         return Vec::new();
@@ -234,14 +233,15 @@ fn select_batch_terms(
     // term covers its spacing/case variants — "orderblock" matches "order
     // block" / "Order Block" in the batch. Every term that appears in this
     // batch MUST be sent: never drop a relevant term (可以多送不能少送).
-    // Over-inclusion is acceptable; the translator LLM ignores terms that
-    // don't fit a given unit.
+    //
+    // Only matched terms are sent. An entry whose source is absent from the
+    // batch cannot fire, so shipping it as "context" buys nothing and dilutes
+    // the terminology block with rows the prompt never asks for — the terms
+    // that do arrive are exactly the ones the prompt mandates verbatim.
     let batch_norm = normalize_for_match(&unit_sources.join("\n"));
 
     let mut selected = Vec::<TranslationTerminologyEntry>::new();
     let mut seen = HashSet::<String>::new();
-
-    // 1. All fuzzy-matched terms — uncapped (不能少送).
     for entry in entries {
         let src_norm = normalize_for_match(&entry.source);
         if src_norm.is_empty() || !batch_norm.contains(&src_norm) {
@@ -250,18 +250,6 @@ fn select_batch_terms(
         if seen.insert(src_norm) {
             selected.push(entry.clone());
         }
-    }
-
-    // 2. Backfill up to max_terms with the rest (broader context for the LLM).
-    for entry in entries {
-        if selected.len() >= max_terms {
-            break;
-        }
-        let src_norm = normalize_for_match(&entry.source);
-        if src_norm.is_empty() || !seen.insert(src_norm) {
-            continue;
-        }
-        selected.push(entry.clone());
     }
 
     selected
@@ -285,9 +273,11 @@ pub(super) fn normalize_for_match(s: &str) -> String {
 }
 
 /// Targets of the terms that actually appear in `current_text` (same fuzzy
-/// match as stage 1 of `select_batch_terms`). Only matched terms' targets are
-/// enforced verbatim in the output; backfilled terms are pure context for the
-/// LLM and must not blanket-exempt lines from the source-script leak guard.
+/// match as `select_batch_terms`). The prompt mandates these terms verbatim;
+/// they are also exempt from the source-script leak guard. Re-filtered per
+/// window rather than taken from the batch: a split window keeps the parent's
+/// term list, so a sub-window must not mandate or exempt a term that lives in
+/// its sibling half.
 pub(super) fn matched_term_targets(
     current_text: &str,
     terms: &[TranslationPromptTerm],
@@ -357,7 +347,7 @@ mod tests {
         // (with a space) in the batch. Exact substring matching dropped it.
         let entries = vec![term("orderblock", "订单块")];
         let units = ["We trade into the order block here."];
-        let selected = select_batch_terms(&units, &entries, 16);
+        let selected = select_batch_terms(&units, &entries);
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].target, "订单块");
     }
@@ -445,16 +435,29 @@ mod tests {
     }
 
     #[test]
-    fn never_drops_a_matched_term_even_past_max() {
-        // 可以多送不能少送: matched terms are kept even when they exceed
-        // max_terms (max_terms only bounds the backfill, not the matches).
+    fn never_drops_a_matched_term() {
+        // 可以多送不能少送: every term the batch can fire is sent.
         let entries = vec![
             term("orderblock", "订单块"),
             term("FVG", "公允价值缺口"),
         ];
         let units = ["order block and FVG together"];
-        let selected = select_batch_terms(&units, &entries, 1);
+        let selected = select_batch_terms(&units, &entries);
         assert_eq!(selected.len(), 2);
+    }
+
+    #[test]
+    fn sends_only_matched_terms() {
+        // An entry the batch cannot fire is prompt noise: it is not sent, not
+        // even as context. The translator only ever sees terms it must honour.
+        let entries = vec![
+            term("orderblock", "订单块"),
+            term("some other video's term", "无关词"),
+        ];
+        let units = ["order block and FVG together"];
+        let selected = select_batch_terms(&units, &entries);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].source, "orderblock");
     }
 
     #[test]
@@ -469,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn matched_term_targets_excludes_unmatched_backfilled_terms() {
+    fn matched_term_targets_are_filtered_to_the_window_text() {
         use super::matched_term_targets;
         use crate::services::prompts::translation::TranslationPromptTerm;
         let terms = [
@@ -484,6 +487,8 @@ mod tests {
                 note: String::new(),
             },
         ];
+        // A split window keeps the parent's term list; the sibling half's term
+        // must not be exempted here.
         let targets = matched_term_targets("We trade the order block here.", &terms);
         assert_eq!(targets, vec!["订单块".to_string()]);
         // Fullwidth variant of the term source still matches.

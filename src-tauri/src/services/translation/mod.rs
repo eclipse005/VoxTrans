@@ -104,7 +104,6 @@ pub const DEFAULT_BATCH_SIZE: usize = 8;
 const MAX_BATCH_SIZE: usize = 40;
 const PREV_CONTEXT_LINES: usize = 3;
 const NEXT_CONTEXT_LINES: usize = 2;
-const MAX_TERMS_PER_BATCH: usize = 16;
 /// Min interval between mid-stream subtitle preview patches (per batch worker).
 const STREAM_PREVIEW_MIN_INTERVAL: Duration = Duration::from_millis(100);
 /// Also emit when this many new chars accumulate since last preview.
@@ -395,7 +394,7 @@ async fn translate_window_with_split(
     request_id: String,
 ) -> Result<WindowOutcome, String> {
     match translate_window_once(call, &window, &request_id).await {
-        Ok(outcome) => return Ok(outcome),
+        Ok(outcome) => Ok(outcome),
         Err(err) => {
             let Some(chunk) = split_chunk_size(window.local_to_global.len()) else {
                 return Err(err);
@@ -481,8 +480,8 @@ async fn translate_window_once(
     let source_lang = window.source_lang.clone();
     let target_lang = window.target_lang.clone();
     // Only terms whose source actually appears in this window are enforced
-    // verbatim in the output; backfilled terms are context for the LLM and
-    // must not blanket-exempt lines from the source-script leak guard.
+    // verbatim in the output; their targets are exempt from the source-script
+    // leak guard.
     let enforced_targets: Vec<String> = matched_term_targets(&current_text, window.terms.as_ref());
     let local_to_global = window.local_to_global.clone();
     let on_partial = make_stream_partial(call, window);
@@ -701,11 +700,9 @@ fn make_stream_partial(
                 // Per-token-block callback: previews self-correct as the
                 // stream grows; keep the longest seen text per segment.
                 let entry = map.entry(global_id).or_default();
-                if text.len() >= entry.len() || entry.is_empty() {
-                    if text != *entry {
-                        *entry = text;
-                        changed = true;
-                    }
+                if (text.len() >= entry.len() || entry.is_empty()) && text != *entry {
+                    *entry = text;
+                    changed = true;
                 }
             }
         } else {
@@ -741,7 +738,7 @@ fn log_translate_split(
     reason: &str,
 ) {
     let n = window.local_to_global.len();
-    let parts = if chunk == 0 { 0 } else { (n + chunk - 1) / chunk };
+    let parts = if chunk == 0 { 0 } else { n.div_ceil(chunk) };
     let logger = match context.media_path.as_deref() {
         Some(path) if !path.trim().is_empty() => {
             TaskLogger::llm_with_media(context.task_id.clone(), path)

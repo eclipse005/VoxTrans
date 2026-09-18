@@ -30,7 +30,7 @@ pub(super) struct SlotValidationContext<'a> {
     pub units: &'a [SlotUnitExpectation<'a>],
     pub source_lang: &'a str,
     pub target_lang: &'a str,
-    /// Terminology targets enforced verbatim on this batch; their source-script
+    /// Terminology targets mandated on this window; their source-script
     /// characters are exempt from the leak check.
     pub enforced_targets: &'a [String],
     /// Lenient mode (single-unit ladder floor): salvage soft failures instead
@@ -90,7 +90,7 @@ pub(super) fn validate_sentence_slot_response_with_context(
         let missing_slot_ids: Vec<usize> = expected
             .slots
             .iter()
-            .filter(|(id, _)| model_slots.get(id).map_or(true, |text| text.is_empty()))
+            .filter(|(id, _)| model_slots.get(id).is_none_or(|text| text.is_empty()))
             .map(|(id, _)| *id)
             .collect();
 
@@ -235,20 +235,20 @@ fn collect_unit_candidates(
             }
         }
         Value::Object(map) => {
-            if let Some(candidate) = unit_item(map) {
-                if let Some(id) = json_id(map.get("id")) {
-                    if out.contains_key(&id) {
-                        duplicate_unit_ids.push(id);
-                        // Keep the first candidate that carries slots; a later
-                        // bare translation cannot beat a slotted one.
-                        if out[&id].slots.is_empty() && !candidate.slots.is_empty() {
-                            out.insert(id, candidate);
-                        }
-                    } else {
+            if let Some(candidate) = unit_item(map)
+                && let Some(id) = json_id(map.get("id"))
+            {
+                if out.contains_key(&id) {
+                    duplicate_unit_ids.push(id);
+                    // Keep the first candidate that carries slots; a later
+                    // bare translation cannot beat a slotted one.
+                    if out[&id].slots.is_empty() && !candidate.slots.is_empty() {
                         out.insert(id, candidate);
                     }
-                    return;
+                } else {
+                    out.insert(id, candidate);
                 }
+                return;
             }
             for child in map.values() {
                 collect_unit_candidates(child, out, duplicate_unit_ids);
