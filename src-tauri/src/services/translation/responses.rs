@@ -81,18 +81,8 @@ pub(super) fn validate_sentence_slot_response_with_context(
         }
 
         // Slot protocol: every expected slot id present, non-empty.
-        let model_slots: HashMap<usize, String> = candidate
-            .slots
-            .iter()
-            .filter(|(id, _)| expected.slots.iter().any(|(eid, _)| eid == id))
-            .map(|(id, text)| (*id, text.trim().to_string()))
-            .collect();
-        let missing_slot_ids: Vec<usize> = expected
-            .slots
-            .iter()
-            .filter(|(id, _)| model_slots.get(id).is_none_or(|text| text.is_empty()))
-            .map(|(id, _)| *id)
-            .collect();
+        let model_slots = collect_model_slots(candidate, expected);
+        let missing_slot_ids = expected_missing_slot_ids(expected, &model_slots);
 
         if !missing_slot_ids.is_empty() {
             if ctx.lenient {
@@ -145,15 +135,7 @@ pub(super) fn validate_sentence_slot_response_with_context(
         // never re-fill a slot the model emptied. Slots whose source has no
         // speakable content (an ellipsis row, a bare "?") are exempt.
         if !ctx.lenient {
-            let bare_slot_ids: Vec<usize> = expected
-                .slots
-                .iter()
-                .zip(slot_texts.iter())
-                .filter(|((_, source), text)| {
-                    !norm_core(source).is_empty() && norm_core(text).is_empty()
-                })
-                .map(|((slot_id, _), _)| *slot_id)
-                .collect();
+            let bare_slot_ids = bare_content_slot_ids(expected, &slot_texts);
             if !bare_slot_ids.is_empty() {
                 issues.push(format!(
                     "unit {unit_id}: bare punctuation for slot ids [{}] whose source carries content — every content-bearing slot must render words, not punctuation alone; re-split the translation across the slots",
@@ -215,6 +197,43 @@ pub(super) fn validate_sentence_slot_response_with_context(
     }
 
     Ok(out)
+}
+
+/// Accept gate 2 building block: the model's slot texts, restricted to the
+/// ids this unit expects and trimmed. Anything else is ignored so an extra id
+/// in the answer can't satisfy a real gap.
+fn collect_model_slots(candidate: &UnitCandidate, expected: &SlotUnitExpectation<'_>) -> HashMap<usize, String> {
+    candidate
+        .slots
+        .iter()
+        .filter(|(id, _)| expected.slots.iter().any(|(eid, _)| eid == id))
+        .map(|(id, text)| (*id, text.trim().to_string()))
+        .collect()
+}
+
+/// Accept gate 2: expected slot ids the model left absent or blank.
+fn expected_missing_slot_ids(
+    expected: &SlotUnitExpectation<'_>,
+    model_slots: &HashMap<usize, String>,
+) -> Vec<usize> {
+    expected
+        .slots
+        .iter()
+        .filter(|(id, _)| model_slots.get(id).is_none_or(|text| text.is_empty()))
+        .map(|(id, _)| *id)
+        .collect()
+}
+
+/// Accept gate 4: slots whose source carries speakable content but whose model
+/// text is bare punctuation. `slot_texts` is in `expected.slots` order.
+fn bare_content_slot_ids(expected: &SlotUnitExpectation<'_>, slot_texts: &[String]) -> Vec<usize> {
+    expected
+        .slots
+        .iter()
+        .zip(slot_texts.iter())
+        .filter(|((_, source), text)| !norm_core(source).is_empty() && norm_core(text).is_empty())
+        .map(|((slot_id, _), _)| *slot_id)
+        .collect()
 }
 
 #[derive(Debug, Clone, Default)]
