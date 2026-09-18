@@ -9,10 +9,12 @@ use tauri::{AppHandle, Manager};
 
 #[tauri::command]
 pub async fn load_user_preferences(app: AppHandle) -> Result<UserPreferencesResponse, String> {
-    let store = app.state::<TaskStore>().inner();
-    let response = preferences::load_user_preferences(store).await?;
-    sync_models_root(&response.settings.models_dir);
-    Ok(response)
+    crate::services::app_log::report("preferences", "LOAD_USER_PREFERENCES_FAILED", async {
+        let store = app.state::<TaskStore>().inner();
+        let response = preferences::load_user_preferences(store).await?;
+        sync_models_root(&response.settings.models_dir);
+        Ok(response)
+    }.await)
 }
 
 #[tauri::command]
@@ -20,10 +22,12 @@ pub async fn save_app_settings(
     app: AppHandle,
     request: SaveAppSettingsRequest,
 ) -> Result<(), String> {
-    let store = app.state::<TaskStore>().inner();
-    preferences::save_app_settings(store, &request).await?;
-    sync_models_root(&request.settings.models_dir);
-    Ok(())
+    crate::services::app_log::report("preferences", "SAVE_APP_SETTINGS_FAILED", async {
+        let store = app.state::<TaskStore>().inner();
+        preferences::save_app_settings(store, &request).await?;
+        sync_models_root(&request.settings.models_dir);
+        Ok(())
+    }.await)
 }
 
 #[tauri::command]

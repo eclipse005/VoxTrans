@@ -102,7 +102,12 @@ where
             format!("terminology extraction panicked: {detail}")
         }
     };
-    eprintln!("[terminology] skipped: {skipped_reason}");
+    crate::services::app_log::error(
+        "terminology",
+        "TERMINOLOGY_SKIPPED",
+        &skipped_reason,
+        Some(serde_json::json!({ "taskId": &task_id })),
+    );
     TaskLogger::main_with_media(task_id, media_path).event(
         event::TERMINOLOGY_SKIP,
         Some(&json!({ "reason": skipped_reason })),

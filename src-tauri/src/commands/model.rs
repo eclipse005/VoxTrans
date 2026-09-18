@@ -47,8 +47,10 @@ pub fn get_model_status(
     state: State<'_, AppState>,
     request: ModelTargetCommandRequest,
 ) -> Result<ModelStatusCommandResponse, String> {
-    let target = to_service_target(&request.target)?;
-    model::get_model_status(&state, target, request.model).map(from_service_model_status)
+    crate::services::app_log::report("model", "GET_MODEL_STATUS_FAILED", (|| {
+        let target = to_service_target(&request.target)?;
+        model::get_model_status(&state, target, request.model).map(from_service_model_status)
+    })())
 }
 
 #[tauri::command]
@@ -57,8 +59,10 @@ pub fn start_model_download(
     state: State<'_, AppState>,
     request: ModelTargetCommandRequest,
 ) -> Result<(), String> {
-    let target = to_service_target(&request.target)?;
-    model::start_model_download(app, &state, target, request.model)
+    crate::services::app_log::report("model", "START_MODEL_DOWNLOAD_FAILED", (|| {
+        let target = to_service_target(&request.target)?;
+        model::start_model_download(app, &state, target, request.model)
+    })())
 }
 
 #[tauri::command]
@@ -66,14 +70,18 @@ pub fn cancel_model_download(
     state: State<'_, AppState>,
     request: ModelTargetCommandRequest,
 ) -> Result<(), String> {
-    let target = to_service_target(&request.target)?;
-    model::cancel_model_download(&state, target, request.model)
+    crate::services::app_log::report("model", "CANCEL_MODEL_DOWNLOAD_FAILED", (|| {
+        let target = to_service_target(&request.target)?;
+        model::cancel_model_download(&state, target, request.model)
+    })())
 }
 
 #[tauri::command]
 pub fn open_model_dir(request: ModelTargetCommandRequest) -> Result<(), String> {
-    let target = to_service_target(&request.target)?;
-    model::open_model_dir(target, request.model)
+    crate::services::app_log::report("model", "OPEN_MODEL_DIR_FAILED", (|| {
+        let target = to_service_target(&request.target)?;
+        model::open_model_dir(target, request.model)
+    })())
 }
 
 fn to_service_target(target: &str) -> Result<model::ModelTarget, String> {

@@ -88,7 +88,40 @@ impl TaskLogger {
 
     pub fn event(&self, event_type: &str, payload: Option<&Value>) {
         append_event_best_effort(&self.target, event_type, payload);
+        mirror_failure_to_app_log(&self.target, event_type, payload);
     }
+}
+
+/// Failure events are mirrored into the app-wide error log. A task log only helps
+/// once the user knows *which* task to send; `app.log` is what they can hand over
+/// for "it broke". Task correlation travels as `taskId`.
+///
+/// Only failure events are mirrored — the rest of the task log is per-task
+/// detail. `terminology.skip` is deliberately absent: it is recorded where the
+/// reason is known (see `terminology_agent`), so mirroring it here would double
+/// every line.
+fn mirror_failure_to_app_log(target: &TaskLogTarget, event_type: &str, payload: Option<&Value>) {
+    let code = match event_type {
+        event::TASK_FAILED => "TASK_FAILED",
+        event::TRANSCRIBE_FAILED => "TRANSCRIBE_FAILED",
+        _ => return,
+    };
+    let message = payload
+        .and_then(|value| value.get("error"))
+        .and_then(Value::as_str)
+        .unwrap_or(event_type);
+
+    crate::services::app_log::error(
+        "task",
+        code,
+        message,
+        Some(serde_json::json!({
+            "taskId": &target.task_id,
+            "channel": &target.channel,
+            "event": event_type,
+            "payload": payload,
+        })),
+    );
 }
 
 fn append_event(

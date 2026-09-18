@@ -327,9 +327,16 @@ fn finish_chat_stream(
     }
     let Some(usage) = usage else {
         // Same contract as the Messages transport: surface missing usage
-        // instead of silently billing zero.
-        eprintln!(
-            "[warn] openai stream finished without usage; token count for this call will be 0"
+        // instead of silently billing zero. Endpoints that accept
+        // `stream_options.include_usage` but never honour it land here, and the
+        // only symptom is a task total that quietly under-counts — invisible to
+        // the user, so it belongs in the app log rather than on a console a
+        // release build does not have.
+        crate::services::app_log::error(
+            "llm.openai",
+            "STREAM_USAGE_MISSING",
+            "stream finished without usage; token count for this call will be 0",
+            None,
         );
         return Ok((acc, LlmTokenUsage::default()));
     };

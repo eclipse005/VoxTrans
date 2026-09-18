@@ -34,7 +34,12 @@ async fn record_llm_usage(
             // total until the next persist_task_meta upsert rewrites it
             // from the record. Log so it's diagnosable instead of being
             // silently swallowed.
-            eprintln!("warn: persist token count for task {task_id} failed: {e}");
+            crate::services::app_log::error(
+                "task.usage",
+                "TOKEN_PERSIST_FAILED",
+                format!("persist token count failed: {e}"),
+                Some(serde_json::json!({ "taskId": task_id })),
+            );
         }
     Ok(())
 }

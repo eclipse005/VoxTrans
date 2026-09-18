@@ -3,11 +3,19 @@
 use voxtrans::app_state;
 use voxtrans::commands;
 use voxtrans::db;
+use voxtrans::services::app_log;
 
 use std::sync::Arc;
 use tauri::Manager;
 
 fn main() {
+    // First statements in the process: a release build sets
+    // `windows_subsystem = "windows"`, so stderr goes nowhere and a bootstrap
+    // failure or panic would leave no trace at all. `app_log` resolves its path
+    // without an AppHandle precisely so it is available this early.
+    app_log::init();
+    app_log::install_panic_hook();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -24,8 +32,14 @@ fn main() {
                     })
                 }
                 _ => tauri::async_runtime::block_on(db::init_pool(&app_handle)),
-            }
-            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            };
+            let pool = match pool {
+                Ok(pool) => pool,
+                Err(err) => {
+                    app_log::error("app.startup", "DB_INIT_FAILED", &err, None);
+                    return Err(err.into());
+                }
+            };
             app.manage(db::store::TaskStore::new(pool));
             app.manage(app_state::AppState {
                 asr_model_download: Arc::new(std::sync::Mutex::new(
@@ -47,6 +61,7 @@ fn main() {
             commands::file::get_file_size,
             commands::system::open_task_output_dir,
             commands::system::open_task_log_dir,
+            commands::system::open_app_log_dir,
             commands::system::list_system_fonts,
             commands::model::open_model_dir,
             commands::model::get_model_status,
@@ -82,5 +97,8 @@ fn main() {
             commands::youtube::update_yt_dlp,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running voxtrans desktop");
+        .unwrap_or_else(|err| {
+            app_log::error("app.startup", "APP_RUN_FAILED", err.to_string(), None);
+            std::process::exit(1);
+        });
 }

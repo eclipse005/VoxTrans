@@ -3,6 +3,7 @@
 //! Boundary:
 //! - `transcribe`: ASR runtime calls and token-level output.
 //! - `transcription`: step2 sentence grouping pipeline.
+pub mod app_log;
 pub mod binary;
 pub mod demucs;
 pub mod file;

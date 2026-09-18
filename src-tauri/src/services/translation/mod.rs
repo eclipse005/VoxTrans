@@ -292,8 +292,11 @@ pub async fn build_translation_layer_with_progress(
                                 // dropping progress updates. The poisoned lock will
                                 // also fail the main-thread read below, which will
                                 // propagate the error properly.
-                                eprintln!(
-                                    "[warn] translation partial_map lock poisoned: {err}"
+                                crate::services::app_log::error(
+                                    "translation",
+                                    "PARTIAL_MAP_LOCK_POISONED",
+                                    format!("translation partial_map lock poisoned: {err}"),
+                                    None,
                                 );
                             }
                         }
@@ -516,9 +519,14 @@ async fn translate_window_once<P: TranslationLlm>(
         })?;
 
     let mut skipped = |id: usize| {
-        eprintln!(
-            "[warn] translate: model returned out-of-range unit id {id} (expected 1..={}); ignoring",
-            local_to_global.len()
+        crate::services::app_log::error(
+            "translation",
+            "UNIT_ID_OUT_OF_RANGE",
+            format!(
+                "model returned out-of-range unit id {id} (expected 1..={}); ignoring",
+                local_to_global.len()
+            ),
+            None,
         );
     };
     let outcome = merge_units_to_slots(window, result.value, &mut skipped);

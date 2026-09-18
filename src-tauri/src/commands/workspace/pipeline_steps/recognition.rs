@@ -139,8 +139,11 @@ impl PipelineStep for Step1AsrPipelineStep {
                             };
                             block_on_runtime_worker(async {
                                 if let Err(err) = us.save_asr_transcript(&row).await {
-                                    eprintln!(
-                                        "[warn] step1 asr save failed for segment {segment_index}: {err}"
+                                    crate::services::app_log::error(
+                                        "pipeline.resume",
+                                        "ASR_UNIT_SAVE_FAILED",
+                                        format!("step1 asr save failed for segment {segment_index}: {err}"),
+                                        Some(serde_json::json!({ "taskId": &task_id_owned })),
                                     );
                                 }
                             });
@@ -158,8 +161,11 @@ impl PipelineStep for Step1AsrPipelineStep {
                                 if let Err(err) =
                                     us.save_alignment_result(&align_model, &row).await
                                 {
-                                    eprintln!(
-                                        "[warn] step1 alignment save failed for segment {segment_index}: {err}"
+                                    crate::services::app_log::error(
+                                        "pipeline.resume",
+                                        "ALIGN_UNIT_SAVE_FAILED",
+                                        format!("step1 alignment save failed for segment {segment_index}: {err}"),
+                                        Some(serde_json::json!({ "taskId": &task_id_owned })),
                                     );
                                 }
                             });

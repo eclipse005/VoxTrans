@@ -110,7 +110,17 @@ pub(super) fn degrade_max_tokens_after_rejection(
         return None;
     }
     let lowered = halve_max_tokens(current)?;
-    eprintln!("[warn] endpoint rejected max_tokens={current} ({err}); retrying with {lowered}");
+    crate::services::app_log::error(
+        "llm.http",
+        "MAX_TOKENS_REJECTED",
+        format!("endpoint rejected max_tokens={current} ({err}); retrying with {lowered}"),
+        Some(serde_json::json!({
+            "requested": current,
+            "retryingWith": lowered,
+            "baseUrl": config.base_url,
+            "model": config.model,
+        })),
+    );
     config.capabilities.record_max_tokens_override(&config.base_url, &config.model, lowered);
     Some(lowered)
 }

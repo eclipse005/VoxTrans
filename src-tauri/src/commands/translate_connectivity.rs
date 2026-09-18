@@ -13,79 +13,81 @@ use serde_json::{Value, json};
 pub async fn test_translate_llm(
     request: TestTranslateLlmRequest,
 ) -> Result<TestTranslateLlmResponse, String> {
-    // Keyless slots store a non-empty placeholder instead of a real key.
-    if request.api_key.trim().is_empty() {
-        return Err("translateApiKey is required".to_string());
-    }
-    if request.base_url.trim().is_empty() {
-        return Err("translateBaseUrl is required".to_string());
-    }
-    if request.model.trim().is_empty() {
-        return Err("translateModel is required".to_string());
-    }
+    crate::services::app_log::report("translate", "TEST_TRANSLATE_LLM_FAILED", async {
+        // Keyless slots store a non-empty placeholder instead of a real key.
+        if request.api_key.trim().is_empty() {
+            return Err("translateApiKey is required".to_string());
+        }
+        if request.base_url.trim().is_empty() {
+            return Err("translateBaseUrl is required".to_string());
+        }
+        if request.model.trim().is_empty() {
+            return Err("translateModel is required".to_string());
+        }
 
-    cleanup_connectivity_test_artifacts();
+        cleanup_connectivity_test_artifacts();
 
-    let client = LlmClient::new(
-        LlmConfig::new(
-            request.base_url.trim().to_string(),
-            request.api_key.trim().to_string(),
-            request.model.trim().to_string(),
-        )
-        // The probe validates *configuration* (key/url/model). Free-tier
-        // models answer transient 429/529 congestion in well under a second,
-        // so two quick retries keep vendor load from reading as a config
-        // failure; hard errors still fail on the first attempt (no retries
-        // for non-retryable statuses). Worst case ≈6s of backoff.
-        .with_max_retries(2),
-    )?;
+        let client = LlmClient::new(
+            LlmConfig::new(
+                request.base_url.trim().to_string(),
+                request.api_key.trim().to_string(),
+                request.model.trim().to_string(),
+            )
+            // The probe validates *configuration* (key/url/model). Free-tier
+            // models answer transient 429/529 congestion in well under a second,
+            // so two quick retries keep vendor load from reading as a config
+            // failure; hard errors still fail on the first attempt (no retries
+            // for non-retryable statuses). Worst case ≈6s of backoff.
+            .with_max_retries(2),
+        )?;
 
-    let validator = JsonResponseValidator::with_required_keys(&["ok", "message"]);
-    let context = LlmCallContext {
-        task_id: "settings-llm-test".to_string(),
-        media_path: None,
-        phase: "connectivity_test".to_string(),
-        store: None,
-        output_schema: Some(json!({
-            "type": "object",
-            "properties": {
-                "ok": {"type": "boolean"},
-                "message": {"type": "string"}
-            },
-            "required": ["ok", "message"],
-            "additionalProperties": false
-        })),
-    };
-    let llm_id = next_llm_request_id();
+        let validator = JsonResponseValidator::with_required_keys(&["ok", "message"]);
+        let context = LlmCallContext {
+            task_id: "settings-llm-test".to_string(),
+            media_path: None,
+            phase: "connectivity_test".to_string(),
+            store: None,
+            output_schema: Some(json!({
+                "type": "object",
+                "properties": {
+                    "ok": {"type": "boolean"},
+                    "message": {"type": "string"}
+                },
+                "required": ["ok", "message"],
+                "additionalProperties": false
+            })),
+        };
+        let llm_id = next_llm_request_id();
 
-    let result = client
-        .call_json(
-            &context,
-            &llm_id,
-            TRANSLATE_LLM_CONNECTIVITY_TEST,
-            Some(&validator),
-        )
-        .await
-        .map_err(|err| format!("LLM connectivity test failed: {}", err.message))?;
-    let ok = result
-        .json
-        .get("ok")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let msg = result
-        .json
-        .get("message")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.trim().is_empty())
-        .ok_or_else(|| "LLM response missing 'message' field".to_string())?;
-    if !ok {
-        return Err(format!("LLM connectivity test failed: {msg}"));
-    }
-    Ok(TestTranslateLlmResponse {
-        ok: true,
-        message: msg.to_string(),
-        model: request.model.trim().to_string(),
-    })
+        let result = client
+            .call_json(
+                &context,
+                &llm_id,
+                TRANSLATE_LLM_CONNECTIVITY_TEST,
+                Some(&validator),
+            )
+            .await
+            .map_err(|err| format!("LLM connectivity test failed: {}", err.message))?;
+        let ok = result
+            .json
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let msg = result
+            .json
+            .get("message")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| "LLM response missing 'message' field".to_string())?;
+        if !ok {
+            return Err(format!("LLM connectivity test failed: {msg}"));
+        }
+        Ok(TestTranslateLlmResponse {
+            ok: true,
+            message: msg.to_string(),
+            model: request.model.trim().to_string(),
+        })
+    }.await)
 }
 
 fn cleanup_connectivity_test_artifacts() {
@@ -100,62 +102,64 @@ fn cleanup_connectivity_test_artifacts() {
 pub async fn list_llm_models(
     request: ListLlmModelsRequest,
 ) -> Result<ListLlmModelsResponse, String> {
-    let base = request.base_url.trim().trim_end_matches('/').to_string();
-    let api_key = crate::services::llm::port::parse_api_keys(&request.api_key)
-        .first()
-        .cloned()
-        .unwrap_or_default();
-    if api_key.is_empty() {
-        return Err("translateApiKey is required".to_string());
-    }
-    if base.is_empty() {
-        return Err("translateBaseUrl is required".to_string());
-    }
+    crate::services::app_log::report("translate", "LIST_LLM_MODELS_FAILED", async {
+        let base = request.base_url.trim().trim_end_matches('/').to_string();
+        let api_key = crate::services::llm::port::parse_api_keys(&request.api_key)
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        if api_key.is_empty() {
+            return Err("translateApiKey is required".to_string());
+        }
+        if base.is_empty() {
+            return Err("translateBaseUrl is required".to_string());
+        }
 
-    let url = models_endpoint(&base);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
+        let url = models_endpoint(&base);
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("http client: {e}"))?;
 
-    // Same auth shape as the Messages call (shared helper).
-    let get = add_auth_headers(
-        client.get(&url).header("anthropic-version", ANTHROPIC_VERSION),
-        &api_key,
-    );
-    let response = get
-        .send()
-        .await
-        .map_err(|e| format!("list models request failed: {e}"))?;
+        // Same auth shape as the Messages call (shared helper).
+        let get = add_auth_headers(
+            client.get(&url).header("anthropic-version", ANTHROPIC_VERSION),
+            &api_key,
+        );
+        let response = get
+            .send()
+            .await
+            .map_err(|e| format!("list models request failed: {e}"))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        let msg = parse_error_message(&body).unwrap_or_else(|| format!("HTTP {status}"));
-        return Err(msg);
-    }
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            let msg = parse_error_message(&body).unwrap_or_else(|| format!("HTTP {status}"));
+            return Err(msg);
+        }
 
-    let payload: Value = response
-        .json()
-        .await
-        .map_err(|e| format!("list models parse failed: {e}"))?;
+        let payload: Value = response
+            .json()
+            .await
+            .map_err(|e| format!("list models parse failed: {e}"))?;
 
-    let mut all = extract_models(&payload);
-    // Prefer latest/common models first (providers often return ascending).
-    all.reverse();
+        let mut all = extract_models(&payload);
+        // Prefer latest/common models first (providers often return ascending).
+        all.reverse();
 
-    if all.is_empty() {
-        return Err("接口已响应，但未解析到模型列表，请手填模型名".to_string());
-    }
+        if all.is_empty() {
+            return Err("接口已响应，但未解析到模型列表，请手填模型名".to_string());
+        }
 
-    let chat_models: Vec<_> = all.iter().filter(|m| m.kind == "chat").cloned().collect();
-    let excluded_models: Vec<_> = all.iter().filter(|m| m.kind != "chat").cloned().collect();
+        let chat_models: Vec<_> = all.iter().filter(|m| m.kind == "chat").cloned().collect();
+        let excluded_models: Vec<_> = all.iter().filter(|m| m.kind != "chat").cloned().collect();
 
-    Ok(ListLlmModelsResponse {
-        chat_models,
-        excluded_models,
-        all_models: all,
-    })
+        Ok(ListLlmModelsResponse {
+            chat_models,
+            excluded_models,
+            all_models: all,
+        })
+    }.await)
 }
 
 fn parse_error_message(body: &str) -> Option<String> {

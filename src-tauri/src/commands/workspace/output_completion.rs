@@ -192,7 +192,12 @@ fn write_completion_srts(
                         &srt_segments,
                         &flat_items,
                     ) {
-                        eprintln!("[warn] flat SRT output failed: {e}");
+                        crate::services::app_log::error(
+                            "workspace.output",
+                            "FLAT_SRT_OUTPUT_FAILED",
+                            format!("flat SRT output failed: {e}"),
+                            None,
+                        );
                     }
                 }
             }
