@@ -116,8 +116,8 @@ async fn run() -> Result<(), String> {
             model: settings.translate_model.clone(),
             store: None,
         },
-        |done, est, width| {
-            eprintln!("window {done}/{est} ({width} chars)");
+        |done, est, _width| {
+            eprintln!("window {done}/{est}");
         },
     )
     .await;

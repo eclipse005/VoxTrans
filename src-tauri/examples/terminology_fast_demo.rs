@@ -72,7 +72,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── 3. 分窗增量抽取 ─────────────────────────────────────────────────────
     let t0 = Instant::now();
     let mut glossary: BTreeMap<String, (String, String)> = BTreeMap::new(); // lower_source -> (source, target+note)
-    let mut misheard: Vec<(String, String, String)> = Vec::new();
     let mut style_guide = String::new();
     let mut window_chars = WINDOW_START_CHARS;
     let mut total_prompt = 0u64;
@@ -133,14 +132,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         new_terms += 1;
                     }
                 }
-                for pair in parsed["misheard"].as_array().cloned().unwrap_or_default() {
-                    let wrong = pair["wrong"].as_str().unwrap_or_default().trim().to_string();
-                    let right = pair["right"].as_str().unwrap_or_default().trim().to_string();
-                    let note = pair["note"].as_str().unwrap_or_default().trim().to_string();
-                    if !wrong.is_empty() && !misheard.iter().any(|(w, _, _)| w.eq_ignore_ascii_case(&wrong)) {
-                        misheard.push((wrong, right, note));
-                    }
-                }
                 eprintln!(
                     "窗 {window_no} [cue {}..{}] {} 字符: prompt={} completion={} 新术语={new_terms}",
                     i + 1,
@@ -194,12 +185,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let flag = if hits == 0 { "  <-- 0 命中，剔除" } else { "" };
         eprintln!("  {source} -> {target}  [x{hits}]{flag}{}", if note.is_empty() { String::new() } else { format!("  {note}") });
     }
-    if !misheard.is_empty() {
-        eprintln!("\n== 误听判定（{} 组）==", misheard.len());
-        for (wrong, right, note) in &misheard {
-            eprintln!("  {wrong} -> {right}  {note}");
-        }
-    }
     if !style_guide.is_empty() {
         eprintln!("\n== styleGuide ==\n  {style_guide}");
     }
@@ -219,7 +204,7 @@ fn build_window_prompt(window_text: &str, known_terms: &[String], first_window: 
         known_terms.join("\n")
     };
     let style_task = if first_window {
-        "\n3. 另外给出 styleGuide：这个视频译成目标语言的口吻、句式、术语处理原则（100 字内）。"
+        "\n2. 另外给出 styleGuide：这个视频译成目标语言的口吻、句式、术语处理原则（100 字内）。"
     } else {
         ""
     };
@@ -232,8 +217,8 @@ fn build_window_prompt(window_text: &str, known_terms: &[String], first_window: 
         "你是字幕术语审校。下面是视频转写的一个连续片段。已确定的术语表（此前片段提取）附后。\n\
 任务：\n\
 1. 只提取本片段中【新出现】的领域术语/专有名词/缩写——已确定术语表里有的不要重复输出；普通常见词不要收录；只收录影响理解或会反复出现的词。给出 zh-CN 译名（采用中文交易/技术社区惯用译法，不要字面直译；行业缩写保留原文），note 写译法依据（没有就空字符串）。\n\
-2. 本片段中如有疑似语音识别误听的词（上下文里讲不通的词），给出裁决；没有就输出空数组。{style_task}\n\
-只返回 JSON：{{\"terms\":[{{\"source\":\"...\",\"target\":\"...\",\"note\":\"...\"}}],\"misheard\":[{{\"wrong\":\"...\",\"right\":\"...\",\"note\":\"...\"}}]{style_field}}}\n\
+{style_task}\n\
+只返回 JSON：{{\"terms\":[{{\"source\":\"...\",\"target\":\"...\",\"note\":\"...\"}}]{style_field}}}\n\
 \n== 已确定术语表 ==\n{known_block}\n\
 \n== 本片段转写 ==\n{window_text}"
     )

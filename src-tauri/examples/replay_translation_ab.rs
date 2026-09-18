@@ -35,7 +35,6 @@
 //!
 //! Cost note: one replay = TWO full translations of the video.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -261,10 +260,10 @@ fn parse_agent_log(task_id: &str, media_path: &str) -> Option<AgentStats> {
         if v.get("phase").and_then(|p| p.as_str()) != Some("terminology") {
             return;
         }
-        if let Some(status) = v.get("status").and_then(|s| s.as_str()) {
-            if status != "ok" {
-                return;
-            }
+        if let Some(status) = v.get("status").and_then(|s| s.as_str())
+            && status != "ok"
+        {
+            return;
         }
         stats.calls += 1;
         let usage = v.get("usage");
@@ -386,8 +385,8 @@ async fn run() -> Result<(), String> {
                 model: settings.translate_model.clone(),
                 store: None,
             },
-            |done, est, width| {
-                eprintln!("terminology window {done}/{est} ({width} chars)");
+            |done, est, _width| {
+                eprintln!("terminology {done}/{est}");
             },
         )
         .await;
