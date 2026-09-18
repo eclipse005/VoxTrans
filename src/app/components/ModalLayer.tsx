@@ -58,6 +58,7 @@ type ModalLayerProps = {
   setLogChannel: (channel: LogChannel) => void;
   clearLogs: () => void | Promise<void>;
   openLogDir: () => void | Promise<void>;
+  openAppLogDir: () => void | Promise<void>;
   closeUpdateDialog: () => void;
   installUpdate: () => void | Promise<void>;
   cancelInstall: () => void | Promise<void>;
@@ -95,6 +96,7 @@ export function ModalLayer({
   setLogChannel,
   clearLogs,
   openLogDir,
+  openAppLogDir,
   closeUpdateDialog,
   installUpdate,
   cancelInstall,
@@ -129,6 +131,7 @@ export function ModalLayer({
             onRefresh={loadLogs}
             onClear={clearLogs}
             onOpenDir={openLogDir}
+            onOpenAppDir={openAppLogDir}
           />
         </Suspense>
       ) : null}

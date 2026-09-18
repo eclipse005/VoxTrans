@@ -269,6 +269,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     openLogs,
     clearLogs,
     openLogDir,
+    openAppLogDir,
   } = useTaskLogs({
     showLogs,
     activeQueueItem,
@@ -409,6 +410,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
           setLogChannel={setLogChannel}
           clearLogs={clearLogs}
           openLogDir={openLogDir}
+          openAppLogDir={openAppLogDir}
           closeUpdateDialog={closeUpdateDialog}
           installUpdate={installUpdate}
           cancelInstall={cancelInstall}

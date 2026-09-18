@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MutableRefObject, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronLeftIcon, ChevronRightIcon, FolderIcon, RefreshIcon, TrashIcon } from "./Icons";
+import { ChevronLeftIcon, ChevronRightIcon, FolderIcon, LogFileIcon, RefreshIcon, TrashIcon } from "./Icons";
 import { LOG_CHANNELS, channelLabel, type LogChannel } from "../api/logs";
 import { useDialogA11y } from "./useDialogA11y";
 
@@ -17,6 +17,7 @@ type LogsModalProps = {
   onRefresh: () => void | Promise<void>;
   onClear: () => void | Promise<void>;
   onOpenDir: () => void | Promise<void>;
+  onOpenAppDir: () => void | Promise<void>;
 };
 
 export default function LogsModal({
@@ -31,6 +32,7 @@ export default function LogsModal({
   onRefresh,
   onClear,
   onOpenDir,
+  onOpenAppDir,
 }: LogsModalProps) {
   const { t } = useTranslation(["tasks", "common"]);
   const dialogRef = useDialogA11y(visible, onClose);
@@ -122,6 +124,16 @@ export default function LogsModal({
                   aria-label={t("tasks:logs.openDir")}
                 >
                   <FolderIcon />
+                </button>
+                {/* App-scoped, so not gated on the task log load: this is the
+                    folder a user is asked to send when something goes wrong. */}
+                <button
+                  className="file-list-icon-btn"
+                  onClick={() => { void onOpenAppDir(); }}
+                  title={t("tasks:logs.openAppDir")}
+                  aria-label={t("tasks:logs.openAppDirAria")}
+                >
+                  <LogFileIcon />
                 </button>
                 <button
                   className="file-list-icon-btn"

@@ -19,6 +19,15 @@ export async function openTaskLogDir(request: OpenTaskLogDirRequest): Promise<vo
   await invoke("open_task_log_dir", { request });
 }
 
+/**
+ * Open the app-wide error log directory (`<output root>/logs`). Not scoped to a
+ * task, so it works even before anything has run — this is the folder to ask a
+ * user for when they report a problem.
+ */
+export async function openAppLogDir(): Promise<void> {
+  await invoke("open_app_log_dir");
+}
+
 export async function openModelDir(target: ModelTarget, model: AsrModel | AlignModel | DemucsModel): Promise<void> {
   await invoke("open_model_dir", {
     request: { target, model },
