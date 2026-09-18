@@ -84,16 +84,6 @@ impl TerminologyBriefing {
     }
 }
 
-/// One ASR-mishear verdict from a window: `wrong` is the transcript spelling,
-/// `right` the corrected one (or the same term when adjudicated as intended).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MisheardPair {
-    pub wrong: String,
-    pub right: String,
-    #[serde(default)]
-    pub note: String,
-}
-
 pub fn normalize_term_key(source: &str) -> String {
     source
         .trim()

@@ -7,11 +7,13 @@ pub mod event {
     pub const TRANSCRIBE_SAVED: &str = "transcribe.saved";
     pub const TRANSCRIBE_FAILED: &str = "transcribe.failed";
     pub const TASK_FAILED: &str = "task.failed";
-    pub const TERMINOLOGY_AGENT_START: &str = "terminology.agent.start";
-    pub const TERMINOLOGY_AGENT_END: &str = "terminology.agent.end";
-    pub const TERMINOLOGY_AGENT_SKIP: &str = "terminology.agent.skip";
-    pub const TERMINOLOGY_AGENT_RESUMED: &str = "terminology.agent.resumed";
-    pub const TERMINOLOGY_WINDOW_END: &str = "terminology.window.end";
+    /// Terminology events are named `terminology.start/end/skip/resumed`.
+    /// Older runs wrote `terminology.agent.*`; only the log text changed, so
+    /// reading back either spelling keeps working.
+    pub const TERMINOLOGY_START: &str = "terminology.start";
+    pub const TERMINOLOGY_END: &str = "terminology.end";
+    pub const TERMINOLOGY_SKIP: &str = "terminology.skip";
+    pub const TERMINOLOGY_RESUMED: &str = "terminology.resumed";
 }
 
 #[derive(Debug, Clone)]

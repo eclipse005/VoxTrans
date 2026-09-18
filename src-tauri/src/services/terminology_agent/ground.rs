@@ -9,6 +9,33 @@ pub fn transcript_haystack(cues: &[TranscriptCue]) -> String {
         .join("\n")
 }
 
+/// Folding for the recall-first containment test below: lowercase, fold
+/// fullwidth ASCII, and drop everything that is not alphanumeric — so case,
+/// spacing and punctuation can never break a match ("order block" ≡
+/// "Order, block!" ≡ "orderblock"). Deliberately looser than
+/// [`source_grounded_in_text`], which decides whether a term may enter the
+/// glossary: here the only stake is whether a user term is worth carrying in a
+/// window prompt, where a false positive costs one line and a false negative
+/// costs the term's "already known" hint.
+pub fn normalize_for_containment(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|ch| match ch as u32 {
+            0xFF01..=0xFF5E => char::from_u32(ch as u32 - 0xFEE0).unwrap_or(ch),
+            _ => ch,
+        })
+        .filter(|c| c.is_alphanumeric())
+        .collect()
+}
+
+/// Does `source` occur in an already-folded transcript
+/// ([`normalize_for_containment`] once per transcript, then one `contains` per
+/// term — see the caller for why this stays cheap at hundreds of terms).
+pub fn term_occurs_in_normalized(source: &str, normalized_haystack: &str) -> bool {
+    let needle = normalize_for_containment(source);
+    !needle.is_empty() && normalized_haystack.contains(&needle)
+}
+
 fn is_cjk(c: char) -> bool {
     matches!(c,
         '\u{3040}'..='\u{30FF}'
@@ -88,21 +115,20 @@ fn expand_source_forms<'a>(source: &'a str, text: &str) -> Vec<&'a str> {
         return vec![src];
     }
     // "Foo (Bar)" → try inner parts when the full string is not present.
-    if let Some(open) = src.find('(') {
-        if let Some(close) = src.rfind(')') {
-            if close > open {
-                let outer = src[..open].trim();
-                let inner = src[open + 1..close].trim();
-                let mut forms = Vec::new();
-                if !outer.is_empty() && source_grounded_in_text(outer, text) {
-                    forms.push(outer);
-                }
-                if !inner.is_empty() && source_grounded_in_text(inner, text) {
-                    forms.push(inner);
-                }
-                return forms;
-            }
+    if let Some(open) = src.find('(')
+        && let Some(close) = src.rfind(')')
+        && close > open
+    {
+        let outer = src[..open].trim();
+        let inner = src[open + 1..close].trim();
+        let mut forms = Vec::new();
+        if !outer.is_empty() && source_grounded_in_text(outer, text) {
+            forms.push(outer);
         }
+        if !inner.is_empty() && source_grounded_in_text(inner, text) {
+            forms.push(inner);
+        }
+        return forms;
     }
     Vec::new()
 }
@@ -358,6 +384,34 @@ pub fn split_small_windows(cues: &[TranscriptCue], max_chars: usize) -> Vec<(usi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn containment_fold_drops_case_spacing_and_punctuation() {
+        assert_eq!(normalize_for_containment("Order, Block!"), "orderblock");
+        assert_eq!(normalize_for_containment("order block"), "orderblock");
+        assert_eq!(normalize_for_containment("订单块。"), "订单块");
+        assert_eq!(normalize_for_containment("ＳＮＳ"), "sns");
+    }
+
+    #[test]
+    fn containment_is_recall_first() {
+        let hay = normalize_for_containment("we trade the Order, block! and ＳＮＳ here");
+        assert!(term_occurs_in_normalized("order block", &hay));
+        assert!(term_occurs_in_normalized("Order Block", &hay));
+        assert!(term_occurs_in_normalized("sns", &hay));
+        assert!(!term_occurs_in_normalized("turtle soup", &hay));
+        assert!(!term_occurs_in_normalized("", &hay));
+        assert!(!term_occurs_in_normalized("   ", &hay));
+    }
+
+    #[test]
+    fn containment_accepts_substring_hits_inside_longer_words() {
+        // The accepted cost of the recall-first folding: short terms fire on
+        // longer words ("AI" inside "said"). The stake is one prompt line, so
+        // over-inclusion is the cheaper error — and it is what the block wants.
+        let hay = normalize_for_containment("he said it again");
+        assert!(term_occurs_in_normalized("AI", &hay));
+    }
 
     #[test]
     fn ascii_word_boundary_rejects_substring() {

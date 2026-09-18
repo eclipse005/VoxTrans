@@ -13,7 +13,7 @@ mod types;
 mod windowed;
 
 pub use ground::{merge_glossary_user_priority, source_grounded_in_text};
-pub use types::{EndReason, GlossaryEntry, MisheardPair, TerminologyBriefing, TranscriptCue};
+pub use types::{EndReason, GlossaryEntry, TerminologyBriefing, TranscriptCue};
 
 use serde_json::json;
 
@@ -104,7 +104,7 @@ where
     };
     eprintln!("[terminology] skipped: {skipped_reason}");
     TaskLogger::main_with_media(task_id, media_path).event(
-        event::TERMINOLOGY_AGENT_SKIP,
+        event::TERMINOLOGY_SKIP,
         Some(&json!({ "reason": skipped_reason })),
     );
     TerminologyBriefing::skipped(skipped_reason)
@@ -120,7 +120,7 @@ where
     let main_logger = TaskLogger::main_with_media(input.task_id.clone(), input.media_path.clone());
     if input.cues.is_empty() {
         main_logger.event(
-            event::TERMINOLOGY_AGENT_SKIP,
+            event::TERMINOLOGY_SKIP,
             Some(&json!({ "reason": "no subtitle cues" })),
         );
         return Ok(TerminologyBriefing::skipped("no subtitle cues"));
@@ -128,27 +128,24 @@ where
 
     // Merged-briefing cache: a completed run (or a previous partial with the
     // same width) is reused verbatim on restart.
-    if let Some(store) = &input.store {
-        if let Some(json) = store
+    if let Some(store) = &input.store
+        && let Some(json) = store
             .load_artifact(&input.task_id, TERMINOLOGY_ARTIFACT_PREFIX)
             .await?
-        {
-            if let Ok(cached) = serde_json::from_str::<TerminologyBriefing>(&json) {
-                if !cached.skipped {
-                    main_logger.event(
-                        event::TERMINOLOGY_AGENT_RESUMED,
-                        Some(&json!({
-                            "taskId": input.task_id,
-                            "glossary": cached.glossary.len(),
-                            "styleChars": cached.style_guide.chars().count(),
-                            "windows": cached.windows,
-                            "endReason": cached.end_reason.as_str(),
-                        })),
-                    );
-                    return Ok(cached);
-                }
-            }
-        }
+        && let Ok(cached) = serde_json::from_str::<TerminologyBriefing>(&json)
+        && !cached.skipped
+    {
+        main_logger.event(
+            event::TERMINOLOGY_RESUMED,
+            Some(&json!({
+                "taskId": input.task_id,
+                "glossary": cached.glossary.len(),
+                "styleChars": cached.style_guide.chars().count(),
+                "windows": cached.windows,
+                "endReason": cached.end_reason.as_str(),
+            })),
+        );
+        return Ok(cached);
     }
 
     let client = LlmClient::new(LlmConfig::new(
@@ -159,7 +156,7 @@ where
     .map_err(|e| format!("llm client: {e}"))?;
 
     main_logger.event(
-        event::TERMINOLOGY_AGENT_START,
+        event::TERMINOLOGY_START,
         Some(&json!({
             "taskId": input.task_id,
             "cues": input.cues.len(),
@@ -214,18 +211,17 @@ where
         },
     };
 
-    if !briefing.skipped {
-        if let Some(store) = &input.store {
-            if let Ok(json) = serde_json::to_string(&briefing) {
-                let _ = store
-                    .save_artifact(&input.task_id, TERMINOLOGY_ARTIFACT_PREFIX, &json)
-                    .await;
-            }
-        }
+    if !briefing.skipped
+        && let Some(store) = &input.store
+        && let Ok(json) = serde_json::to_string(&briefing)
+    {
+        let _ = store
+            .save_artifact(&input.task_id, TERMINOLOGY_ARTIFACT_PREFIX, &json)
+            .await;
     }
 
     main_logger.event(
-        event::TERMINOLOGY_AGENT_END,
+        event::TERMINOLOGY_END,
         Some(&json!({
             "taskId": input.task_id,
             "ok": !briefing.skipped,
@@ -233,7 +229,6 @@ where
             "glossary": briefing.glossary.len(),
             "styleChars": briefing.style_guide.chars().count(),
             "windows": briefing.windows,
-            "misheard": outcome.misheard.len(),
             "terms": briefing
                 .glossary
                 .iter()

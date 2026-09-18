@@ -9,33 +9,32 @@
 
 use serde::Deserialize;
 
-use super::ground::split_small_windows;
+use super::ground::{
+    normalize_for_containment, split_small_windows, term_occurs_in_normalized, transcript_haystack,
+};
 use super::types::{EndReason, GlossaryEntry, TranscriptCue};
 use crate::services::llm::error::LlmError;
 
-/// Established-glossary lines carried into a window prompt.
-pub(super) const ESTABLISHED_PROMPT_CAP: usize = 60;
+/// Cap on the rows *discovered in this run* that a window prompt carries.
+/// User terms are not capped but pre-filtered to the transcript's vocabulary
+/// (see [`established_block`]), so the block stays proportional to what the
+/// video can actually say instead of to the size of the user's glossary — it is
+/// fixed overhead, after all, that the width ladder cannot shrink. Capping the
+/// in-run rows (still ungrounded at this point) also limits what a hallucinated
+/// target can propagate into later windows.
+pub(super) const ESTABLISHED_AGENT_PROMPT_CAP: usize = 60;
+
 /// Consecutive zero-new-term windows before the vocabulary is declared saturated.
 pub(super) const EARLY_EXIT_EMPTY_WINDOWS: usize = 3;
 
-/// One ASR-mishear verdict parsed from a window response.
+/// The validated shape of one window's response. camelCase on the wire: the
+/// prompt asks for `styleGuide`, so without the rename the field deserializes
+/// as empty on every call and the style guide silently disappears.
 #[derive(Debug, Clone, Deserialize)]
-pub(super) struct MisheardVerdict {
-    #[serde(default)]
-    pub wrong: String,
-    #[serde(default)]
-    pub right: String,
-    #[serde(default)]
-    pub note: String,
-}
-
-/// The validated shape of one window's response.
-#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct WindowExtraction {
     #[serde(default)]
     pub terms: Vec<GlossaryEntry>,
-    #[serde(default)]
-    pub misheard: Vec<MisheardVerdict>,
     #[serde(default)]
     pub style_guide: String,
 }
@@ -50,7 +49,6 @@ pub(super) trait TermJsonCaller: Send + Sync {
 
 pub(super) struct WindowedOutcome {
     pub glossary: Vec<GlossaryEntry>,
-    pub misheard: Vec<(String, String, String)>,
     pub style_guide: String,
     pub windows_done: usize,
     pub end_reason: EndReason,
@@ -98,7 +96,17 @@ pub(super) async fn run_windowed_extraction(
         }
     }
 
-    let mut misheard: Vec<(String, String, String)> = Vec::new();
+    // Which seeded user rows the prompts may carry: a term the transcript
+    // cannot contain buys nothing there — the model only ever proposes words
+    // from the window it is reading, so an absent term can be neither
+    // re-proposed nor useful as a consistency cue. Every user term stays in
+    // `seen` regardless, so dedupe is unaffected.
+    let transcript_folded = normalize_for_containment(&transcript_haystack(cues));
+    let user_in_transcript: Vec<bool> = ordered[..user_seeded]
+        .iter()
+        .map(|g| term_occurs_in_normalized(&g.source, &transcript_folded))
+        .collect();
+
     let mut style_guide = String::new();
     let mut window_chars = start_window_chars.max(min_window_chars);
     let mut windows_done = 0usize;
@@ -115,7 +123,7 @@ pub(super) async fn run_windowed_extraction(
         let window_text = cues[i..j].iter().map(|c| c.text.as_str()).collect::<Vec<_>>().join("\n");
         let window_no = windows_done + 1;
 
-        let established = established_block(&ordered);
+        let established = established_block(&ordered, &user_in_transcript);
         let prompt = build_window_prompt(
             &window_text,
             &established,
@@ -144,21 +152,6 @@ pub(super) async fn run_windowed_extraction(
                     let (target, note) = split_target_parenthetical(target, entry.note.trim());
                     ordered.push(GlossaryEntry::new(source, target, note));
                     new_terms += 1;
-                }
-                for pair in &extraction.misheard {
-                    let wrong = pair.wrong.trim();
-                    if wrong.is_empty()
-                        || misheard
-                            .iter()
-                            .any(|(w, _, _)| w.eq_ignore_ascii_case(wrong))
-                    {
-                        continue;
-                    }
-                    misheard.push((
-                        wrong.to_string(),
-                        pair.right.trim().to_string(),
-                        pair.note.trim().to_string(),
-                    ));
                 }
                 if style_guide.is_empty() {
                     style_guide = extraction.style_guide.trim().to_string();
@@ -194,18 +187,23 @@ pub(super) async fn run_windowed_extraction(
 
     WindowedOutcome {
         glossary: ordered.into_iter().skip(user_seeded).collect(),
-        misheard,
         style_guide,
         windows_done,
         end_reason,
     }
 }
 
-/// Compact established-glossary block for the prompt (first-seen order, capped).
-fn established_block(ordered: &[GlossaryEntry]) -> String {
-    ordered
+/// Compact established-glossary block for the prompt: the user terms the
+/// transcript can contain (`user_in_transcript`, one flag per leading row of
+/// `ordered`), then the run's own rows up to
+/// [`ESTABLISHED_AGENT_PROMPT_CAP`]. First-seen order throughout.
+fn established_block(ordered: &[GlossaryEntry], user_in_transcript: &[bool]) -> String {
+    let (user_rows, discovered_rows) = ordered.split_at(user_in_transcript.len().min(ordered.len()));
+    user_rows
         .iter()
-        .take(ESTABLISHED_PROMPT_CAP)
+        .zip(user_in_transcript)
+        .filter_map(|(g, keep)| keep.then_some(g))
+        .chain(discovered_rows.iter().take(ESTABLISHED_AGENT_PROMPT_CAP))
         .map(|g| format!("{} -> {}", g.source, g.target))
         .collect::<Vec<_>>()
         .join("\n")
@@ -251,7 +249,7 @@ fn build_window_prompt(
     first_window: bool,
 ) -> String {
     let style_task = if first_window {
-        "\n3. 另外给出 styleGuide：这个视频译成目标语言的口吻、句式、术语处理原则（100 字内）。"
+        "\n2. 另外给出 styleGuide：这个视频译成目标语言的口吻、句式、术语处理原则（100 字内）。"
     } else {
         ""
     };
@@ -259,9 +257,8 @@ fn build_window_prompt(
     format!(
         "你是字幕术语审校。下面是视频转写的一个连续片段（{source_lang}），译文目标语言是 {target_lang}。已确定的术语表附后。\n\
 任务：\n\
-1. 只提取本片段中【新出现】的领域术语/专有名词/缩写——已确定术语表里已有的不要重复输出；普通常见词不要收录；只收录影响理解或会反复出现的词。target 用 {target_lang} 社区惯用译法，不要字面直译；行业缩写按惯例保留原文。note 写译法依据，没有就空字符串。\n\
-2. 本片段中如有疑似语音识别误听的词（在上下文里讲不通的词），给出裁决；没有就输出空数组。{style_task}\n\
-只返回 JSON：{{\"terms\":[{{\"source\":\"...\",\"target\":\"...\",\"note\":\"...\"}}],\"misheard\":[{{\"wrong\":\"...\",\"right\":\"...\",\"note\":\"...\"}}]{style_field}}}\n\
+1. 只提取本片段中【新出现】的领域术语/专有名词/缩写——已确定术语表里已有的不要重复输出；普通常见词不要收录；只收录影响理解或会反复出现的词。target 用 {target_lang} 社区惯用译法，不要字面直译；行业缩写按惯例保留原文。note 写译法依据，没有就空字符串。{style_task}\n\
+只返回 JSON：{{\"terms\":[{{\"source\":\"...\",\"target\":\"...\",\"note\":\"...\"}}]{style_field}}}\n\
 \n== 已确定术语表 ==\n{}\n\
 \n== 本片段转写 ==\n{}",
         if established.is_empty() { "（尚无）" } else { established },
@@ -288,29 +285,37 @@ mod tests {
                 .iter()
                 .map(|(s, t)| serde_json::json!({"source": s, "target": t, "note": ""}))
                 .collect::<Vec<_>>(),
-            "misheard": [],
         })
     }
 
     struct FakeCaller {
         replies: std::sync::Mutex<Vec<Result<Value, LlmError>>>,
+        prompts: std::sync::Mutex<Vec<String>>,
     }
     impl FakeCaller {
         fn ok(replies: Vec<Value>) -> Self {
             Self {
                 replies: std::sync::Mutex::new(replies.into_iter().map(Ok).collect()),
+                prompts: std::sync::Mutex::new(Vec::new()),
             }
         }
         fn with_errors_first(ok_replies: Vec<Value>, errors: usize) -> Self {
             let mut replies: Vec<Result<Value, LlmError>> =
                 (0..errors).map(|_| Err(LlmError::new(crate::services::llm::error::LlmErrorKind::Http, "boom"))).collect();
             replies.extend(ok_replies.into_iter().map(Ok));
-            Self { replies: std::sync::Mutex::new(replies) }
+            Self {
+                replies: std::sync::Mutex::new(replies),
+                prompts: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+        fn prompts(&self) -> Vec<String> {
+            self.prompts.lock().unwrap().clone()
         }
     }
     #[async_trait::async_trait]
     impl TermJsonCaller for FakeCaller {
-        async fn call_window(&self, _request_id: &str, _prompt: &str) -> Result<WindowExtraction, LlmError> {
+        async fn call_window(&self, _request_id: &str, prompt: &str) -> Result<WindowExtraction, LlmError> {
+            self.prompts.lock().unwrap().push(prompt.to_string());
             let mut replies = self.replies.lock().unwrap();
             if replies.is_empty() {
                 return Err(LlmError::new(crate::services::llm::error::LlmErrorKind::Http, "script exhausted"));
@@ -426,7 +431,10 @@ mod tests {
         let replies: Vec<Result<Value, LlmError>> = (0..10)
             .map(|_| Err(LlmError::new(crate::services::llm::error::LlmErrorKind::Http, "endpoint dead")))
             .collect();
-        let caller = FakeCaller { replies: std::sync::Mutex::new(replies) };
+        let caller = FakeCaller {
+            replies: std::sync::Mutex::new(replies),
+            prompts: std::sync::Mutex::new(Vec::new()),
+        };
         let mut progress = no_progress();
         let out = run_windowed_extraction(WindowedParams {
             cues: &cues,
@@ -490,6 +498,91 @@ mod tests {
         assert!(target.contains("(2024"));
         let (target, _) = split_target_parenthetical("（只有括号）", "");
         assert_eq!(target, "（只有括号）");
+    }
+
+    #[test]
+    fn established_block_keeps_only_relevant_user_terms_and_caps_discovered_rows() {
+        let over_cap = ESTABLISHED_AGENT_PROMPT_CAP + 5;
+        let user: Vec<GlossaryEntry> = (0..over_cap)
+            .map(|i| GlossaryEntry::new(format!("user{i}"), format!("译{i}"), ""))
+            .collect();
+        let mut ordered = user.clone();
+        for i in 0..over_cap {
+            ordered.push(GlossaryEntry::new(format!("found{i}"), format!("译{i}"), ""));
+        }
+        // Every user term the transcript can contain stays; one absent term
+        // (index 1) must drop out of the block without shifting its neighbours.
+        let mut keep = vec![true; over_cap];
+        keep[1] = false;
+
+        let block = established_block(&ordered, &keep);
+        let lines: Vec<&str> = block.lines().collect();
+
+        assert_eq!(lines.len(), over_cap - 1 + ESTABLISHED_AGENT_PROMPT_CAP);
+        assert!(
+            block.contains(&format!("user{} -> 译{}", over_cap - 1, over_cap - 1)),
+            "the last relevant user term must reach the prompt"
+        );
+        assert!(!block.contains("user1 -> "), "an irrelevant term must not");
+        assert!(block.contains(&format!("found{}", ESTABLISHED_AGENT_PROMPT_CAP - 1)));
+        assert!(!block.contains(&format!("found{}", ESTABLISHED_AGENT_PROMPT_CAP)));
+    }
+
+    #[tokio::test]
+    async fn prompt_carries_only_terms_the_transcript_can_contain() {
+        // "kill zone" is in the cue; "turtle soup" is not, despite being in the
+        // user's glossary. Only the former belongs in the prompt — but the
+        // absent one must still block re-extraction and stay out of the output.
+        let cues = vec![cue(1, "the kill zone is hot")];
+        let user = vec![
+            GlossaryEntry::new("kill zone", "猎杀区", ""),
+            GlossaryEntry::new("turtle soup", "海龟汤", ""),
+        ];
+        let caller = FakeCaller::ok(vec![terms_json(&[
+            ("kill zone", "杀区"),
+            ("turtle soup", "海龟汤"),
+        ])]);
+        let mut progress = no_progress();
+        let out = run_windowed_extraction(WindowedParams {
+            cues: &cues,
+            user_terms: &user,
+            source_lang: "en",
+            target_lang: "zh-CN",
+            start_window_chars: 4000,
+            min_window_chars: 1200,
+            caller: &caller,
+            on_progress: &mut progress,
+        })
+        .await;
+
+        let prompt = caller.prompts().remove(0);
+        let established = prompt
+            .split("== 已确定术语表 ==")
+            .nth(1)
+            .expect("prompt must carry the established block");
+        assert!(established.contains("kill zone -> 猎杀区"), "prompt={established}");
+        assert!(
+            !established.contains("turtle soup"),
+            "a term the transcript cannot contain must not reach the prompt: {established}"
+        );
+        assert!(
+            out.glossary.is_empty(),
+            "the absent user term still dedupes the model's re-proposal: {:?}",
+            out.glossary
+        );
+    }
+
+    #[test]
+    fn window_response_is_camel_case_on_the_wire() {
+        // The prompt asks for {"terms":[…],"styleGuide":"…"}; the struct must
+        // read that spelling or the style guide is dropped without a trace.
+        let parsed: WindowExtraction = serde_json::from_value(serde_json::json!({
+            "terms": [{"source": "kill zone", "target": "猎杀区", "note": ""}],
+            "styleGuide": "口吻务实，缩写保留原文",
+        }))
+        .expect("model-shaped response must parse");
+        assert_eq!(parsed.terms.len(), 1);
+        assert_eq!(parsed.style_guide, "口吻务实，缩写保留原文");
     }
 
     #[test]
