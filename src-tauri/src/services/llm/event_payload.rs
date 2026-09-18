@@ -4,7 +4,6 @@ use crate::services::task_log::TaskLogger;
 
 use super::base_url::normalize_base_url;
 use super::port::{LlmCallContext, LlmConfig, LlmTokenUsage};
-use super::protocol::resolve_protocol;
 
 const EPHEMERAL_PHASE_CONNECTIVITY_TEST: &str = "connectivity_test";
 const ATTEMPT_PAYLOAD_KEYS: &[&str] = &[
@@ -49,7 +48,7 @@ pub(super) fn attempt_base_payload(
     // Record the dialect actually in use, not a fixed label: the same profile
     // can resolve to either one, and a task log that says "anthropic" for a
     // chat-completions call sends debugging in the wrong direction.
-    let protocol = resolve_protocol(&config.base_url, &config.model);
+    let protocol = config.capabilities.resolve_protocol(&config.base_url, &config.model);
     json!({
         "attempt": attempt,
         "maxAttempts": max_attempts,
@@ -173,6 +172,8 @@ pub(super) fn http_error_attempt_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::llm::capabilities::CapabilityMemo;
+    use std::sync::Arc;
 
     fn context() -> LlmCallContext {
         LlmCallContext {
@@ -188,8 +189,12 @@ mod tests {
     fn attempt_payload_labels_follow_the_resolved_dialect() {
         // Same log shape for both dialects — only the labels move, so a task
         // log never claims "anthropic" for a chat-completions call.
-        let messages_url = format!("http://log-label.local/anthropic/{}", line!());
-        let config = LlmConfig::new(messages_url, "k".to_string(), "claude-sonnet-5".to_string());
+        let config = LlmConfig::new(
+            "http://log-label.local/anthropic".to_string(),
+            "k".to_string(),
+            "claude-sonnet-5".to_string(),
+        )
+        .with_capabilities(Arc::new(CapabilityMemo::new()));
         let payload = attempt_base_payload(&config, &context(), "req-1", 1, 3, "hi");
         assert_eq!(payload["provider"], json!("anthropic"));
         assert_eq!(payload["transport"], json!("messages"));
@@ -199,7 +204,8 @@ mod tests {
             "http://log-label-chat.local/v1/chat/completions".to_string(),
             "k".to_string(),
             "deepseek/oss-model".to_string(),
-        );
+        )
+        .with_capabilities(Arc::new(CapabilityMemo::new()));
         let payload = attempt_base_payload(&config, &context(), "req-2", 1, 3, "hi");
         assert_eq!(payload["provider"], json!("openai"));
         assert_eq!(payload["transport"], json!("chat_completions"));

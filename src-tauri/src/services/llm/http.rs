@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
-use super::max_tokens::{halve_max_tokens, is_max_tokens_rejection, record_max_tokens_override};
+use super::max_tokens::{halve_max_tokens, is_max_tokens_rejection};
 use super::port::LlmConfig;
 use super::text::truncate_chars;
 
@@ -111,7 +111,7 @@ pub(super) fn degrade_max_tokens_after_rejection(
     }
     let lowered = halve_max_tokens(current)?;
     eprintln!("[warn] endpoint rejected max_tokens={current} ({err}); retrying with {lowered}");
-    record_max_tokens_override(&config.base_url, &config.model, lowered);
+    config.capabilities.record_max_tokens_override(&config.base_url, &config.model, lowered);
     Some(lowered)
 }
 

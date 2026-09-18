@@ -23,6 +23,10 @@ pub struct LlmConfig {
     key_cursor: Arc<AtomicUsize>,
     pub model: String,
     pub max_retries: u32,
+    /// Injected endpoint-capability memo. Cloning a config shares the same memo
+    /// (that is the point); production configs share the process-wide instance,
+    /// while tests build one with a fresh memo for isolation.
+    pub capabilities: Arc<super::capabilities::CapabilityMemo>,
 }
 
 impl LlmConfig {
@@ -33,6 +37,7 @@ impl LlmConfig {
             key_cursor: Arc::new(AtomicUsize::new(0)),
             model,
             max_retries: 3,
+            capabilities: super::capabilities::global_capabilities(),
         }
     }
 
@@ -40,6 +45,13 @@ impl LlmConfig {
     /// test returns immediately instead of waiting out retries.
     pub fn with_max_retries(mut self, max_retries: u32) -> Self {
         self.max_retries = max_retries;
+        self
+    }
+
+    /// Use a specific capability memo instead of the process-wide one — the
+    /// injection seam tests use to run against a clean, isolated slate.
+    pub fn with_capabilities(mut self, capabilities: Arc<super::capabilities::CapabilityMemo>) -> Self {
+        self.capabilities = capabilities;
         self
     }
 

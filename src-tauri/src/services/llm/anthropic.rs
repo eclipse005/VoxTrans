@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
 use super::http::{drive_sse, json_u64};
-use super::max_tokens::{effective_max_tokens, parse_claude_version};
+use super::max_tokens::parse_claude_version;
 use super::port::{
     AGENT_TEMPERATURE, AssistantTurn, ChatMessage, LlmConfig, LlmTokenUsage,
     TRANSLATION_TEMPERATURE, ToolCall, ToolCallFunction,
@@ -380,7 +380,7 @@ async fn post_messages_adaptive(
     config: &LlmConfig,
     build_body: impl Fn(u32) -> Value,
 ) -> Result<reqwest::Response, LlmError> {
-    let mut max_tokens = effective_max_tokens(&config.base_url, &config.model);
+    let mut max_tokens = config.capabilities.effective_max_tokens(&config.base_url, &config.model);
     loop {
         match post_messages(http, config, &build_body(max_tokens)).await {
             Ok(response) => return Ok(response),

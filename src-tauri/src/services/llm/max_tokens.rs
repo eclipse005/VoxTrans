@@ -7,10 +7,6 @@
 //! the ladder (a one-time 400, then the halved value is memoized per
 //! `(base_url, model)` so later requests start there).
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-
-use super::base_url::normalize_base_url;
 use super::error::LlmError;
 
 /// Output budget for models we cannot classify as Claude. kimi-code falls
@@ -116,37 +112,6 @@ pub(super) fn resolve_max_tokens(model: &str) -> u32 {
     parse_claude_version(model)
         .and_then(|(family, major, minor)| output_ceiling(family, major, minor))
         .unwrap_or(FALLBACK_MAX_TOKENS)
-}
-
-/// Endpoints that already rejected a `max_tokens` value once, remembered per
-/// (normalized base_url, model): later requests start from the lower value
-/// instead of eating the same 400 on every call (project's global-mutex
-/// pattern, same shape as `STRUCTURED_OUTPUT_UNSUPPORTED` in client.rs).
-static MAX_TOKENS_OVERRIDE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
-
-fn override_key(base_url: &str, model: &str) -> String {
-    format!("{}\u{1}{model}", normalize_base_url(base_url))
-}
-
-/// The `max_tokens` a request should carry: the recorded degrade value when
-/// this endpoint+model rejected a larger one before, the family ceiling
-/// otherwise.
-pub(super) fn effective_max_tokens(base_url: &str, model: &str) -> u32 {
-    MAX_TOKENS_OVERRIDE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .ok()
-        .and_then(|map| map.get(&override_key(base_url, model)).copied())
-        .unwrap_or_else(|| resolve_max_tokens(model))
-}
-
-pub(super) fn record_max_tokens_override(base_url: &str, model: &str, value: u32) {
-    if let Ok(mut map) = MAX_TOKENS_OVERRIDE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-    {
-        map.insert(override_key(base_url, model), value);
-    }
 }
 
 /// Does this error mean "your `max_tokens` exceeds this endpoint's cap"?
@@ -283,17 +248,18 @@ mod tests {
 
     #[test]
     fn max_tokens_override_memo_is_per_endpoint_and_model() {
-        let base = format!("http://maxtok-test.local/{}", line!());
+        let caps = super::super::capabilities::CapabilityMemo::new();
+        let base = "http://maxtok-test.local";
         let model_a = "probe-a";
         let model_b = "probe-b";
-        assert_eq!(effective_max_tokens(&base, model_a), FALLBACK_MAX_TOKENS);
-        record_max_tokens_override(&base, model_a, 4_096);
-        assert_eq!(effective_max_tokens(&base, model_a), 4_096);
+        assert_eq!(caps.effective_max_tokens(base, model_a), FALLBACK_MAX_TOKENS);
+        caps.record_max_tokens_override(base, model_a, 4_096);
+        assert_eq!(caps.effective_max_tokens(base, model_a), 4_096);
         // Same base, different model: unaffected.
-        assert_eq!(effective_max_tokens(&base, model_b), FALLBACK_MAX_TOKENS);
+        assert_eq!(caps.effective_max_tokens(base, model_b), FALLBACK_MAX_TOKENS);
         // Same model, different base: unaffected.
         assert_eq!(
-            effective_max_tokens("http://maxtok-other.local", model_a),
+            caps.effective_max_tokens("http://maxtok-other.local", model_a),
             FALLBACK_MAX_TOKENS
         );
     }

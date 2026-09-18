@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -10,7 +9,6 @@ use crate::services::task_log::TaskLogger;
 use crate::services::task_usage::{LlmTokenUsage as TaskUsage, record_llm_usage_best_effort};
 
 use super::anthropic::{call_message, call_message_stream, call_message_tools};
-use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
 use super::event_payload::{
     attempt_base_payload, failed_attempt_payload, http_error_attempt_payload,
@@ -23,9 +21,7 @@ use super::openai::{
 use super::port::{
     AssistantTurn, ChatMessage, LlmCallContext, LlmConfig, LlmJsonResult, LlmPort, LlmTokenUsage,
 };
-use super::protocol::{
-    LlmProtocol, both_protocols_rejected, is_protocol_mismatch, remember_protocol, resolve_protocol,
-};
+use super::protocol::{LlmProtocol, both_protocols_rejected, is_protocol_mismatch};
 use super::retry::{
     RetryFeedback, augment_user_prompt_with_retry_feedback, effective_backoff_ms,
     feedback_from_llm_error, retry_backoff_ms,
@@ -64,36 +60,6 @@ trait LlmCallOnce: Send + Sync {
         store: Option<TaskStore>,
     ) {
         record_llm_usage_best_effort(task_id, phase, usage, store);
-    }
-}
-
-/// Endpoints that already rejected structured output once — remembered per
-/// (protocol, normalized base_url) so later batches skip the schema instead of
-/// eating a 400 every round (project's existing global-mutex pattern). The
-/// protocol is part of the key because one host can serve both dialects with
-/// different capabilities behind each.
-static STRUCTURED_OUTPUT_UNSUPPORTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-
-fn structured_output_key(protocol: LlmProtocol, base_url: &str) -> String {
-    format!("{}\u{1}{}", protocol.provider_id(), normalize_base_url(base_url))
-}
-
-fn is_structured_output_unsupported(protocol: LlmProtocol, base_url: &str) -> bool {
-    let key = structured_output_key(protocol, base_url);
-    STRUCTURED_OUTPUT_UNSUPPORTED
-        .get_or_init(|| Mutex::new(HashSet::new()))
-        .lock()
-        .map(|set| set.contains(&key))
-        .unwrap_or(false)
-}
-
-fn mark_structured_output_unsupported(protocol: LlmProtocol, base_url: &str) {
-    let key = structured_output_key(protocol, base_url);
-    if let Ok(mut set) = STRUCTURED_OUTPUT_UNSUPPORTED
-        .get_or_init(|| Mutex::new(HashSet::new()))
-        .lock()
-    {
-        set.insert(key);
     }
 }
 
@@ -316,7 +282,7 @@ impl HttpCallOnce {
         output_schema: Option<&Value>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
         let effective_schema = match output_schema {
-            Some(schema) if !is_structured_output_unsupported(protocol, &config.base_url) => {
+            Some(schema) if !config.capabilities.is_structured_output_unsupported(protocol, &config.base_url) => {
                 Some(schema)
             }
             _ => None,
@@ -328,7 +294,7 @@ impl HttpCallOnce {
             {
                 Ok(result) => Ok(result),
                 Err(err) if is_structured_output_rejection(&err) => {
-                    mark_structured_output_unsupported(protocol, &config.base_url);
+                    config.capabilities.mark_structured_output_unsupported(protocol, &config.base_url);
                     match logger {
                         Some(logger) => log_llm_call(
                             Some(logger),
@@ -364,7 +330,7 @@ impl LlmCallOnce for HttpCallOnce {
         on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
         output_schema: Option<&Value>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
-        let first = resolve_protocol(&config.base_url, &config.model);
+        let first = config.capabilities.resolve_protocol(&config.base_url, &config.model);
         match self
             .attempt_with_schema_fallback(
                 first,
@@ -409,7 +375,7 @@ impl LlmCallOnce for HttpCallOnce {
                     .await
                 {
                     Ok(result) => {
-                        remember_protocol(&config.base_url, &config.model, second);
+                        config.capabilities.remember_protocol(&config.base_url, &config.model, second);
                         Ok(result)
                     }
                     Err(retry_err) if is_protocol_mismatch(&retry_err, second) => {
@@ -492,7 +458,7 @@ impl ToolTurnOnce for HttpToolTurn {
         // Same protocol resolution and one-shot reroute as the JSON path: an
         // agent turn must not fail just because the endpoint speaks the other
         // dialect.
-        let first = resolve_protocol(&config.base_url, &config.model);
+        let first = config.capabilities.resolve_protocol(&config.base_url, &config.model);
         let attempt = |protocol: LlmProtocol| async move {
             self.dialect(protocol)
                 .call_tools(http, config, messages, tools, temperature)
@@ -509,7 +475,7 @@ impl ToolTurnOnce for HttpToolTurn {
                 );
                 match attempt(second).await {
                     Ok(turn) => {
-                        remember_protocol(&config.base_url, &config.model, second);
+                        config.capabilities.remember_protocol(&config.base_url, &config.model, second);
                         Ok(turn)
                     }
                     Err(retry_err) if is_protocol_mismatch(&retry_err, second) => {
@@ -1014,7 +980,9 @@ impl TranslationLlm for LlmClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::llm::capabilities::CapabilityMemo;
     use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Instant;
 
@@ -1635,19 +1603,20 @@ mod tests {
 
     #[test]
     fn structured_output_unsupported_memo_is_per_protocol_and_base_url() {
-        let probe = format!("http://memo-test.local/{}", line!());
+        let caps = CapabilityMemo::new();
+        let probe = "http://memo-test.local";
         let messages = LlmProtocol::AnthropicMessages;
         let chat = LlmProtocol::OpenAiChatCompletions;
 
-        assert!(!is_structured_output_unsupported(messages, &probe));
-        mark_structured_output_unsupported(messages, &probe);
-        assert!(is_structured_output_unsupported(messages, &probe));
-        assert!(is_structured_output_unsupported(messages, &format!("{probe}/")));
+        assert!(!caps.is_structured_output_unsupported(messages, probe));
+        caps.mark_structured_output_unsupported(messages, probe);
+        assert!(caps.is_structured_output_unsupported(messages, probe));
+        assert!(caps.is_structured_output_unsupported(messages, &format!("{probe}/")));
         // One host can serve both dialects with different capabilities, so the
         // verdict must not leak across protocols.
-        assert!(!is_structured_output_unsupported(chat, &probe));
+        assert!(!caps.is_structured_output_unsupported(chat, probe));
         // Other endpoints are unaffected.
-        assert!(!is_structured_output_unsupported(messages, "http://other.local"));
+        assert!(!caps.is_structured_output_unsupported(messages, "http://other.local"));
     }
 
     // ── protocol reroute ────────────────────────────────────────────────
@@ -1735,10 +1704,11 @@ mod tests {
         }
     }
 
-    /// A base URL no other test uses, with no `/anthropic` in it so the
-    /// heuristic starts on Messages (today's default behavior).
+    /// A base URL with no `/anthropic` in it so the heuristic starts on
+    /// Messages (today's default behavior). Tests use an isolated
+    /// `CapabilityMemo`, so the tag alone is enough to keep cases distinct.
     fn probe_base(tag: &str) -> String {
-        format!("http://protocol-{tag}.local/{}", line!())
+        format!("http://protocol-{tag}.local")
     }
 
     fn failing(status: u16, detail: &str) -> LlmError {
@@ -1765,11 +1735,17 @@ mod tests {
         }
     }
 
-    fn json_client(base_url: &str, model: &str, transport: Arc<dyn LlmCallOnce>) -> LlmClient {
+    fn json_client(
+        base_url: &str,
+        model: &str,
+        transport: Arc<dyn LlmCallOnce>,
+        caps: Arc<CapabilityMemo>,
+    ) -> LlmClient {
         LlmClient {
             // No retries: these tests are about routing, not backoff.
             config: LlmConfig::new(base_url.to_string(), "test-key".to_string(), model.to_string())
-                .with_max_retries(0),
+                .with_max_retries(0)
+                .with_capabilities(caps),
             http: reqwest::Client::new(),
             transport,
             tool_transport: Arc::new(HttpToolTurn::new()),
@@ -1784,6 +1760,7 @@ mod tests {
     async fn protocol_reroute_switches_dialect_once_then_remembers_it() {
         let base = probe_base("reroute");
         let model = "deepseek/deepseek-v4-flash-fast";
+        let caps = Arc::new(CapabilityMemo::new());
         let anthropic = Arc::new(FakeDialect::new(vec![Err(aggregator_rejection())]));
         let openai = Arc::new(FakeDialect::new(vec![ok_reply(), ok_reply()]));
         let client = json_client(
@@ -1793,6 +1770,7 @@ mod tests {
                 anthropic: anthropic.clone(),
                 openai: openai.clone(),
             }),
+            caps,
         );
 
         let first = client
@@ -1804,7 +1782,10 @@ mod tests {
         assert_eq!(openai.calls(), 1);
 
         // The endpoint's answer is remembered for this (url, model) pair...
-        assert_eq!(resolve_protocol(&base, model), LlmProtocol::OpenAiChatCompletions);
+        assert_eq!(
+            client.config.capabilities.resolve_protocol(&base, model),
+            LlmProtocol::OpenAiChatCompletions
+        );
 
         // ...so the second call never touches the rejected dialect again.
         let second = client.call_json(&call_context(), "r2", "hi", None).await;
@@ -1824,6 +1805,7 @@ mod tests {
                 anthropic: anthropic.clone(),
                 openai: openai.clone(),
             }),
+            Arc::new(CapabilityMemo::new()),
         );
 
         let err = client
@@ -1851,6 +1833,7 @@ mod tests {
                 anthropic: anthropic.clone(),
                 openai: openai.clone(),
             }),
+            Arc::new(CapabilityMemo::new()),
         );
 
         let err = client
@@ -1888,7 +1871,8 @@ mod tests {
         let openai = Arc::new(FakeDialect::new(Vec::new()).with_tool_reply(Ok(turn)));
         let client = LlmClient {
             config: LlmConfig::new(base.clone(), "test-key".to_string(), model.to_string())
-                .with_max_retries(0),
+                .with_max_retries(0)
+                .with_capabilities(Arc::new(CapabilityMemo::new())),
             http: reqwest::Client::new(),
             transport: Arc::new(HttpCallOnce::new()),
             tool_transport: Arc::new(HttpToolTurn {
@@ -1904,7 +1888,10 @@ mod tests {
         assert_eq!(turn.content, "done");
         assert_eq!(anthropic.tool_calls(), 1);
         assert_eq!(openai.tool_calls(), 1);
-        assert_eq!(resolve_protocol(&base, model), LlmProtocol::OpenAiChatCompletions);
+        assert_eq!(
+            client.config.capabilities.resolve_protocol(&base, model),
+            LlmProtocol::OpenAiChatCompletions
+        );
     }
 
     /// Live probe against a real endpoint, to prove the reroute works against
@@ -1925,9 +1912,12 @@ mod tests {
             panic!("set VOXTRANS_LIVE_LLM_URL, VOXTRANS_LIVE_LLM_KEY and VOXTRANS_LIVE_LLM_MODEL");
         };
 
-        let before = resolve_protocol(&url, &model);
+        let caps = Arc::new(CapabilityMemo::new());
+        let before = caps.resolve_protocol(&url, &model);
         let client = LlmClient::new(
-            LlmConfig::new(url.clone(), key, model.clone()).with_max_retries(0),
+            LlmConfig::new(url.clone(), key, model.clone())
+                .with_max_retries(0)
+                .with_capabilities(caps.clone()),
         )
         .expect("http client");
 
@@ -1942,10 +1932,10 @@ mod tests {
             .expect("the endpoint answers on whichever dialect it speaks");
         assert_eq!(result.json["ok"], json!(true), "raw: {}", result.json);
 
-        let after = resolve_protocol(&url, &model);
+        let after = caps.resolve_protocol(&url, &model);
         eprintln!("live: {url} / {model} resolved {before:?} -> {after:?}");
         // Whatever it settled on is now a fixed point, so later calls skip the probe.
-        assert_eq!(resolve_protocol(&url, &model), after);
+        assert_eq!(caps.resolve_protocol(&url, &model), after);
 
         // ...and the remembered dialect keeps working.
         let again = client

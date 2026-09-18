@@ -17,9 +17,6 @@
 //! the memo key carries the model too — switching model on the same URL
 //! re-resolves the protocol.
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-
 use super::base_url::normalize_base_url;
 use super::error::{LlmError, LlmErrorKind};
 
@@ -61,49 +58,11 @@ impl LlmProtocol {
     }
 }
 
-/// Endpoints whose protocol we already learned, keyed by
-/// `{normalized base_url}\u{1}{model}` (same key shape as `MAX_TOKENS_OVERRIDE`).
-static PROTOCOL_BY_ENDPOINT: OnceLock<Mutex<HashMap<String, LlmProtocol>>> = OnceLock::new();
-
-fn memo_key(base_url: &str, model: &str) -> String {
-    format!("{}\u{1}{}", normalize_base_url(base_url), model.trim())
-}
-
-fn remembered(base_url: &str, model: &str) -> Option<LlmProtocol> {
-    PROTOCOL_BY_ENDPOINT
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .ok()
-        .and_then(|map| map.get(&memo_key(base_url, model)).copied())
-}
-
-/// Remember which dialect this endpoint+model actually answered on, so later
-/// calls skip the probe entirely.
-pub fn remember_protocol(base_url: &str, model: &str, protocol: LlmProtocol) {
-    if let Ok(mut map) = PROTOCOL_BY_ENDPOINT
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-    {
-        map.insert(memo_key(base_url, model), protocol);
-    }
-}
-
-/// The protocol to try first for this endpoint+model.
-///
-/// Order of truth: what this endpoint already answered on → what the URL
-/// says → Anthropic. The last default is deliberate: every configuration
-/// that works today speaks Messages, so an unproven endpoint keeps its
-/// current behavior and only leaves it when the endpoint itself objects.
-pub fn resolve_protocol(base_url: &str, model: &str) -> LlmProtocol {
-    if let Some(known) = remembered(base_url, model) {
-        return known;
-    }
-    heuristic(base_url)
-}
-
-/// URL-only guess. A vendor that publishes an `/anthropic` path is telling
-/// us outright; a URL already carrying the OpenAI route is equally explicit.
-fn heuristic(base_url: &str) -> LlmProtocol {
+/// URL-only guess, used by [`super::capabilities::CapabilityMemo::resolve_protocol`]
+/// as the fallback when nothing has been learned yet. A vendor that publishes
+/// an `/anthropic` path is telling us outright; a URL already carrying the
+/// OpenAI route is equally explicit.
+pub(super) fn heuristic(base_url: &str) -> LlmProtocol {
     let normalized = normalize_base_url(base_url).to_ascii_lowercase();
     if normalized.contains("/anthropic") {
         return LlmProtocol::AnthropicMessages;
@@ -208,28 +167,31 @@ mod tests {
 
     #[test]
     fn remembered_protocol_beats_the_url_guess() {
+        let caps = super::super::capabilities::CapabilityMemo::new();
         let base = "https://probe.example/v1";
-        assert_eq!(resolve_protocol(base, "m"), LlmProtocol::AnthropicMessages);
+        assert_eq!(caps.resolve_protocol(base, "m"), LlmProtocol::AnthropicMessages);
 
-        remember_protocol(base, "m", LlmProtocol::OpenAiChatCompletions);
-        assert_eq!(resolve_protocol(base, "m"), LlmProtocol::OpenAiChatCompletions);
+        caps.remember_protocol(base, "m", LlmProtocol::OpenAiChatCompletions);
+        assert_eq!(caps.resolve_protocol(base, "m"), LlmProtocol::OpenAiChatCompletions);
     }
 
     #[test]
     fn memory_is_per_model_so_switching_model_re_resolves() {
+        let caps = super::super::capabilities::CapabilityMemo::new();
         let base = "https://probe-model.example/v1";
-        remember_protocol(base, "oss-model", LlmProtocol::OpenAiChatCompletions);
+        caps.remember_protocol(base, "oss-model", LlmProtocol::OpenAiChatCompletions);
 
         // Same URL, Claude id: the aggregator serves that one over Messages.
-        assert_eq!(resolve_protocol(base, "claude-sonnet-5"), LlmProtocol::AnthropicMessages);
-        assert_eq!(resolve_protocol(base, "oss-model"), LlmProtocol::OpenAiChatCompletions);
+        assert_eq!(caps.resolve_protocol(base, "claude-sonnet-5"), LlmProtocol::AnthropicMessages);
+        assert_eq!(caps.resolve_protocol(base, "oss-model"), LlmProtocol::OpenAiChatCompletions);
     }
 
     #[test]
     fn memory_normalizes_trailing_slash_and_model_whitespace() {
-        remember_protocol("https://norm.example/v1/", " m ", LlmProtocol::OpenAiChatCompletions);
+        let caps = super::super::capabilities::CapabilityMemo::new();
+        caps.remember_protocol("https://norm.example/v1/", " m ", LlmProtocol::OpenAiChatCompletions);
         assert_eq!(
-            resolve_protocol("https://norm.example/v1", "m"),
+            caps.resolve_protocol("https://norm.example/v1", "m"),
             LlmProtocol::OpenAiChatCompletions
         );
     }

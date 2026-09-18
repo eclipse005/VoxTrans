@@ -1,6 +1,7 @@
 mod anthropic;
 mod base_url;
 pub mod batch;
+pub mod capabilities;
 pub mod client;
 pub(crate) use anthropic::{ANTHROPIC_VERSION, add_auth_headers};
 pub mod error;
