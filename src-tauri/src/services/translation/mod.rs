@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use crate::services::llm::batch::run_indexed_chained_idempotent;
-use crate::services::llm::client::LlmClient;
+use crate::services::llm::client::{LlmClient, TranslationLlm};
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 use crate::services::task_log::TaskLogger;
 
@@ -360,8 +360,8 @@ pub async fn build_translation_layer_with_progress(
 }
 
 #[derive(Clone)]
-struct TranslateCall {
-    llm_client: LlmClient,
+struct TranslateCall<P> {
+    llm_client: P,
     context: LlmCallContext,
     segments: Arc<Vec<types::NormalizedSegment>>,
     known_translations: Arc<Mutex<HashMap<usize, String>>>,
@@ -388,8 +388,8 @@ impl WindowOutcome {
     }
 }
 
-async fn translate_window_with_split(
-    call: &TranslateCall,
+async fn translate_window_with_split<P: TranslationLlm>(
+    call: &TranslateCall<P>,
     window: BatchWindow,
     request_id: String,
 ) -> Result<WindowOutcome, String> {
@@ -423,8 +423,8 @@ async fn translate_window_with_split(
     }
 }
 
-async fn translate_window_once(
-    call: &TranslateCall,
+async fn translate_window_once<P: TranslationLlm>(
+    call: &TranslateCall<P>,
     window: &BatchWindow,
     request_id: &str,
 ) -> Result<WindowOutcome, String> {
@@ -607,8 +607,8 @@ fn merge_units_to_slots(
     outcome
 }
 
-fn make_stream_partial(
-    call: &TranslateCall,
+fn make_stream_partial<P>(
+    call: &TranslateCall<P>,
     window: &BatchWindow,
 ) -> Arc<dyn Fn(String) + Send + Sync> {
     let partial_map = call.partial_map.clone();

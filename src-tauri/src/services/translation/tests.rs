@@ -6,7 +6,9 @@ use super::responses::{
 use super::segments::normalize_segments;
 use super::slots::{norm_core, proportional_split, repair_slot_boundaries, slot_texts_in_order};
 use super::{TranslationSegmentInput, TranslationTerminologyEntry};
-use serde_json::json;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
+use serde_json::{Value, json};
 
 fn seg(text: &str) -> TranslationSegmentInput {
     TranslationSegmentInput {
@@ -637,3 +639,152 @@ fn ladder_splits_eight_units_to_one_without_losing_global_ids() {
     }
     assert_eq!(seen, (1..=8).collect::<Vec<_>>());
 }
+
+// ── injectable LLM seam: end-to-end window / ladder / slot tests ────────────
+
+/// Scripted fake for the `TranslationLlm` seam. It replays a queue of assistant
+/// JSON answers by feeding each through the caller's *real* `semantic_validate`
+/// closure, so the accept gates, slot backfill and the 8→4→2→1 ladder all run
+/// for real — only the network/LLM is faked. An exhausted script returns a
+/// retryable error, so split attempts become observable instead of the fake
+/// inventing a success the pipeline never earned.
+#[derive(Clone)]
+struct FakeLlm {
+    scripted: Arc<Mutex<VecDeque<Option<Value>>>>,
+}
+
+impl FakeLlm {
+    fn new(values: Vec<Value>) -> Self {
+        Self {
+            scripted: Arc::new(Mutex::new(values.into_iter().map(Some).collect())),
+        }
+    }
+}
+
+impl crate::services::llm::client::TranslationLlm for FakeLlm {
+    async fn call_json_validated_streaming<T, F>(
+        &self,
+        _context: &crate::services::llm::port::LlmCallContext,
+        _request_id: &str,
+        _user_prompt: &str,
+        _response_validator: Option<&crate::services::llm::json_guard::JsonResponseValidator>,
+        _on_partial: Arc<dyn Fn(String) + Send + Sync>,
+        semantic_validate: F,
+    ) -> Result<
+        crate::services::llm::client::LlmValidatedJsonResult<T>,
+        crate::services::llm::error::LlmError,
+    >
+    where
+        F: Fn(
+            Value,
+        ) -> Result<T, crate::services::llm::client::LlmSemanticValidationError>,
+    {
+        let next = self
+            .scripted
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pop_front();
+        match next {
+            Some(Some(value)) => semantic_validate(value)
+                .map(|value| crate::services::llm::client::LlmValidatedJsonResult { value })
+                .map_err(|crate::services::llm::client::LlmSemanticValidationError::Retryable(msg)| {
+                    crate::services::llm::error::LlmError::new(
+                        crate::services::llm::error::LlmErrorKind::InvalidSemantic,
+                        msg,
+                    )
+                }),
+            _ => Err(crate::services::llm::error::LlmError::new(
+                crate::services::llm::error::LlmErrorKind::InvalidSemantic,
+                "fake script exhausted",
+            )),
+        }
+    }
+}
+
+fn call_context() -> crate::services::llm::port::LlmCallContext {
+    crate::services::llm::port::LlmCallContext {
+        task_id: "t".into(),
+        media_path: None,
+        phase: "translate".into(),
+        store: None,
+        output_schema: None,
+    }
+}
+
+fn fake_call(fake: FakeLlm, segments: Vec<super::types::NormalizedSegment>) -> super::TranslateCall<FakeLlm> {
+    super::TranslateCall {
+        llm_client: fake,
+        context: call_context(),
+        segments: Arc::new(segments),
+        known_translations: Arc::new(Mutex::new(HashMap::new())),
+        partial_map: Arc::new(Mutex::new(HashMap::new())),
+        progress_callback: None,
+        completed_batches: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        partial_snapshot_cache: Arc::new(Mutex::new(Vec::new())),
+        batch_total: 1,
+    }
+}
+
+/// The seam really admits a fake, and the deterministic backfill maps the
+/// model's per-slot text onto the global segment ids.
+#[tokio::test]
+async fn translation_pipeline_runs_on_injected_fake_llm() {
+    let normalized = normalize_segments(&[seg_in("Hello there", 5), seg_in("my friend", 5)]);
+    let windows = build_batch_windows(
+        &normalized,
+        8,
+        "en",
+        "zh-CN",
+        "",
+        &Vec::<TranslationTerminologyEntry>::new(),
+    );
+    assert_eq!(windows.len(), 1);
+    let window = windows.into_iter().next().unwrap();
+
+    let call = fake_call(
+        FakeLlm::new(vec![json!({
+            "units": [{
+                "id": 1,
+                "translation": "你好啊，我的朋友",
+                "slots": [
+                    {"id": 1, "text": "你好啊"},
+                    {"id": 2, "text": "我的朋友"}
+                ]
+            }]
+        })]),
+        normalized,
+    );
+
+    let outcome = super::translate_window_with_split(&call, window, "r1".to_string())
+        .await
+        .expect("window should translate on the fake");
+    assert_eq!(
+        outcome.segment_translations.get(&1).map(String::as_str),
+        Some("你好啊")
+    );
+    assert_eq!(
+        outcome.segment_translations.get(&2).map(String::as_str),
+        Some("我的朋友")
+    );
+}
+
+/// With an empty script every attempt fails, so the whole window fails rather
+/// than fabricating output — proving errors propagate through the seam.
+#[tokio::test]
+async fn injected_fake_drives_window_failure_path() {
+    let normalized = normalize_segments(&[seg("One.")]);
+    let windows = build_batch_windows(
+        &normalized,
+        8,
+        "en",
+        "zh-CN",
+        "",
+        &Vec::<TranslationTerminologyEntry>::new(),
+    );
+    let window = windows.into_iter().next().unwrap();
+
+    let call = fake_call(FakeLlm::new(vec![]), normalized);
+    let result = super::translate_window_with_split(&call, window, "r1".to_string()).await;
+    assert!(result.is_err(), "an exhausted fake script must fail, not invent text");
+}
+

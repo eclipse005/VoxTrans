@@ -962,6 +962,55 @@ impl LlmPort for LlmClient {
     }
 }
 
+/// The LLM seam the translation layer drives. Static dispatch over a generic
+/// trait: the call is generic in the validated type `T` and the semantic
+/// validator `F`, so a `dyn` port is impossible — the same shape as the
+/// terminology module's `TermJsonCaller`. Production injects `LlmClient`;
+/// tests inject a scripted fake to exercise the window / 8→4→2→1 ladder / slot
+/// backfill pipeline end-to-end with no network. `#[allow(async_fn_in_trait)]`
+/// (not `async_trait`) so the returned future keeps its concrete `Send`ness
+/// under monomorphization instead of needing a boxed `+ Send`.
+#[allow(async_fn_in_trait)]
+pub trait TranslationLlm: Send + Sync {
+    async fn call_json_validated_streaming<T, F>(
+        &self,
+        context: &LlmCallContext,
+        request_id: &str,
+        user_prompt: &str,
+        response_validator: Option<&JsonResponseValidator>,
+        on_partial: Arc<dyn Fn(String) + Send + Sync>,
+        semantic_validate: F,
+    ) -> Result<LlmValidatedJsonResult<T>, LlmError>
+    where
+        F: Fn(Value) -> Result<T, LlmSemanticValidationError>;
+}
+
+impl TranslationLlm for LlmClient {
+    async fn call_json_validated_streaming<T, F>(
+        &self,
+        context: &LlmCallContext,
+        request_id: &str,
+        user_prompt: &str,
+        response_validator: Option<&JsonResponseValidator>,
+        on_partial: Arc<dyn Fn(String) + Send + Sync>,
+        semantic_validate: F,
+    ) -> Result<LlmValidatedJsonResult<T>, LlmError>
+    where
+        F: Fn(Value) -> Result<T, LlmSemanticValidationError>,
+    {
+        LlmClient::call_json_validated_streaming(
+            self,
+            context,
+            request_id,
+            user_prompt,
+            response_validator,
+            on_partial,
+            semantic_validate,
+        )
+        .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
