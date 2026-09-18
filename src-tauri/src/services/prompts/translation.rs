@@ -37,6 +37,7 @@ pub struct TranslationNameExample {
     pub example_translation: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_batch_translate_prompt(
     source_lang: &str,
     target_lang: &str,

@@ -153,11 +153,10 @@ fn unescaped_string_prefix(s: &str) -> String {
                             hex.push(h);
                         }
                     }
-                    if let Ok(code) = u16::from_str_radix(&hex, 16) {
-                        if let Some(ch) = char::from_u32(code as u32) {
+                    if let Ok(code) = u16::from_str_radix(&hex, 16)
+                        && let Some(ch) = char::from_u32(code as u32) {
                             out.push(ch);
                         }
-                    }
                 }
                 Some(other) => out.push(other),
                 None => break,
@@ -365,16 +364,14 @@ fn complete_objects(region: &str) -> Vec<String> {
                 }
                 depth += 1;
             }
-            '}' => {
-                if depth > 0 {
+            '}'
+                if depth > 0 => {
                     depth -= 1;
-                    if depth == 0 {
-                        if let Some(begin) = start.take() {
+                    if depth == 0
+                        && let Some(begin) = start.take() {
                             objects.push(region[begin..=offset].to_string());
                         }
-                    }
                 }
-            }
             _ => {}
         }
     }

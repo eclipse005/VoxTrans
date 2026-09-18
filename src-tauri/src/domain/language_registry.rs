@@ -222,11 +222,11 @@ impl LanguageRegistry {
         let mapping = ASR_MAPPINGS
             .iter()
             .find(|m| m.model == asr)
-            .ok_or_else(|| LanguageError::UnsupportedForAsr {
+            .ok_or(LanguageError::UnsupportedForAsr {
                 lang,
                 model: asr,
             })?;
-        (mapping.code_for)(lang).ok_or_else(|| LanguageError::UnsupportedForAsr {
+        (mapping.code_for)(lang).ok_or(LanguageError::UnsupportedForAsr {
             lang,
             model: asr,
         })
@@ -239,11 +239,11 @@ impl LanguageRegistry {
         let mapping = ALIGN_MAPPINGS
             .iter()
             .find(|m| m.model == align)
-            .ok_or_else(|| LanguageError::UnsupportedForAlign {
+            .ok_or(LanguageError::UnsupportedForAlign {
                 lang,
                 model: align,
             })?;
-        (mapping.code_for)(lang).ok_or_else(|| LanguageError::UnsupportedForAlign {
+        (mapping.code_for)(lang).ok_or(LanguageError::UnsupportedForAlign {
             lang,
             model: align,
         })

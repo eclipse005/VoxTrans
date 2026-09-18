@@ -76,6 +76,7 @@ pub(super) fn attempt_event_payload(base_payload: &Value, mut payload: Value) ->
     payload
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn failed_attempt_payload(
     base_payload: &Value,
     status: &str,

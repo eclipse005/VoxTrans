@@ -22,11 +22,15 @@ impl AudioSegment {
     }
 }
 
+/// VAD output: the chunked segments, the resolved audio duration in seconds,
+/// and the raw speech ranges the chunks were cut from.
+pub(crate) type VadSegments = (Vec<AudioSegment>, f64, Vec<(f64, f64)>);
+
 pub(crate) fn build_segments_from_vad(
     audio_path: &Path,
     total_duration_sec: f64,
     chunk_target_seconds: f64,
-) -> Result<(Vec<AudioSegment>, f64, Vec<(f64, f64)>), Box<dyn std::error::Error>> {
+) -> Result<VadSegments, Box<dyn std::error::Error>> {
     let vad_started_at = Instant::now();
     let chunk_target_seconds = chunk_target_seconds.max(30.0);
     let engine = Vad::new()?;

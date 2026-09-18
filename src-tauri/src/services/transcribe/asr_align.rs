@@ -183,7 +183,7 @@ where
                 AsrEngine::Moss(t)
             }
             AsrModel::Qwen3Asr06B | AsrModel::Qwen3Asr17B => {
-                let t = AsrInference::load(&asr_model_dir, device.asr_device.clone()).map_err(
+                let t = AsrInference::load(&asr_model_dir, device.asr_device).map_err(
                     |err| {
                         format!(
                             "failed to load ASR model from {}: {err:#}",
@@ -233,7 +233,7 @@ where
 
             let segment_samples = &prepared.mono_samples[start_index..end_index];
             let transcribe_started_at = Instant::now();
-            let text = engine.transcribe(segment_samples, &language)?;
+            let text = engine.transcribe(segment_samples, language)?;
             timing.asr_transcribe_sec += transcribe_started_at.elapsed().as_secs_f64();
             if text.is_empty() {
                 continue;
@@ -451,15 +451,14 @@ fn strip_moss_tags(raw: &str) -> String {
     let bytes = raw.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'[' {
-            if let Some(end) = raw[i + 1..].find(']') {
+        if bytes[i] == b'['
+            && let Some(end) = raw[i + 1..].find(']') {
                 let tag = &raw[i + 1..i + 1 + end];
                 if is_moss_meta_tag(tag) {
                     i = i + 2 + end;
                     continue;
                 }
             }
-        }
         // Advance by one UTF-8 char so multi-byte text is preserved.
         let ch = raw[i..].chars().next().unwrap_or('\0');
         out.push(ch);

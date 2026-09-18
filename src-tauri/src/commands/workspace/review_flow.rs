@@ -400,16 +400,15 @@ async fn load_sot_segments(
     let record = get_task_record(task_id)?;
     let from_json: Result<Vec<WorkspaceSubtitleSegment>, _> =
         serde_json::from_str(&record.item.subtitle_segments_json);
-    if let Ok(segs) = from_json {
-        if !segs.is_empty() {
+    if let Ok(segs) = from_json
+        && !segs.is_empty() {
             return Ok(segs);
         }
-    }
     let store = app.state::<TaskStore>().inner();
     store
         .load_segments(task_id)
         .await
-        .map_err(|e| WorkspaceError::TaskFailed(e))
+        .map_err(WorkspaceError::TaskFailed)
 }
 
 fn source_text_from_workspace_segments(segments: &[WorkspaceSubtitleSegment]) -> String {

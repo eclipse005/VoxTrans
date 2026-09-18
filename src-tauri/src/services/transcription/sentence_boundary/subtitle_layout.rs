@@ -403,6 +403,7 @@ impl HardLimits {
 ///
 /// Returns `None` when the span must be kept intact: under target, or within
 /// the grace band with no linguistically good cut reaching the target.
+#[allow(clippy::too_many_arguments)]
 fn dp_split_span(
     words: &[WordTokenDto],
     start: usize,
@@ -466,7 +467,7 @@ fn dp_split_span(
         DpMode::Force
     };
 
-    let base_cost = compute_base_costs(words, start, end, vad_index, profile, &advisor, &byte_offset);
+    let base_cost = compute_base_costs(words, start, end, vad_index, profile, advisor, &byte_offset);
     // quality_ok[k] == cutting after word start+k-1 is linguistically good.
     let quality_ok: Vec<bool> = (1..n)
         .map(|k| is_quality_cut_boundary(words, start + k - 1, profile, vad_index))
@@ -682,24 +683,22 @@ fn absorb_short_fragments(
             // Merge into the FOLLOWING segment (drop the cut after this one).
             if seg_idx + 2 < bounds.len() && !keep_cut(b) {
                 let c = bounds[seg_idx + 2];
-                if hard.valid(c - a, prefix[c] - prefix[a], char_of(a, c - 1)) {
-                    if let Some(ix) = cuts_rel.iter().position(|&k| k == b) {
+                if hard.valid(c - a, prefix[c] - prefix[a], char_of(a, c - 1))
+                    && let Some(ix) = cuts_rel.iter().position(|&k| k == b) {
                         cuts_rel.remove(ix);
                         absorbed = true;
                         break;
                     }
-                }
             }
             // Merge into the PREVIOUS segment (drop the cut before this one).
             if seg_idx > 0 && !keep_cut(a) {
                 let z = bounds[seg_idx - 1];
-                if hard.valid(b - z, prefix[b] - prefix[z], char_of(z, b - 1)) {
-                    if let Some(ix) = cuts_rel.iter().position(|&k| k == a) {
+                if hard.valid(b - z, prefix[b] - prefix[z], char_of(z, b - 1))
+                    && let Some(ix) = cuts_rel.iter().position(|&k| k == a) {
                         cuts_rel.remove(ix);
                         absorbed = true;
                         break;
                     }
-                }
             }
         }
         if !absorbed {
@@ -728,7 +727,7 @@ fn greedy_cuts_by_hard_limit(
         let units = prefix[i + 1] - prefix[seg_start];
         let tokens = i + 1 - seg_start;
         let chars = char_of(seg_start, i);
-        if !(tokens > 1 && !hard.valid(tokens, units, chars)) {
+        if tokens <= 1 || hard.valid(tokens, units, chars) {
             i += 1;
             continue;
         }

@@ -292,8 +292,8 @@ fn twitter_what_do_you_see_post_stays_one_cue() {
         response
             .translation_sentences
             .iter()
-            .all(|s| s.text.trim().to_ascii_lowercase() != "post"
-                && s.text.trim().to_ascii_lowercase() != "post."),
+            .all(|s| !s.text.trim().eq_ignore_ascii_case("post")
+                && !s.text.trim().eq_ignore_ascii_case("post.")),
         "flash cue: {:?}",
         response.translation_sentences
     );
@@ -1746,12 +1746,11 @@ fn ja_trailing_particle_na_stays_with_copula_sentence() {
         .iter()
         .find(|s| s.text == "人気なんだな。")
         .expect("merged sentence");
-    assert_ne!(
-        response
+    assert!(
+        !response
             .translation_sentences
             .iter()
             .any(|s| s.text.trim() == "な。"),
-        true,
         "bare particle cue must not exist"
     );
     assert!(na_text.semantic_sentence_id > 0);

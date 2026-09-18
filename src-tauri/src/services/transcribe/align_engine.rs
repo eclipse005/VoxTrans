@@ -11,9 +11,11 @@ use crate::domain::language_registry::LanguageRegistry;
 use crate::domain::AlignedSpan;
 use crate::services::preferences_types::AlignModel;
 
+/// Both variants are boxed: the engines are 4KB (Qwen) and 800B (CTC), and an
+/// `AlignEngine` is moved around per segment.
 enum AlignBackend {
-    Qwen(qwen_forced_aligner_rs::Qwen3ForcedAligner),
-    Ctc(ctc_forced_aligner_rs::Aligner),
+    Qwen(Box<qwen_forced_aligner_rs::Qwen3ForcedAligner>),
+    Ctc(Box<ctc_forced_aligner_rs::Aligner>),
 }
 
 /// Loaded aligner selected by `AlignModel`.
@@ -64,7 +66,7 @@ impl AlignEngine {
                     )
                 })?;
                 Ok(Self {
-                    backend: AlignBackend::Qwen(aligner),
+                    backend: AlignBackend::Qwen(Box::new(aligner)),
                     model,
                 })
             }
@@ -95,7 +97,7 @@ impl AlignEngine {
                     )
                 })?;
                 Ok(Self {
-                    backend: AlignBackend::Ctc(aligner),
+                    backend: AlignBackend::Ctc(Box::new(aligner)),
                     model,
                 })
             }

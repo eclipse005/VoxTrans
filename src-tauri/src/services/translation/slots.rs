@@ -240,8 +240,8 @@ pub(super) fn repair_slot_boundaries(texts: &mut [String], target_lang: &str) {
         // while staying a CJK line, and its trailing "。" must still be
         // absorbed — the guard keys on the TARGET's convention, never on
         // what the neighboring char happens to be.
-        if (b..next_b).all(|k| !is_word_char(chars[k])) && b > prev_b {
-            if attached_punct_target || !chars[b - 1].is_ascii_alphanumeric() {
+        if (b..next_b).all(|k| !is_word_char(chars[k])) && b > prev_b
+            && (attached_punct_target || !chars[b - 1].is_ascii_alphanumeric()) {
                 let mut target = None;
                 if let Some(edges) = &jieba_edges {
                     target = edges
@@ -259,7 +259,6 @@ pub(super) fn repair_slot_boundaries(texts: &mut [String], target_lang: &str) {
                     }
                 }
             }
-        }
 
         new_bounds[i] = b;
     }
@@ -316,7 +315,7 @@ fn nearest_space(chars: &[char], from: usize, lo: usize, hi: usize) -> Option<us
         if dist == 0 {
             continue; // cannot happen mid-word; guard anyway
         }
-        if best.map_or(true, |b| dist < b.abs_diff(from)) {
+        if best.is_none_or(|b| dist < b.abs_diff(from)) {
             best = Some(s);
         }
     }

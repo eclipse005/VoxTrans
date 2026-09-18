@@ -204,15 +204,12 @@ fn ensure_llm_profiles(
         seeded_active =
             seed_legacy_into_profiles(&mut profiles, legacy_key, legacy_base_url, legacy_model);
         // One-shot: if legacy model was an old catalog default, bump to current preset.
-        if let Some(ref target) = seeded_active {
-            if let Some(p) = profiles.iter_mut().find(|p| p.id == *target) {
-                if is_obsolete_catalog_model(&p.id, &p.model) {
-                    if let Some(catalog_p) = catalog.iter().find(|c| c.id == p.id) {
+        if let Some(ref target) = seeded_active
+            && let Some(p) = profiles.iter_mut().find(|p| p.id == *target)
+                && is_obsolete_catalog_model(&p.id, &p.model)
+                    && let Some(catalog_p) = catalog.iter().find(|c| c.id == p.id) {
                         p.model = catalog_p.model.clone();
                     }
-                }
-            }
-        }
     } else {
         // Fill missing vendor slots when catalog grows (add-provider is data-only).
         for preset in &catalog {

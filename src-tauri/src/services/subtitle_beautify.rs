@@ -2,7 +2,7 @@ use crate::services::subtitle_srt::SubtitleSrtSegment;
 use crate::services::workspace_subtitle::WorkspaceSubtitleSegment;
 
 pub fn beautify_subtitle_srt_segments(
-    segments: &mut Vec<SubtitleSrtSegment>,
+    segments: &mut [SubtitleSrtSegment],
     _subtitle_length_preset: &str,
     target_lang: &str,
 ) {
@@ -74,7 +74,7 @@ fn is_cjk_target(target_lang: &str) -> bool {
 
 /// Text polish + one-shot hold/gap pad. Call once on source SoT.
 pub fn beautify_workspace_segments(
-    segments: &mut Vec<WorkspaceSubtitleSegment>,
+    segments: &mut [WorkspaceSubtitleSegment],
     subtitle_length_preset: &str,
     target_lang: &str,
 ) {

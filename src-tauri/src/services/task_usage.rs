@@ -28,15 +28,14 @@ async fn record_llm_usage(
     }
 
     let new_total = crate::commands::workspace::add_task_total_tokens(task_id, normalized_total)?;
-    if let Some(store) = store {
-        if let Err(e) = store.update_task_tokens(task_id, new_total).await {
+    if let Some(store) = store
+        && let Err(e) = store.update_task_tokens(task_id, new_total).await {
             // DB write failure leaves the DB count behind the in-memory
             // total until the next persist_task_meta upsert rewrites it
             // from the record. Log so it's diagnosable instead of being
             // silently swallowed.
             eprintln!("warn: persist token count for task {task_id} failed: {e}");
         }
-    }
     Ok(())
 }
 

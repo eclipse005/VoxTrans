@@ -480,8 +480,8 @@ pub(super) async fn execute_task_batch_internal(
             continue;
         }
 
-        if let Some(intent) = request.intent.as_deref() {
-            if let Err(err) = patch_task_item(app, &task_id, |record| {
+        if let Some(intent) = request.intent.as_deref()
+            && let Err(err) = patch_task_item(app, &task_id, |record| {
                 record.intent = normalize_intent(intent).to_string();
             })
             .await
@@ -490,7 +490,6 @@ pub(super) async fn execute_task_batch_internal(
                 response.failed.push(failed_task_item(task_id, &err));
                 continue;
             }
-        }
 
         match execute_single_task(app, &task_id).await {
             Ok(()) => response.succeeded_task_ids.push(task_id),

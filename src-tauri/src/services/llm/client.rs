@@ -259,6 +259,7 @@ impl HttpCallOnce {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn attempt(
         &self,
         protocol: LlmProtocol,
@@ -303,6 +304,7 @@ impl HttpCallOnce {
 
     /// One methodical attempt on ONE dialect: the structured-output degrade
     /// lives here, so it applies identically to whichever dialect is running.
+    #[allow(clippy::too_many_arguments)]
     async fn attempt_with_schema_fallback(
         &self,
         protocol: LlmProtocol,

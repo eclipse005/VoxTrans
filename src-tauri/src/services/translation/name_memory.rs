@@ -67,14 +67,13 @@ pub(super) fn derive_name_memory(
             // 「Baron（バロン）」) and the translation uses that Latin form,
             // the kana is an annotation, not a lazy passthrough.
             let companion_latin = adjacent_latin_in_source(&segment.source, &span);
-            if let Some(script) = leak {
-                if super::guard::contains_script(span.as_str(), script)
+            if let Some(script) = leak
+                && super::guard::contains_script(span.as_str(), script)
                     && translation.contains(span.as_str())
                     && !latin_rendered_in_translation(companion_latin.as_deref(), translation)
                 {
                     continue;
                 }
-            }
             for form in forms_present_in_current(&span, &current_spans, &current_norm) {
                 let key = normalize_for_match(&form);
                 if key.is_empty() {
@@ -147,13 +146,12 @@ fn forms_present_in_current(
         if current == span {
             continue;
         }
-        if span.contains(current.as_str()) || current.contains(span) {
-            if current.chars().filter(|c| !c.is_ascii_punctuation()).count() >= 3
+        if (span.contains(current.as_str()) || current.contains(span))
+            && current.chars().filter(|c| !c.is_ascii_punctuation()).count() >= 3
                 && !forms.iter().any(|f| f == current)
             {
                 forms.push(current.clone());
             }
-        }
     }
     forms
 }

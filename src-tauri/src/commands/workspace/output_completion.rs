@@ -171,8 +171,8 @@ fn write_completion_srts(
     )?;
 
     // Flat SRT output to output/ root directory
-    if let Ok(settings) = crate::services::preferences::load_saved_settings_from_default_path(store) {
-        if settings.flat_srt_output && !settings.flat_srt_items.is_empty() {
+    if let Ok(settings) = crate::services::preferences::load_saved_settings_from_default_path(store)
+        && settings.flat_srt_output && !settings.flat_srt_items.is_empty() {
             let flat_items: Vec<crate::services::subtitle_srt::ExportSrtItem> = settings
                 .flat_srt_items
                 .iter()
@@ -197,7 +197,6 @@ fn write_completion_srts(
                 }
             }
         }
-    }
 
     Ok(())
 }
@@ -218,11 +217,10 @@ fn resolve_flat_output_stem(media_path: &str, task_id: &str) -> String {
         .map(|s| s.to_string_lossy().to_string())
     {
         let suffix = format!("_{task_id}");
-        if let Some(stripped) = parent_name.strip_suffix(&suffix) {
-            if !stripped.is_empty() {
+        if let Some(stripped) = parent_name.strip_suffix(&suffix)
+            && !stripped.is_empty() {
                 return stripped.to_string();
             }
-        }
         if !parent_name.is_empty() {
             return parent_name;
         }

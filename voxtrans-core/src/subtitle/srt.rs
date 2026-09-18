@@ -98,7 +98,7 @@ pub fn parse_srt_content(content: &str) -> Result<Vec<SrtCue>, String> {
         let Some(start_ms) = parse_srt_time(start_raw.trim()) else {
             continue;
         };
-        let end_token = end_raw.trim().split_whitespace().next().unwrap_or("");
+        let end_token = end_raw.split_whitespace().next().unwrap_or("");
         let Some(end_ms) = parse_srt_time(end_token) else {
             continue;
         };
