@@ -18,7 +18,7 @@ pub fn export_task_srts(
     app: AppHandle,
     request: ExportTaskSrtsCommandRequest,
 ) -> Result<Vec<String>, String> {
-    crate::services::app_log::report("file", "EXPORT_TASK_SRTS_FAILED", {
+    crate::services::app_log::guard("file", "EXPORT_TASK_SRTS_FAILED", || {
         let store = app.state::<TaskStore>().inner();
         crate::services::file::export_task_srts(
             store,
@@ -34,9 +34,7 @@ pub fn export_task_srts(
 
 #[tauri::command]
 pub fn get_file_size(path: String) -> Result<u64, String> {
-    crate::services::app_log::report(
-        "file",
-        "GET_FILE_SIZE_FAILED",
-        crate::services::file::get_file_size(path),
-    )
+    crate::services::app_log::guard("file", "GET_FILE_SIZE_FAILED", || {
+        crate::services::file::get_file_size(path)
+    })
 }

@@ -27,7 +27,7 @@ pub struct DownloadUpdateRequest {
 
 #[tauri::command]
 pub async fn check_update(_state: State<'_, AppState>) -> Result<UpdateCheckResponse, String> {
-    crate::services::app_log::report("updater", "CHECK_UPDATE_FAILED", async {
+    crate::services::app_log::guard_async("updater", "CHECK_UPDATE_FAILED", async {
         let current_version = env!("CARGO_PKG_VERSION").to_string();
         let result = updater::check_update(&current_version).await?;
 
@@ -42,7 +42,8 @@ pub async fn check_update(_state: State<'_, AppState>) -> Result<UpdateCheckResp
             download_size: result.download_size,
             has_update: result.has_update,
         })
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -51,7 +52,7 @@ pub async fn download_update(
     _state: State<'_, AppState>,
     request: DownloadUpdateRequest,
 ) -> Result<(), String> {
-    crate::services::app_log::report("updater", "DOWNLOAD_UPDATE_FAILED", async {
+    crate::services::app_log::guard_async("updater", "DOWNLOAD_UPDATE_FAILED", async {
         let app_for_thread = app.clone();
         let url = request.download_url;
         let task_id = request.task_id;
@@ -63,40 +64,35 @@ pub async fn download_update(
         .map_err(|e| format!("download task failed: {}", e))??;
 
         Ok(())
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
 pub fn cancel_update(task_id: String) -> Result<bool, String> {
-    crate::services::app_log::report(
-        "updater",
-        "CANCEL_UPDATE_FAILED",
-        Ok(updater::request_cancel(&task_id)),
-    )
+    crate::services::app_log::guard("updater", "CANCEL_UPDATE_FAILED", || {
+        Ok(updater::request_cancel(&task_id))
+    })
 }
 
 #[tauri::command]
 pub fn skip_update_version(app: tauri::AppHandle, version: String) -> Result<(), String> {
-    crate::services::app_log::report(
-        "updater",
-        "SKIP_UPDATE_VERSION_FAILED",
-        updater::save_skipped_version(&app, &version),
-    )
+    crate::services::app_log::guard("updater", "SKIP_UPDATE_VERSION_FAILED", || {
+        updater::save_skipped_version(&app, &version)
+    })
 }
 
 #[tauri::command]
 pub fn get_skipped_version(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    crate::services::app_log::report(
-        "updater",
-        "GET_SKIPPED_VERSION_FAILED",
-        Ok(updater::load_skipped_version(&app)),
-    )
+    crate::services::app_log::guard("updater", "GET_SKIPPED_VERSION_FAILED", || {
+        Ok(updater::load_skipped_version(&app))
+    })
 }
 
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
-    crate::services::app_log::report("updater", "OPEN_EXTERNAL_URL_FAILED", (|| {
+    crate::services::app_log::guard("updater", "OPEN_EXTERNAL_URL_FAILED", || {
         open::that(&url).map_err(|e| format!("Failed to open link: {}", e))?;
         Ok(())
-    })())
+    })
 }

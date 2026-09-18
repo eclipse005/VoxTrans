@@ -18,9 +18,7 @@ pub fn list_source_languages(
     asr_model: AsrModel,
     align_model: AlignModel,
 ) -> Result<Vec<SourceLanguageOption>, String> {
-    crate::services::app_log::report(
-        "language",
-        "LIST_SOURCE_LANGUAGES_FAILED",
+    crate::services::app_log::guard("language", "LIST_SOURCE_LANGUAGES_FAILED", || {
         Ok(LanguageRegistry::supported_for(asr_model, align_model)
             .into_iter()
             .map(|m| SourceLanguageOption {
@@ -28,6 +26,6 @@ pub fn list_source_languages(
                 label: m.display_name.to_string(),
                 short: m.short_badge.to_string(),
             })
-            .collect()),
-    )
+            .collect())
+    })
 }

@@ -48,13 +48,14 @@ struct WorkspaceTaskRecord {
 pub async fn load_workspace_state(
     app: AppHandle,
 ) -> Result<WorkspaceStateResponse, String> {
-    crate::services::app_log::report("workspace", "LOAD_WORKSPACE_STATE_FAILED", async {
+    crate::services::app_log::guard_async("workspace", "LOAD_WORKSPACE_STATE_FAILED", async {
         ensure_workspace_hydrated_from_db(&app).await?;
         let store = lock_workspace_store()?;
         Ok(WorkspaceStateResponse {
             queue: store.tasks().iter().map(|task| task.item.clone()).collect(),
         })
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -62,14 +63,15 @@ pub async fn load_workspace_task(
     app: AppHandle,
     request: LoadWorkspaceTaskCommandRequest,
 ) -> Result<WorkspaceTaskResponse, String> {
-    crate::services::app_log::report("workspace", "LOAD_WORKSPACE_TASK_FAILED", async {
+    crate::services::app_log::guard_async("workspace", "LOAD_WORKSPACE_TASK_FAILED", async {
         let task_id = require_task_id(&request.task_id)?;
         ensure_workspace_hydrated_from_db(&app).await?;
         let task = get_task_record(task_id)?;
         Ok(WorkspaceTaskResponse {
             item: task.item.clone(),
         })
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -77,9 +79,10 @@ pub async fn register_task_upload(
     app: AppHandle,
     request: RegisterTaskUploadCommandRequest,
 ) -> Result<WorkspaceQueueItem, String> {
-    crate::services::app_log::report("workspace", "REGISTER_TASK_UPLOAD_FAILED", async {
+    crate::services::app_log::guard_async("workspace", "REGISTER_TASK_UPLOAD_FAILED", async {
         Ok(register_task_upload_internal(&app, request).await?)
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -87,9 +90,10 @@ pub async fn delete_tasks(
     app: AppHandle,
     request: DeleteTasksCommandRequest,
 ) -> Result<(), String> {
-    crate::services::app_log::report("workspace", "DELETE_TASKS_FAILED", async {
+    crate::services::app_log::guard_async("workspace", "DELETE_TASKS_FAILED", async {
         Ok(delete_tasks_internal(&app, request).await?)
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -97,9 +101,10 @@ pub async fn enqueue_task_run(
     app: AppHandle,
     request: EnqueueTaskRunCommandRequest,
 ) -> Result<(), String> {
-    crate::services::app_log::report("workspace", "ENQUEUE_TASK_RUN_FAILED", async {
+    crate::services::app_log::guard_async("workspace", "ENQUEUE_TASK_RUN_FAILED", async {
         Ok(enqueue_task_run_internal(&app, request).await?)
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -107,9 +112,10 @@ pub async fn update_task_languages(
     app: AppHandle,
     request: UpdateTaskLanguagesCommandRequest,
 ) -> Result<(), String> {
-    crate::services::app_log::report("workspace", "UPDATE_TASK_LANGUAGES_FAILED", async {
+    crate::services::app_log::guard_async("workspace", "UPDATE_TASK_LANGUAGES_FAILED", async {
         Ok(update_task_languages_internal(&app, request).await?)
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -117,9 +123,10 @@ pub async fn update_task_terminology(
     app: AppHandle,
     request: UpdateTaskTerminologyCommandRequest,
 ) -> Result<(), String> {
-    crate::services::app_log::report("workspace", "UPDATE_TASK_TERMINOLOGY_FAILED", async {
+    crate::services::app_log::guard_async("workspace", "UPDATE_TASK_TERMINOLOGY_FAILED", async {
         Ok(update_task_terminology_internal(&app, request).await?)
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -127,10 +134,11 @@ pub async fn update_task_review_flags(
     app: AppHandle,
     request: review_flow::UpdateTaskReviewFlagsRequest,
 ) -> Result<WorkspaceQueueItem, String> {
-    crate::services::app_log::report("workspace", "UPDATE_TASK_REVIEW_FLAGS_FAILED", async {
+    crate::services::app_log::guard_async("workspace", "UPDATE_TASK_REVIEW_FLAGS_FAILED", async {
         ensure_workspace_hydrated_from_db(&app).await?;
         Ok(review_flow::update_task_review_flags_internal(&app, request).await?)
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -138,10 +146,11 @@ pub async fn resume_task_after_review(
     app: AppHandle,
     request: review_flow::ResumeTaskAfterReviewRequest,
 ) -> Result<(), String> {
-    crate::services::app_log::report("workspace", "RESUME_TASK_AFTER_REVIEW_FAILED", async {
+    crate::services::app_log::guard_async("workspace", "RESUME_TASK_AFTER_REVIEW_FAILED", async {
         ensure_workspace_hydrated_from_db(&app).await?;
         Ok(review_flow::resume_task_after_review_internal(&app, request).await?)
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -149,7 +158,7 @@ pub async fn save_subtitle_editor(
     app: AppHandle,
     request: SaveSubtitleEditorCommandRequest,
 ) -> Result<(), String> {
-    crate::services::app_log::report("workspace", "SAVE_SUBTITLE_EDITOR_FAILED", async {
+    crate::services::app_log::guard_async("workspace", "SAVE_SUBTITLE_EDITOR_FAILED", async {
         let task_id = require_task_id(&request.task_id)?;
         ensure_workspace_hydrated_from_db(&app).await?;
         let subtitle_segments_json = request.subtitle_segments_json.clone();
@@ -171,7 +180,8 @@ pub async fn save_subtitle_editor(
         })
         .await?;
         Ok(())
-    }.await)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -179,11 +189,10 @@ pub async fn execute_task_batch(
     app: AppHandle,
     request: ExecuteTaskBatchCommandRequest,
 ) -> Result<ExecuteTaskBatchCommandResponse, String> {
-    crate::services::app_log::report(
-        "workspace",
-        "EXECUTE_TASK_BATCH_FAILED",
-        Ok(execute_task_batch_internal(&app, request.items).await),
-    )
+    crate::services::app_log::guard_async("workspace", "EXECUTE_TASK_BATCH_FAILED", async {
+        Ok(execute_task_batch_internal(&app, request.items).await)
+    })
+    .await
 }
 
 pub fn task_subtitle_beautify_context(

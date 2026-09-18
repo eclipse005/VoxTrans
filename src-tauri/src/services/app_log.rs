@@ -94,17 +94,33 @@ pub fn error(
     let _ = write_entry(&mut state, &entry);
 }
 
-/// Wrap a command result so a failure is recorded once, at the IPC boundary.
+/// Run `body` and record a failure once, at the IPC boundary.
 ///
-/// A command is where a user-visible failure materializes — "it showed an error"
-/// or "nothing happened" — and most of them delegate straight into a service, so
-/// this is the cheapest seam that reaches every operation the app exposes. The
-/// result passes through untouched: recording never changes control flow.
-pub fn report<T, E: std::fmt::Display>(
+/// The body is a **closure on purpose**. `?` inside it returns from the closure,
+/// so the `Err` always reaches this function; an API that takes an
+/// already-computed `Result` cannot promise that — `report(scope, code,
+/// Ok(x.await?))` returns from the *command* before the call even happens, and
+/// records nothing. Taking the closure makes that mistake unrepresentable.
+pub fn guard<T, E: std::fmt::Display>(
     scope: &str,
     code: &str,
-    result: Result<T, E>,
+    body: impl FnOnce() -> Result<T, E>,
 ) -> Result<T, E> {
+    let result = body();
+    if let Err(err) = &result {
+        error(scope, code, err.to_string(), None);
+    }
+    result
+}
+
+/// [`guard`] for async command bodies:
+/// `guard_async(scope, code, async { .. }).await`.
+pub async fn guard_async<T, E: std::fmt::Display>(
+    scope: &str,
+    code: &str,
+    body: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, E> {
+    let result = body.await;
     if let Err(err) = &result {
         error(scope, code, err.to_string(), None);
     }
@@ -350,16 +366,46 @@ mod tests {
         text.lines().map(|line| line.to_string()).collect()
     }
 
+    /// Recording must never change control flow. The failure arm writes one line
+    /// into the build dir's output tree — that is where `log_dir()` resolves
+    /// during tests, not the user's install. That recording *happens* is covered
+    /// by the file tests above; these pin the pass-through contract.
     #[test]
-    fn report_passes_the_result_through_untouched() {
-        // Recording must never change control flow. The failure arm writes one
-        // line into the build dir's output tree — that is where `log_dir()`
-        // resolves during tests, not the user's install.
-        assert_eq!(report("test.boundary", "OK_CODE", Ok::<u32, String>(7)), Ok(7));
+    fn guard_passes_the_result_through_untouched() {
+        assert_eq!(guard("test.boundary", "OK_CODE", || Ok::<u32, String>(7)), Ok(7));
         assert_eq!(
-            report("test.boundary", "ERR_CODE", Err::<u32, String>("boom".into())),
+            guard("test.boundary", "ERR_CODE", || Err::<u32, String>("boom".into())),
             Err("boom".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn guard_async_passes_the_result_through_untouched() {
+        assert_eq!(
+            guard_async("test.boundary", "OK_CODE", async { Ok::<u32, String>(7) }).await,
+            Ok(7)
+        );
+        assert_eq!(
+            guard_async("test.boundary", "ERR_CODE", async { Err::<u32, String>("boom".into()) }).await,
+            Err("boom".to_string())
+        );
+    }
+
+    /// This is why the API takes a closure rather than a computed `Result`: a `?`
+    /// in the body must not be able to skip the recording call.
+    #[test]
+    fn guard_still_records_when_the_body_uses_the_question_mark_operator() {
+        fn fallible() -> Result<u32, String> {
+            Err("raised with ?".to_string())
+        }
+
+        // Shaped like a real command body: do fallible work, then produce a value.
+        let result = guard("test.boundary", "QUESTION_MARK_FAILED", || {
+            let value = fallible()?;
+            Ok(value + 1)
+        });
+
+        assert_eq!(result, Err("raised with ?".to_string()));
     }
 
     #[test]

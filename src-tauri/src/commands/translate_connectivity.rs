@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 pub async fn test_translate_llm(
     request: TestTranslateLlmRequest,
 ) -> Result<TestTranslateLlmResponse, String> {
-    crate::services::app_log::report("translate", "TEST_TRANSLATE_LLM_FAILED", async {
+    crate::services::app_log::guard_async("translate", "TEST_TRANSLATE_LLM_FAILED", async {
         // Keyless slots store a non-empty placeholder instead of a real key.
         if request.api_key.trim().is_empty() {
             return Err("translateApiKey is required".to_string());
@@ -87,7 +87,8 @@ pub async fn test_translate_llm(
             message: msg.to_string(),
             model: request.model.trim().to_string(),
         })
-    }.await)
+    })
+    .await
 }
 
 fn cleanup_connectivity_test_artifacts() {
@@ -102,7 +103,7 @@ fn cleanup_connectivity_test_artifacts() {
 pub async fn list_llm_models(
     request: ListLlmModelsRequest,
 ) -> Result<ListLlmModelsResponse, String> {
-    crate::services::app_log::report("translate", "LIST_LLM_MODELS_FAILED", async {
+    crate::services::app_log::guard_async("translate", "LIST_LLM_MODELS_FAILED", async {
         let base = request.base_url.trim().trim_end_matches('/').to_string();
         let api_key = crate::services::llm::port::parse_api_keys(&request.api_key)
             .first()
@@ -159,7 +160,8 @@ pub async fn list_llm_models(
             excluded_models,
             all_models: all,
         })
-    }.await)
+    })
+    .await
 }
 
 fn parse_error_message(body: &str) -> Option<String> {

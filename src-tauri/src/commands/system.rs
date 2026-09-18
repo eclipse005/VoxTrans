@@ -24,7 +24,7 @@ fn open_output_dir() -> Result<(), String> {
 
 #[tauri::command]
 pub fn open_task_output_dir(request: OpenTaskOutputDirRequest) -> Result<(), String> {
-    crate::services::app_log::report("system", "OPEN_TASK_OUTPUT_DIR_FAILED", (|| {
+    crate::services::app_log::guard("system", "OPEN_TASK_OUTPUT_DIR_FAILED", || {
         if request.task_id.trim().is_empty() || request.media_path.trim().is_empty() {
             return open_output_dir();
         }
@@ -35,12 +35,12 @@ pub fn open_task_output_dir(request: OpenTaskOutputDirRequest) -> Result<(), Str
         );
         std::fs::create_dir_all(&task_dir).map_err(|err| err.to_string())?;
         crate::services::system::open_path(&task_dir)
-    })())
+    })
 }
 
 #[tauri::command]
 pub fn open_task_log_dir(request: OpenTaskLogDirRequest) -> Result<(), String> {
-    crate::services::app_log::report("system", "OPEN_TASK_LOG_DIR_FAILED", (|| {
+    crate::services::app_log::guard("system", "OPEN_TASK_LOG_DIR_FAILED", || {
         if request.task_id.trim().is_empty() {
             return open_output_dir();
         }
@@ -54,7 +54,7 @@ pub fn open_task_log_dir(request: OpenTaskLogDirRequest) -> Result<(), String> {
         let log_dir = crate::services::task_path::task_log_dir(&request.task_id, media_path);
         std::fs::create_dir_all(&log_dir).map_err(|err| err.to_string())?;
         crate::services::system::open_path(&log_dir)
-    })())
+    })
 }
 
 /// Open the app-wide error log directory (`<output root>/logs`). Unlike the task
@@ -62,16 +62,16 @@ pub fn open_task_log_dir(request: OpenTaskLogDirRequest) -> Result<(), String> {
 /// before knowing which task failed.
 #[tauri::command]
 pub fn open_app_log_dir() -> Result<(), String> {
-    crate::services::app_log::report("system", "OPEN_APP_LOG_DIR_FAILED", (|| {
+    crate::services::app_log::guard("system", "OPEN_APP_LOG_DIR_FAILED", || {
         let log_dir = crate::services::app_log::log_dir();
         std::fs::create_dir_all(&log_dir).map_err(|err| err.to_string())?;
         crate::services::system::open_path(&log_dir)
-    })())
+    })
 }
 
 #[tauri::command]
 pub fn list_system_fonts() -> Result<Vec<String>, String> {
-    crate::services::app_log::report("system", "LIST_SYSTEM_FONTS_FAILED", (|| {
+    crate::services::app_log::guard("system", "LIST_SYSTEM_FONTS_FAILED", || {
         let source = font_kit::source::SystemSource::new();
         let mut families = source
             .all_families()
@@ -79,5 +79,5 @@ pub fn list_system_fonts() -> Result<Vec<String>, String> {
         families.sort();
         families.dedup();
         Ok(families)
-    })())
+    })
 }
