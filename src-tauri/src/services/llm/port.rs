@@ -213,10 +213,6 @@ pub struct LlmCallContext {
     pub media_path: Option<String>,
     pub phase: String,
     pub store: Option<TaskStore>,
-    /// JSON Schema forwarded as Anthropic structured output
-    /// (`output_config.format`). Endpoints that reject it fall back to
-    /// plain-JSON generation with the existing repair chain.
-    pub output_schema: Option<Value>,
 }
 
 #[derive(Debug, Clone)]

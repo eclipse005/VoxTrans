@@ -40,7 +40,6 @@ trait LlmCallOnce: Send + Sync {
         logger: Option<&TaskLogger>,
         user_prompt: &str,
         on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
-        output_schema: Option<&Value>,
     ) -> Result<(String, LlmTokenUsage), LlmError>;
 
     /// Delay (ms) before the next attempt, or `None` to proceed
@@ -63,37 +62,6 @@ trait LlmCallOnce: Send + Sync {
     }
 }
 
-/// Does this error mean "endpoint does not support structured output"? Only
-/// schema-related 400/422s trigger the fallback; unrelated bad requests keep
-/// failing loudly.
-fn is_structured_output_rejection(err: &LlmError) -> bool {
-    if !matches!(err.status, Some(400) | Some(422)) {
-        return false;
-    }
-    let message = err.message.to_ascii_lowercase();
-    let named = message.contains("output_config")
-        || message.contains("json_schema")
-        || message.contains("structured output")
-        // Constrained-decoding backends (vLLM/xgrammar family) surface schema
-        // trouble as grammar errors, e.g. SenseNova's `guided_grammar …
-        // compile_grammar_error: No module named 'xgrammar'`.
-        || message.contains("grammar")
-        || message.contains("guided")
-        // SenseNova rejects ANY `output_config` with a generic 400 body
-        // "inference request is invalid" — verified 2026-09 against
-        // token.sensenova.cn: flat and nested schemas both 400 while the
-        // identical request without output_config returns 200. Treating this
-        // as a structured-output rejection is safe: the fallback retries
-        // without the schema, and a genuinely broken request fails again
-        // either way (the memo then only skips a schema the endpoint hates).
-        || message.contains("inference request");
-    let format_shaped = message.contains("format")
-        && ["unsupported", "not supported", "unknown", "unexpected", "invalid"]
-            .iter()
-            .any(|word| message.contains(word));
-    named || format_shaped
-}
-
 /// One dialect's wire calls, behind a seam so the protocol reroute can be
 /// scripted without a network. Production pairs [`AnthropicDialect`] with
 /// [`OpenAiDialect`]; tests substitute fakes and assert the reroute.
@@ -104,7 +72,6 @@ trait Dialect: Send + Sync {
         http: &reqwest::Client,
         config: &LlmConfig,
         user_prompt: &str,
-        output_schema: Option<&Value>,
     ) -> Result<(String, LlmTokenUsage), LlmError>;
 
     async fn call_stream<'a>(
@@ -112,7 +79,6 @@ trait Dialect: Send + Sync {
         http: &'a reqwest::Client,
         config: &'a LlmConfig,
         user_prompt: &'a str,
-        output_schema: Option<&'a Value>,
         on_delta: Option<&'a mut (dyn for<'b> FnMut(&'b str) + Send + 'a)>,
     ) -> Result<(String, LlmTokenUsage), LlmError>;
 
@@ -135,9 +101,8 @@ impl Dialect for AnthropicDialect {
         http: &reqwest::Client,
         config: &LlmConfig,
         user_prompt: &str,
-        output_schema: Option<&Value>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
-        call_message(http, config, user_prompt, output_schema).await
+        call_message(http, config, user_prompt).await
     }
 
     async fn call_stream<'a>(
@@ -145,10 +110,9 @@ impl Dialect for AnthropicDialect {
         http: &'a reqwest::Client,
         config: &'a LlmConfig,
         user_prompt: &'a str,
-        output_schema: Option<&'a Value>,
         on_delta: Option<&'a mut (dyn for<'b> FnMut(&'b str) + Send + 'a)>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
-        call_message_stream(http, config, user_prompt, output_schema, on_delta).await
+        call_message_stream(http, config, user_prompt, on_delta).await
     }
 
     async fn call_tools(
@@ -172,9 +136,8 @@ impl Dialect for OpenAiDialect {
         http: &reqwest::Client,
         config: &LlmConfig,
         user_prompt: &str,
-        output_schema: Option<&Value>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
-        call_chat_completion(http, config, user_prompt, output_schema).await
+        call_chat_completion(http, config, user_prompt).await
     }
 
     async fn call_stream<'a>(
@@ -182,10 +145,9 @@ impl Dialect for OpenAiDialect {
         http: &'a reqwest::Client,
         config: &'a LlmConfig,
         user_prompt: &'a str,
-        output_schema: Option<&'a Value>,
         on_delta: Option<&'a mut (dyn for<'b> FnMut(&'b str) + Send + 'a)>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
-        call_chat_completion_stream(http, config, user_prompt, output_schema, on_delta).await
+        call_chat_completion_stream(http, config, user_prompt, on_delta).await
     }
 
     async fn call_tools(
@@ -202,9 +164,8 @@ impl Dialect for OpenAiDialect {
 
 /// Production transport: resolves which dialect the endpoint speaks, streams
 /// when a callback is given (falling back to a plain completion when the
-/// provider rejects streaming), falls back to unstructured generation when
-/// the endpoint rejects the structured-output field, and reroutes once to the
-/// other dialect when the endpoint says we knocked on the wrong door.
+/// provider rejects streaming), and reroutes once to the other dialect when
+/// the endpoint says we knocked on the wrong door.
 struct HttpCallOnce {
     anthropic: Arc<dyn Dialect>,
     openai: Arc<dyn Dialect>,
@@ -225,7 +186,6 @@ impl HttpCallOnce {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn attempt(
         &self,
         protocol: LlmProtocol,
@@ -234,7 +194,6 @@ impl HttpCallOnce {
         logger: Option<&TaskLogger>,
         user_prompt: &str,
         on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
-        output_schema: Option<&Value>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
         let dialect = self.dialect(protocol);
         if let Some(cb) = on_partial {
@@ -242,7 +201,7 @@ impl HttpCallOnce {
                 cb(acc.to_string());
             };
             match dialect
-                .call_stream(http, config, user_prompt, output_schema, Some(&mut delta_cb))
+                .call_stream(http, config, user_prompt, Some(&mut delta_cb))
                 .await
             {
                 Ok(result) => return Ok(result),
@@ -265,57 +224,7 @@ impl HttpCallOnce {
                 },
             }
         }
-        dialect.call(http, config, user_prompt, output_schema).await
-    }
-
-    /// One methodical attempt on ONE dialect: the structured-output degrade
-    /// lives here, so it applies identically to whichever dialect is running.
-    #[allow(clippy::too_many_arguments)]
-    async fn attempt_with_schema_fallback(
-        &self,
-        protocol: LlmProtocol,
-        http: &reqwest::Client,
-        config: &LlmConfig,
-        logger: Option<&TaskLogger>,
-        user_prompt: &str,
-        on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
-        output_schema: Option<&Value>,
-    ) -> Result<(String, LlmTokenUsage), LlmError> {
-        let effective_schema = match output_schema {
-            Some(schema) if !config.capabilities.is_structured_output_unsupported(protocol, &config.base_url) => {
-                Some(schema)
-            }
-            _ => None,
-        };
-        if let Some(schema) = effective_schema {
-            return match self
-                .attempt(protocol, http, config, logger, user_prompt, on_partial, Some(schema))
-                .await
-            {
-                Ok(result) => Ok(result),
-                Err(err) if is_structured_output_rejection(&err) => {
-                    config.capabilities.mark_structured_output_unsupported(protocol, &config.base_url);
-                    match logger {
-                        Some(logger) => log_llm_call(
-                            Some(logger),
-                            json!({
-                                "status": "structured_output_fallback",
-                                "protocol": protocol.provider_id(),
-                                "error": err.message,
-                            }),
-                        ),
-                        None => eprintln!(
-                            "[warn] endpoint rejected structured output ({err}); falling back to plain JSON"
-                        ),
-                    }
-                    self.attempt(protocol, http, config, logger, user_prompt, on_partial, None)
-                        .await
-                }
-                Err(err) => Err(err),
-            };
-        }
-        self.attempt(protocol, http, config, logger, user_prompt, on_partial, None)
-            .await
+        dialect.call(http, config, user_prompt).await
     }
 }
 
@@ -328,19 +237,10 @@ impl LlmCallOnce for HttpCallOnce {
         logger: Option<&TaskLogger>,
         user_prompt: &str,
         on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
-        output_schema: Option<&Value>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
         let first = config.capabilities.resolve_protocol(&config.base_url, &config.model);
         match self
-            .attempt_with_schema_fallback(
-                first,
-                http,
-                config,
-                logger,
-                user_prompt,
-                on_partial,
-                output_schema,
-            )
+            .attempt(first, http, config, logger, user_prompt, on_partial)
             .await
         {
             Ok(result) => Ok(result),
@@ -363,15 +263,7 @@ impl LlmCallOnce for HttpCallOnce {
                     ),
                 }
                 match self
-                    .attempt_with_schema_fallback(
-                        second,
-                        http,
-                        config,
-                        logger,
-                        user_prompt,
-                        on_partial,
-                        output_schema,
-                    )
+                    .attempt(second, http, config, logger, user_prompt, on_partial)
                     .await
                 {
                     Ok(result) => {
@@ -592,19 +484,11 @@ impl LlmClient {
     async fn call_once(
         &self,
         logger: Option<&TaskLogger>,
-        context: &LlmCallContext,
         user_prompt: &str,
         on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
     ) -> Result<(String, LlmTokenUsage), LlmError> {
         self.transport
-            .call_once(
-                &self.http,
-                &self.config,
-                logger,
-                user_prompt,
-                on_partial,
-                context.output_schema.as_ref(),
-            )
+            .call_once(&self.http, &self.config, logger, user_prompt, on_partial)
             .await
     }
 
@@ -730,7 +614,7 @@ impl LlmClient {
 
             let partial_ref = on_partial.as_ref().map(|a| a.as_ref());
             match self
-                .call_once(logger.as_ref(), context, &effective_user_prompt, partial_ref)
+                .call_once(logger.as_ref(), &effective_user_prompt, partial_ref)
                 .await
             {
                 Ok((raw_text, usage)) => {
@@ -1029,7 +913,6 @@ mod tests {
             _logger: Option<&TaskLogger>,
             user_prompt: &str,
             _on_partial: Option<&(dyn Fn(String) + Send + Sync)>,
-            _output_schema: Option<&Value>,
         ) -> Result<(String, LlmTokenUsage), LlmError> {
             self.prompts.lock().unwrap().push(user_prompt.to_string());
             self.script
@@ -1091,7 +974,6 @@ mod tests {
             media_path: None,
             phase: "connectivity_test".to_string(),
             store: None,
-            output_schema: None,
         }
     }
 
@@ -1560,65 +1442,6 @@ mod tests {
         assert_eq!(tool.call_count(), 4, "1 initial + 3 retries");
     }
 
-    #[test]
-    fn structured_output_rejection_detection() {
-        let rejection = |status: u16, msg: &str| {
-            let mut err = LlmError::new(LlmErrorKind::Http, msg.to_string());
-            err.status = Some(status);
-            err
-        };
-        assert!(is_structured_output_rejection(&rejection(
-            400,
-            "http status 400: output_config is not supported"
-        )));
-        assert!(is_structured_output_rejection(&rejection(
-            422,
-            "http status 422: json_schema format unknown"
-        )));
-        assert!(is_structured_output_rejection(&rejection(
-            400,
-            "http status 400: format unsupported by this model"
-        )));
-        // Grammar-constrained decoding failures (vLLM/xgrammar family).
-        assert!(is_structured_output_rejection(&rejection(
-            400,
-            "http status 400: guided_grammar '{\"type\":\"object\"}' has compile_grammar_error: No module named 'xgrammar'"
-        )));
-        // SenseNova's generic 400 for any output_config (empirically
-        // verified: same request without the schema returns 200).
-        assert!(is_structured_output_rejection(&rejection(
-            400,
-            "http status 400: inference request is invalid"
-        )));
-        // Unrelated 400s and non-4xx/422 statuses never trigger fallback.
-        assert!(!is_structured_output_rejection(&rejection(
-            400,
-            "http status 400: max_tokens too large"
-        )));
-        assert!(!is_structured_output_rejection(&rejection(
-            500,
-            "http status 500: output_config exploded"
-        )));
-    }
-
-    #[test]
-    fn structured_output_unsupported_memo_is_per_protocol_and_base_url() {
-        let caps = CapabilityMemo::new();
-        let probe = "http://memo-test.local";
-        let messages = LlmProtocol::AnthropicMessages;
-        let chat = LlmProtocol::OpenAiChatCompletions;
-
-        assert!(!caps.is_structured_output_unsupported(messages, probe));
-        caps.mark_structured_output_unsupported(messages, probe);
-        assert!(caps.is_structured_output_unsupported(messages, probe));
-        assert!(caps.is_structured_output_unsupported(messages, &format!("{probe}/")));
-        // One host can serve both dialects with different capabilities, so the
-        // verdict must not leak across protocols.
-        assert!(!caps.is_structured_output_unsupported(chat, probe));
-        // Other endpoints are unaffected.
-        assert!(!caps.is_structured_output_unsupported(messages, "http://other.local"));
-    }
-
     // ── protocol reroute ────────────────────────────────────────────────
 
     /// Fake dialect: a scripted reply queue plus call counters, so a test can
@@ -1675,7 +1498,6 @@ mod tests {
             _http: &reqwest::Client,
             _config: &LlmConfig,
             _user_prompt: &str,
-            _output_schema: Option<&Value>,
         ) -> Result<(String, LlmTokenUsage), LlmError> {
             self.next_reply()
         }
@@ -1685,7 +1507,6 @@ mod tests {
             _http: &'a reqwest::Client,
             _config: &'a LlmConfig,
             _user_prompt: &'a str,
-            _output_schema: Option<&'a Value>,
             _on_delta: Option<&'a mut (dyn for<'b> FnMut(&'b str) + Send + 'a)>,
         ) -> Result<(String, LlmTokenUsage), LlmError> {
             self.next_reply()
@@ -1731,7 +1552,6 @@ mod tests {
             media_path: None,
             phase: "translate".to_string(),
             store: None,
-            output_schema: None,
         }
     }
 
@@ -1973,23 +1793,11 @@ mod tests {
             "streaming must reach the preview callback, not silently degrade"
         );
 
-        // Mirror the settings 测试 button exactly: it sends an `output_schema`,
-        // which on this dialect becomes `response_format.json_schema` — the
-        // field OSS gateways most often reject. Either the endpoint takes it,
-        // or the schema-dropping fallback keeps the probe working.
-        let schema = json!({
-            "type": "object",
-            "properties": {"ok": {"type": "boolean"}, "message": {"type": "string"}},
-            "required": ["ok", "message"],
-            "additionalProperties": false
-        });
-        let probe_context = LlmCallContext {
-            output_schema: Some(schema),
-            ..call_context()
-        };
+        // Same shape as the settings connectivity button: one JSON object,
+        // checked locally. The request does not carry a provider schema.
         let probe = client
             .call_json(
-                &probe_context,
+                &call_context(),
                 "live-4",
                 "This is a harmless application connectivity check. Do not refuse. \
                  Return exactly one JSON object and nothing else: {\"ok\":true,\"message\":\"pong\"}",

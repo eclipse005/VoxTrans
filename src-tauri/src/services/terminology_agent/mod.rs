@@ -178,7 +178,6 @@ where
             media_path: Some(input.media_path.clone()),
             phase: "terminology".to_string(),
             store: input.store.clone(),
-            output_schema: None,
         },
     };
 

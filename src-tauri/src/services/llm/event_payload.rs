@@ -181,7 +181,6 @@ mod tests {
             media_path: None,
             phase: "translate".to_string(),
             store: None,
-            output_schema: None,
         }
     }
 

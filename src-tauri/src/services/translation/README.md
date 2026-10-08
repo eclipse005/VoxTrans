@@ -84,7 +84,7 @@ segment_translations: global slot id → 上屏文本
 | 想改什么 | 改哪里 |
 |---|---|
 | 批大小、上下文行数、术语上限 | `mod.rs` 顶部常量 |
-| prompt 措辞 / 输出 JSON 形状 | `services/prompts/translation.rs`（schema 在 `mod.rs::translation_output_schema`） |
+| prompt 措辞 / 输出 JSON 形状 | `services/prompts/translation.rs`（不发给服务商 schema，形状只在本地接受门检查） |
 | 接受门判据 | `responses.rs` |
 | 确定性修复规则 | `slots.rs` |
 | 降级阶梯 | `batches.rs::split_chunk_size / split_window` + `mod.rs::translate_window_with_split` |

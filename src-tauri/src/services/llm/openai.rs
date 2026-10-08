@@ -8,9 +8,7 @@
 //!
 //! Differences from the Messages dialect that callers must not see:
 //! - auth is `Authorization: Bearer` only (`x-api-key` means nothing here);
-//! - structured output is `response_format.json_schema`, which many
-//!   OSS/self-hosted endpoints reject — the client's existing rejection
-//!   fallback drops it and lets the JSON repair chain take over;
+//! - no provider JSON schema (`response_format`); shape is checked locally;
 //! - a streamed reply carries no usage unless `stream_options` asks for it.
 
 use serde_json::{Value, json};
@@ -23,10 +21,6 @@ use super::port::{
     ToolCall, ToolCallFunction,
 };
 use super::text::truncate_chars;
-
-/// Name attached to the structured-output schema. OpenAI requires one;
-/// nothing reads it back.
-const RESULT_JSON_SCHEMA_NAME: &str = "result";
 
 // ── Endpoint ────────────────────────────────────────────────────────────────
 
@@ -54,7 +48,6 @@ struct ChatCallParams<'a> {
     /// adaptive degrade can rebuild the body with a lowered value.
     max_tokens: u32,
     tools: Option<&'a [Value]>,
-    output_schema: Option<&'a Value>,
 }
 
 fn build_chat_body(params: &ChatCallParams<'_>) -> Value {
@@ -75,22 +68,8 @@ fn build_chat_body(params: &ChatCallParams<'_>) -> Value {
         body["tools"] = Value::Array(tools.to_vec());
         body["tool_choice"] = json!("auto");
     }
-    if let Some(schema) = params.output_schema {
-        body["response_format"] = json!({
-            "type": "json_schema",
-            "json_schema": {
-                "name": RESULT_JSON_SCHEMA_NAME,
-                "schema": schema,
-                // The schemas in this codebase were written for Anthropic's
-                // `output_config`, which has no strict mode. `strict: true`
-                // demands the full OpenAI subset (every property listed in
-                // `required`, `additionalProperties: false` everywhere) and
-                // would reject most of them, so ask for the schema without
-                // the guarantee.
-                "strict": false,
-            }
-        });
-    }
+    // Do not send `response_format`. Same reason as the Anthropic dialect:
+    // some relays reject the whole body, and the error does not name the field.
     body
 }
 
@@ -187,7 +166,6 @@ pub(super) async fn call_chat_completion(
     http: &reqwest::Client,
     config: &LlmConfig,
     user_prompt: &str,
-    output_schema: Option<&Value>,
 ) -> Result<(String, LlmTokenUsage), LlmError> {
     let messages = vec![json!(ChatMessage::user(user_prompt))];
     let response = post_chat_adaptive(http, config, |max_tokens| {
@@ -198,7 +176,6 @@ pub(super) async fn call_chat_completion(
             stream: false,
             max_tokens,
             tools: None,
-            output_schema,
         })
     })
     .await?;
@@ -224,7 +201,6 @@ pub(super) async fn call_chat_completion_stream(
     http: &reqwest::Client,
     config: &LlmConfig,
     user_prompt: &str,
-    output_schema: Option<&Value>,
     mut on_delta: Option<&mut (dyn FnMut(&str) + Send)>,
 ) -> Result<(String, LlmTokenUsage), LlmError> {
     let messages = vec![json!(ChatMessage::user(user_prompt))];
@@ -236,7 +212,6 @@ pub(super) async fn call_chat_completion_stream(
             stream: true,
             max_tokens,
             tools: None,
-            output_schema,
         })
     })
     .await?;
@@ -361,7 +336,6 @@ pub(super) async fn call_chat_completion_tools(
             stream: false,
             max_tokens,
             tools: Some(tools),
-            output_schema: None,
         })
     })
     .await?;
@@ -495,12 +469,7 @@ mod tests {
 
     // ── request body ────────────────────────────────────────────────────
 
-    fn body(
-        stream: bool,
-        tools: Option<&[Value]>,
-        schema: Option<&Value>,
-        max_tokens: u32,
-    ) -> Value {
+    fn body(stream: bool, tools: Option<&[Value]>, max_tokens: u32) -> Value {
         build_chat_body(&ChatCallParams {
             model: "deepseek/deepseek-v4-flash-fast",
             messages: vec![json!(ChatMessage::user("hi"))],
@@ -508,13 +477,12 @@ mod tests {
             stream,
             max_tokens,
             tools,
-            output_schema: schema,
         })
     }
 
     #[test]
     fn body_uses_messages_shape_not_output_config() {
-        let body = body(false, None, None, 12_800);
+        let body = body(false, None, 12_800);
         assert_eq!(body["model"], json!("deepseek/deepseek-v4-flash-fast"));
         assert_eq!(body["messages"][0]["role"], json!("user"));
         assert_eq!(body["messages"][0]["content"], json!("hi"));
@@ -530,24 +498,17 @@ mod tests {
 
     #[test]
     fn body_asks_for_usage_only_when_streaming() {
-        assert!(body(false, None, None, 1024).get("stream_options").is_none());
+        assert!(body(false, None, 1024).get("stream_options").is_none());
         assert_eq!(
-            body(true, None, None, 1024)["stream_options"],
+            body(true, None, 1024)["stream_options"],
             json!({"include_usage": true})
         );
     }
 
     #[test]
-    fn body_wraps_schema_in_response_format() {
-        let schema = json!({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]});
-        let body = body(false, None, Some(&schema), 1024);
-        assert_eq!(body["response_format"]["type"], json!("json_schema"));
-        assert_eq!(body["response_format"]["json_schema"]["schema"], schema);
-        assert_eq!(body["response_format"]["json_schema"]["name"], json!("result"));
-        // Our schemas are not written to OpenAI's strict subset.
-        assert_eq!(body["response_format"]["json_schema"]["strict"], json!(false));
-        // Still no Anthropic structured-output field.
-        assert!(body.get("output_config").is_none());
+    fn request_body_never_sends_response_format() {
+        let body = body(false, None, 1024);
+        assert!(body.get("response_format").is_none());
     }
 
     #[test]
@@ -561,14 +522,14 @@ mod tests {
             }
         })];
         // Verbatim: the Anthropic converter must NOT run on this path.
-        let with_tools = body(false, Some(&tools), None, 1024);
+        let with_tools = body(false, Some(&tools), 1024);
         assert_eq!(with_tools["tools"], json!(tools));
         assert_eq!(with_tools["tool_choice"], json!("auto"));
         assert!(with_tools["tools"][0]["function"]["parameters"].is_object());
         assert!(with_tools["tools"][0].get("input_schema").is_none());
 
         // Empty tool list means no tools block at all.
-        let without_tools = body(false, Some(&[]), None, 1024);
+        let without_tools = body(false, Some(&[]), 1024);
         assert!(without_tools.get("tools").is_none());
         assert!(without_tools.get("tool_choice").is_none());
     }

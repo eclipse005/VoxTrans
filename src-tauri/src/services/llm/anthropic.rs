@@ -281,7 +281,6 @@ struct MessageCallParams<'a> {
     temperature: f64,
     stream: bool,
     tools: Option<Vec<Value>>,
-    output_schema: Option<&'a Value>,
     /// Resolved output budget — callers pass [`effective_max_tokens`] so the
     /// adaptive degrade can rebuild the body with a lowered value.
     max_tokens: u32,
@@ -321,9 +320,8 @@ fn build_request_body(params: &MessageCallParams<'_>) -> Value {
     {
         mark_last_block_cached(last_message);
     }
-    if let Some(schema) = params.output_schema {
-        body["output_config"] = json!({"format":{"type":"json_schema","schema":schema}});
-    }
+    // Do not send `output_config`. Some relays reject the whole body with a 400
+    // that does not name the field. JSON shape is checked locally.
     body
 }
 
@@ -423,7 +421,6 @@ pub(super) async fn call_message(
     http: &reqwest::Client,
     config: &LlmConfig,
     user_prompt: &str,
-    output_schema: Option<&Value>,
 ) -> Result<(String, LlmTokenUsage), LlmError> {
     let conv = convert_messages(&[ChatMessage::user(user_prompt)], &config.model);
     let response = post_messages_adaptive(http, config, |max_tokens| {
@@ -434,7 +431,6 @@ pub(super) async fn call_message(
             temperature: TRANSLATION_TEMPERATURE,
             stream: false,
             tools: None,
-            output_schema,
             max_tokens,
         })
     })
@@ -487,7 +483,6 @@ pub(super) async fn call_message_stream(
     http: &reqwest::Client,
     config: &LlmConfig,
     user_prompt: &str,
-    output_schema: Option<&Value>,
     mut on_delta: Option<&mut (dyn FnMut(&str) + Send)>,
 ) -> Result<(String, LlmTokenUsage), LlmError> {
     let conv = convert_messages(&[ChatMessage::user(user_prompt)], &config.model);
@@ -499,7 +494,6 @@ pub(super) async fn call_message_stream(
             temperature: TRANSLATION_TEMPERATURE,
             stream: true,
             tools: None,
-            output_schema,
             max_tokens,
         })
     })
@@ -678,7 +672,6 @@ pub(super) async fn call_message_tools(
             temperature: temperature.unwrap_or(AGENT_TEMPERATURE),
             stream: false,
             tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
-            output_schema: None,
             max_tokens,
         })
     })
@@ -991,7 +984,7 @@ mod tests {
 
     // ── request body / cache breakpoints ────────────────────────────────
 
-    fn body_with(messages: Vec<ChatMessage>, tools: Option<Vec<Value>>, schema: Option<&Value>) -> Value {
+    fn body_with(messages: Vec<ChatMessage>, tools: Option<Vec<Value>>) -> Value {
         let conv = convert_messages(&messages, "claude-sonnet-5");
         build_request_body(&MessageCallParams {
             model: "claude-sonnet-5",
@@ -1000,14 +993,13 @@ mod tests {
             temperature: TRANSLATION_TEMPERATURE,
             stream: false,
             tools,
-            output_schema: schema,
             max_tokens: resolve_max_tokens("claude-sonnet-5"),
         })
     }
 
     #[test]
     fn single_message_gets_no_message_cache_control() {
-        let body = body_with(vec![ChatMessage::user("batch")], None, None);
+        let body = body_with(vec![ChatMessage::user("batch")], None);
         // No system/tools/message-level cache markers at all.
         assert!(body.get("system").is_none());
         assert_eq!(body["max_tokens"], json!(128_000));
@@ -1025,7 +1017,7 @@ mod tests {
             "type":"function",
             "function":{"name":"a","description":"d","parameters":{"type":"object","properties":{}}}
         })];
-        let body = body_with(msgs, Some(tools.clone()), None);
+        let body = body_with(msgs, Some(tools.clone()));
         let system = body["system"].as_array().unwrap();
         assert_eq!(system.last().unwrap()["cache_control"]["type"], json!("ephemeral"));
         let wire_tools = body["tools"].as_array().unwrap();
@@ -1046,7 +1038,7 @@ mod tests {
             }], None),
             ChatMessage::tool("t1", "res"),
         ];
-        let body = body_with(msgs, None, None);
+        let body = body_with(msgs, None);
         let last_blocks = body["messages"]
             .as_array()
             .and_then(|messages| messages.last())
@@ -1056,11 +1048,9 @@ mod tests {
     }
 
     #[test]
-    fn output_schema_becomes_output_config() {
-        let schema = json!({"type":"object","properties":{}});
-        let body = body_with(vec![ChatMessage::user("batch")], None, Some(&schema));
-        assert_eq!(body["output_config"]["format"]["type"], json!("json_schema"));
-        assert_eq!(body["output_config"]["format"]["schema"], schema);
+    fn request_body_never_sends_output_config() {
+        let body = body_with(vec![ChatMessage::user("batch")], None);
+        assert!(body.get("output_config").is_none());
     }
 
     // ── SSE parsing ─────────────────────────────────────────────────────

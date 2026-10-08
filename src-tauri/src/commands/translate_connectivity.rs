@@ -7,7 +7,7 @@ use crate::services::llm::json_guard::JsonResponseValidator;
 use crate::services::llm::{ANTHROPIC_VERSION, add_auth_headers, models_endpoint};
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmPort, next_llm_request_id};
 use crate::services::prompts::connectivity::TRANSLATE_LLM_CONNECTIVITY_TEST;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 #[tauri::command]
 pub async fn test_translate_llm(
@@ -47,15 +47,6 @@ pub async fn test_translate_llm(
             media_path: None,
             phase: "connectivity_test".to_string(),
             store: None,
-            output_schema: Some(json!({
-                "type": "object",
-                "properties": {
-                    "ok": {"type": "boolean"},
-                    "message": {"type": "string"}
-                },
-                "required": ["ok", "message"],
-                "additionalProperties": false
-            })),
         };
         let llm_id = next_llm_request_id();
 

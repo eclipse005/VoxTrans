@@ -707,7 +707,6 @@ fn call_context() -> crate::services::llm::port::LlmCallContext {
         media_path: None,
         phase: "translate".into(),
         store: None,
-        output_schema: None,
     }
 }
 

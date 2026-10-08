@@ -24,45 +24,6 @@ use crate::services::llm::client::{LlmClient, TranslationLlm};
 use crate::services::llm::port::{LlmCallContext, LlmConfig, LlmJsonTask, next_llm_request_id};
 use crate::services::task_log::TaskLogger;
 
-/// Structured-output schema for translation batches (two-stage protocol):
-/// the model must answer with sentence units, each carrying the full unit
-/// translation plus the display-slot backfill `{"units":[{"id":<int>,
-/// "translation":<str>,"slots":[{"id":<int>,"text":<str>}]}]}`. Endpoints
-/// that reject `output_config` fall back to plain JSON + the repair chain.
-fn translation_output_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "units": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "integer"},
-                        "translation": {"type": "string"},
-                        "slots": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "id": {"type": "integer"},
-                                    "text": {"type": "string"}
-                                },
-                                "required": ["id", "text"],
-                                "additionalProperties": false
-                            }
-                        }
-                    },
-                    "required": ["id", "translation", "slots"],
-                    "additionalProperties": false
-                }
-            }
-        },
-        "required": ["units"],
-        "additionalProperties": false
-    })
-}
-
 mod batches;
 mod guard;
 mod name_memory;
@@ -195,7 +156,6 @@ pub async fn build_translation_layer_with_progress(
         media_path: Some(request.media_path.clone()),
         phase: "step4_translate_batch".to_string(),
         store: request.unit_store.as_ref().map(|us| us.store().clone()),
-        output_schema: Some(translation_output_schema()),
     };
 
     // Share the batch windows across worker tasks via Arc instead of
