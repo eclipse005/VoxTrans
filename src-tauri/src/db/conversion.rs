@@ -70,9 +70,6 @@ pub fn row_from_settings(settings: &SavedSettings) -> SettingsRow {
         llm_concurrency: settings.llm_concurrency,
         active_terminology_group_id: settings.active_terminology_group_id.clone(),
         enable_subtitle_beautify: settings.enable_subtitle_beautify,
-        // Dormant schema column: the toggle was removed; the extraction is a
-        // mandatory pipeline step now. The DB column is NOT NULL so keep a 0.
-        enable_terminology_agent: false,
         enable_click_sound: settings.enable_click_sound,
         auto_burn_hard_subtitle: settings.auto_burn_hard_subtitle,
         default_review_source: settings.default_review_source,
@@ -218,8 +215,6 @@ pub fn row_from_task(item: &WorkspaceQueueItem, extras: &TaskMetaExtras) -> Task
         max_retries: extras.max_retries,
         subtitle_length_preset: extras.subtitle_length_preset.clone(),
         enable_subtitle_beautify: extras.enable_subtitle_beautify,
-        // Dormant schema column (toggle removed): NOT NULL keeps a 0.
-        enable_terminology_agent: false,
         terminology_groups_json: extras.terminology_groups_json.clone(),
         terminology_group_id: item.terminology_group_id.clone(),
         review_source: item.review_source,
