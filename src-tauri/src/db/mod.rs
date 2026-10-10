@@ -69,15 +69,18 @@ pub async fn init_pool(app: &tauri::AppHandle) -> Result<SqlitePool, String> {
     Ok(pool)
 }
 
-/// Hand-written idempotent schema changes for columns that came or went after
-/// the initial schema.
+/// Hand-written idempotent ADD COLUMNs for columns introduced after the
+/// initial schema.
 ///
-/// SQLite doesn't support `ADD COLUMN IF NOT EXISTS` (nor `DROP COLUMN IF
-/// EXISTS`), so each entry carries the column it touches and the direction is
-/// decided by a `PRAGMA table_info(<table>)` probe: adds run only while the
-/// column is missing, drops only while it is present. Split out of `init_pool`
-/// so an existing database can be migrated without a Tauri handle (and so the
-/// legacy-schema path has a regression test).
+/// SQLite doesn't support `ADD COLUMN IF NOT EXISTS`, so each entry is skipped
+/// when `PRAGMA table_info(<table>)` already lists its column. Split out of
+/// `init_pool` so an existing database can be migrated without a Tauri handle
+/// (and so the legacy-schema path has a regression test).
+///
+/// Retired columns are deliberately NOT dropped here: a `DROP COLUMN` rewrites
+/// the table under the user's data, and this app's stance is that a column
+/// nobody reads anymore is either left in place (new SQL never names it) or
+/// the database gets rebuilt. Both are cheap; an in-place rewrite is not.
 pub(crate) async fn apply_migration_alters(pool: &SqlitePool) -> Result<(), String> {
     for mig in MIGRATION_ALTERS {
         if has_table_column(pool, mig.table, mig.column).await? {
@@ -87,18 +90,10 @@ pub(crate) async fn apply_migration_alters(pool: &SqlitePool) -> Result<(), Stri
             return Err(format!("failed to apply migration `{}`: {e}", mig.sql));
         }
     }
-    for mig in MIGRATION_DROPS {
-        if !has_table_column(pool, mig.table, mig.column).await? {
-            continue;
-        }
-        if let Err(e) = sqlx::query(mig.sql).execute(pool).await {
-            return Err(format!("failed to apply migration `{}`: {e}", mig.sql));
-        }
-    }
     Ok(())
 }
 
-struct MigrationColumn {
+struct MigrationAlter {
     table: &'static str,
     column: &'static str,
     sql: &'static str,
@@ -108,83 +103,56 @@ struct MigrationColumn {
 /// by the `has_table_column` PRAGMA pre-check in `init_pool` (which skips a
 /// statement if its target column already exists) — NOT by error suppression.
 /// Add columns introduced after the initial schema here.
-const MIGRATION_ALTERS: &[MigrationColumn] = &[
-    MigrationColumn {
-        table: "settings",
-        column: "enable_vision_assist",
-        sql: "ALTER TABLE settings ADD COLUMN enable_vision_assist INTEGER NOT NULL DEFAULT 0",
-    },
-    MigrationColumn {
+const MIGRATION_ALTERS: &[MigrationAlter] = &[
+    MigrationAlter {
         table: "settings",
         column: "locale",
         sql: "ALTER TABLE settings ADD COLUMN locale TEXT NOT NULL DEFAULT 'zh-CN'",
     },
-    MigrationColumn {
+    MigrationAlter {
         table: "settings",
         column: "models_dir",
         sql: "ALTER TABLE settings ADD COLUMN models_dir TEXT",
     },
-    MigrationColumn {
+    MigrationAlter {
         table: "settings",
         column: "llm_profiles_json",
         sql: "ALTER TABLE settings ADD COLUMN llm_profiles_json TEXT NOT NULL DEFAULT '[]'",
     },
-    MigrationColumn {
+    MigrationAlter {
         table: "settings",
         column: "active_llm_profile_id",
         sql: "ALTER TABLE settings ADD COLUMN active_llm_profile_id TEXT NOT NULL DEFAULT 'deepseek'",
     },
-    MigrationColumn {
+    MigrationAlter {
         table: "settings",
         column: "default_review_source",
         sql: "ALTER TABLE settings ADD COLUMN default_review_source INTEGER NOT NULL DEFAULT 0",
     },
-    MigrationColumn {
+    MigrationAlter {
         table: "settings",
         column: "default_review_target",
         sql: "ALTER TABLE settings ADD COLUMN default_review_target INTEGER NOT NULL DEFAULT 0",
     },
-    MigrationColumn {
+    MigrationAlter {
         table: "tasks",
         column: "review_source",
         sql: "ALTER TABLE tasks ADD COLUMN review_source INTEGER NOT NULL DEFAULT 0",
     },
-    MigrationColumn {
+    MigrationAlter {
         table: "tasks",
         column: "review_target",
         sql: "ALTER TABLE tasks ADD COLUMN review_target INTEGER NOT NULL DEFAULT 0",
     },
-    MigrationColumn {
+    MigrationAlter {
         table: "tasks",
         column: "resume_from",
         sql: "ALTER TABLE tasks ADD COLUMN resume_from TEXT NOT NULL DEFAULT ''",
     },
-    MigrationColumn {
+    MigrationAlter {
         table: "subtitle_segments",
         column: "semantic_sentence_id",
         sql: "ALTER TABLE subtitle_segments ADD COLUMN semantic_sentence_id INTEGER NOT NULL DEFAULT 0",
-    },
-];
-
-/// Columns retired after shipping. Each entry runs only while the column is
-/// still present, so a fresh database (built from `SCHEMA_SQL`, which no longer
-/// declares it) and a repeated run are both no-ops. There is no `IF EXISTS`
-/// form for `DROP COLUMN` in SQLite — the probe above is what makes this
-/// idempotent.
-///
-/// `enable_terminology_agent` is the first one: the toggle was removed from the
-/// app (terminology extraction is an unconditional pipeline step now), but the
-/// column stayed behind in both tables as a NOT NULL zero nobody ever read.
-const MIGRATION_DROPS: &[MigrationColumn] = &[
-    MigrationColumn {
-        table: "settings",
-        column: "enable_terminology_agent",
-        sql: "ALTER TABLE settings DROP COLUMN enable_terminology_agent",
-    },
-    MigrationColumn {
-        table: "tasks",
-        column: "enable_terminology_agent",
-        sql: "ALTER TABLE tasks DROP COLUMN enable_terminology_agent",
     },
 ];
 
@@ -277,56 +245,5 @@ mod tests {
         .await
         .expect("column exists after migration");
         assert_eq!(sid, 0, "legacy rows keep per-cue semantics");
-    }
-
-    /// Removal path for the column a retired toggle left behind. SQLite has no
-    /// `DROP COLUMN IF EXISTS`, so the PRAGMA probe is the only thing making
-    /// this idempotent: the column must go on both tables, a second run must be
-    /// a no-op, and a database built from `SCHEMA_SQL` must never grow it back.
-    #[tokio::test]
-    async fn migration_drops_the_retired_terminology_toggle_column() {
-        let pool = crate::db::store::test_pool().await;
-        // Pre-migration shape: both tables still carry the retired column,
-        // plus the third table the ALTER list also touches.
-        for ddl in [
-            "CREATE TABLE settings (id INTEGER PRIMARY KEY, \
-             enable_terminology_agent INTEGER NOT NULL DEFAULT 0)",
-            "CREATE TABLE tasks (id TEXT PRIMARY KEY, \
-             enable_terminology_agent INTEGER NOT NULL DEFAULT 0)",
-            "CREATE TABLE subtitle_segments (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL)",
-        ] {
-            sqlx::query(ddl)
-                .execute(&pool)
-                .await
-                .expect("create legacy table");
-        }
-
-        apply_migration_alters(&pool)
-            .await
-            .expect("migrate a database that still has the column");
-        apply_migration_alters(&pool)
-            .await
-            .expect("re-running the migration is a no-op");
-
-        for table in ["settings", "tasks"] {
-            assert!(
-                !has_table_column(&pool, table, "enable_terminology_agent")
-                    .await
-                    .expect("read schema"),
-                "{table} should no longer carry the retired column"
-            );
-        }
-
-        // A fresh database never had it: schema.sql is the source of truth for
-        // new installs, and it must stay free of the column.
-        let fresh = crate::db::store::test_pool_with_migrations().await;
-        for table in ["settings", "tasks"] {
-            assert!(
-                !has_table_column(&fresh, table, "enable_terminology_agent")
-                    .await
-                    .expect("read schema"),
-                "{table} must not declare the retired column"
-            );
-        }
     }
 }

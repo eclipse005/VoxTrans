@@ -28,13 +28,11 @@ CREATE TABLE IF NOT EXISTS settings (
     llm_concurrency INTEGER NOT NULL,
     active_terminology_group_id TEXT NOT NULL DEFAULT '',
     enable_subtitle_beautify INTEGER NOT NULL,
-    anysearch_api_key TEXT NOT NULL DEFAULT '',
     enable_click_sound INTEGER NOT NULL,
     auto_burn_hard_subtitle INTEGER NOT NULL,
     subtitle_burn_mode TEXT NOT NULL,
     subtitle_render_style_json TEXT NOT NULL,
     flat_srt_output INTEGER NOT NULL,
-    enable_vision_assist INTEGER NOT NULL DEFAULT 0,
     locale TEXT NOT NULL DEFAULT 'zh-CN',
     models_dir TEXT,
     -- Defaults applied only when adding a new task (not live policy).
