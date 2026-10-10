@@ -37,7 +37,7 @@ mod tests;
 mod text;
 mod types;
 
-use batches::{build_batch_windows, matched_term_targets, split_chunk_size, split_window};
+use batches::{build_batch_windows, build_translation_units, matched_term_targets, split_chunk_size, split_window};
 use crate::services::transcription::join_words;
 use name_memory::derive_name_memory;
 use preview::{make_stream_partial, rebuild_partial_outputs};
@@ -346,6 +346,86 @@ impl WindowOutcome {
         self.segment_translations.extend(other.segment_translations);
         self.unit_translations.extend(other.unit_translations);
     }
+}
+
+// ── Prompt-planning seam ────────────────────────────────────────────────────
+//
+// Read-only view of what a request would send, for tooling that must inspect the
+// payload without spending tokens (the CLI's `translate --dry-run`). The
+// pipeline itself never calls this. It reuses `build_translation_units` and
+// `build_batch_windows`, so a plan cannot drift from a real run's payload;
+// what it cannot reproduce is the *chained* context — later windows on a real
+// run see their predecessors' translations in `previousLines`, while a plan
+// renders every window from the untranslated state.
+
+/// One LLM call a request would make, with the exact prompt it would send.
+pub(crate) struct TranslationWindowPlan {
+    pub batch_id: usize,
+    /// Global unit ids in this window (sentence-level translation units).
+    pub unit_ids: Vec<usize>,
+    /// Global slot ids (display cues) this window's units cover.
+    pub slot_ids: Vec<usize>,
+    pub prompt: String,
+}
+
+/// The plan for one request: unit/window counts plus the per-window prompts.
+pub(crate) struct TranslationPlan {
+    pub unit_total: usize,
+    pub window_total: usize,
+    pub windows: Vec<TranslationWindowPlan>,
+}
+
+pub(crate) fn plan_translation_windows(
+    request: &BuildTranslationLayerRequest,
+) -> Result<TranslationPlan, String> {
+    validate_request(request)?;
+
+    let normalized_segments = normalize_segments(&request.segments);
+    if normalized_segments.is_empty() {
+        return Err("segments contain no translatable text".to_string());
+    }
+
+    // Same batch-size resolution (and the same constant) as a real run.
+    let batch_size = if request.batch_size == 0 {
+        DEFAULT_BATCH_SIZE
+    } else {
+        request.batch_size.clamp(1, MAX_BATCH_SIZE)
+    };
+
+    let unit_total = build_translation_units(&normalized_segments).len();
+    let windows = build_batch_windows(
+        &normalized_segments,
+        batch_size,
+        &request.source_lang,
+        &request.target_lang,
+        &request.style_guide,
+        &request.terminology_entries,
+    );
+    if windows.is_empty() {
+        return Err("failed to build translation batches".to_string());
+    }
+
+    let known_translations = HashMap::<usize, String>::new();
+    let planned = windows
+        .iter()
+        .map(|window| TranslationWindowPlan {
+            batch_id: window.batch_id,
+            unit_ids: window.current_lines.iter().map(|line| line.id).collect(),
+            slot_ids: window
+                .unit_slots
+                .iter()
+                .flatten()
+                .map(|(id, _)| *id)
+                .collect(),
+            prompt: window.build_prompt(&known_translations, &[], &[]),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(TranslationPlan {
+        unit_total,
+        window_total: planned.len(),
+        windows: planned,
+    })
 }
 
 async fn translate_window_with_split<P: TranslationLlm>(

@@ -514,6 +514,18 @@ impl TaskStore {
         Ok(total.unwrap_or(0) as u64)
     }
 
+    /// Cheap existence probe. The CLI registers a task row before writing
+    /// per-unit resume state; this lets it reuse an existing row (a GUI task
+    /// with the same id) instead of overwriting the user's task bookkeeping.
+    pub async fn task_exists(&self, id: &str) -> Result<bool, String> {
+        let row: Option<i64> = sqlx::query_scalar("SELECT 1 FROM tasks WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| format!("probe task: {e}"))?;
+        Ok(row.is_some())
+    }
+
     pub async fn delete_task(&self, id: &str) -> Result<(), String> {
         sqlx::query("DELETE FROM tasks WHERE id = ?")
             .bind(id)

@@ -74,7 +74,20 @@ pub fn resolve_runtime_settings(
     // row or locked DB should surface here, not 3 steps later as
     // "translateApiKey is required" with no root-cause context.
     let saved = crate::services::preferences::load_saved_settings_from_default_path(store)?;
+    runtime_from_saved(&saved, frozen, require_translate_llm)
+}
 
+/// Same resolution as [`resolve_runtime_settings`], minus the database read.
+///
+/// The CLI resolves settings from the very same `SavedSettings` row (loaded
+/// once, then overridden by flags), so "live vs frozen" and "what is required"
+/// cannot drift between the desktop app and the headless pipeline: both go
+/// through this function.
+pub fn runtime_from_saved(
+    saved: &crate::services::preferences::SavedSettings,
+    frozen: &FrozenSettings,
+    require_translate_llm: bool,
+) -> Result<PipelineRuntimeSettings, String> {
     let provider = saved.provider;
     let chunk_target_seconds = saved.chunk_target_seconds.clamp(30, 180);
     let asr_model = saved.asr_model.as_str().to_string();

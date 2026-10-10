@@ -1,6 +1,27 @@
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
+
+static OUTPUT_ROOT_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// Pin the output root for this process. Set once by the CLI (`--out`) so every
+/// path helper built on `resolve_output_dir()` — task folders, task logs, flat
+/// SRT exports, the app log — lands under the caller's directory instead of
+/// next to the executable. The desktop app never calls this: unset (the
+/// default) means the exe-relative behaviour below is unchanged.
+pub fn set_output_root_override(path: Option<PathBuf>) {
+    if let Ok(mut guard) = OUTPUT_ROOT_OVERRIDE.write() {
+        *guard = path;
+    }
+}
 
 pub fn resolve_output_dir() -> PathBuf {
+    if let Ok(guard) = OUTPUT_ROOT_OVERRIDE.read()
+        && let Some(ref path) = *guard
+            && !path.as_os_str().is_empty()
+    {
+        return path.clone();
+    }
+
     let base_dir = std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(|dir| dir.to_path_buf()))

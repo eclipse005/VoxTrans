@@ -15,7 +15,10 @@ mod preview;
 mod progress;
 mod queue_ops;
 mod review_flow;
-mod runtime_settings;
+// Shared with the headless CLI (`crate::cli`), which resolves its settings
+// through the same functions so GUI and CLI cannot disagree about what a
+// setting means.
+pub(crate) mod runtime_settings;
 mod store;
 mod task_logs;
 mod translation_flow;

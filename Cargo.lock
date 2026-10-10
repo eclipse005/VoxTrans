@@ -7123,6 +7123,7 @@ version = "1.5.1"
 dependencies = [
  "async-trait",
  "chrono",
+ "clap",
  "ctc-forced-aligner-rs",
  "dashmap",
  "font-kit",

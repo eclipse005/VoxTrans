@@ -49,6 +49,9 @@ src-tauri/output/
 release/
 src-tauri/bin/cuda/
 
+# voxtrans-cli default --out root (run from the repo root)
+voxtrans-out/
+
 # Vendored crate build artifacts
 vendor/*/target/
 

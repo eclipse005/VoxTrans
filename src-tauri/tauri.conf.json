@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "VoxTrans",
+  "mainBinaryName": "voxtrans",
   "version": "1.5.1",
   "identifier": "com.voxtrans.desktop",
   "build": {
