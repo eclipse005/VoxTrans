@@ -84,6 +84,12 @@ pub(super) async fn report_task_stage(
     current: u32,
     total: u32,
 ) -> WorkspaceResult<()> {
+    // Phase trail for the app log's abnormal-exit report: if this process dies
+    // without ever running again, the next start can still say which stage it
+    // died in. A no-op when the stage has not changed, so the per-tick callers
+    // pay nothing for it.
+    crate::services::app_log::set_phase(&format!("{task_id}:{}", stage.code()));
+
     let progress = task_progress_state(stage, detail, current, total);
 
     // Check before doing any of the expensive work (clone, UPSERT, event): a tick

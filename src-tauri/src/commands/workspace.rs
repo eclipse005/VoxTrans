@@ -171,8 +171,7 @@ pub async fn save_subtitle_editor(
         // result_srt + segments_json while the DB segments table silently
         // stays stale -- a restart hydrate then resets segments to empty.
         let store = app.state::<TaskStore>().inner().clone();
-        let segments: Vec<crate::domain::workspace_subtitle::WorkspaceSubtitleSegment> =
-            serde_json::from_str(&subtitle_segments_json).unwrap_or_default();
+        let segments = parse_subtitle_segments_json(&subtitle_segments_json)?;
         store
             .replace_segments(task_id, &segments)
             .await
@@ -263,6 +262,17 @@ fn require_task_id(task_id: &str) -> WorkspaceResult<&str> {
     Ok(normalized)
 }
 
+/// Parse the editor's segment payload. Malformed JSON must fail the command:
+/// defaulting to an empty list here would replace the stored segments with
+/// `[]` and silently wipe the user's structured subtitles.
+fn parse_subtitle_segments_json(
+    subtitle_segments_json: &str,
+) -> WorkspaceResult<Vec<crate::domain::workspace_subtitle::WorkspaceSubtitleSegment>> {
+    serde_json::from_str(subtitle_segments_json).map_err(|e| {
+        WorkspaceError::InvalidRequest(format!("subtitle_segments_json is not valid JSON: {e}"))
+    })
+}
+
 pub fn get_task_queue_item_for_export(task_id: &str) -> WorkspaceResult<WorkspaceQueueItem> {
     let normalized = require_task_id(task_id)?;
     if !is_workspace_hydrated() {
@@ -340,5 +350,25 @@ mod tests {
 
         assert_eq!(err.code(), "INVALID_REQUEST");
         assert_eq!(err.to_string(), "invalid request: taskId is required");
+    }
+
+    #[test]
+    fn parse_subtitle_segments_rejects_invalid_json() {
+        let err = parse_subtitle_segments_json("{not json")
+            .expect_err("malformed JSON must fail instead of clearing segments");
+
+        assert_eq!(err.code(), "INVALID_REQUEST");
+        assert!(
+            err.to_string().contains("subtitle_segments_json"),
+            "message must name the payload: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_subtitle_segments_accepts_empty_array() {
+        let segments =
+            parse_subtitle_segments_json("[]").expect("an explicit empty list must stay valid");
+
+        assert!(segments.is_empty());
     }
 }

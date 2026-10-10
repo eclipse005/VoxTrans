@@ -21,10 +21,30 @@ pub(super) async fn ensure_workspace_hydrated_from_store(store: &TaskStore) -> W
         }
     }
 
-    store
+    // Read the ids first so the app log can name the interrupted tasks; the
+    // UPDATE below only reports how many rows it touched and cannot carry them.
+    let orphan_task_ids = store
+        .processing_task_ids()
+        .await
+        .map_err(|e| WorkspaceError::TaskFailed(format!("recover orphans: {e}")))?;
+    let recovered = store
         .recover_orphan_processing()
         .await
         .map_err(|e| WorkspaceError::TaskFailed(format!("recover orphans: {e}")))?;
+    if recovered > 0 {
+        // A non-zero count means the previous run died mid-task
+        // (crash/kill/forced quit). Record it once with the affected ids;
+        // a normal start recovers 0 and must stay silent.
+        crate::services::app_log::error(
+            "workspace.recovery",
+            "TASKS_INTERRUPTED",
+            format!("the previous run ended abnormally: {recovered} task(s) were marked interrupted"),
+            Some(serde_json::json!({
+                "count": recovered,
+                "taskIds": orphan_task_ids,
+            })),
+        );
+    }
     hydrate_workspace_from_db(store).await?;
     let mut hydrated = lock_workspace_hydrated()?;
     *hydrated = true;

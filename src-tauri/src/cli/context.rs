@@ -684,6 +684,23 @@ const DEFAULT_TARGET_LANG: &str = "zh-CN";
 mod tests {
     use super::*;
 
+    /// Run `body` and reset the process-wide output root afterwards, even when
+    /// the body fails the way the negative tests expect. `CliContext::new` pins
+    /// that root (`--out`) — correct for the CLI process, but global state: a
+    /// test that resolves the output dir afterwards (app log paths, task
+    /// folders) would otherwise see this run's directory. The first test that
+    /// forgot this reset broke an unrelated app-log test, so the reset lives in
+    /// one helper next to the tests that create a context.
+    async fn without_output_root<F, Fut, T>(body: F) -> T
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        let result = body().await;
+        crate::services::output::set_output_root_override(None);
+        result
+    }
+
     fn common() -> CommonArgs {
         CommonArgs {
             db: DB_NONE.to_string(),
@@ -727,11 +744,13 @@ mod tests {
         args.target = Some("en".to_string());
         args.out = Some(PathBuf::from("target/cli-test-out"));
 
-        let ctx = CliContext::new(ContextRequest {
-            verb: "test",
-            common: &args,
-            input_path: Some(Path::new("sample.srt")),
-            require_llm: true,
+        let ctx = without_output_root(|| {
+            CliContext::new(ContextRequest {
+                verb: "test",
+                common: &args,
+                input_path: Some(Path::new("sample.srt")),
+                require_llm: true,
+            })
         })
         .await
         .expect("context resolves from defaults + flags");
@@ -752,11 +771,13 @@ mod tests {
     #[tokio::test]
     async fn require_llm_fails_without_credentials() {
         let args = common();
-        let err = CliContext::new(ContextRequest {
-            verb: "test",
-            common: &args,
-            input_path: None,
-            require_llm: true,
+        let err = without_output_root(|| {
+            CliContext::new(ContextRequest {
+                verb: "test",
+                common: &args,
+                input_path: None,
+                require_llm: true,
+            })
         })
         .await
         .expect_err("defaults have no api key");
@@ -771,11 +792,13 @@ mod tests {
         args.task = Some("cli-test".to_string());
         args.out = Some(PathBuf::from("target/cli-test-out"));
 
-        let err = CliContext::new(ContextRequest {
-            verb: "test",
-            common: &args,
-            input_path: None,
-            require_llm: false,
+        let err = without_output_root(|| {
+            CliContext::new(ContextRequest {
+                verb: "test",
+                common: &args,
+                input_path: None,
+                require_llm: false,
+            })
         })
         .await
         .expect_err("--task without a database must fail");

@@ -554,6 +554,18 @@ impl TaskStore {
         Ok(n)
     }
 
+    /// IDs of tasks currently marked `processing`, read *before*
+    /// [`recover_orphan_processing`] rewrites them to `error`. The caller uses
+    /// them to report exactly which tasks an unclean shutdown interrupted.
+    pub async fn processing_task_ids(&self) -> Result<Vec<String>, String> {
+        let ids: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM tasks WHERE transcribe_status = 'processing'")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| format!("list processing tasks: {e}"))?;
+        Ok(ids)
+    }
+
     // ---- task_artifacts (pipeline step checkpoints) ----
 
     /// Load a cached artifact JSON for a given task + step, or None if not cached.

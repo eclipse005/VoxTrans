@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { toUserErrorMessage } from "./errors";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { reportError, toUserErrorMessage } from "./errors";
+
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 describe("toUserErrorMessage", () => {
   it("returns string errors directly", () => {
@@ -91,5 +95,77 @@ describe("toUserErrorMessage", () => {
 
   it("preserves unknown errors as-is", () => {
     expect(toUserErrorMessage("some random error")).toBe("some random error");
+  });
+});
+
+describe("reportError", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+  });
+
+  it("forwards a serialized Error to report_frontend_error without awaiting", () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    reportError(new Error("boom"), "registerTaskUpload");
+
+    expect(consoleSpy).toHaveBeenCalledWith("[voxtrans] registerTaskUpload", expect.any(Error));
+    expect(invokeMock).toHaveBeenCalledWith("report_frontend_error", {
+      context: "registerTaskUpload",
+      message: expect.stringContaining("boom"),
+    });
+    consoleSpy.mockRestore();
+  });
+
+  it("passes plain strings through and truncates long context", () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const context = "c".repeat(500);
+
+    reportError("plain failure", context);
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    const [command, args] = invokeMock.mock.calls[0] as [string, { context: string; message: string }];
+    expect(command).toBe("report_frontend_error");
+    expect(args.message).toBe("plain failure");
+    expect(Array.from(args.context)).toHaveLength(200);
+    expect(args.context.endsWith("…")).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
+  it("truncates multi-MB messages before they reach IPC", () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    reportError({ stack: "x".repeat(5_000_000) }, "window.error");
+
+    const [, args] = invokeMock.mock.calls[0] as [string, { message: string }];
+    expect(Array.from(args.message)).toHaveLength(2000);
+    consoleSpy.mockRestore();
+  });
+
+  it("swallows IPC rejection so reporting cannot recurse", async () => {
+    invokeMock.mockRejectedValue(new Error("ipc down"));
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() => reportError("plain string", "pickFiles")).not.toThrow();
+    await Promise.resolve();
+
+    expect(invokeMock).toHaveBeenCalledWith("report_frontend_error", {
+      context: "pickFiles",
+      message: "plain string",
+    });
+    consoleSpy.mockRestore();
+  });
+
+  it("survives values JSON.stringify cannot serialize", () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    expect(() => reportError(circular, "window.error")).not.toThrow();
+    expect(() => reportError(10n, "window.error")).not.toThrow();
+
+    const [, args] = invokeMock.mock.calls[0] as [string, { message: string }];
+    expect(args.message.length).toBeGreaterThan(0);
+    consoleSpy.mockRestore();
   });
 });

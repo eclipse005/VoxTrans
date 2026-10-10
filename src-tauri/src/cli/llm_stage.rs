@@ -691,18 +691,39 @@ mod tests {
         }
     }
 
-    async fn test_ctx(name: &str, style_guide: Option<&Path>, terms: Option<&Path>) -> CliContext {
+    /// A test context. `CliContext::new` pins the process-wide output root
+    /// (`--out`) — correct for the CLI process, but global state that leaks into
+    /// any other test in the same binary that resolves the output dir (the app
+    /// log path test is the one that notices). Reset it on drop.
+    struct TestContext(CliContext);
+
+    impl Drop for TestContext {
+        fn drop(&mut self) {
+            crate::services::output::set_output_root_override(None);
+        }
+    }
+
+    impl std::ops::Deref for TestContext {
+        type Target = CliContext;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    async fn test_ctx(name: &str, style_guide: Option<&Path>, terms: Option<&Path>) -> TestContext {
         let mut args = common(name);
         args.style_guide = style_guide.map(Path::to_path_buf);
         args.terms = terms.map(Path::to_path_buf);
-        CliContext::new(ContextRequest {
+        let ctx = CliContext::new(ContextRequest {
             verb: "test",
             common: &args,
             input_path: Some(Path::new("sample.srt")),
             require_llm: true,
         })
         .await
-        .expect("test context resolves")
+        .expect("test context resolves");
+        TestContext(ctx)
     }
 
     fn briefing_with(glossary: Vec<GlossaryEntry>, style_guide: &str) -> TerminologyBriefing {

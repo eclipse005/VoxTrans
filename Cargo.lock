@@ -7148,6 +7148,7 @@ dependencies = [
  "tokio",
  "ts-rs",
  "voxtrans-core",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

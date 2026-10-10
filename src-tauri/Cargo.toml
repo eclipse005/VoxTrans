@@ -50,6 +50,17 @@ dashmap = "6"
 thiserror = "2"
 ts-rs = "10"
 open = "5"
+# Windows-only: SetUnhandledExceptionFilter, so a native fault (CUDA driver,
+# illegal access inside a C++ engine) leaves a crash report the next start
+# promotes into the app log. Target-gated so non-Windows builds stay clean.
+#
+# `Win32_System_Kernel` looks unrelated but is required: windows-sys 0.59 gates
+# `EXCEPTION_POINTERS` and `SetUnhandledExceptionFilter` behind it. Without the
+# feature spelled out here the crate still built, but only because another
+# dependency happened to enable it — feature unification, not intent, and it
+# broke as soon as the graph changed.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel"] }
 # CUDA engines ship precompiled multi-arch PTX (scheme B): end users need an
 # NVIDIA game-ready driver only — no CUDA Toolkit / NVRTC. Installer still
 # downloads cudart/cublas/cublasLt/curand from ModelScope (see apply-cuda-runtime.ps1).

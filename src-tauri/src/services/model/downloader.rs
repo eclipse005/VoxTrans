@@ -56,6 +56,15 @@ pub fn start_model_download(
         {
             Ok(Ok(())) => {}
             Ok(Err(err)) => {
+                crate::services::app_log::error(
+                    "model.download",
+                    "MODEL_DOWNLOAD_FAILED",
+                    &err,
+                    Some(serde_json::json!({
+                        "model": &model_for_error,
+                        "target": target_for_thread,
+                    })),
+                );
                 let _ = set_model_download_snapshot(
                     &app,
                     &model_download,
@@ -70,6 +79,16 @@ pub fn start_model_download(
                 );
             }
             Err(err) => {
+                let message = format!("Download task error: {}", err);
+                crate::services::app_log::error(
+                    "model.download",
+                    "MODEL_DOWNLOAD_FAILED",
+                    &message,
+                    Some(serde_json::json!({
+                        "model": &model_for_error,
+                        "target": target_for_thread,
+                    })),
+                );
                 let _ = set_model_download_snapshot(
                     &app,
                     &model_download,
@@ -79,7 +98,7 @@ pub fn start_model_download(
                     0,
                     0,
                     0,
-                    &format!("Download task error: {}", err),
+                    &message,
                     true,
                 );
             }

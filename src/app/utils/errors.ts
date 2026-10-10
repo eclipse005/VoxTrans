@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import i18n from "../../i18n";
 
 /**
@@ -112,7 +113,65 @@ export function toUserErrorMessage(
   return classified ? i18n.t(classified) : raw;
 }
 
+/**
+ * Reporting is best-effort and must never change control flow: never await
+ * IPC, never surface a second error while reporting the first, never touch
+ * React state. The text is capped here (the backend caps again) so a multi-MB
+ * stack cannot cross the IPC boundary.
+ */
+const REPORT_MESSAGE_MAX_CHARS = 2000;
+const REPORT_CONTEXT_MAX_CHARS = 200;
+const TRUNCATION_MARKER = "…";
+
+function truncateForReport(value: string, maxChars: number): string {
+  // Fast path: UTF-16 units are never fewer than code points, so this cannot
+  // under-count. It avoids materializing an array for the common case — and in
+  // a crash path a multi-MB stack is exactly what arrives here.
+  if (value.length <= maxChars) return value;
+  const characters = Array.from(value);
+  if (characters.length <= maxChars) return value;
+  return `${characters.slice(0, Math.max(0, maxChars - 1)).join("")}${TRUNCATION_MARKER}`;
+}
+
+/**
+ * Flatten an unknown thrown value into a bounded string. `Error` keeps its
+ * name/message/stack, strings pass through, everything else falls back to
+ * JSON. `JSON.stringify` can throw (bigint, cycles, throwing `toJSON`) and
+ * `String()` can throw on hostile objects, so both paths are guarded.
+ */
+function stringifyErrorForReport(error: unknown): string {
+  if (typeof error === "string") {
+    return truncateForReport(error, REPORT_MESSAGE_MAX_CHARS);
+  }
+  if (error instanceof Error) {
+    const parts = [error.name, error.message, error.stack].filter(
+      (part): part is string => typeof part === "string" && part.length > 0,
+    );
+    return truncateForReport(parts.join("\n"), REPORT_MESSAGE_MAX_CHARS);
+  }
+
+  let text: string;
+  try {
+    const json = JSON.stringify(error);
+    text = json ?? String(error);
+  } catch {
+    try {
+      text = String(error);
+    } catch {
+      text = "unserializable error";
+    }
+  }
+  return truncateForReport(text, REPORT_MESSAGE_MAX_CHARS);
+}
+
 export function reportError(error: unknown, context: string): void {
   // Keep console logging centralized so we can switch to external telemetry later.
   console.error(`[voxtrans] ${context}`, error);
+
+  // Fire-and-forget into `<output root>/logs/app.log`. In non-Tauri hosts
+  // (tests, plain browser) `invoke` rejects and the catch drops it.
+  void invoke("report_frontend_error", {
+    context: truncateForReport(context, REPORT_CONTEXT_MAX_CHARS),
+    message: stringifyErrorForReport(error),
+  }).catch(() => {});
 }

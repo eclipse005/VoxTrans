@@ -9,7 +9,10 @@
 //! Design notes:
 //!
 //! - **Error level only.** The file is a support artifact, not a trace: every
-//!   line should be something a user would plausibly report.
+//!   line should be something a user would plausibly report. The one exception is
+//!   the session markers (`level: "session"`, two lines per run): they exist so
+//!   that an abnormal exit is detectable at all. Filter on `level` to read the
+//!   file as a pure error list.
 //! - **One JSON object per line.** Append-only and crash-safe (a torn write
 //!   ruins only its own line), groupable by `code`, and still greppable. `code`
 //!   is what makes "is this bug fixed?" an answerable question.
@@ -25,8 +28,29 @@
 //! Task correlation is by convention, not by a dedicated field: pass
 //! `{"taskId": ...}` in `context`.
 //!
-//! [`init`] and [`install_panic_hook`] are called as the binary's first
-//! statements; nothing else needs wiring.
+//! # Deaths that leave a trace
+//!
+//! "It just disappeared" used to be undiagnosable, because nothing in the log
+//! said whether the app had been closed or had died. Three mechanisms cover the
+//! space between a clean shutdown and a silent kill, in decreasing order of how
+//! much they can tell you:
+//!
+//! 1. [`session_start`] / [`session_stop`] write one line each. A start with no
+//!    matching stop means the process never reached its shutdown path: killed,
+//!    out of memory, power loss, or a hard crash. Nothing else can distinguish
+//!    "the user closed it" from "it vanished".
+//! 2. [`set_phase`] keeps the running pipeline stage in `logs/last-phase.txt` —
+//!    a sidecar rather than a log line, because stage transitions are normal
+//!    operation. It is read exactly once, when (1) says the previous session
+//!    died, turning "it crashed" into "it crashed while translating task ep12".
+//! 3. [`install_crash_handler`] (Windows) writes `logs/crash-<pid>.txt` when the
+//!    process dies from a native fault — a CUDA driver error, an illegal access,
+//!    a stack overflow — that reaches no Rust `Result` and no panic hook. The
+//!    next start promotes it into a real entry.
+//!
+//! [`init`], [`install_panic_hook`], [`install_crash_handler`] and
+//! [`session_start`] are called as the binary's first statements;
+//! [`session_stop`] is called on a deliberate shutdown.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -48,6 +72,20 @@ const MAX_FILES: usize = 4;
 /// RFC 3339 with a local offset — the timestamp a user can compare against their
 /// own clock when describing "it happened around 21:50".
 const TS_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.3f%:z";
+/// Level of the two session lifecycle lines. Not `error`: they exist to make an
+/// abnormal exit detectable, and a reader who wants errors only can filter them
+/// out by this field.
+const SESSION_LEVEL: &str = "session";
+const SESSION_SCOPE: &str = "app.session";
+const SESSION_START_CODE: &str = "SESSION_START";
+const SESSION_STOP_CODE: &str = "SESSION_STOP";
+/// Sidecar holding the current pipeline stage (see the module doc, layer 2).
+const PHASE_FILE_NAME: &str = "last-phase.txt";
+/// Native-crash reports (module doc, layer 3).
+const CRASH_FILE_PREFIX: &str = "crash-";
+/// The phase may embed a task id; keep the sidecar short enough to read at a
+/// glance inside an error message.
+const MAX_PHASE_CHARS: usize = 160;
 
 static LOG: OnceLock<Mutex<State>> = OnceLock::new();
 
@@ -83,6 +121,7 @@ pub fn error(
         level: "error",
         pid: std::process::id(),
         app: env!("CARGO_PKG_VERSION"),
+        build: crate::services::BUILD_VARIANT,
         os: os_tag(),
         scope,
         code,
@@ -125,6 +164,377 @@ pub async fn guard_async<T, E: std::fmt::Display>(
         error(scope, code, err.to_string(), None);
     }
     result
+}
+
+// ── Session lifecycle, phase trail, native crashes ──────────────────────────
+//
+// The three layers described in the module doc. They share one property: none of
+// them can fail the caller. Recording that the app died must never be a reason
+// for the app to die.
+
+/// The pipeline stage last reported by [`set_phase`], cached so repeated
+/// progress ticks with an unchanged stage touch no file.
+static LAST_PHASE: Mutex<Option<String>> = Mutex::new(None);
+
+/// Record the start of this session, and report what the previous one left
+/// behind: a native-crash report if there is one, otherwise an unfinished
+/// session marker.
+///
+/// Called once, right after [`init`]. Both reports are best-effort; a missing or
+/// unreadable log directory simply means nothing to say.
+pub fn session_start() {
+    // Layer 3 before layer 1: a crash report is the most specific evidence, and
+    // "unfinished session" is the fallback when there is none.
+    for report in take_crash_reports() {
+        let phase = report.phase.clone();
+        error(
+            "app.crash",
+            "NATIVE_EXCEPTION",
+            report.summary(),
+            Some(serde_json::json!({
+                "report": report.raw,
+                "phase": phase,
+            })),
+        );
+    }
+
+    if let Some(previous) = previous_session_left_unfinished() {
+        error(
+            "app.session",
+            "UNEXPECTED_EXIT",
+            format!(
+                "previous session (pid {}) started at {} and never recorded a clean shutdown",
+                previous.pid, previous.ts
+            ),
+            Some(serde_json::json!({
+                "pid": previous.pid,
+                "startedAt": previous.ts,
+                "phase": read_phase(),
+            })),
+        );
+    }
+
+    write_session_line(SESSION_START_CODE, "session started");
+}
+
+/// Record a deliberate shutdown. This is the marker that makes the next start's
+/// abnormal-exit check mean something, so it is written on every exit path that
+/// the process actually reaches.
+pub fn session_stop() {
+    write_session_line(SESSION_STOP_CODE, "clean shutdown");
+    clear_phase();
+}
+
+fn write_session_line(code: &str, message: &str) {
+    let entry = session_marker_entry(code, message);
+    let mut state = lock();
+    let _ = write_entry(&mut state, &entry);
+}
+
+/// The session marker as an entry. Split out from the writer so a test can pin
+/// its shape (level, scope, code) without touching the global log state.
+fn session_marker_entry<'a>(code: &'a str, message: &'a str) -> Entry<'a> {
+    Entry {
+        ts: Local::now().format(TS_FORMAT).to_string(),
+        level: SESSION_LEVEL,
+        pid: std::process::id(),
+        app: env!("CARGO_PKG_VERSION"),
+        build: crate::services::BUILD_VARIANT,
+        os: os_tag(),
+        scope: SESSION_SCOPE,
+        code,
+        message,
+        context: None,
+    }
+}
+
+/// Remember which pipeline stage is running, for the next start's report.
+///
+/// Deliberately a sidecar file and not a log line: stage transitions are normal
+/// operation, and the log is error-only. Cheap when nothing changed — the same
+/// stage reported twice (progress ticks) writes nothing, which is what keeps
+/// this safe to call from a per-tick path.
+pub fn set_phase(phase: &str) {
+    let phase: String = phase.trim().chars().take(MAX_PHASE_CHARS).collect();
+    if phase.is_empty() {
+        return;
+    }
+    {
+        let Ok(mut last) = LAST_PHASE.lock() else { return };
+        if last.as_deref() == Some(phase.as_str()) {
+            return;
+        }
+        *last = Some(phase.clone());
+    }
+    let dir = log_dir();
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let _ = fs::write(dir.join(PHASE_FILE_NAME), phase.as_bytes());
+}
+
+/// Drop the phase trail on a clean shutdown: a leftover file must mean "died
+/// mid-stage", never "closed the window".
+pub fn clear_phase() {
+    if let Ok(mut last) = LAST_PHASE.lock() {
+        *last = None;
+    }
+    let _ = fs::remove_file(log_dir().join(PHASE_FILE_NAME));
+}
+
+fn read_phase() -> Option<String> {
+    read_phase_in(&log_dir())
+}
+
+fn read_phase_in(dir: &Path) -> Option<String> {
+    let text = fs::read_to_string(dir.join(PHASE_FILE_NAME)).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
+struct PreviousSession {
+    pid: u32,
+    ts: String,
+}
+
+enum SessionMarker {
+    Start { pid: u32, ts: String },
+    Stop,
+    Unknown,
+}
+
+/// Whether the newest session marker in the log is an unfinished start from a
+/// different process.
+///
+/// Reads the active file first and only walks older generations when it holds no
+/// session line at all (an error storm can rotate the start line away), stopping
+/// at the first marker found from the end.
+fn previous_session_left_unfinished() -> Option<PreviousSession> {
+    previous_session_left_unfinished_in(&log_dir())
+}
+
+fn previous_session_left_unfinished_in(dir: &Path) -> Option<PreviousSession> {
+    for generation in 0..MAX_FILES {
+        let Ok(text) = fs::read_to_string(rotated_path(dir, generation)) else {
+            continue;
+        };
+        let Some(marker) = last_session_marker(&text) else {
+            continue;
+        };
+        return match marker {
+            SessionMarker::Start { pid, ts } if pid != std::process::id() => {
+                Some(PreviousSession { pid, ts })
+            }
+            _ => None,
+        };
+    }
+    None
+}
+
+/// The newest session marker in one log's text.
+///
+/// Pure on purpose: "was the previous session unfinished?" is a property of the
+/// log contents, so it is testable without a dying process. Lines are filtered
+/// by a substring before parsing, so scanning 8 MB costs almost nothing.
+fn last_session_marker(text: &str) -> Option<SessionMarker> {
+    for line in text.lines().rev() {
+        if !line.contains("\"level\":\"session\"") {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let code = value.get("code").and_then(|c| c.as_str()).unwrap_or_default();
+        let pid = value.get("pid").and_then(|p| p.as_u64()).unwrap_or(0) as u32;
+        let ts = value
+            .get("ts")
+            .and_then(|t| t.as_str())
+            .unwrap_or_default()
+            .to_string();
+        return Some(match code {
+            SESSION_START_CODE => SessionMarker::Start { pid, ts },
+            SESSION_STOP_CODE => SessionMarker::Stop,
+            _ => SessionMarker::Unknown,
+        });
+    }
+    None
+}
+
+struct CrashReport {
+    raw: String,
+    phase: Option<String>,
+}
+
+impl CrashReport {
+    fn summary(&self) -> String {
+        let code = self
+            .raw
+            .lines()
+            .next()
+            .unwrap_or("native exception")
+            .trim()
+            .to_string();
+        match &self.phase {
+            Some(phase) if !phase.is_empty() => format!("native exception while in {phase} ({code})"),
+            _ => format!("native exception ({code})"),
+        }
+    }
+}
+
+/// Promote the reports a previous process left when it died of a native fault,
+/// deleting them so the next start does not repeat the same news.
+fn take_crash_reports() -> Vec<CrashReport> {
+    take_crash_reports_in(&log_dir())
+}
+
+fn take_crash_reports_in(dir: &Path) -> Vec<CrashReport> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut reports = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with(CRASH_FILE_PREFIX) || !name.ends_with(".txt") {
+            continue;
+        }
+        let Ok(bytes) = fs::read(entry.path()) else { continue };
+        let _ = fs::remove_file(entry.path());
+        // Lossy: the handler truncates into a fixed buffer and may cut a
+        // multi-byte character. A slightly mangled line beats no line.
+        let raw = String::from_utf8_lossy(&bytes).trim().to_string();
+        // The handler writes one line (`code=… address=… pid=… phase=…`), so the
+        // phase is a token in the line, not a line of its own.
+        let phase = raw
+            .split_whitespace()
+            .find_map(|token| token.strip_prefix("phase=").map(str::to_string));
+        reports.push(CrashReport { raw, phase });
+    }
+    reports
+}
+
+/// Route a Windows unhandled exception (SEH) into a crash report.
+///
+/// This is the only hook that sees a native fault: a CUDA driver error, an
+/// illegal access inside a C++ engine, a stack overflow. Rust's panic hook never
+/// runs for those, and the process gets no chance to write a log line — so the
+/// report is a sidecar the next start promotes (see the module doc).
+///
+/// No-op on other platforms.
+#[cfg(windows)]
+pub fn install_crash_handler() {
+    native_crash::install();
+}
+
+#[cfg(not(windows))]
+pub fn install_crash_handler() {}
+
+#[cfg(windows)]
+mod native_crash {
+    use super::{CRASH_FILE_PREFIX, LAST_PHASE, log_dir};
+    use std::fmt::{self, Write as _};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use windows_sys::Win32::System::Diagnostics::Debug::{
+        EXCEPTION_POINTERS, SetUnhandledExceptionFilter,
+    };
+
+    /// Conventional "handle it and terminate" answer for an unhandled filter.
+    const EXCEPTION_EXECUTE_HANDLER: i32 = 1;
+
+    /// Resolved once at install time: the handler must not build a path (or do
+    /// anything else that allocates) while the process is dying.
+    static REPORT_PATH: OnceLock<PathBuf> = OnceLock::new();
+    /// A fault inside the handler would otherwise re-enter it forever.
+    static IN_HANDLER: AtomicBool = AtomicBool::new(false);
+
+    pub(super) fn install() {
+        let dir = log_dir();
+        if fs::create_dir_all(&dir).is_ok() {
+            let _ = REPORT_PATH
+                .set(dir.join(format!("{CRASH_FILE_PREFIX}{}.txt", std::process::id())));
+        }
+        // SAFETY: a plain function pointer with the documented signature; the
+        // filter only writes a file and returns.
+        unsafe { SetUnhandledExceptionFilter(Some(filter)) };
+    }
+
+    unsafe extern "system" fn filter(info: *const EXCEPTION_POINTERS) -> i32 {
+        if IN_HANDLER.swap(true, Ordering::SeqCst) {
+            return EXCEPTION_EXECUTE_HANDLER;
+        }
+        if !info.is_null() && unsafe { !(*info).ExceptionRecord.is_null() } {
+            let record = unsafe { *(*info).ExceptionRecord };
+            write_report(record.ExceptionCode as u32, record.ExceptionAddress as usize);
+        }
+        EXCEPTION_EXECUTE_HANDLER
+    }
+
+    /// Best-effort, allocation-light, and never allowed to unwind: the stack may
+    /// be exhausted and the heap may be suspect by the time we get here.
+    fn write_report(code: u32, address: usize) {
+        let Some(path) = REPORT_PATH.get() else { return };
+        let mut buffer = [0u8; 192];
+        // `try_lock`: the crash may have happened while the log lock (or this
+        // one) was held, and blocking here would hang the dying process.
+        let phase = LAST_PHASE
+            .try_lock()
+            .ok()
+            .and_then(|guard| guard.clone());
+        let len = format_report(code, address, phase.as_deref(), &mut buffer);
+        let _ = fs::write(path, &buffer[..len]);
+    }
+
+    /// The report body, built without allocating (only the caller's stack buffer
+    /// is used). Pure so the format stays testable without crashing a process.
+    pub(super) fn format_report(
+        code: u32,
+        address: usize,
+        phase: Option<&str>,
+        buffer: &mut [u8],
+    ) -> usize {
+        let mut sink = FixedBuffer::new(buffer);
+        let _ = write!(
+            sink,
+            "code=0x{code:08X} address=0x{address:016X} pid={}",
+            std::process::id()
+        );
+        if let Some(phase) = phase.filter(|phase| !phase.is_empty()) {
+            let _ = write!(sink, " phase={phase}");
+        }
+        sink.len
+    }
+
+    /// A `fmt::Write` sink over a fixed stack buffer: truncates instead of
+    /// allocating. The handler has no heap budget to trust. `pub(super)` so the
+    /// truncation contract stays covered by a test.
+    pub(super) struct FixedBuffer<'a> {
+        pub(super) buffer: &'a mut [u8],
+        pub(super) len: usize,
+    }
+
+    impl<'a> FixedBuffer<'a> {
+        pub(super) fn new(buffer: &'a mut [u8]) -> Self {
+            Self { buffer, len: 0 }
+        }
+    }
+
+    impl fmt::Write for FixedBuffer<'_> {
+        fn write_str(&mut self, text: &str) -> fmt::Result {
+            let bytes = text.as_bytes();
+            let room = self.buffer.len() - self.len;
+            let take = bytes.len().min(room);
+            self.buffer[self.len..self.len + take].copy_from_slice(&bytes[..take]);
+            self.len += take;
+            Ok(())
+        }
+    }
 }
 
 /// Route panics into the log, keeping the default hook so debug builds still
@@ -188,6 +598,9 @@ struct Entry<'a> {
     level: &'static str,
     pid: u32,
     app: &'static str,
+    /// `cuda` or `cpu`: the two installers fail differently, and a GPU bug report
+    /// is unusable without knowing which one produced it.
+    build: &'static str,
     os: &'static str,
     scope: &'a str,
     code: &'a str,
@@ -274,7 +687,14 @@ impl State {
 }
 
 fn write_entry(state: &mut State, entry: &Entry<'_>) -> io::Result<()> {
-    if !state.ensure_open() {
+    write_entry_in(&log_dir(), state, entry)
+}
+
+/// [`write_entry`] against an explicit directory. Split out so tests can write
+/// into a scratch dir instead of the real log (which, during a test run, is the
+/// build output tree — while another cargo process may be pruning it).
+fn write_entry_in(dir: &Path, state: &mut State, entry: &Entry<'_>) -> io::Result<()> {
+    if !state.ensure_open_in(dir) {
         return Ok(());
     }
     if !state.rotate_if_needed() {
@@ -349,12 +769,38 @@ mod tests {
             level: "error",
             pid: 4242,
             app: "1.5.1",
+            build: "cpu",
             os: "windows-x86_64",
             scope: "youtube.download",
             code: "YTDLP_STALL",
             message,
             context: None,
         }
+    }
+
+    /// Serialize a session line exactly as `write_session_line` does, so the
+    /// detector below is tested against the real on-disk shape (level, code,
+    /// pid) rather than a hand-written approximation.
+    fn session_line(code: &str, pid: u32, ts: &str) -> String {
+        let entry = Entry {
+            ts: ts.to_string(),
+            level: SESSION_LEVEL,
+            pid,
+            app: "1.5.1",
+            build: "cuda",
+            os: "windows-x86_64",
+            scope: SESSION_SCOPE,
+            code,
+            message: "",
+            context: None,
+        };
+        serde_json::to_string(&entry).expect("session line")
+    }
+
+    /// A serialized error line, the shape the session-marker parser must
+    /// ignore.
+    fn sample_line(message: &str) -> String {
+        serde_json::to_string(&sample(message)).expect("error line")
     }
 
     fn read_lines(path: &Path) -> Vec<String> {
@@ -411,11 +857,16 @@ mod tests {
     #[test]
     fn the_log_sits_under_the_managed_output_root() {
         // The support workflow ("open the folder and send me that file") depends
-        // on this being a predictable place, so pin the shape of it.
+        // on this being a predictable place, so pin the shape of it. Deliberately
+        // not `assert_eq!(dir, resolve_output_dir().join(LOG_DIR_NAME))`: that
+        // compares two independent writability probes, and a concurrent cargo run
+        // pruning `target/` can make them disagree (exe-relative root vs the
+        // platform fallback) for no real reason.
         let dir = log_dir();
         assert_eq!(dir.file_name().and_then(|name| name.to_str()), Some(LOG_DIR_NAME));
-        assert_eq!(dir, crate::services::output::resolve_output_dir().join(LOG_DIR_NAME));
         assert_eq!(log_path(), dir.join(LOG_FILE_NAME));
+        let root = dir.parent().expect("log dir has a parent");
+        assert_eq!(root.file_name().and_then(|name| name.to_str()), Some("output"));
     }
 
     #[test]
@@ -515,8 +966,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unusable_directory_disables_the_log_without_panicking() {
-        // A file where a directory is expected: create_dir_all fails fatally.
+    fn an_unusable_directory_disables_the_log_without_panicking() {        // A file where a directory is expected: create_dir_all fails fatally.
         let blocker = std::env::temp_dir().join(format!(
             "voxtrans_app_log_blocker_{}",
             std::process::id()
@@ -530,5 +980,175 @@ mod tests {
         write_entry(&mut state, &sample("unwritable")).expect("best effort");
 
         let _ = fs::remove_file(&blocker);
+    }
+
+    // ── the three death-visibility layers ───────────────────────────────
+
+    #[test]
+    fn the_newest_session_marker_decides_whether_a_run_ended_cleanly() {
+        let start = session_line(SESSION_START_CODE, 111, "2026-10-10T21:00:00.000+08:00");
+        let stop = session_line(SESSION_STOP_CODE, 111, "2026-10-10T21:05:00.000+08:00");
+
+        // A start with nothing after it: the process never reached shutdown.
+        match last_session_marker(&start).expect("marker") {
+            SessionMarker::Start { pid, .. } => assert_eq!(pid, 111),
+            _ => panic!("a lone start must read as a start"),
+        }
+
+        // Errors after the start do not confuse it; the older start still owns
+        // the "unfinished" verdict.
+        let text = format!("{start}\n{}\n{}", sample_line("later error"), sample_line("another"));
+        assert!(matches!(last_session_marker(&text), Some(SessionMarker::Start { .. })));
+
+        // A stop after a start: clean, regardless of anything older.
+        let text = format!("{start}\n{stop}");
+        assert!(matches!(last_session_marker(&text), Some(SessionMarker::Stop)));
+
+        // Nothing but errors.
+        assert!(last_session_marker(&sample_line("only an error")).is_none());
+        // Malformed session lines are skipped, not fatal.
+        let text = format!("{start}\n{}bad json", "{\"level\":\"session\"");
+        assert!(matches!(last_session_marker(&text), Some(SessionMarker::Start { .. })));
+    }
+
+    /// The detector is only useful if it agrees with the writer about the
+    /// on-disk format; `session_line` serializes the real `Entry`.
+    #[test]
+    fn session_lines_are_filterable_from_errors_by_level() {
+        let line = session_line(SESSION_START_CODE, 7, "2026-10-10T21:00:00.000+08:00");
+        let value: serde_json::Value = serde_json::from_str(&line).expect("json");
+        assert_eq!(value["level"], "session");
+        assert_eq!(value["scope"], "app.session");
+        assert_eq!(value["build"], "cuda");
+        assert_eq!(value["pid"], 7);
+    }
+
+    /// A session that died is reported from the log contents; one that stopped
+    /// cleanly is not; and our own marker (pid == current) never reports itself.
+    #[test]
+    fn an_unfinished_session_from_another_process_is_detected() {
+        let dir = scratch_dir("unfinished");
+        let start = session_line(SESSION_START_CODE, 999_999, "2026-10-10T21:00:00.000+08:00");
+        fs::write(active_path(&dir), format!("{start}\n")).expect("write log");
+
+        let previous = previous_session_left_unfinished_in(&dir).expect("unfinished session");
+        assert_eq!(previous.pid, 999_999);
+        assert_eq!(previous.ts, "2026-10-10T21:00:00.000+08:00");
+
+        let stop = session_line(SESSION_STOP_CODE, 999_999, "2026-10-10T21:05:00.000+08:00");
+        fs::write(active_path(&dir), format!("{start}\n{stop}\n")).expect("write log");
+        assert!(
+            previous_session_left_unfinished_in(&dir).is_none(),
+            "a clean shutdown must not be reported as an unexpected exit"
+        );
+    }
+
+    /// The phase trail: a plain string beside the log, deleted on a clean
+    /// shutdown so a leftover file can only mean "died mid-stage".
+    #[test]
+    fn the_phase_trail_reads_back_and_clears() {
+        let dir = scratch_dir("phase");
+        assert!(read_phase_in(&dir).is_none(), "nothing written yet");
+
+        fs::write(dir.join(PHASE_FILE_NAME), "ep12:translating").expect("write phase");
+        assert_eq!(read_phase_in(&dir).as_deref(), Some("ep12:translating"));
+
+        fs::write(dir.join(PHASE_FILE_NAME), "   ").expect("blank phase");
+        assert!(read_phase_in(&dir).is_none(), "blank is not a phase");
+    }
+
+    /// A crash report is promoted once and then deleted, and it carries the
+    /// phase the dying process recorded.
+    #[test]
+    fn crash_reports_are_promoted_once_and_then_removed() {
+        let dir = scratch_dir("crash");
+        let report = dir.join(format!("{CRASH_FILE_PREFIX}{}.txt", 1234));
+        fs::write(&report, "code=0xC0000005 address=0x00007FF612345678 pid=1234 phase=ep12:recognizing")
+            .expect("write report");
+        // An unrelated file must not be swept up.
+        fs::write(dir.join("app.log"), "{}").expect("decoy");
+
+        let reports = take_crash_reports_in(&dir);
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].phase.as_deref(), Some("ep12:recognizing"));
+        assert!(reports[0].summary().contains("ep12:recognizing"));
+        assert!(reports[0].summary().contains("0xC0000005"));
+        assert!(!report.exists(), "a promoted report must not repeat next start");
+        assert!(dir.join("app.log").exists());
+        assert!(take_crash_reports_in(&dir).is_empty(), "nothing left to promote");
+    }
+
+    /// The crash handler must not allocate; its sink truncates instead.
+    #[cfg(windows)]
+    #[test]
+    fn the_crash_handler_buffer_truncates_instead_of_growing() {
+        use std::fmt::Write as _;
+        let mut buffer = [0u8; 16];
+        let mut sink = native_crash::FixedBuffer::new(&mut buffer);
+        write!(sink, "0123456789abcdefghij").expect("write");
+        assert_eq!(sink.len, 16, "writes past the end are dropped, not grown");
+        assert_eq!(&sink.buffer[..sink.len], b"0123456789abcdef");
+    }
+
+    /// What the dying process leaves on disk: the exception code, the faulting
+    /// address and the phase, on one line, with no heap involved. The next start
+    /// parses exactly this shape (see the promotion test above).
+    #[cfg(windows)]
+    #[test]
+    fn a_crash_report_carries_code_address_and_phase() {
+        let mut buffer = [0u8; 192];
+        let len = native_crash::format_report(
+            0xC000_0005,
+            0x0000_7FF6_1234_5678,
+            Some("ep12:recognizing"),
+            &mut buffer,
+        );
+        let line = std::str::from_utf8(&buffer[..len]).expect("ascii");
+        assert!(line.starts_with("code=0xC0000005 address=0x00007FF612345678"), "{line}");
+        assert!(line.contains("phase=ep12:recognizing"), "{line}");
+
+        // Without a phase (the crash happened before any task stage) the report
+        // is still written, just shorter.
+        let len = native_crash::format_report(0xC000_0005, 0x10, None, &mut buffer);
+        let line = std::str::from_utf8(&buffer[..len]).expect("ascii");
+        assert!(!line.contains("phase="), "{line}");
+    }
+
+    /// Installing the handler must be safe to call on any thread and must not
+    /// disturb a healthy process (the filter only runs on a fatal fault).
+    #[cfg(windows)]
+    #[test]
+    fn installing_the_crash_handler_is_harmless() {
+        install_crash_handler();
+    }
+
+    /// The glue `main.rs` calls, against a scratch directory: a start marker is
+    /// written with the session level, and the marker a previous session left can
+    /// then be read back as "unfinished". No global log state, and nothing under
+    /// the real log dir, which a concurrent cargo run may be pruning.
+    #[test]
+    fn the_session_glue_writes_a_filterable_stop_marker() {
+        let dir = scratch_dir("session_glue");
+        let mut state = State::default();
+        assert!(state.ensure_open_in(&dir));
+
+        let start = session_marker_entry(SESSION_START_CODE, "session started");
+        write_entry_in(&dir, &mut state, &start).expect("write start");
+        // A start alone reads as an unfinished session.
+        assert!(matches!(
+            last_session_marker(&fs::read_to_string(active_path(&dir)).expect("log")),
+            Some(SessionMarker::Start { .. })
+        ));
+
+        let stop = session_marker_entry(SESSION_STOP_CODE, "clean shutdown");
+        write_entry_in(&dir, &mut state, &stop).expect("write stop");
+        let text = fs::read_to_string(active_path(&dir)).expect("log");
+        assert!(matches!(last_session_marker(&text), Some(SessionMarker::Stop)));
+        // The stop must be filterable the same way the start is.
+        let last_line = text.lines().last().expect("line");
+        let value: serde_json::Value = serde_json::from_str(last_line).expect("json");
+        assert_eq!(value["level"], SESSION_LEVEL);
+        assert_eq!(value["code"], SESSION_STOP_CODE);
+        assert_eq!(value["scope"], SESSION_SCOPE);
     }
 }

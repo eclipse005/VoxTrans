@@ -1,5 +1,5 @@
 /// 更新服务：检测更新、下载并安装。
-const BUILD_VARIANT: &str = if cfg!(feature = "cuda") { "cuda" } else { "cpu" };
+use crate::services::BUILD_VARIANT;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
