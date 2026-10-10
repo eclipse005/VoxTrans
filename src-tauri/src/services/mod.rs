@@ -9,7 +9,11 @@
 /// and PTX mismatch), so every support artifact records which produced it: the
 /// updater picks the matching installer asset with it, and the app log stamps
 /// it on every entry.
-pub(crate) const BUILD_VARIANT: &str = if cfg!(feature = "cuda") { "cuda" } else { "cpu" };
+pub(crate) const BUILD_VARIANT: &str = if cfg!(feature = "cuda") {
+    "cuda"
+} else {
+    "cpu"
+};
 
 pub mod app_log;
 pub mod binary;
@@ -30,8 +34,8 @@ pub mod subtitle_srt;
 pub mod system;
 pub mod task_log;
 pub mod task_path;
-pub mod terminology_agent;
 pub mod task_usage;
+pub mod terminology_agent;
 pub mod time_utils;
 pub mod transcribe;
 pub mod transcription;

@@ -33,6 +33,16 @@ pub fn read_task_log(request: ReadTaskLogCommandRequest) -> Result<String, Strin
     })
 }
 
+/// The app log's state, for the settings screen.
+///
+/// Read-only: it reports whether writes are landing, and why they are not.
+/// Without this, a log that quietly stopped being written looks exactly like a
+/// run where nothing went wrong.
+#[tauri::command]
+pub async fn get_app_log_health() -> Result<crate::services::app_log::AppLogHealth, String> {
+    Ok(crate::services::app_log::health())
+}
+
 #[tauri::command]
 pub fn clear_task_logs(request: ClearTaskLogsCommandRequest) -> Result<(), String> {
     crate::services::app_log::guard("logs", "CLEAR_TASK_LOGS_FAILED", || {

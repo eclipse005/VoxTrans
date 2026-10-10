@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
 
-use super::binary::{configure_background_command, resolve_bundled_or_path};
+use super::binary::{configure_background_command, describe_exit, resolve_bundled_or_path};
 use super::output::resolve_output_dir;
 use super::task_path::sanitize_filename_component;
 
@@ -31,8 +31,7 @@ const METADATA_TIMEOUT: Duration = Duration::from_secs(120);
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(300);
 /// Prefer H.264 + AAC. The default `bestvideo*+bestaudio` selector picks the
 /// AV1/VP9 DASH streams, which YouTube frequently refuses with HTTP 403.
-const MP4_FORMAT_SELECTOR: &str =
-    "bestvideo[vcodec*=avc1]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best";
+const MP4_FORMAT_SELECTOR: &str = "bestvideo[vcodec*=avc1]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best";
 /// Diagnostics live in the output root, next to the per-task folders.
 const YTDLP_LOG_FILE: &str = "yt-dlp.log";
 /// Keep a few verbose lines per run: enough to see which proxy yt-dlp picked
@@ -168,17 +167,16 @@ pub fn download_youtube_to_task(
         remove_cancel_flag(&task_id);
         return Err("YouTube download cancelled".to_string());
     }
-    let output_dir =
-        match youtube_output_dir_for_title(&output_root, &metadata.title, &task_id) {
-            Ok(value) => value,
-            Err(err) => {
-                snapshot.phase = "failed".to_string();
-                snapshot.message = err.clone();
-                set_progress(app, snapshot);
-                remove_cancel_flag(&task_id);
-                return Err(err);
-            }
-        };
+    let output_dir = match youtube_output_dir_for_title(&output_root, &metadata.title, &task_id) {
+        Ok(value) => value,
+        Err(err) => {
+            snapshot.phase = "failed".to_string();
+            snapshot.message = err.clone();
+            set_progress(app, snapshot);
+            remove_cancel_flag(&task_id);
+            return Err(err);
+        }
+    };
     if let Err(err) = std::fs::create_dir_all(&output_dir) {
         let message = format!("Failed to create download directory: {err}");
         snapshot.phase = "failed".to_string();
@@ -220,10 +218,7 @@ pub fn get_download_progress(task_id: &str) -> Result<YoutubeDownloadProgressRes
 }
 
 pub fn list_download_progress() -> Result<Vec<YoutubeDownloadProgressResponse>, String> {
-    Ok(progress_snapshots()
-        .iter()
-        .map(|r| r.clone())
-        .collect())
+    Ok(progress_snapshots().iter().map(|r| r.clone()).collect())
 }
 
 pub fn request_cancel(task_id: &str) -> bool {
@@ -242,7 +237,10 @@ pub fn get_yt_dlp_version() -> Result<String, String> {
         .output()
         .map_err(|err| format!("Failed to run yt-dlp: {err}"))?;
     if !output.status.success() {
-        return Err(command_output_message("Failed to detect yt-dlp version", &output));
+        return Err(command_output_message(
+            "Failed to detect yt-dlp version",
+            &output,
+        ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
@@ -255,7 +253,11 @@ pub fn update_yt_dlp() -> Result<UpdateYtDlpResponse, String> {
         .map_err(|err| format!("Failed to run yt-dlp update: {err}"))?;
     let text = command_output_text(&output);
     if !output.status.success() {
-        return Err(format!("yt-dlp update failed: {text}"));
+        let reason = describe_exit(&output.status);
+        if text.is_empty() {
+            return Err(format!("yt-dlp update failed ({reason})"));
+        }
+        return Err(format!("yt-dlp update failed ({reason}): {text}"));
     }
     let to_version = get_yt_dlp_version().unwrap_or_else(|_| from_version.clone());
     Ok(UpdateYtDlpResponse {
@@ -364,7 +366,11 @@ fn run_ytdlp_download(
             let _ = child.kill();
             let _ = child.wait();
             let message = stalled_message(&line_state.recent_lines);
-            log_ytdlp(output_root, task_id, &format!("download stalled | {message}"));
+            log_ytdlp(
+                output_root,
+                task_id,
+                &format!("download stalled | {message}"),
+            );
             log_ytdlp(output_root, task_id, &debug_blob(&debug_lines));
             snapshot.phase = "failed".to_string();
             snapshot.message = message.clone();
@@ -382,9 +388,13 @@ fn run_ytdlp_download(
 
             log_ytdlp(output_root, task_id, &debug_blob(&debug_lines));
             if !status.success() {
-                let message =
-                    recent_output_message(&line_state.recent_lines, "YouTube download failed");
-                log_ytdlp(output_root, task_id, &format!("download failed | {message}"));
+                let fallback = format!("YouTube download failed ({})", describe_exit(&status));
+                let message = recent_output_message(&line_state.recent_lines, &fallback);
+                log_ytdlp(
+                    output_root,
+                    task_id,
+                    &format!("download failed | {message}"),
+                );
                 snapshot.phase = "failed".to_string();
                 snapshot.message = message.clone();
                 set_progress(app, snapshot.clone());
@@ -401,8 +411,8 @@ fn run_ytdlp_download(
         .filter(|path| path.is_file())
         .or_else(|| find_downloaded_media(output_dir))
         .ok_or_else(|| "YouTube download finished but no media file was found".to_string())?;
-    let metadata =
-        std::fs::metadata(&downloaded_path).map_err(|err| format!("Failed to read downloaded file: {err}"))?;
+    let metadata = std::fs::metadata(&downloaded_path)
+        .map_err(|err| format!("Failed to read downloaded file: {err}"))?;
     let name = media_name(&downloaded_path);
     snapshot.phase = "completed".to_string();
     snapshot.progress_percent = 100.0;
@@ -583,16 +593,25 @@ fn fetch_youtube_metadata(
             return Err(format!("Failed to parse YouTube info: {err}"));
         }
     };
-    log_ytdlp(output_root, task_id, &debug_blob(&collect_debug_lines(&output.stderr)));
+    log_ytdlp(
+        output_root,
+        task_id,
+        &debug_blob(&collect_debug_lines(&output.stderr)),
+    );
 
     if !output.status.success() {
+        let reason = describe_exit(&output.status);
         let detail = tail_lines(&String::from_utf8_lossy(&output.stderr), 4);
         let message = if detail.is_empty() {
-            "Failed to parse YouTube info".to_string()
+            format!("Failed to parse YouTube info ({reason})")
         } else {
-            format!("Failed to parse YouTube info: {detail}")
+            format!("Failed to parse YouTube info ({reason}): {detail}")
         };
-        log_ytdlp(output_root, task_id, &format!("metadata failed | {message}"));
+        log_ytdlp(
+            output_root,
+            task_id,
+            &format!("metadata failed | {message}"),
+        );
         return Err(message);
     }
     let mut metadata = serde_json::from_slice::<YoutubeVideoMetadata>(&output.stdout)
@@ -803,12 +822,13 @@ fn handle_ytdlp_line(
     remember_line(&mut state.recent_lines, line);
 
     if let Some(path) = extract_path_from_line(line, output_dir)
-        && path.extension().is_some() {
-            state.final_path = Some(path.clone());
-            if let Some(title) = title_from_download_path(&path) {
-                snapshot.title = title;
-            }
+        && path.extension().is_some()
+    {
+        state.final_path = Some(path.clone());
+        if let Some(title) = title_from_download_path(&path) {
+            snapshot.title = title;
         }
+    }
 
     if line.contains("[Merger]") {
         snapshot.phase = "merging".to_string();
@@ -1056,10 +1076,11 @@ fn default_task_id() -> String {
 
 fn command_output_message(label: &str, output: &std::process::Output) -> String {
     let text = command_output_text(output);
+    let reason = describe_exit(&output.status);
     if text.is_empty() {
-        label.to_string()
+        format!("{label} ({reason})")
     } else {
-        format!("{label}: {text}")
+        format!("{label} ({reason}): {text}")
     }
 }
 
@@ -1130,11 +1151,13 @@ mod tests {
         let line = "[debug] Invoking downloader on \"https://rr3---sn-x.googlevideo.com/videoplayback?mime=video%2Fmp4&clen=123\"";
 
         assert!(extract_path_from_line(line, Path::new("C:\\output")).is_none());
-        assert!(extract_path_from_line(
-            "[download] Destination: C:\\output\\clip.f137.mp4",
-            Path::new("C:\\output")
-        )
-        .is_some());
+        assert!(
+            extract_path_from_line(
+                "[download] Destination: C:\\output\\clip.f137.mp4",
+                Path::new("C:\\output")
+            )
+            .is_some()
+        );
     }
 
     #[test]
@@ -1257,7 +1280,10 @@ mod tests {
             &mut lines,
             "[debug] User config \"C:\\Users\\x\\yt-dlp.conf\": ['--proxy', 'http://127.0.0.1:1']",
         );
-        collect_ytdlp_debug(&mut lines, "[download]  12.3% of 1.12GiB at 800KiB/s ETA 19:00");
+        collect_ytdlp_debug(
+            &mut lines,
+            "[download]  12.3% of 1.12GiB at 800KiB/s ETA 19:00",
+        );
         collect_ytdlp_debug(&mut lines, "[debug] Request Handlers: urllib, requests");
 
         assert_eq!(lines.len(), 2);

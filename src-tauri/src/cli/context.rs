@@ -263,15 +263,23 @@ impl CliContext {
         let (store, db_path) = open_store(&common.db).await?;
         let (mut settings, settings_source) = match &store {
             Some(store) => {
-                let settings = crate::services::preferences::load_saved_settings_from_default_path(
-                    store,
-                )?;
+                let settings =
+                    crate::services::preferences::load_saved_settings_from_default_path(store)?;
                 (
                     settings,
-                    format!("db:{}", db_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default()),
+                    format!(
+                        "db:{}",
+                        db_path
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default()
+                    ),
                 )
             }
-            None => (normalize_saved_settings(default_settings()), "defaults".to_string()),
+            None => (
+                normalize_saved_settings(default_settings()),
+                "defaults".to_string(),
+            ),
         };
         apply_overrides(&mut settings, common);
 
@@ -339,7 +347,8 @@ impl CliContext {
                 ctx.task_registered = true;
             } else {
                 return Err(
-                    "--task needs a settings database; pass --db <path> (or drop --task)".to_string(),
+                    "--task needs a settings database; pass --db <path> (or drop --task)"
+                        .to_string(),
                 );
             }
         }
@@ -504,7 +513,11 @@ fn platform_data_dir() -> Option<PathBuf> {
     {
         std::env::var_os("HOME")
             .filter(|value| !value.is_empty())
-            .map(|home| PathBuf::from(home).join("Library").join("Application Support"))
+            .map(|home| {
+                PathBuf::from(home)
+                    .join("Library")
+                    .join("Application Support")
+            })
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -634,7 +647,9 @@ async fn register_task(store: &TaskStore, ctx: &CliContext) -> CliResult<()> {
         .map(|stem| stem.to_string_lossy().to_string())
         .filter(|stem| !stem.is_empty())
         .unwrap_or_else(|| ctx.task_id.clone());
-    let size_bytes = std::fs::metadata(&ctx.input_path_str).map(|m| m.len()).unwrap_or(0);
+    let size_bytes = std::fs::metadata(&ctx.input_path_str)
+        .map(|m| m.len())
+        .unwrap_or(0);
 
     let item = WorkspaceQueueItem {
         id: ctx.task_id.clone(),
@@ -802,6 +817,9 @@ mod tests {
         })
         .await
         .expect_err("--task without a database must fail");
-        assert!(err.contains("--task needs a settings database"), "unexpected error: {err}");
+        assert!(
+            err.contains("--task needs a settings database"),
+            "unexpected error: {err}"
+        );
     }
 }

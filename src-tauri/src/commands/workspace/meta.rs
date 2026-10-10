@@ -2,10 +2,10 @@ use tauri::{AppHandle, Manager};
 
 use super::store::{TaskStore as _, lock_workspace_hydrated, lock_workspace_store};
 use super::{WorkspaceQueueItem, WorkspaceTaskRecord};
+use crate::commands::workspace::runtime_settings::FrozenSettings;
 use crate::db::conversion::TaskMetaExtras;
 use crate::db::store::TaskStore;
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
-use crate::commands::workspace::runtime_settings::FrozenSettings;
 use crate::domain::workspace_subtitle::serialize_segments;
 
 pub(super) async fn ensure_workspace_hydrated_from_db(app: &AppHandle) -> WorkspaceResult<()> {
@@ -38,7 +38,9 @@ pub(super) async fn ensure_workspace_hydrated_from_store(store: &TaskStore) -> W
         crate::services::app_log::error(
             "workspace.recovery",
             "TASKS_INTERRUPTED",
-            format!("the previous run ended abnormally: {recovered} task(s) were marked interrupted"),
+            format!(
+                "the previous run ended abnormally: {recovered} task(s) were marked interrupted"
+            ),
             Some(serde_json::json!({
                 "count": recovered,
                 "taskIds": orphan_task_ids,
@@ -97,7 +99,9 @@ async fn hydrate_workspace_from_db(store: &TaskStore) -> WorkspaceResult<()> {
         let target_lang = item.target_lang.clone();
         item.subtitle_segments_json = serialize_segments(&segments);
         let frozen = FrozenSettings {
-            subtitle_length_preset: crate::domain::preferences_types::SubtitleLengthPreset::parse(&extras.subtitle_length_preset),
+            subtitle_length_preset: crate::domain::preferences_types::SubtitleLengthPreset::parse(
+                &extras.subtitle_length_preset,
+            ),
             enable_subtitle_beautify: extras.enable_subtitle_beautify,
             terminology_groups: serde_json::from_str(&extras.terminology_groups_json)
                 .unwrap_or_default(),

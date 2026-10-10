@@ -28,6 +28,37 @@ export async function openAppLogDir(): Promise<void> {
   await invoke("open_app_log_dir");
 }
 
+/**
+ * Health of the app-wide error log writer (`<output root>/logs/app.log`).
+ *
+ * The logger is deliberately silent and disables itself when the file cannot
+ * be written (unwritable dir, locked file, full disk, failed rotation) — so an
+ * empty log can mean either "no errors" or "logging is broken". This snapshot
+ * is what lets the settings UI tell those two apart.
+ */
+export type AppLogHealth = {
+  /** Absolute path of `app.log`. */
+  path: string;
+  /** Absolute path of the log directory. */
+  directory: string;
+  /** false = writes are being dropped for this process. */
+  enabled: boolean;
+  /** Why logging was disabled (present when `enabled` is false). */
+  disabledReason: string | null;
+  /** Whether the file handle is currently open. */
+  fileOpen: boolean;
+};
+
+/**
+ * Read-only diagnostics for the app-wide error log — cheap and side-effect
+ * free, so the settings dialog can probe it on every open. Callers treat a
+ * rejection as "unknown" (e.g. command not available yet) and stay quiet:
+ * this must never surface as a user-facing error.
+ */
+export async function getAppLogHealth(): Promise<AppLogHealth> {
+  return invoke<AppLogHealth>("get_app_log_health");
+}
+
 export async function openModelDir(target: ModelTarget, model: AsrModel | AlignModel | DemucsModel): Promise<void> {
   await invoke("open_model_dir", {
     request: { target, model },

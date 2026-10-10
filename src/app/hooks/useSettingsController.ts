@@ -6,7 +6,11 @@ import {
   testTranslateLlmConnection,
   type FetchLlmModelsResult,
 } from "../api/settings";
-import { openAppLogDir as openAppLogDirApi } from "../api/system";
+import {
+  getAppLogHealth as getAppLogHealthApi,
+  openAppLogDir as openAppLogDirApi,
+  type AppLogHealth,
+} from "../api/system";
 import type {
   AlignModel,
   AsrModel,
@@ -67,9 +71,16 @@ export type SettingsForm = {
   flatSrtItems: SubtitleBurnMode[];
   locale: SavedSettings["locale"];
   modelsDir: string;
+  /**
+   * Latest `get_app_log_health` snapshot — diagnostics only, never saved.
+   * It rides on the form because the settings dialog reads everything through
+   * SettingsFormContext; the form is the channel that already reaches it.
+   * Refreshed by `openSettings` on every open.
+   */
+  appLogHealth: AppLogHealth | null;
 };
 
-function settingsToForm(settings: SavedSettings): SettingsForm {
+function settingsToForm(settings: SavedSettings, appLogHealth: AppLogHealth | null): SettingsForm {
   const ensured = ensureProfiles(settings.llmProfiles, settings.activeLlmProfileId, {
     apiKey: settings.translateApiKey,
     baseUrl: settings.translateBaseUrl,
@@ -99,6 +110,7 @@ function settingsToForm(settings: SavedSettings): SettingsForm {
     flatSrtItems: settings.flatSrtItems,
     locale: settings.locale,
     modelsDir: settings.modelsDir ?? "",
+    appLogHealth,
   };
 }
 
@@ -115,7 +127,7 @@ export function useSettingsController({
   pushToast,
   refreshModelStatus,
 }: UseSettingsControllerArgs) {
-  const [form, setForm] = useState<SettingsForm>(() => settingsToForm(settings));
+  const [form, setForm] = useState<SettingsForm>(() => settingsToForm(settings, null));
   const { t } = useTranslation(["toasts", "tasks", "settings"]);
   const invalidateSourceLanguages = useInvalidateSourceLanguages();
 
@@ -131,11 +143,29 @@ export function useSettingsController({
     }));
   }, [settings.terminologyGroups, settings.activeTerminologyGroupId]);
 
+  /**
+   * Probe the app-error-log writer health (diagnostics only). Never toasts:
+   * a broken logger must not scare the user, so a failed probe just degrades
+   * to "unknown" (null) and the log section stays silent.
+   */
+  const refreshAppLogHealth = useCallback(async () => {
+    try {
+      const health = await getAppLogHealthApi();
+      setForm((prev) => ({ ...prev, appLogHealth: health }));
+    } catch (error) {
+      console.warn("failed to read app log health:", error);
+      setForm((prev) => ({ ...prev, appLogHealth: null }));
+    }
+  }, []);
+
   const openSettings = useCallback(() => {
     void refreshModelStatus();
-    setForm(settingsToForm(settings));
+    void refreshAppLogHealth();
+    // Keep the previous snapshot (if any) visible while the probe is in
+    // flight — avoids the warning line flashing away on every open.
+    setForm((prev) => ({ ...settingsToForm(settings, prev.appLogHealth) }));
     dispatch({ type: "set_ui", payload: { showSettings: true } });
-  }, [dispatch, refreshModelStatus, settings]);
+  }, [dispatch, refreshModelStatus, refreshAppLogHealth, settings]);
 
   const selectLlmProvider = useCallback((id: LlmProviderId) => {
     setForm((prev) => {
@@ -228,7 +258,7 @@ export function useSettingsController({
     const nextSettings = normalizeSettings(draft, settings);
 
     dispatch({ type: "set_settings", settings: nextSettings });
-    setForm(settingsToForm(nextSettings));
+    setForm((prev) => ({ ...settingsToForm(nextSettings, prev.appLogHealth) }));
 
     try {
       await saveAppSettingsApi(nextSettings);
@@ -400,6 +430,8 @@ export function useSettingsController({
     updateActiveLlmProfile,
     resetActiveLlmProfile,
     prepareTerminologyForm,
+    /** Latest app-log health snapshot (`null` = unknown / not probed yet). */
+    appLogHealth: form.appLogHealth,
     form,
     setForm,
   };

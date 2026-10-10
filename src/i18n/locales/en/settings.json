@@ -113,6 +113,8 @@
     "logDir": "Error log",
     "logDirHint": "App-level error records — send this when reporting a problem",
     "logDirOpen": "Open log folder",
+    "logDirUnwritable": "Log is not writable right now: {{reason}}",
+    "logDirUnwritableUnknown": "Log is not writable right now",
     "asr06bDesc": "Default: good enough accuracy, multilingual, balanced speed, smaller download.",
     "asr17bDesc": "Pick for higher accuracy; language coverage similar to 0.6B, larger download.",
     "asrCohereDesc": "Strong accuracy and faster recognition; fixed 14 languages — good for EU / mixed speech.",

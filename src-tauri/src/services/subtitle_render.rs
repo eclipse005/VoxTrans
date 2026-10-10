@@ -9,12 +9,14 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::services::binary::{configure_background_command, resolve_bundled_or_path};
 use crate::domain::preferences_types::{
     SubtitleBorderStyle, SubtitleBurnMode, SubtitleLineStyle, SubtitleRenderStyle,
 };
-use crate::services::task_path::{sanitize_filename_component, task_output_dir};
 use crate::domain::workspace_subtitle::WorkspaceSubtitleSegment;
+use crate::services::binary::{
+    configure_background_command, describe_exit, resolve_bundled_or_path,
+};
+use crate::services::task_path::{sanitize_filename_component, task_output_dir};
 
 pub struct BurnHardSubtitleRequest {
     pub task_id: String,
@@ -38,7 +40,11 @@ pub fn burn_hard_subtitle(
         return Err("Current task has no burnable subtitles".to_string());
     }
 
-    let lines = build_ass_dialogue_lines(&request.subtitle_segments, request.burn_mode, &request.style);
+    let lines = build_ass_dialogue_lines(
+        &request.subtitle_segments,
+        request.burn_mode,
+        &request.style,
+    );
     if lines.is_empty() {
         return Err("Selected subtitle type is empty, cannot burn hard subtitle".to_string());
     }
@@ -177,8 +183,10 @@ fn build_ass_text(style: &SubtitleRenderStyle, lines: &[AssDialogueLine]) -> Str
         _ => 2,
     };
 
-    let source_style = build_ass_style_line("Source", &style.source, alignment, style.layout.margin_v);
-    let target_style = build_ass_style_line("Target", &style.target, alignment, style.layout.margin_v);
+    let source_style =
+        build_ass_style_line("Source", &style.source, alignment, style.layout.margin_v);
+    let target_style =
+        build_ass_style_line("Target", &style.target, alignment, style.layout.margin_v);
 
     let mut output = String::new();
     output.push_str("[Script Info]\n");
@@ -191,7 +199,9 @@ fn build_ass_text(style: &SubtitleRenderStyle, lines: &[AssDialogueLine]) -> Str
     output.push_str(&source_style);
     output.push_str(&target_style);
     output.push_str("\n[Events]\n");
-    output.push_str("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
+    output.push_str(
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
+    );
     for line in lines {
         output.push_str(&format!(
             "Dialogue: {},{},{},{},,0,0,{},,{}\n",
@@ -213,7 +223,11 @@ fn build_ass_style_line(
     margin_v: u32,
 ) -> String {
     let font_name = style.font_family.trim();
-    let font_name = if font_name.is_empty() { "Arial" } else { font_name };
+    let font_name = if font_name.is_empty() {
+        "Arial"
+    } else {
+        font_name
+    };
     let font_size = style.font_size.clamp(16, 96);
     // libass renders nothing when Outline is exactly 0.0 (regardless of
     // BorderStyle), so clamp to a small positive value to guarantee the
@@ -251,17 +265,15 @@ fn run_ffmpeg_burn(media_path: &Path, ass_path: &Path, output_path: &Path) -> Re
         true,
     ) {
         Ok(()) => Ok(()),
-        Err(copy_err) => {
-            execute_ffmpeg_burn(
-                media_path,
-                ass_path,
-                output_path,
-                ass_name,
-                target_video_bitrate_kbps,
-                false,
-            )
-            .map_err(|aac_err| format!("{copy_err}; fallback to AAC also failed: {aac_err}"))
-        }
+        Err(copy_err) => execute_ffmpeg_burn(
+            media_path,
+            ass_path,
+            output_path,
+            ass_name,
+            target_video_bitrate_kbps,
+            false,
+        )
+        .map_err(|aac_err| format!("{copy_err}; fallback to AAC also failed: {aac_err}")),
     }
 }
 
@@ -320,11 +332,12 @@ fn execute_ffmpeg_burn(
         return Ok(());
     }
 
+    let reason = describe_exit(&output.status);
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if stderr.is_empty() {
-        return Err("ffmpeg execution failed".to_string());
+        return Err(format!("ffmpeg execution failed ({reason})"));
     }
-    Err(stderr)
+    Err(format!("ffmpeg execution failed ({reason}): {stderr}"))
 }
 
 /// Probe the source video stream bitrate via `ffmpeg -i` so the burn can
@@ -348,7 +361,10 @@ fn probe_source_video_bitrate_kbps(media_path: &Path) -> Option<u32> {
     let kbps = video_line
         .split(',')
         .map(|part| part.trim())
-        .find_map(|part| part.strip_suffix(" kb/s").and_then(|n| n.parse::<u32>().ok()))?;
+        .find_map(|part| {
+            part.strip_suffix(" kb/s")
+                .and_then(|n| n.parse::<u32>().ok())
+        })?;
     Some(kbps.clamp(300, 40_000))
 }
 
@@ -550,7 +566,10 @@ mod tests {
         style.source.border_style = SubtitleBorderStyle::Box;
         let line = build_ass_style_line("Source", &style.source, 2, 40);
         // border style field is the value right before outline (here 2.5)
-        assert!(line.contains(",3,2.5,"), "box border should encode as 3: {line}");
+        assert!(
+            line.contains(",3,2.5,"),
+            "box border should encode as 3: {line}"
+        );
     }
 
     #[test]
@@ -575,7 +594,10 @@ mod tests {
     fn outline_border_style_maps_to_one() {
         let style = default_style(); // default border_style is Outline
         let line = build_ass_style_line("Source", &style.source, 2, 40);
-        assert!(line.contains(",1,2.5,"), "outline border should encode as 1: {line}");
+        assert!(
+            line.contains(",1,2.5,"),
+            "outline border should encode as 1: {line}"
+        );
     }
 
     #[test]

@@ -1,4 +1,6 @@
-use crate::services::binary::{configure_background_command, resolve_bundled_or_path};
+use crate::services::binary::{
+    configure_background_command, describe_exit, resolve_bundled_or_path,
+};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -39,9 +41,14 @@ fn extract_audio_with_ffmpeg(input_path: &Path, output_wav: &Path) -> Result<(),
         return Ok(());
     }
 
+    let reason = describe_exit(&output.status);
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if stderr.is_empty() {
-        return Err("Failed to extract audio: ffmpeg execution failed".to_string());
+        return Err(format!(
+            "Failed to extract audio: ffmpeg execution failed ({reason})"
+        ));
     }
-    Err(format!("Failed to extract audio: {stderr}"))
+    Err(format!(
+        "Failed to extract audio: ffmpeg execution failed ({reason}): {stderr}"
+    ))
 }

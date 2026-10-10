@@ -113,6 +113,8 @@
     "logDir": "程序错误日志",
     "logDirHint": "程序运行出错的记录，反馈问题时发给开发者",
     "logDirOpen": "打开日志目录",
+    "logDirUnwritable": "日志当前不可写：{{reason}}",
+    "logDirUnwritableUnknown": "日志当前不可写",
     "asr06bDesc": "默认首选：精度够用、多语种、速度均衡，下载也相对小。",
     "asr17bDesc": "要更高识别精度时再换；语种面与 0.6B 类似，体积更大。",
     "asrCohereDesc": "精度较好，且识别更快；固定 14 种语言，欧语/多语混杂可优先。",

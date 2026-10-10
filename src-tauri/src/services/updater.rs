@@ -1,12 +1,12 @@
 /// 更新服务：检测更新、下载并安装。
 use crate::services::BUILD_VARIANT;
 
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use dashmap::DashMap;
 use tauri::Emitter;
 use tauri::Manager;
 
@@ -139,7 +139,9 @@ async fn try_check(current_version: &str) -> Result<UpdateInfo, String> {
         .assets
         .iter()
         .find(|a| a.name.ends_with(".exe") && a.name.contains(BUILD_VARIANT))
-        .ok_or(format!("Installer for current variant not found ({BUILD_VARIANT})"))?;
+        .ok_or(format!(
+            "Installer for current variant not found ({BUILD_VARIANT})"
+        ))?;
 
     Ok(UpdateInfo {
         current_version: current_version.to_string(),
@@ -164,7 +166,8 @@ pub fn download_and_install(
     cancel_flags().insert(task_id.clone(), cancel.clone());
 
     let temp_dir = std::env::temp_dir().join("voxtrans_update");
-    std::fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp directory: {}", e))?;
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
     let installer_name = installer_filename_from_url(&download_url);
     let installer_path = temp_dir.join(Path::new(installer_name));

@@ -260,7 +260,9 @@ pub fn set_phase(phase: &str) {
         return;
     }
     {
-        let Ok(mut last) = LAST_PHASE.lock() else { return };
+        let Ok(mut last) = LAST_PHASE.lock() else {
+            return;
+        };
         if last.as_deref() == Some(phase.as_str()) {
             return;
         }
@@ -348,7 +350,10 @@ fn last_session_marker(text: &str) -> Option<SessionMarker> {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        let code = value.get("code").and_then(|c| c.as_str()).unwrap_or_default();
+        let code = value
+            .get("code")
+            .and_then(|c| c.as_str())
+            .unwrap_or_default();
         let pid = value.get("pid").and_then(|p| p.as_u64()).unwrap_or(0) as u32;
         let ts = value
             .get("ts")
@@ -379,7 +384,9 @@ impl CrashReport {
             .trim()
             .to_string();
         match &self.phase {
-            Some(phase) if !phase.is_empty() => format!("native exception while in {phase} ({code})"),
+            Some(phase) if !phase.is_empty() => {
+                format!("native exception while in {phase} ({code})")
+            }
             _ => format!("native exception ({code})"),
         }
     }
@@ -402,7 +409,9 @@ fn take_crash_reports_in(dir: &Path) -> Vec<CrashReport> {
         if !name.starts_with(CRASH_FILE_PREFIX) || !name.ends_with(".txt") {
             continue;
         }
-        let Ok(bytes) = fs::read(entry.path()) else { continue };
+        let Ok(bytes) = fs::read(entry.path()) else {
+            continue;
+        };
         let _ = fs::remove_file(entry.path());
         // Lossy: the handler truncates into a fixed buffer and may cut a
         // multi-byte character. A slightly mangled line beats no line.
@@ -457,8 +466,8 @@ mod native_crash {
     pub(super) fn install() {
         let dir = log_dir();
         if fs::create_dir_all(&dir).is_ok() {
-            let _ = REPORT_PATH
-                .set(dir.join(format!("{CRASH_FILE_PREFIX}{}.txt", std::process::id())));
+            let _ =
+                REPORT_PATH.set(dir.join(format!("{CRASH_FILE_PREFIX}{}.txt", std::process::id())));
         }
         // SAFETY: a plain function pointer with the documented signature; the
         // filter only writes a file and returns.
@@ -471,7 +480,10 @@ mod native_crash {
         }
         if !info.is_null() && unsafe { !(*info).ExceptionRecord.is_null() } {
             let record = unsafe { *(*info).ExceptionRecord };
-            write_report(record.ExceptionCode as u32, record.ExceptionAddress as usize);
+            write_report(
+                record.ExceptionCode as u32,
+                record.ExceptionAddress as usize,
+            );
         }
         EXCEPTION_EXECUTE_HANDLER
     }
@@ -479,14 +491,13 @@ mod native_crash {
     /// Best-effort, allocation-light, and never allowed to unwind: the stack may
     /// be exhausted and the heap may be suspect by the time we get here.
     fn write_report(code: u32, address: usize) {
-        let Some(path) = REPORT_PATH.get() else { return };
+        let Some(path) = REPORT_PATH.get() else {
+            return;
+        };
         let mut buffer = [0u8; 192];
         // `try_lock`: the crash may have happened while the log lock (or this
         // one) was held, and blocking here would hang the dying process.
-        let phase = LAST_PHASE
-            .try_lock()
-            .ok()
-            .and_then(|guard| guard.clone());
+        let phase = LAST_PHASE.try_lock().ok().and_then(|guard| guard.clone());
         let len = format_report(code, address, phase.as_deref(), &mut buffer);
         let _ = fs::write(path, &buffer[..len]);
     }
@@ -569,13 +580,7 @@ fn panic_payload(info: &std::panic::PanicHookInfo<'_>) -> String {
 
 fn os_tag() -> &'static str {
     static TAG: OnceLock<String> = OnceLock::new();
-    TAG.get_or_init(|| {
-        format!(
-            "{}-{}",
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        )
-    })
+    TAG.get_or_init(|| format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH))
 }
 
 fn state() -> &'static Mutex<State> {
@@ -615,9 +620,22 @@ struct State {
     file: Option<File>,
     /// Set after a directory/file failure so we stop retrying on every error.
     disabled: bool,
+    /// Why it was disabled. A log that silently stops being written is
+    /// indistinguishable from "nothing went wrong", so the reason has to be
+    /// answerable — see [`health`].
+    disabled_reason: Option<String>,
 }
 
 impl State {
+    /// Stop writing for the rest of the process, remembering why. First failure
+    /// wins: every later path short-circuits on `disabled`.
+    fn disable(&mut self, reason: String) {
+        if !self.disabled {
+            self.disabled_reason = Some(reason);
+        }
+        self.disabled = true;
+    }
+
     fn ensure_open(&mut self) -> bool {
         self.ensure_open_in(&log_dir())
     }
@@ -629,8 +647,8 @@ impl State {
         if self.disabled {
             return false;
         }
-        if fs::create_dir_all(dir).is_err() {
-            self.disabled = true;
+        if let Err(err) = fs::create_dir_all(dir) {
+            self.disable(format!("cannot create {}: {err}", dir.display()));
             return false;
         }
         match open_append(&active_path(dir)) {
@@ -639,8 +657,8 @@ impl State {
                 self.file = Some(file);
                 true
             }
-            Err(_) => {
-                self.disabled = true;
+            Err(err) => {
+                self.disable(format!("cannot open {}: {err}", active_path(dir).display()));
                 false
             }
         }
@@ -678,8 +696,11 @@ impl State {
                 self.file = Some(file);
                 true
             }
-            Err(_) => {
-                self.disabled = true;
+            Err(err) => {
+                self.disable(format!(
+                    "cannot reopen {}: {err}",
+                    active_path(dir).display()
+                ));
                 false
             }
         }
@@ -710,11 +731,46 @@ fn write_entry_in(dir: &Path, state: &mut State, entry: &Entry<'_>) -> io::Resul
     // One `write_all` plus a flush per line: errors are rare, and a support log
     // is worthless if it is still sitting in a buffer when the process dies.
     if let Err(err) = file.write_all(line.as_bytes()).and_then(|()| file.flush()) {
-        state.disabled = true;
+        state.disable(format!("write failed: {err}"));
         state.file = None;
         return Err(err);
     }
     Ok(())
+}
+
+/// Why the log is — or is not — being written, for the settings screen.
+///
+/// Read-only on purpose: answering "can you write the log?" must not create the
+/// directory (or fail on the very broken path the question is about).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppLogHealth {
+    /// Absolute path of the active file.
+    pub path: String,
+    /// Absolute path of the directory holding it.
+    pub directory: String,
+    /// False once a write or open failure disabled the log for this process.
+    pub enabled: bool,
+    /// The failure that disabled it, verbatim enough to act on.
+    pub disabled_reason: Option<String>,
+    /// Whether the file handle is currently open.
+    pub file_open: bool,
+}
+
+pub fn health() -> AppLogHealth {
+    health_of(&lock())
+}
+
+/// The mapping from state to report, split out so it can be tested against a
+/// state that was actually disabled (the global one usually is not).
+fn health_of(state: &State) -> AppLogHealth {
+    AppLogHealth {
+        path: log_path().display().to_string(),
+        directory: log_dir().display().to_string(),
+        enabled: !state.disabled,
+        disabled_reason: state.disabled_reason.clone(),
+        file_open: state.file.is_some(),
+    }
 }
 
 fn open_append(path: &Path) -> io::Result<File> {
@@ -754,10 +810,8 @@ mod tests {
 
     /// Unique per test so parallel cases cannot share a directory.
     fn scratch_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "voxtrans_app_log_{label}_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("voxtrans_app_log_{label}_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch dir");
         dir
@@ -818,9 +872,14 @@ mod tests {
     /// by the file tests above; these pin the pass-through contract.
     #[test]
     fn guard_passes_the_result_through_untouched() {
-        assert_eq!(guard("test.boundary", "OK_CODE", || Ok::<u32, String>(7)), Ok(7));
         assert_eq!(
-            guard("test.boundary", "ERR_CODE", || Err::<u32, String>("boom".into())),
+            guard("test.boundary", "OK_CODE", || Ok::<u32, String>(7)),
+            Ok(7)
+        );
+        assert_eq!(
+            guard("test.boundary", "ERR_CODE", || Err::<u32, String>(
+                "boom".into()
+            )),
             Err("boom".to_string())
         );
     }
@@ -832,7 +891,10 @@ mod tests {
             Ok(7)
         );
         assert_eq!(
-            guard_async("test.boundary", "ERR_CODE", async { Err::<u32, String>("boom".into()) }).await,
+            guard_async("test.boundary", "ERR_CODE", async {
+                Err::<u32, String>("boom".into())
+            })
+            .await,
             Err("boom".to_string())
         );
     }
@@ -863,10 +925,16 @@ mod tests {
         // pruning `target/` can make them disagree (exe-relative root vs the
         // platform fallback) for no real reason.
         let dir = log_dir();
-        assert_eq!(dir.file_name().and_then(|name| name.to_str()), Some(LOG_DIR_NAME));
+        assert_eq!(
+            dir.file_name().and_then(|name| name.to_str()),
+            Some(LOG_DIR_NAME)
+        );
         assert_eq!(log_path(), dir.join(LOG_FILE_NAME));
         let root = dir.parent().expect("log dir has a parent");
-        assert_eq!(root.file_name().and_then(|name| name.to_str()), Some("output"));
+        assert_eq!(
+            root.file_name().and_then(|name| name.to_str()),
+            Some("output")
+        );
     }
 
     #[test]
@@ -899,7 +967,10 @@ mod tests {
         write_entry(&mut state, &sample("startup failure")).expect("write");
 
         let line = read_lines(&active_path(&dir)).remove(0);
-        assert!(!line.contains("context"), "absent context must not serialize: {line}");
+        assert!(
+            !line.contains("context"),
+            "absent context must not serialize: {line}"
+        );
     }
 
     #[test]
@@ -958,7 +1029,10 @@ mod tests {
 
         let rolled = read_lines(&rotated_path(&dir, 1));
         assert_eq!(rolled.len(), 1);
-        assert!(rolled[0].starts_with("xxxx"), "the oversized file was rolled aside");
+        assert!(
+            rolled[0].starts_with("xxxx"),
+            "the oversized file was rolled aside"
+        );
 
         let active = read_lines(&active_path(&dir));
         assert_eq!(active.len(), 1);
@@ -966,20 +1040,52 @@ mod tests {
     }
 
     #[test]
-    fn an_unusable_directory_disables_the_log_without_panicking() {        // A file where a directory is expected: create_dir_all fails fatally.
-        let blocker = std::env::temp_dir().join(format!(
-            "voxtrans_app_log_blocker_{}",
-            std::process::id()
-        ));
+    fn an_unusable_directory_disables_the_log_without_panicking() {
+        // A file where a directory is expected: create_dir_all fails fatally.
+        let blocker =
+            std::env::temp_dir().join(format!("voxtrans_app_log_blocker_{}", std::process::id()));
         fs::write(&blocker, b"not a directory").expect("blocker file");
 
         let mut state = State::default();
         assert!(!state.ensure_open_in(&blocker.join("logs")));
         assert!(state.disabled, "a failed open must not be retried forever");
-        // Still a no-op rather than a panic.
+        // The reason is what makes the failure answerable from the settings
+        // screen, instead of looking like "no errors happened".
+        let reason = state.disabled_reason.clone().expect("a disabling reason");
+        assert!(
+            reason.contains("cannot create"),
+            "unhelpful reason: {reason}"
+        );
+        // Still a no-op rather than a panic, and the first failure is kept.
         write_entry(&mut state, &sample("unwritable")).expect("best effort");
+        assert_eq!(state.disabled_reason.as_deref(), Some(reason.as_str()));
 
         let _ = fs::remove_file(&blocker);
+    }
+
+    /// What the settings screen reads: a healthy log reports no reason, and a
+    /// disabled one reports the reason it stopped.
+    #[test]
+    fn health_reports_whether_writes_are_landing() {
+        let healthy = health_of(&State::default());
+        assert!(healthy.enabled);
+        assert!(healthy.disabled_reason.is_none());
+        assert!(!healthy.file_open, "nothing opened it yet");
+        assert!(healthy.path.ends_with(LOG_FILE_NAME));
+        assert_eq!(
+            std::path::Path::new(&healthy.directory).join(LOG_FILE_NAME),
+            std::path::Path::new(&healthy.path),
+            "the two paths must describe the same file"
+        );
+
+        let mut state = State::default();
+        state.disable("cannot open C:\\nope\\app.log: access denied".to_string());
+        let broken = health_of(&state);
+        assert!(!broken.enabled);
+        assert_eq!(
+            broken.disabled_reason.as_deref(),
+            Some("cannot open C:\\nope\\app.log: access denied")
+        );
     }
 
     // ── the three death-visibility layers ───────────────────────────────
@@ -997,18 +1103,31 @@ mod tests {
 
         // Errors after the start do not confuse it; the older start still owns
         // the "unfinished" verdict.
-        let text = format!("{start}\n{}\n{}", sample_line("later error"), sample_line("another"));
-        assert!(matches!(last_session_marker(&text), Some(SessionMarker::Start { .. })));
+        let text = format!(
+            "{start}\n{}\n{}",
+            sample_line("later error"),
+            sample_line("another")
+        );
+        assert!(matches!(
+            last_session_marker(&text),
+            Some(SessionMarker::Start { .. })
+        ));
 
         // A stop after a start: clean, regardless of anything older.
         let text = format!("{start}\n{stop}");
-        assert!(matches!(last_session_marker(&text), Some(SessionMarker::Stop)));
+        assert!(matches!(
+            last_session_marker(&text),
+            Some(SessionMarker::Stop)
+        ));
 
         // Nothing but errors.
         assert!(last_session_marker(&sample_line("only an error")).is_none());
         // Malformed session lines are skipped, not fatal.
         let text = format!("{start}\n{}bad json", "{\"level\":\"session\"");
-        assert!(matches!(last_session_marker(&text), Some(SessionMarker::Start { .. })));
+        assert!(matches!(
+            last_session_marker(&text),
+            Some(SessionMarker::Start { .. })
+        ));
     }
 
     /// The detector is only useful if it agrees with the writer about the
@@ -1063,8 +1182,11 @@ mod tests {
     fn crash_reports_are_promoted_once_and_then_removed() {
         let dir = scratch_dir("crash");
         let report = dir.join(format!("{CRASH_FILE_PREFIX}{}.txt", 1234));
-        fs::write(&report, "code=0xC0000005 address=0x00007FF612345678 pid=1234 phase=ep12:recognizing")
-            .expect("write report");
+        fs::write(
+            &report,
+            "code=0xC0000005 address=0x00007FF612345678 pid=1234 phase=ep12:recognizing",
+        )
+        .expect("write report");
         // An unrelated file must not be swept up.
         fs::write(dir.join("app.log"), "{}").expect("decoy");
 
@@ -1073,9 +1195,15 @@ mod tests {
         assert_eq!(reports[0].phase.as_deref(), Some("ep12:recognizing"));
         assert!(reports[0].summary().contains("ep12:recognizing"));
         assert!(reports[0].summary().contains("0xC0000005"));
-        assert!(!report.exists(), "a promoted report must not repeat next start");
+        assert!(
+            !report.exists(),
+            "a promoted report must not repeat next start"
+        );
         assert!(dir.join("app.log").exists());
-        assert!(take_crash_reports_in(&dir).is_empty(), "nothing left to promote");
+        assert!(
+            take_crash_reports_in(&dir).is_empty(),
+            "nothing left to promote"
+        );
     }
 
     /// The crash handler must not allocate; its sink truncates instead.
@@ -1104,7 +1232,10 @@ mod tests {
             &mut buffer,
         );
         let line = std::str::from_utf8(&buffer[..len]).expect("ascii");
-        assert!(line.starts_with("code=0xC0000005 address=0x00007FF612345678"), "{line}");
+        assert!(
+            line.starts_with("code=0xC0000005 address=0x00007FF612345678"),
+            "{line}"
+        );
         assert!(line.contains("phase=ep12:recognizing"), "{line}");
 
         // Without a phase (the crash happened before any task stage) the report
@@ -1143,7 +1274,10 @@ mod tests {
         let stop = session_marker_entry(SESSION_STOP_CODE, "clean shutdown");
         write_entry_in(&dir, &mut state, &stop).expect("write stop");
         let text = fs::read_to_string(active_path(&dir)).expect("log");
-        assert!(matches!(last_session_marker(&text), Some(SessionMarker::Stop)));
+        assert!(matches!(
+            last_session_marker(&text),
+            Some(SessionMarker::Stop)
+        ));
         // The stop must be filterable the same way the start is.
         let last_line = text.lines().last().expect("line");
         let value: serde_json::Value = serde_json::from_str(last_line).expect("json");

@@ -243,7 +243,10 @@ fn download_model_files(
         .cloned()
         .collect::<Vec<_>>();
     if !missing_files.is_empty() {
-        return Err(format!("Download finished but files missing: {}", missing_files.join(", ")));
+        return Err(format!(
+            "Download finished but files missing: {}",
+            missing_files.join(", ")
+        ));
     }
 
     set_model_download_snapshot(
@@ -330,8 +333,8 @@ mod tests {
 
     #[test]
     fn placeholder_downloads_keep_asr_and_align_entrypoints_active() {
-        let asr = model_definition(ModelTarget::Asr, None)
-            .expect("ASR model definition should be valid");
+        let asr =
+            model_definition(ModelTarget::Asr, None).expect("ASR model definition should be valid");
         let align = model_definition(ModelTarget::Align, None)
             .expect("align model definition should be valid");
 

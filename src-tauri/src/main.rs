@@ -34,9 +34,7 @@ fn main() {
                 Ok(handle)
                     if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread =>
                 {
-                    tokio::task::block_in_place(|| {
-                        handle.block_on(db::init_pool(&app_handle))
-                    })
+                    tokio::task::block_in_place(|| handle.block_on(db::init_pool(&app_handle)))
                 }
                 _ => tauri::async_runtime::block_on(db::init_pool(&app_handle)),
             };
@@ -91,6 +89,7 @@ fn main() {
             commands::workspace::execute_task_batch,
             commands::logs::read_task_log,
             commands::logs::report_frontend_error,
+            commands::logs::get_app_log_health,
             commands::logs::clear_task_logs,
             commands::logs::get_task_total_tokens,
             commands::updater::check_update,

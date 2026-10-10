@@ -2,11 +2,11 @@ use tauri::AppHandle;
 
 use crate::domain::error::{WorkspaceError, WorkspaceResult};
 
+use super::store::TaskStore as _;
 use super::{
     TaskStage, WorkspaceTaskProgressState, WorkspaceTaskStageState, lock_workspace_store,
     patch_task_item,
 };
-use super::store::TaskStore as _;
 
 pub(super) fn task_progress_state(
     stage: TaskStage,
@@ -63,8 +63,7 @@ pub(super) fn is_visible_progress(
     if next.stage.total == 0 || next.stage.current >= next.stage.total {
         return true;
     }
-    previous.stage.total != next.stage.total
-        || visible_percent(previous) != visible_percent(next)
+    previous.stage.total != next.stage.total || visible_percent(previous) != visible_percent(next)
 }
 
 /// The progress already persisted for `task_id`, without cloning or writing.

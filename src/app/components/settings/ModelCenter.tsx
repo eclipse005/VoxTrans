@@ -27,6 +27,8 @@ export function ModelCenter({
 }: ModelCenterProps) {
   const { t } = useTranslation(["settings", "models", "common"]);
   const ctx = useSettingsFormContext();
+  /** App-log writer health, probed by the settings controller on each open. */
+  const appLogHealth = ctx.form.appLogHealth;
   const selectedAsr = ctx.form.asrModel;
   const selectedAlign = ctx.form.alignModel;
 
@@ -84,6 +86,23 @@ export function ModelCenter({
         <div className="model-dir-main">
           <span className="model-section-label">{t("settings:models.logDir")}</span>
           <span className="model-dir-path">{t("settings:models.logDirHint")}</span>
+          {appLogHealth && !appLogHealth.enabled ? (
+            <span
+              className="model-dir-path"
+              // The class clips with an ellipsis; the tooltip is how the whole
+              // reason stays readable when it is the actionable part.
+              title={
+                appLogHealth.disabledReason ??
+                t("settings:models.logDirUnwritableUnknown")
+              }
+            >
+              {appLogHealth.disabledReason
+                ? t("settings:models.logDirUnwritable", {
+                    reason: appLogHealth.disabledReason,
+                  })
+                : t("settings:models.logDirUnwritableUnknown")}
+            </span>
+          ) : null}
         </div>
         <div className="model-dir-actions">
           <button
