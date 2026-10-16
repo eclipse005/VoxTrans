@@ -67,7 +67,8 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
 
 ## CI 与发布
 
-- **CI**（`.github/workflows/ci.yml`）：push 到 `agent` / `main`、或开 PR 时自动跑。
+- **CI**（`.github/workflows/ci.yml`）：push 到 `main`、或开 PR 时自动跑（`main` 是唯一
+  工作分支，直接提交，不走过第二条线）。
   `static`（Linux：版本一致性、locale 守护、eslint、vitest、tsc + vite build）与
   `rust`（Windows：clippy `-D warnings`、两个包的测试、bindings 漂移检查）。
   CI 是网不是主循环：本地先跑 `npm run verify`（或 `verify:fast`）再推
