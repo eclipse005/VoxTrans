@@ -41,7 +41,7 @@ tauri-plugin-dialog = "2.6.0"
 chrono = { version = "0.4", features = ["clock"] }
 hound = "3.5"
 jieba-rs = "0.10"
-punkt = { git = "https://github.com/eclipse005/rust-punkt.git" }
+punkt = { git = "https://github.com/eclipse005/rust-punkt.git", rev = "cc85cbd4ac7f82a747304f2ed211e19ef6eb55e9" }
 voxtrans-core = { path = "../voxtrans-core" }
 tokio = { version = "1", features = ["rt", "sync", "time", "macros", "rt-multi-thread"] }
 font-kit = "0.14"
