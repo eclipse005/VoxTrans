@@ -23,10 +23,18 @@ if (-not (Test-Path $installerNsi)) {
 # Scheme B: only compute runtime DLLs (cudart / cublas / cublasLt / curand).
 # Do NOT download nvrtc / nvrtc-builtins / nvJitLink / CUDA headers — kernels
 # ship as precompiled multi-arch PTX embedded in the engine crates.
+#
+# Anchor strategy: each block is inserted directly BEFORE the next section's
+# banner comment, and every anchor must match exactly once or the script
+# throws. An earlier version replaced the whitespace between two adjacent
+# banner comments ("Copy external binaries" .. "Create file associations"),
+# which silently stopped matching when Tauri 2.10 began rendering an
+# `{{#each binaries}}` File loop between them — v1.6.0 shipped a CUDA
+# installer whose download block was simply absent, and nobody could see it.
+# A silent miss is the failure mode this script must never have again.
 $content = Get-Content $installerNsi -Raw
 
 $installBlock = @'
-  ; Copy external binaries
   !ifdef INCLUDE_CUDA_RUNTIME
   ; CUDA 12.8 user-mode libs only (no NVRTC). Skip if already present.
   ${IfNot} ${FileExists} "$INSTDIR\cudart64_12.dll"
@@ -62,11 +70,9 @@ $installBlock = @'
   cuda_done:
   !endif
 
-  ; Create file associations
 '@
 
 $uninstallBlock = @'
-  ; Delete external binaries
   !ifdef INCLUDE_CUDA_RUNTIME
     ${If} $DeleteAppDataCheckboxState = 1
     ${AndIf} $UpdateMode <> 1
@@ -77,7 +83,6 @@ $uninstallBlock = @'
     ${EndIf}
   !endif
 
-  ; Delete app associations
 '@
 
 # Tauri's uninstaller section also unconditionally wipes $INSTDIR\bin and tries
@@ -92,29 +97,37 @@ $binAndInstdirBlock = @'
   ${EndIf}
 '@
 
-# Replace the empty "Copy external binaries" / "Create file associations" placeholder.
-# Use a MatchEvaluator (scriptblock) so $0 / $1 in $installBlock are not
-# interpreted as regex backreferences or PowerShell variables.
-$content = [regex]::Replace(
-  $content,
-  '(?ms)  ; Copy external binaries\s*\r?\n\s*; Create file associations',
-  [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $installBlock }
-)
+# MatchEvaluator (scriptblock) everywhere below: NSIS's $0 / ${...} text must
+# not be interpreted as regex backreferences or PowerShell variables.
+function Insert-Before-Required {
+  param(
+    [string]$Text,
+    [string]$AnchorPattern,
+    [string]$Block,
+    [string]$Label
+  )
+  $anchorMatches = [regex]::Matches($Text, $AnchorPattern)
+  if ($anchorMatches.Count -ne 1) {
+    throw "NSIS anchor '$Label' matched $($anchorMatches.Count) time(s) in installer.nsi - Tauri's NSIS template changed; update apply-cuda-runtime.ps1 before building the CUDA installer"
+  }
+  return [regex]::Replace($Text, $AnchorPattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $Block + $m.Value })
+}
 
-# Replace the empty "Delete external binaries" / "Delete app associations" placeholder
-$content = [regex]::Replace(
-  $content,
-  '(?ms)  ; Delete external binaries\s*\r?\n\s*; Delete app associations',
-  [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $uninstallBlock }
-)
+$content = Insert-Before-Required -Text $content -AnchorPattern '(?m)^  ; Create file associations\r?$' -Block $installBlock -Label 'Create file associations'
+$content = Insert-Before-Required -Text $content -AnchorPattern '(?m)^  ; Delete app associations\r?$' -Block $uninstallBlock -Label 'Delete app associations'
 
-# Wrap Tauri-generated `RMDir /REBOOTOK "$INSTDIR\bin"` + `RMDir "$INSTDIR"`
-# behind the same checkbox + update-mode guard.
-$content = [regex]::Replace(
-  $content,
-  '(?ms)  RMDir /REBOOTOK "\$INSTDIR\\bin"\r?\n  RMDir "\$INSTDIR"',
-  [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $binAndInstdirBlock }
-)
+$rmdirPattern = '(?ms)  RMDir /REBOOTOK "\$INSTDIR\\bin"\r?\n  RMDir "\$INSTDIR"'
+$rmdirMatches = [regex]::Matches($content, $rmdirPattern)
+if ($rmdirMatches.Count -ne 1) {
+  throw "NSIS anchor 'RMDir /REBOOTOK ...RMDir \$INSTDIR' matched $($rmdirMatches.Count) time(s) - Tauri's NSIS template changed; update apply-cuda-runtime.ps1"
+}
+$content = [regex]::Replace($content, $rmdirPattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $binAndInstdirBlock })
+
+# Belt and braces: both runtime blocks are in, and they are the only ones.
+$defineCount = [regex]::Matches($content, '!ifdef INCLUDE_CUDA_RUNTIME').Count
+if ($defineCount -ne 2 -or $content -notmatch 'cuda_done:') {
+  throw "post-patch self-check failed: $defineCount INCLUDE_CUDA_RUNTIME blocks, cuda_done present: $($content -match 'cuda_done:')"
+}
 
 Set-Content -LiteralPath $installerNsi -Value $content -NoNewline
 Write-Host "Patched installer.nsi with conditional CUDA runtime block"
