@@ -52,6 +52,14 @@ jobs:
           toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # tauri-build validates bundle.resources while compiling the crate, so
+      # src-tauri/bin must hold ffmpeg/yt-dlp/demucs before clippy or test can
+      # build voxtrans (first CI run failed exactly there with "resource path
+      # 'bin\demucs.exe' doesn't exist"). Same digest-verified download the
+      # packaging jobs use.
+      - name: Download bundled binaries
+        shell: pwsh
+        run: .\scripts\download-binaries.ps1
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       # Both packages spelled out: `-p voxtrans` alone leaves voxtrans-core's
