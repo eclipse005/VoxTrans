@@ -27,7 +27,9 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
 
 - `src/` —— React 前端。`app/`（components / hooks / state / styles / api）、
   `features/media/`（字幕等域逻辑）、`i18n/locales/`（zh-CN 与 en 两份 JSON，逐键成对）、
-  `generated/`（ts-rs 生成，勿手改）
+  `generated/`（ts-rs 生成，勿手改）。**全新克隆先跑 `npm run generate:types` 再构建**：
+  `npm run build`（以及打包时的 `beforeBuildCommand`）会引用这里的类型文件，缺了会报
+  TS2307 "Cannot find module '.../generated/bindings/...'"
 - `src-tauri/` —— Tauri 壳与业务服务。`domain/`（纯领域模型/状态）、`services/`
   （transcribe、translation、llm、terminology_agent、demucs 等）、`commands/`（IPC 面）、
   `db/`（SQLite 存储）、`cli/`（无头 CLI）
@@ -72,7 +74,9 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
 - `src-tauri/bin/` 里随包发布的 ffmpeg / demucs 与 `scripts/binaries.sha256` 对锚
   （`npm run verify:binaries`，换文件时把新摘要和文件放同一个提交）。yt-dlp 除外：
   它是滚动更新，两条下载路径都在下载当场对 GitHub API 的 digest 校验
-- 打包走本地 `build-release.ps1`。**发布从不走 GitHub Actions**：仓库没有任何 workflow
+- 打包走本地 `build-release.ps1`。**前置**：全新克隆要先 `scripts/download-binaries.ps1`
+  （`bundle.resources` 引用 `bin/ffmpeg.exe`、`bin/yt-dlp.exe`、`bin/demucs.exe`）和
+  `npm run generate:types`，否则打包会在缺文件处失败。**发布从不走 GitHub Actions**：仓库没有任何 workflow
   （`.github/` 被 gitignore，从未入过库；历史 17 个 Release 的 author 都是本人），
   流程是本地出 `release/VoxTrans_<v>_cpu.exe` / `_cuda.exe` 后手动建 Release 上传。
   `.github/workflows/release.yml` 只是本地留档，且不含 CUDA 运行时的 NSIS 补丁步骤
