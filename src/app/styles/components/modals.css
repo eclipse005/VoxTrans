@@ -47,14 +47,15 @@
   gap: 6px;
   cursor: default;
   transition: border-color var(--apple-transition-fast), background var(--apple-transition-fast), box-shadow var(--apple-transition-fast);
-  /* A task can hold well over a thousand cues and every row is mounted (there is
-     no virtual list). Let the browser skip style/layout/paint for rows that are
-     off screen — this is presentation only and involves no behaviour.
-     `contain-intrinsic-size: auto <h>` keeps the scroll height honest while a
-     skipped row has no measured size, and `auto` replaces the guess with the
-     real size once the row has been rendered, so the list cannot jump. */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 132px;
+  /* `content-visibility: auto` was tried here to skip layout for the off-screen
+     half of a >1000-cue task (7eb81ff) and is reverted. It breaks the list
+     twice over: skipped rows collapse to their padding under this column flex
+     layout's shrink, leaving the list's scroll height ~5x too small; and a
+     thumb drag cannot pass ~51% of the list because Chromium will not drag
+     past rows that still carry the `contain-intrinsic-size` guess. Wheel
+     scrolling hides both, which is why the one-time mount saving (~150ms)
+     looked free while dragging felt broken. Do not reintroduce it without a
+     real windowed list. */
 }
 
 .subtitle-row-card:hover {
