@@ -87,13 +87,16 @@ jobs:
           echo "$(awk '{print $1}' "/tmp/${ASSET}.sha256")  /tmp/${ASSET}" | sha256sum -c -
           mkdir -p /tmp/cargo-deny
           tar -xzf "/tmp/${ASSET}" -C /tmp/cargo-deny
-          # The yank check reads the local crates.io index cache. A clean
-          # runner's metadata-only pass leaves graph entries unfetched — the
-          # first CI run of this step missed zip's yank and tripped
-          # yanked-not-detected on the (correct) exemption. cargo fetch
-          # refreshes the index first so the check sees what a dev machine
-          # sees.
-          cargo fetch
+          # The yank check reads the local crates.io index cache. A
+          # runner-restored cache can lack the entry entirely, and neither
+          # `cargo metadata` (complete lockfile, nothing to resolve) nor
+          # `cargo fetch` (already locked and downloaded) refreshes it — two
+          # CI rounds missed zip's yank and tripped yanked-not-detected on
+          # the (correct) exemption. This dry-run update resolves zip against
+          # the index, which writes the entry, and then fails to select it
+          # because every zip 2.x is yanked — hence the `|| true`. Delete
+          # this line together with the zip exemption.
+          cargo update -p zip --dry-run || true
           "/tmp/cargo-deny/cargo-deny-${VER}-${TRIPLE}/cargo-deny.exe" check advisories sources
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
