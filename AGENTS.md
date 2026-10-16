@@ -20,6 +20,9 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
 - 类型导出：`npm run generate:types`（ts-rs → `src/generated/`，**已入库**：改了 Rust
   侧导出类型就重新生成并连同 diff 一起提交；生成物不手改）
 - CUDA 特性编译检查：`npm run cargo:check:cuda`
+- 依赖审计：`cargo deny check advisories sources`（配置 `deny.toml`；CI 的 rust job 必跑，
+  用的是钉版 0.20.2 + 官方 sha256 校验的二进制。本机网络对 github HTTPS 不通时加
+  `--offline` 复用已缓存的 advisory-db）
 - 无头 CLI：`cargo run -p voxtrans --bin voxtrans-cli -- --help`
   （用法与设计见 `src-tauri/src/cli/README.md`）
 - 发版打包：`.\build-release.ps1`（本地出 CPU + CUDA 安装包）
@@ -74,7 +77,8 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
 - **CI**（`.github/workflows/ci.yml`）：push 到 `main`、或开 PR 时自动跑（`main` 是唯一
   工作分支，直接提交，不走过第二条线）。
   `static`（Linux：版本一致性、locale 守护、eslint、vitest、tsc + vite build）与
-  `rust`（Windows：clippy `-D warnings`、两个包的测试、bindings 漂移检查）。
+  `rust`（Windows：clippy `-D warnings`、两个包的测试、cargo-deny 依赖审计、
+  bindings 漂移检查）。
   CI 是网不是主循环：本地先跑 `npm run verify`（或 `verify:fast`）再推
 - **发版**（`.github/workflows/release.yml`，tag 触发）：
   1. `github-release.md` 顶部「未发布」段改名为 `## v<版本>`（发布说明单一出处，

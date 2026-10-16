@@ -1,0 +1,66 @@
+# cargo-deny 配置 —— 依赖安全与来源治理。
+#
+# 运行（本地与 CI 同一条命令；CI 在 rust job 里跑，二进制钉版 0.20.2 + sha256 校验）：
+#   cargo deny check advisories sources
+#
+# 只开 advisories 与 sources：这两条都是「有事实依据就能判定」的检查，
+# [bans] / [licenses] 一开就会大面积报出与本次治理无关的历史债，先不开。
+#
+# 本地网络提示：本机对 github.com 的 HTTPS 可能不通（SSH 通），首次拉
+# advisory-db 若失败就加 `--offline` 复用已有缓存（%USERPROFILE%\.cargo\advisory-dbs\）。
+
+[graph]
+# 交付目标只有 Windows x64；按它评估依赖图，不把其他平台的可选依赖算进风险面。
+targets = [
+    { triple = "x86_64-pc-windows-msvc" },
+]
+
+[advisories]
+version = 2
+# Cargo.lock 入库：出现 yanked 就说明锁文件该更新了，直接失败。
+yanked = "deny"
+# unmaintained = "workspace"：只把「本仓库直接依赖」里的停维护 crate 当错误。
+# 传递依赖里已知修不动的一批（实测：fxhash、paste、proc-macro-error2、rand_os、
+# unic-* —— 分别来自 tauri-utils / punkt 的旧链）降为提示；一个都修不了的门禁
+# 等于没有门禁，只会被无视。
+unmaintained = "workspace"
+# 刻意保持最小：只放「传递依赖 + 修复位置不在本仓库」的通告，并写明摘除条件。
+# unused-ignored-advisory = "deny"：豁免一旦不再命中（上游修了/升级了），
+# 构建会红着提醒你把它删掉，不留烂账。
+unused-ignored-advisory = "deny"
+ignore = [
+    # rustc-serialize（punkt → num 0.1 → …）的 JSON 深嵌套栈溢出。
+    # punkt 是我们自己的 fork：摘除条件 = 在 rust-punkt 仓库里升级 num 依赖后换 rev；
+    # 在那之前它只经 punkt 内部使用，不是本仓库对外的解析入口。
+    "RUSTSEC-2022-0004",
+    # zip 2.4.2 被上游按「整线回收」政策 yank（zip-rs/zip2#315，2025 起，
+    # 非安全事故；RUSTSEC-2025-0168 影响的是 <2.3.0，2.4.2 不在其中）。
+    # ndarray-npy 0.9 要 zip ^2、0.10 要 ^6，两条线都已全量 yank——
+    # 市面上不存在 semver 兼容的非 yanked 版本，属于「上游没发」而非「我们没升」。
+    # 用途 = 解析自家嵌入二进制的 weights.npz，没有不可信归档入口。
+    # 摘除条件 = ndarray-npy 跟上 zip ^9 一线后升上去（它在 npz.rs 里对 zip
+    # 只有 5 处引用，移植量很小，届时连同 fireredvad 一起升）。
+    { crate = "zip@2.4.2", reason = "upstream yanks whole release lines by policy; no semver-compatible non-yanked release exists in the ^2 or ^6 lines" },
+]
+
+[sources]
+# 依赖只允许来自 crates.io（默认）与 allow-git 里逐个列出的仓库。
+unknown-registry = "deny"
+unknown-git = "deny"
+# 精确 URL 匹配（不支持通配符），.git 后缀按 cargo 的归一化省掉。
+# 新增 git 依赖必须同时改这里 —— 这正是想要的：来路不明的 fork 在 CI 被拦下，
+# 而不是静静进入产物。
+allow-git = [
+    "https://github.com/eclipse005/cohere-transcribe-rs",
+    "https://github.com/eclipse005/ctc-aligner-rs",
+    "https://github.com/eclipse005/FireRedVad",
+    "https://github.com/eclipse005/moss-transcribe-diarize-rs",
+    "https://github.com/eclipse005/nagisa-rs",
+    "https://github.com/eclipse005/qwen-aligner-rs",
+    "https://github.com/eclipse005/qwen3-asr-rs",
+    "https://github.com/eclipse005/rust-punkt",
+]
+# 必须带 tag 或 rev（punkt 就是被这条抓出来的）。
+required-git-spec = "tag"
+# 清单里列了却没被用到的 URL 直接报错：既防呆，也防止删依赖后清单烂在那里。
+unused-allowed-source = "deny"

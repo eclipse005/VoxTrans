@@ -70,6 +70,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: .\scripts\download-binaries.ps1
+      # Dependency audit: known vulnerabilities (RustSec) plus the git-source
+      # allow-list, both configured in deny.toml. The binary is pinned and
+      # verified against the sha256 GitHub publishes with the release — same
+      # rule as the bundled ffmpeg, and no third-party action involved.
+      - name: cargo deny (advisories + sources)
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER=0.20.2
+          TRIPLE=x86_64-pc-windows-msvc
+          ASSET="cargo-deny-${VER}-${TRIPLE}.tar.gz"
+          BASE="https://github.com/EmbarkStudios/cargo-deny/releases/download/${VER}"
+          curl -sSfL --retry 3 -o "/tmp/${ASSET}" "${BASE}/${ASSET}"
+          curl -sSfL --retry 3 -o "/tmp/${ASSET}.sha256" "${BASE}/${ASSET}.sha256"
+          echo "$(awk '{print $1}' "/tmp/${ASSET}.sha256")  /tmp/${ASSET}" | sha256sum -c -
+          mkdir -p /tmp/cargo-deny
+          tar -xzf "/tmp/${ASSET}" -C /tmp/cargo-deny
+          "/tmp/cargo-deny/cargo-deny-${VER}-${TRIPLE}/cargo-deny.exe" check advisories sources
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       # Both packages spelled out: `-p voxtrans` alone leaves voxtrans-core's
