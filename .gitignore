@@ -33,15 +33,16 @@ dist-ssr
 # CodeBuddy Code local guidance
 CODEBUDDY.md
 
-# Internal planning / CI
+# Internal planning
 ROADMAP.md
-.github/
 
 # Rust / local assets
 target/
 src-tauri/target/
 src-tauri/gen/
-src/generated/
+# src/generated/ is committed on purpose: ts-rs bindings are what a clean
+# checkout typechecks against. Regenerate with `npm run generate:types` and
+# commit the diff when Rust-side IPC types change; CI checks the drift.
 /model/
 runtime/
 output/
