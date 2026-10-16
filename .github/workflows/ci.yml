@@ -56,9 +56,12 @@ jobs:
       # src-tauri/bin must hold ffmpeg/yt-dlp/demucs before clippy or test can
       # build voxtrans (first CI run failed exactly there with "resource path
       # 'bin\demucs.exe' doesn't exist"). Same digest-verified download the
-      # packaging jobs use.
+      # packaging jobs use; the token lifts the anonymous API rate limit that
+      # shared runner IPs keep hitting.
       - name: Download bundled binaries
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: .\scripts\download-binaries.ps1
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

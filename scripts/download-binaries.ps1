@@ -20,7 +20,16 @@ $binaries = @(
 
 $releaseUrl = "https://api.github.com/repos/$repo/releases/tags/$toolsTag"
 Write-Host "Fetching release info: $releaseUrl"
-$releaseJson = Invoke-RestMethod -Uri $releaseUrl -Headers @{ Accept = "application/vnd.github+json" }
+
+# Unauthenticated API calls are limited to 60/hour per IP and CI runners share
+# IPs — the first CI run to use this script died with a 429. Use GH_TOKEN /
+# GITHUB_TOKEN when present (workflows pass secrets.GITHUB_TOKEN); plain local
+# runs stay unauthenticated.
+$headers = @{ Accept = "application/vnd.github+json" }
+$token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
+if ($token) { $headers["Authorization"] = "Bearer $token" }
+
+$releaseJson = Invoke-RestMethod -Uri $releaseUrl -Headers $headers
 
 # The release assets can be re-uploaded, so the API's own sha256 digest of the
 # asset is the trust anchor for what we just fetched (same rule as

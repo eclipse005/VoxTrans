@@ -70,9 +70,12 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # bundle.resources ships bin/{ffmpeg,yt-dlp,demucs}.exe; the script fetches
       # them from the `tools` release and checks each download against the
-      # digest GitHub reports for that asset.
+      # digest GitHub reports for that asset. The token lifts the anonymous API
+      # rate limit that shared runner IPs keep hitting.
       - name: Download bundled binaries
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: .\scripts\download-binaries.ps1
       - run: npm ci
       # Toolchain version matches the maintainer's build machine (nvcc V12.8.93
