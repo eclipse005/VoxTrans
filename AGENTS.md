@@ -39,6 +39,10 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
   下载当场对 GitHub 的 sha256 digest 校验）、`tauri-cuda.ps1`、`apply-cuda-runtime.ps1`；
   门禁：`verify.mjs`（一键）、`verify-version.mjs`、`verify-binaries.mjs` + `binaries.sha256`；
   发布：`release-notes.mjs`（从 `github-release.md` 提取 `## v<版本>` 段，release workflow 用）
+- `rust-toolchain.toml` —— **Rust 工具链的唯一出处**：本地、CI、发版都读它（workflow 从文件里
+  解析 channel，不另写版本号）。升版是主动行为：改 channel → 本地跑
+  `cargo clippy --workspace --all-targets -- -D warnings` 与测试 → 修新编译器/lint 报出的
+  问题 → 再推（曾经吃过教训：本地旧版、CI stable 新版，新 lint 只在 CI 上炸）
 - 模块级单一出处：`src-tauri/src/cli/README.md` 与
   `src-tauri/src/services/translation/README.md`——改这两个模块先改对应文档，再改代码
 

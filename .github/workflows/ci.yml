@@ -47,9 +47,16 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Channel comes from rust-toolchain.toml — the file is the single source,
+      # so CI runs the same compiler the maintainer does. Bumping the toolchain
+      # is deliberate (see the file's comment).
+      - id: toolchain
+        name: Read pinned toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: stable
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # tauri-build validates bundle.resources while compiling the crate, so

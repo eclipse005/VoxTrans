@@ -1,0 +1,11 @@
+# The single source for the Rust toolchain: local builds, CI and releases all
+# read this file (the workflows parse the channel out of it instead of naming
+# a version). Bumping it is a deliberate act — raise the channel, then run
+# `cargo clippy --workspace --all-targets -- -D warnings` and the test suite
+# locally, and fix whatever the new compiler or lints report before pushing.
+# (The first CI run asked for "toolchain: stable" while local was older; the
+# drift surfaced as clippy 1.99 linting async_trait-generated code — that is
+# exactly the class of surprise this pin exists to prevent.)
+[toolchain]
+channel = "1.99.1"
+components = ["clippy"]

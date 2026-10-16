@@ -64,9 +64,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Channel comes from rust-toolchain.toml — the file is the single source,
+      # so releases are built by the same compiler the maintainer runs.
+      - id: toolchain
+        name: Read pinned toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: stable
+          toolchain: ${{ steps.toolchain.outputs.channel }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # bundle.resources ships bin/{ffmpeg,yt-dlp,demucs}.exe; the script fetches
       # them from the `tools` release and checks each download against the
