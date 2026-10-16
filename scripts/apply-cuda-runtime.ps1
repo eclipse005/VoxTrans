@@ -1,9 +1,18 @@
 param(
   [string]$NsisDir = ".\target\release\nsis\x64",
-  [string]$Makensis = "C:\Users\ADMIN\AppData\Local\tauri\NSIS\Bin\makensis.exe"
+  [string]$Makensis = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+# Tauri caches NSIS under the user profile; resolve it instead of hardcoding a
+# machine-specific path, so the same script runs on a CI runner.
+if (-not $Makensis) {
+  $Makensis = Join-Path $env:LOCALAPPDATA "tauri\NSIS\Bin\makensis.exe"
+}
+if (-not (Test-Path -LiteralPath $Makensis)) {
+  throw "makensis not found at '$Makensis' (run a tauri bundle build first, or pass -Makensis)"
+}
 
 $installerNsi = Join-Path $NsisDir "installer.nsi"
 if (-not (Test-Path $installerNsi)) {

@@ -10,14 +10,15 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
 ## 常用命令
 
 - 前端开发：`npm run dev`；桌面开发：`npm run tauri dev`（CUDA：`npm run tauri:dev:cuda`）
-- 提交前检查（一键门禁——仓库没有 CI，这条就是门）：
+- 提交前检查（本地门禁；CI 会跑同一套，见「CI 与发布」）：
   - `npm run verify:fast` —— 版本一致性、二进制锚点、eslint、vitest、tsc + vite build
   - `npm run verify` —— 以上全部，另加 `cargo clippy --workspace --all-targets -- -D warnings`
     与 Rust 测试 `cargo test -j 1 -p voxtrans -p voxtrans-core`
     （**两个包都要点名**：只写 `-p voxtrans` 时 `voxtrans-core` 的测试进不了视野）
   - 单条等价命令按需单独跑：`npm run lint` / `npm run test` / `npm run build` /
     `npm run verify:version` / `npm run verify:binaries`；Rust 两条同上
-- 类型导出：`npm run generate:types`（ts-rs → `src/generated/`；生成物不手改、不提交）
+- 类型导出：`npm run generate:types`（ts-rs → `src/generated/`，**已入库**：改了 Rust
+  侧导出类型就重新生成并连同 diff 一起提交；生成物不手改）
 - CUDA 特性编译检查：`npm run cargo:check:cuda`
 - 无头 CLI：`cargo run -p voxtrans --bin voxtrans-cli -- --help`
   （用法与设计见 `src-tauri/src/cli/README.md`）
@@ -27,9 +28,8 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
 
 - `src/` —— React 前端。`app/`（components / hooks / state / styles / api）、
   `features/media/`（字幕等域逻辑）、`i18n/locales/`（zh-CN 与 en 两份 JSON，逐键成对）、
-  `generated/`（ts-rs 生成，勿手改）。**全新克隆先跑 `npm run generate:types` 再构建**：
-  `npm run build`（以及打包时的 `beforeBuildCommand`）会引用这里的类型文件，缺了会报
-  TS2307 "Cannot find module '.../generated/bindings/...'"
+  `generated/`（ts-rs 生成、已入库、勿手改；改 Rust 类型后 `npm run generate:types` 并提交
+  diff，CI 有漂移检查）
 - `src-tauri/` —— Tauri 壳与业务服务。`domain/`（纯领域模型/状态）、`services/`
   （transcribe、translation、llm、terminology_agent、demucs 等）、`commands/`（IPC 面）、
   `db/`（SQLite 存储）、`cli/`（无头 CLI）
@@ -37,7 +37,8 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
   新算法优先落在这里写单测
 - `scripts/` —— `download-binaries.ps1`（ffmpeg / yt-dlp / demucs → `src-tauri/bin/`，
   下载当场对 GitHub 的 sha256 digest 校验）、`tauri-cuda.ps1`、`apply-cuda-runtime.ps1`；
-  门禁：`verify.mjs`（一键）、`verify-version.mjs`、`verify-binaries.mjs` + `binaries.sha256`
+  门禁：`verify.mjs`（一键）、`verify-version.mjs`、`verify-binaries.mjs` + `binaries.sha256`；
+  发布：`release-notes.mjs`（从 `github-release.md` 提取 `## v<版本>` 段，release workflow 用）
 - 模块级单一出处：`src-tauri/src/cli/README.md` 与
   `src-tauri/src/services/translation/README.md`——改这两个模块先改对应文档，再改代码
 
@@ -64,30 +65,32 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
   `src/i18n/locales.test.ts` 会拦：命名空间文件、深键、值类型、`{{插值}}` 逐项对齐
 - 新增行为要带测试：前端行为进 vitest，纯逻辑进 `voxtrans-core` 单测
 
-## 发布流程
+## CI 与发布
 
-- `github-release.md` 顶部的「未发布」段是面向用户的发布说明**单一出处**：发版时整理为
-  `## v<版本>` 段落。写"用户能感觉到什么"，不搬运提交原文
-- 版本号三处（`package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`）由
-  `build-release.ps1` 一次写齐，写后立刻用 `scripts/verify-version.mjs --expect` 断言；
-  手改了任何一处就跑 `npm run verify:version`——不一致会列出三处现状
-- `src-tauri/bin/` 里随包发布的 ffmpeg / demucs 与 `scripts/binaries.sha256` 对锚
+- **CI**（`.github/workflows/ci.yml`）：push 到 `agent` / `main`、或开 PR 时自动跑。
+  `static`（Linux：版本一致性、locale 守护、eslint、vitest、tsc + vite build）与
+  `rust`（Windows：clippy `-D warnings`、两个包的测试、bindings 漂移检查）。
+  CI 是网不是主循环：本地先跑 `npm run verify`（或 `verify:fast`）再推
+- **发版**（`.github/workflows/release.yml`，tag 触发）：
+  1. `github-release.md` 顶部「未发布」段改名为 `## v<版本>`（发布说明单一出处，
+     写"用户能感觉到什么"）；
+  2. 三处版本号改成同值（`build-release.ps1` 的 Step 1 会一起写），`npm run verify:version` 确认；
+  3. commit → `git tag v<版本>` → push tag；
+  4. workflow 断言 tag == 版本 → 构建 CPU 与 CUDA 安装包（CUDA 走 `apply-cuda-runtime.ps1`
+     的 NSIS 补丁）→ 用发布说明段建 Release，挂 `VoxTrans_<版本>_cpu.exe` / `_cuda.exe`。
+  `workflow_dispatch` 只出 artifact、不建 Release（干跑用）；说明段缺失会直接失败
+- 本地 `build-release.ps1` 保留为离线/备用路径，产出与 CI 同名的资产；全新克隆直接打包的
+  前置是 `scripts/download-binaries.ps1`（`bundle.resources` 引用 `bin/` 下三个 exe）
+- 版本号三处用 `scripts/verify-version.mjs` 断言（`--expect` / `--tag` / `--print`）；
+  `src-tauri/bin/` 里随包发布的 ffmpeg / demucs 与 `scripts/binaries.sha256` 对锚
   （`npm run verify:binaries`，换文件时把新摘要和文件放同一个提交）。yt-dlp 除外：
   它是滚动更新，两条下载路径都在下载当场对 GitHub API 的 digest 校验
-- 打包走本地 `build-release.ps1`。**前置**：全新克隆要先 `scripts/download-binaries.ps1`
-  （`bundle.resources` 引用 `bin/ffmpeg.exe`、`bin/yt-dlp.exe`、`bin/demucs.exe`）和
-  `npm run generate:types`，否则打包会在缺文件处失败。**发布从不走 GitHub Actions**：仓库没有任何 workflow
-  （`.github/` 被 gitignore，从未入过库；历史 17 个 Release 的 author 都是本人），
-  流程是本地出 `release/VoxTrans_<v>_cpu.exe` / `_cuda.exe` 后手动建 Release 上传。
-  `.github/workflows/release.yml` 只是本地留档，且不含 CUDA 运行时的 NSIS 补丁步骤
-  （`apply-cuda-runtime.ps1`），不要直接照它执行
 
 ## 不要提交的东西
 
 - 产物与中间件：`output/`、`release/`、`dist/`、`target/`、`src-tauri/output/`、
   `voxtrans-out/`、`runtime/`
 - 二进制：`src-tauri/bin/` 下按 `.gitignore` 清单的 exe（ffmpeg / yt-dlp / demucs / fireredvad）
-- 机器生成：`src-tauri/fixtures/`、`src/generated/`
-- 本地/内部资料：`.workbuddy/`、`.github/`、`ROADMAP.md`、`CODEBUDDY.md`、`.claude/`、
-  `.worktrees/`
+- 机器生成：`src-tauri/fixtures/`
+- 本地/内部资料：`.workbuddy/`、`ROADMAP.md`、`CODEBUDDY.md`、`.claude/`、`.worktrees/`
 - 任何密钥；AI 能力一律由使用者自行配置

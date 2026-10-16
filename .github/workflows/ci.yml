@@ -1,0 +1,67 @@
+# Push / PR gate: the jobs run what `npm run verify` runs locally, on a machine
+# that is not the maintainer's — that is the point (the fresh-checkout gap this
+# caught: bindings that were never committed). Release building lives in
+# release.yml; nothing here publishes or needs secrets.
+name: CI
+
+on:
+  push:
+    branches: [agent, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  # Frontend + static checks on Linux: fast to schedule, and a second OS
+  # catches import-case mistakes Windows cannot see. Node only — the ts-rs
+  # bindings are committed, so nothing Rust has to build to typecheck.
+  static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # version consistency, binaries manifest, eslint, vitest (incl. the
+      # locale guard) and tsc + vite build — the same script as locally.
+      - run: npm run verify:fast
+
+  # The Rust half where it can actually run: the crate is Windows-targeted
+  # (windows-sys, MSVC-linked engines), so the runner is windows-latest too.
+  # This is the only place the suite runs outside the maintainer's machine.
+  rust:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      # Both packages spelled out: `-p voxtrans` alone leaves voxtrans-core's
+      # tests out of the run.
+      - name: test
+        run: cargo test -p voxtrans -p voxtrans-core
+      # The committed bindings must match the Rust types. Regenerating must not
+      # change a byte; when it does, run `npm run generate:types` locally and
+      # commit the diff with the type change.
+      - name: ts-rs bindings are in sync
+        run: |
+          cargo test -p voxtrans ts_export_tests
+          git diff --exit-code -- src/generated

@@ -1,0 +1,148 @@
+# Tag v* -> build the CPU and CUDA installers and publish a GitHub Release.
+# This is the server-side port of build-release.ps1 (which stays as the local /
+# offline path and produces identically named files). workflow_dispatch builds
+# the artifacts only — no Release is created — so the pipeline can be exercised
+# without publishing anything.
+#
+# Invariants enforced here, matching the repo's rules:
+#   - the tag must equal the three version files (scripts/verify-version.mjs)
+#   - the release body is the `## v<version>` section of github-release.md;
+#     a tag without that section fails the run instead of shipping empty notes
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - id: ver
+        name: Assert the tag matches the three version files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            V="$(node scripts/verify-version.mjs --tag "${GITHUB_REF_NAME}" --print)"
+          else
+            V="$(node scripts/verify-version.mjs --print)"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "VoxTrans $V"
+
+  build:
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [cpu, cuda]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # bundle.resources ships bin/{ffmpeg,yt-dlp,demucs}.exe; the script fetches
+      # them from the `tools` release and checks each download against the
+      # digest GitHub reports for that asset.
+      - name: Download bundled binaries
+        shell: pwsh
+        run: .\scripts\download-binaries.ps1
+      - run: npm ci
+      # Toolchain version matches the maintainer's build machine (nvcc V12.8.93
+      # = CUDA 12.8 Update 1); the engines' cudarc feature set is 12.8.
+      - name: Install CUDA toolkit (CUDA build only)
+        if: matrix.variant == 'cuda'
+        uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d # v0.2.36
+        with:
+          cuda: "12.8.1"
+      - name: Build (CPU)
+        if: matrix.variant == 'cpu'
+        run: npm run tauri build
+      - name: Build (CUDA)
+        if: matrix.variant == 'cuda'
+        run: npm run tauri build -- --features cuda
+        env:
+          CUDA_COMPUTE_CAP: "61"
+      # Tauri regenerates installer.nsi on every build; re-apply the CUDA
+      # runtime download blocks and re-run NSIS with /DINCLUDE_CUDA_RUNTIME,
+      # exactly like the local build-release.ps1 does. Skipping this ships a
+      # CUDA installer that needs a full Toolkit on the user's machine.
+      - name: Patch the installer to fetch the CUDA runtime (CUDA build only)
+        if: matrix.variant == 'cuda'
+        shell: pwsh
+        run: .\scripts\apply-cuda-runtime.ps1
+      - name: Rename installer
+        shell: pwsh
+        run: |
+          $ver = "${{ needs.version.outputs.version }}"
+          $variant = "${{ matrix.variant }}"
+          if ($variant -eq 'cuda') {
+            $src = "target\release\nsis\x64\nsis-output.exe"
+          } else {
+            $src = Get-ChildItem "target\release\bundle\nsis\*setup.exe" |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $src -or -not (Test-Path -LiteralPath $src)) {
+            throw "installer not found for $variant build: $src"
+          }
+          Move-Item -LiteralPath $src "VoxTrans_${ver}_${variant}.exe"
+          Write-Host "-> VoxTrans_${ver}_${variant}.exe"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: VoxTrans_${{ needs.version.outputs.version }}_${{ matrix.variant }}
+          path: VoxTrans_*.exe
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: VoxTrans_*
+          merge-multiple: true
+      - name: Extract the release notes for this tag
+        run: node scripts/release-notes.mjs "${GITHUB_REF_NAME}" --out notes.md
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            VoxTrans_*.exe
