@@ -40,6 +40,12 @@ Update-FileContent -Path ".\src-tauri\Cargo.toml" -Pattern '(^version\s*=\s*")[^
 Update-FileContent -Path ".\src-tauri\tauri.conf.json" -Pattern '(^\s*"version"\s*:\s*")[^"]+(")'
 Write-Host "    package.json, Cargo.toml, tauri.conf.json updated."
 
+# ── Step 1b: Verify what Step 1 wrote, and the binaries that ship in the bundle ──
+node .\scripts\verify-version.mjs --expect $Version
+if ($LASTEXITCODE -ne 0) { throw "Version verification failed" }
+node .\scripts\verify-binaries.mjs
+if ($LASTEXITCODE -ne 0) { throw "Bundled binary verification failed" }
+
 # ── Step 2: Locate vcvars ──
 $vcvarsPath = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 if (-not (Test-Path -LiteralPath $vcvarsPath)) {

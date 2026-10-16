@@ -23,7 +23,11 @@ if ($Command -eq "build") {
     }
     # A few-KB metadata call beats a ~18MB binary on every build; unauthenticated
     # rate limit (60/hr) is plenty since this runs once per packaging build.
-    $latestTag = (Invoke-RestMethod -Uri "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest" -UseBasicParsing -ErrorAction Stop).tag_name.Trim()
+    # The same response carries the sha256 GitHub computed for the asset, which
+    # is the only content anchor available for a rolling "latest" download.
+    $latest = Invoke-RestMethod -Uri "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest" -UseBasicParsing -ErrorAction Stop
+    $latestTag = $latest.tag_name.Trim()
+    $expectedDigest = ($latest.assets | Where-Object { $_.name -eq "yt-dlp.exe" } | Select-Object -First 1).digest
     if ($localVersion -and ($localVersion -eq $latestTag)) {
       Write-Host "yt-dlp is already latest ($localVersion); skipping download."
     } else {
@@ -42,6 +46,18 @@ if ($Command -eq "build") {
       }
       if ($downloaded -lt 10MB) {
         throw "suspiciously small download ($downloaded bytes)"
+      }
+      # Content check on top of the size checks: the asset is fetched from a
+      # "latest" URL, so only the digest GitHub reports for this release pins
+      # what actually landed on disk.
+      if ($expectedDigest -and $expectedDigest.StartsWith("sha256:")) {
+        $expected = $expectedDigest.Substring("sha256:".Length).ToLowerInvariant()
+        $actual = (Get-FileHash -LiteralPath $tmpPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) {
+          throw "yt-dlp digest mismatch: expected $expected, got $actual"
+        }
+      } else {
+        Write-Warning "yt-dlp release has no digest in the API response; only size was checked"
       }
       Move-Item -LiteralPath $tmpPath -Destination $ytDlpPath -Force
       Write-Host "yt-dlp updated to $latestTag."

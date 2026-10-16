@@ -1,0 +1,21 @@
+# Content anchors for the binaries shipped inside the installer
+# (src-tauri/bin/). The GitHub release assets these files come from can be
+# re-uploaded at any time, so the trust anchor is the content, not the URL:
+# scripts/download-binaries.ps1 checks every download against the digest the
+# GitHub API serves for that release asset, and `npm run verify:binaries`
+# checks the working tree against this file.
+#
+# The digests below are the GitHub API `assets[].digest` values of the
+# eclipse005/VoxTrans `tools` release (fetched 2026-10-16) and were
+# cross-checked against the local files. To update ffmpeg / demucs: replace
+# the files, run `npm run verify:binaries` to see the digests it reads, and
+# land the new values here in the same commit.
+#
+# yt-dlp.exe is deliberately absent: scripts/tauri-cuda.ps1 refreshes it to
+# the upstream latest on every packaging build, so any pinned digest goes
+# stale by design. Both download paths verify it against the GitHub API digest
+# for the exact release they fetched (download-binaries.ps1 and tauri-cuda.ps1).
+#
+# Format: <sha256>  <filename>   (sha256sum -c compatible)
+a065077f12fa683c4051810e1ad5fe262c064606b02d1f27c673234ed9499a68  demucs.exe
+6e1c77f66726dcafb8008d9081972d5b28590110eb7bf906eaeef9298d366359  ffmpeg.exe

@@ -10,11 +10,13 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
 ## 常用命令
 
 - 前端开发：`npm run dev`；桌面开发：`npm run tauri dev`（CUDA：`npm run tauri:dev:cuda`）
-- 提交前检查（都要干净）：
-  - `npm run lint`（eslint）、`npm run test`（vitest）、`npm run build`（tsc -b + vite build）
-  - `cargo clippy --workspace --all-targets`（保持 0 警告）
-  - `cargo test -p voxtrans -p voxtrans-core`
+- 提交前检查（一键门禁——仓库没有 CI，这条就是门）：
+  - `npm run verify:fast` —— 版本一致性、二进制锚点、eslint、vitest、tsc + vite build
+  - `npm run verify` —— 以上全部，另加 `cargo clippy --workspace --all-targets -- -D warnings`
+    与 Rust 测试 `cargo test -j 1 -p voxtrans -p voxtrans-core`
     （**两个包都要点名**：只写 `-p voxtrans` 时 `voxtrans-core` 的测试进不了视野）
+  - 单条等价命令按需单独跑：`npm run lint` / `npm run test` / `npm run build` /
+    `npm run verify:version` / `npm run verify:binaries`；Rust 两条同上
 - 类型导出：`npm run generate:types`（ts-rs → `src/generated/`；生成物不手改、不提交）
 - CUDA 特性编译检查：`npm run cargo:check:cuda`
 - 无头 CLI：`cargo run -p voxtrans --bin voxtrans-cli -- --help`
@@ -31,8 +33,9 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
   `db/`（SQLite 存储）、`cli/`（无头 CLI）
 - `voxtrans-core/` —— 后端无关的纯逻辑（VAD 分段、音频读取、字幕切分……），依赖最少，
   新算法优先落在这里写单测
-- `scripts/` —— `download-binaries.ps1`（ffmpeg / yt-dlp / demucs → `src-tauri/bin/`）、
-  `tauri-cuda.ps1`、`apply-cuda-runtime.ps1`
+- `scripts/` —— `download-binaries.ps1`（ffmpeg / yt-dlp / demucs → `src-tauri/bin/`，
+  下载当场对 GitHub 的 sha256 digest 校验）、`tauri-cuda.ps1`、`apply-cuda-runtime.ps1`；
+  门禁：`verify.mjs`（一键）、`verify-version.mjs`、`verify-binaries.mjs` + `binaries.sha256`
 - 模块级单一出处：`src-tauri/src/cli/README.md` 与
   `src-tauri/src/services/translation/README.md`——改这两个模块先改对应文档，再改代码
 
@@ -55,18 +58,25 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
   的东西必须收敛到单一来源（同一常量、同一函数），并配守护测试；改动前 grep 其余手抄处
   （`62ac344`、`62501b4` 都栽在这上面，见 lessons 第 2 条）
 - 界面文案必须双语成对：用户可见字符串走 `src/i18n/locales/`（zh-CN 与 en 同一提交内成对
-  新增），组件里不硬编码中文/英文；插值占位符（`{{count}}` 等）两侧一致
+  新增），组件里不硬编码中文/英文；插值占位符（`{{count}}` 等）两侧一致——
+  `src/i18n/locales.test.ts` 会拦：命名空间文件、深键、值类型、`{{插值}}` 逐项对齐
 - 新增行为要带测试：前端行为进 vitest，纯逻辑进 `voxtrans-core` 单测
 
 ## 发布流程
 
 - `github-release.md` 顶部的「未发布」段是面向用户的发布说明**单一出处**：发版时整理为
   `## v<版本>` 段落。写"用户能感觉到什么"，不搬运提交原文
-- 版本号目前有三处：`package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`——
-  改版本三处一起改（`build-release.ps1` 目前也代写这三处）。计划加 `verify-version` 脚本
-  收敛到单一来源，落地前照现状来
-- 打包走本地 `build-release.ps1`；`.github/` 目录被 `.gitignore` 忽略（workflow 未上库），
-  不要把它当成已生效的 CI
+- 版本号三处（`package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`）由
+  `build-release.ps1` 一次写齐，写后立刻用 `scripts/verify-version.mjs --expect` 断言；
+  手改了任何一处就跑 `npm run verify:version`——不一致会列出三处现状
+- `src-tauri/bin/` 里随包发布的 ffmpeg / demucs 与 `scripts/binaries.sha256` 对锚
+  （`npm run verify:binaries`，换文件时把新摘要和文件放同一个提交）。yt-dlp 除外：
+  它是滚动更新，两条下载路径都在下载当场对 GitHub API 的 digest 校验
+- 打包走本地 `build-release.ps1`。**发布从不走 GitHub Actions**：仓库没有任何 workflow
+  （`.github/` 被 gitignore，从未入过库；历史 17 个 Release 的 author 都是本人），
+  流程是本地出 `release/VoxTrans_<v>_cpu.exe` / `_cuda.exe` 后手动建 Release 上传。
+  `.github/workflows/release.yml` 只是本地留档，且不含 CUDA 运行时的 NSIS 补丁步骤
+  （`apply-cuda-runtime.ps1`），不要直接照它执行
 
 ## 不要提交的东西
 
