@@ -85,6 +85,13 @@ voxtrans_wv2_pu_done:
 # leave them alone.
 $warnMessage = 'MessageBox MB_ICONEXCLAMATION|MB_OK "The WebView2 runtime is not registered on this machine, and installing it automatically failed.$\r$\n$\r$\nVoxTrans will finish installing. If the app does not start, install the WebView2 Evergreen Runtime from https://go.microsoft.com/fwlink/p/?LinkId=2124703 and run VoxTrans again."'
 
+# Both strings are spliced in verbatim; an empty one would silently produce a
+# template that still aborts (or one with a probe that does nothing), so fail at
+# startup instead of relying on the post-patch self-check alone.
+if ([string]::IsNullOrWhiteSpace($probeBlock) -or [string]::IsNullOrWhiteSpace($warnMessage)) {
+  throw "internal error: patch text is empty (probe block or warning message)"
+}
+
 function Apply-WebView2Patch {
   param([string]$Text)
 
@@ -97,8 +104,11 @@ function Apply-WebView2Patch {
   if ($probeHits.Count -ne 1) {
     throw "WebView2 install-decision anchor matched $($probeHits.Count) time(s), expected 1 - Tauri's NSIS template changed; update patch-nsis-webview2.ps1"
   }
-  $evaluateProbe = { param($m) $probeBlock + $m.Value }.GetNewClosure()
-  $Text = [regex]::Replace($Text, $probeAnchor, [System.Text.RegularExpressions.MatchEvaluator]$evaluateProbe)
+  # Index surgery instead of a MatchEvaluator: GetNewClosure() does not capture
+  # script-scope variables on every PowerShell build (the CI runner's pwsh 7.x
+  # handed the delegate an empty $probeBlock and the self-check caught it). This
+  # form behaves identically on Windows PowerShell 5.1 and PowerShell 7.
+  $Text = $Text.Insert([regex]::Match($Text, $probeAnchor).Index, $probeBlock)
 
   # Anchor 2: both hard aborts (bootstrapper download failure, bootstrapper exit).
   $abortAnchor = '(?m)^([ \t]*)Abort "\$\(webview2AbortError\)"\r?$'
@@ -106,12 +116,13 @@ function Apply-WebView2Patch {
   if ($abortHits.Count -ne 2) {
     throw "WebView2 abort anchor matched $($abortHits.Count) time(s), expected 2 - Tauri's NSIS template changed; update patch-nsis-webview2.ps1"
   }
-  $evaluateAbort = {
-    param($m)
-    $indent = $m.Groups[1].Value
-    $indent + $warnMessage + "`r`n" + $indent + 'Goto webview2_done'
-  }.GetNewClosure()
-  $Text = [regex]::Replace($Text, $abortAnchor, [System.Text.RegularExpressions.MatchEvaluator]$evaluateAbort)
+  # Reverse order keeps the earlier match indices valid while splicing.
+  for ($i = $abortHits.Count - 1; $i -ge 0; $i--) {
+    $match = $abortHits[$i]
+    $indent = $match.Groups[1].Value
+    $replacement = $indent + $warnMessage + "`r`n" + $indent + 'Goto webview2_done'
+    $Text = $Text.Remove($match.Index, $match.Length).Insert($match.Index, $replacement)
+  }
 
   return $Text
 }
