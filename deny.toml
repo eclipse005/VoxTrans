@@ -33,14 +33,16 @@ ignore = [
     # punkt 是我们自己的 fork：摘除条件 = 在 rust-punkt 仓库里升级 num 依赖后换 rev；
     # 在那之前它只经 punkt 内部使用，不是本仓库对外的解析入口。
     "RUSTSEC-2022-0004",
-    # zip 2.4.2 被上游按「整线回收」政策 yank（zip-rs/zip2#315，2025 起，
-    # 非安全事故；RUSTSEC-2025-0168 影响的是 <2.3.0，2.4.2 不在其中）。
-    # ndarray-npy 0.9 要 zip ^2、0.10 要 ^6，两条线都已全量 yank——
-    # 市面上不存在 semver 兼容的非 yanked 版本，属于「上游没发」而非「我们没升」。
-    # 用途 = 解析自家嵌入二进制的 weights.npz，没有不可信归档入口。
-    # 摘除条件 = ndarray-npy 跟上 zip ^9 一线后升上去（它在 npz.rs 里对 zip
-    # 只有 5 处引用，移植量很小，届时连同 fireredvad 一起升）。
-    { crate = "zip@2.4.2", reason = "upstream yanks whole release lines by policy; no semver-compatible non-yanked release exists in the ^2 or ^6 lines" },
+    # zip 2.4.2（ndarray-npy → fireredvad）的 extract() / extract_stream() 在解压时
+    # 跟随符号链接、可能写到目标目录外（RUSTSEC-2026-0368 / 0369，2026-10 公告）。
+    # 本项目不调用它：ndarray-npy 的 npz.rs 只用 ZipArchive::by_name / by_index
+    # 和 ZipWriter，读的是编译期嵌入二进制的自家 weights.npz，没有不可信归档入口。
+    # 升不上去的原因：ndarray-npy 0.9 要 zip ^2、0.10 要 ^6，两条线都被上游按整线
+    # 回收政策 yank（zip-rs/zip2#315），zip ^9 要等 ndarray-npy 自己跟上——它在
+    # npz.rs 里对 zip 只有 5 处引用，移植量很小，届时连同 fireredvad 一起升。
+    # 摘除条件 = ndarray-npy 升到 zip ^9 后删掉这两条。
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
 ]
 
 [sources]
