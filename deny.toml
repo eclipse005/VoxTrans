@@ -33,14 +33,17 @@ ignore = [
     # punkt 是我们自己的 fork：摘除条件 = 在 rust-punkt 仓库里升级 num 依赖后换 rev；
     # 在那之前它只经 punkt 内部使用，不是本仓库对外的解析入口。
     "RUSTSEC-2022-0004",
-    # zip 2.4.2（ndarray-npy → fireredvad）的 extract() / extract_stream() 在解压时
-    # 跟随符号链接、可能写到目标目录外（RUSTSEC-2026-0368 / 0369，2026-10 公告）。
-    # 本项目不调用它：ndarray-npy 的 npz.rs 只用 ZipArchive::by_name / by_index
-    # 和 ZipWriter，读的是编译期嵌入二进制的自家 weights.npz，没有不可信归档入口。
-    # 升不上去的原因：ndarray-npy 0.9 要 zip ^2、0.10 要 ^6，两条线都被上游按整线
-    # 回收政策 yank（zip-rs/zip2#315），zip ^9 要等 ndarray-npy 自己跟上——它在
-    # npz.rs 里对 zip 只有 5 处引用，移植量很小，届时连同 fireredvad 一起升。
-    # 摘除条件 = ndarray-npy 升到 zip ^9 后删掉这两条。
+    # zip 2.4.2（ndarray-npy → fireredvad）的三条公告：RUSTSEC-2026-0367
+    # （解压时保留 SUID/SGID 位）、0368 / 0369（extract() 跟随符号链接）。
+    # 三条都只命中「解压不可信归档」这一条路径，而本项目不调用 extract：
+    # ndarray-npy 的 npz.rs 只用 ZipArchive::by_name / by_index 和 ZipWriter，
+    # 读的是编译期嵌入二进制的自家 weights.npz，没有外部归档入口。
+    # 为什么停在 2.4.2：三条的修复版本都是 zip >= 9.0.0，^2 线最新的 2.6.1
+    # 仍在受影响范围内，升它清不掉门禁。跨到 ^9 要 ndarray-npy 先动
+    # （0.9 锁 zip ^2、0.10 锁 ^6）——它在 npz.rs 里对 zip 只有 5 处引用，
+    # 移植量很小，届时连同 fireredvad 一起升。
+    # 摘除条件 = ndarray-npy 升到 zip ^9 后删掉这三条。
+    "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
 ]
