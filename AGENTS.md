@@ -39,7 +39,8 @@ workspace；发布目标是 Windows x64，出 CPU / CUDA 两个安装包。
 - `voxtrans-core/` —— 后端无关的纯逻辑（VAD 分段、音频读取、字幕切分……），依赖最少，
   新算法优先落在这里写单测
 - `scripts/` —— `download-binaries.ps1`（ffmpeg / yt-dlp / demucs → `src-tauri/bin/`，
-  下载当场对 GitHub 的 sha256 digest 校验）、`tauri-cuda.ps1`、`apply-cuda-runtime.ps1`；
+  下载当场对 GitHub 的 sha256 digest 校验）、`tauri-cuda.ps1`、`apply-cuda-runtime.ps1`、
+  `patch-nsis-webview2.ps1`（WebView2 探测 + 失败不再中止安装，两个安装包都打）；
   门禁：`verify.mjs`（一键）、`verify-version.mjs`、`verify-binaries.mjs` + `binaries.sha256`；
   发布：`release-notes.mjs`（从 `github-release.md` 提取 `## v<版本>` 段，release workflow 用）
 - `rust-toolchain.toml` —— **Rust 工具链的唯一出处**：本地、CI、发版都读它（workflow 从文件里

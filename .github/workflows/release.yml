@@ -99,6 +99,20 @@ jobs:
         run: npm run tauri build -- --features cuda
         env:
           CUDA_COMPUTE_CAP: "61"
+      # Tauri's stock WebView2 section trusts only the EdgeUpdate registry key
+      # and aborts the whole install when its bootstrapper fails, locking out
+      # machines whose runtime works but is unregistered. The patch probes the
+      # runtime on disk and downgrades that abort to a warning. CUDA is
+      # patch-only here because the next step re-runs NSIS for it.
+      - name: Patch WebView2 handling
+        shell: pwsh
+        run: |
+          .\scripts\patch-nsis-webview2.ps1 -SelfTest
+          if ('${{ matrix.variant }}' -eq 'cuda') {
+            .\scripts\patch-nsis-webview2.ps1
+          } else {
+            .\scripts\patch-nsis-webview2.ps1 -Build
+          }
       # Tauri regenerates installer.nsi on every build; re-apply the CUDA
       # runtime download blocks and re-run NSIS with /DINCLUDE_CUDA_RUNTIME,
       # exactly like the local build-release.ps1 does. Skipping this ships a
@@ -112,9 +126,10 @@ jobs:
         run: |
           $ver = "${{ needs.version.outputs.version }}"
           $variant = "${{ matrix.variant }}"
-          if ($variant -eq 'cuda') {
-            $src = "target\release\nsis\x64\nsis-output.exe"
-          } else {
+          # Both variants are rebuilt by patch-nsis-webview2.ps1 (CPU: -Build,
+          # CUDA: the runtime patch step); the bundle copy stays unpatched.
+          $src = "target\release\nsis\x64\nsis-output.exe"
+          if (-not (Test-Path -LiteralPath $src)) {
             $src = Get-ChildItem "target\release\bundle\nsis\*setup.exe" |
               Select-Object -First 1 -ExpandProperty FullName
           }

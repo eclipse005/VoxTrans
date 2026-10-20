@@ -86,6 +86,36 @@ AGENTS.md 里那些规矩不是凭空来的，每条底下都有一次具体的�
 
 ---
 
+## 4. 安装器把"探测不到"当成"没有"，还用它中止整个安装
+
+**规则**：安装脚本判断依赖（运行库、WebView2、VC++……）在不在时，注册表只是证据之一，
+要落到文件系统上再看一眼；装不上时的默认动作是**警告并继续安装**，不是 `Abort`——
+继续装最坏是应用起不来，中止安装会让本来能用的机器一个都装不上。
+
+**为什么**：Tauri 的 NSIS 模板只读 EdgeUpdate 的 `{F3017226-…}\pv`。机器上 runtime 明明
+能用、只是注册项被清理（Edge 精简脚本、fixed-version 部署、另一个账户下的 per-user 安装），
+安装器就认定"没装"，去下载微软 bootstrapper；bootstrapper 失败（私有 HRESULT
+`0x8004070C`，facility 4 = ITF，Windows 消息表里查不到，本机 `FormatMessage` 返回
+`ERROR_RESOURCE_TYPE_NOT_FOUND`），模板随即 `Abort` 整个安装。
+
+**证据**：
+
+- 2026-10-20 用户反馈：`Installing WebView2 failed with exit code -2147219700`（=
+  `0x8004070C`）+ `Failed to install WebView2! The app can't run without it.`；同一台机器上
+  其他应用调用 WebView2 正常。
+- 两行文案逐字来自生成物 `installer.nsi` 引用的 `English.nsh`（`webview2InstallError` /
+  `webview2AbortError`）；判定逻辑是第 515–605 行三处 `ReadRegStr` + `ExecWait … /silent
+  /install` + 两处 `Abort "$(webview2AbortError)"`。
+- 修复：`scripts/patch-nsis-webview2.ps1`——先按
+  `EdgeWebView\Application\*\msedgewebview2.exe` 探盘（程序目录 + `%LOCALAPPDATA%`），
+  再把两处 `Abort` 换成警告 + 继续；锚点计数断言 + `-SelfTest`（改锚点必须抛错、重复跑必须
+  幂等）。两个安装包都打：CPU 包在 `build-release.ps1` / CI 里用 `-Build` 重跑 makensis，
+  CUDA 包只打补丁不重编（由 `apply-cuda-runtime.ps1` 统一跑一次 makensis）。
+
+**Seen**：1×（2026-10-20 用户反馈）
+
+---
+
 ## 已迁入 AGENTS.md 的
 
 | 规则 | 迁入日期 |
