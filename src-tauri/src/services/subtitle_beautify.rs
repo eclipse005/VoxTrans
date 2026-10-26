@@ -53,6 +53,7 @@ fn normalize_timeline(segments: &mut [SubtitleSrtSegment]) {
 /// 1. Gap to next is (0, 800ms) → end = next.start. Done.
 /// 2. Else if duration < 800ms → grow up to 800ms, never past next.start.
 ///    The leftover gap is left as-is; it must not then trigger (1).
+///
 /// Runs [`normalize_timeline`] first so pad always sees sorted, non-overlapping cues.
 fn pad_cue_hold_and_gaps(segments: &mut [SubtitleSrtSegment]) {
     normalize_timeline(segments);
