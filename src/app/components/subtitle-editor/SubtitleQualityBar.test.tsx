@@ -20,24 +20,18 @@ function cue(
 
 function renderBar(options: {
   cues: SubtitleCue[];
-  canEdit?: boolean;
-  applying?: boolean;
   activeKind?: Diagnostic["kind"] | null;
   onActiveKindChange?: (kind: Diagnostic["kind"] | null) => void;
   onLocate?: (cueId: string) => void;
-  onApply?: () => void;
 }) {
   const diagnostics = diagnoseCues(options.cues, "zh-CN");
   return render(
     <SubtitleQualityBar
       diagnostics={diagnostics}
       summary={summarizeDiagnostics(diagnostics)}
-      canEdit={options.canEdit ?? true}
-      applying={options.applying ?? false}
       activeKind={options.activeKind ?? null}
       onActiveKindChange={options.onActiveKindChange ?? vi.fn()}
       onLocate={options.onLocate ?? vi.fn()}
-      onApply={options.onApply ?? vi.fn()}
     />,
   );
 }
@@ -50,7 +44,9 @@ describe("SubtitleQualityBar", () => {
     const strip = container.querySelector(".subtitle-quality-strip");
     expect(strip?.className).toContain("error");
     expect(container.querySelector(".subtitle-quality-label")?.textContent).toContain("1");
-    expect(container.querySelector(".subtitle-quality-apply")?.textContent).toContain("美化");
+    // The bar is diagnosis only: the single beautify entry lives in the header,
+    // so two competing controls can never be on screen at once.
+    expect(container.querySelector(".subtitle-quality-apply")).toBeNull();
   });
 
   it("uses the warning tone when nothing is blocking", () => {
@@ -112,25 +108,9 @@ describe("SubtitleQualityBar", () => {
     expect(container.querySelector(".subtitle-quality-panel")?.getAttribute("data-open")).toBe("false");
   });
 
-  it("disables the action in read-only mode and while applying", () => {
-    const cues = [cue("a", 1000, 2600), cue("b", 2000, 3000)];
-    const readOnly = renderBar({ cues, canEdit: false });
-    expect(
-      readOnly.container.querySelector<HTMLButtonElement>(".subtitle-quality-apply")?.disabled,
-    ).toBe(true);
-
-    const busy = renderBar({ cues, applying: true });
-    const button = busy.container.querySelector<HTMLButtonElement>(".subtitle-quality-apply");
-    expect(button?.disabled).toBe(true);
-    expect(button?.textContent).toContain("处理中");
-  });
-
   it("keeps the strip honest when only manual issues remain", () => {
-    // Empty source text cannot be auto-fixed, so the CTA must stay disabled.
+    // Empty source text cannot be auto-fixed; only the manual count reports it.
     const { container } = renderBar({ cues: [cue("a", 0, 3000, "   ", "译文")] });
-    expect(
-      container.querySelector<HTMLButtonElement>(".subtitle-quality-apply")?.disabled,
-    ).toBe(true);
     expect(container.querySelector(".subtitle-quality-manual")?.textContent).toContain("1");
   });
 });

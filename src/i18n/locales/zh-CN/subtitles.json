@@ -96,7 +96,6 @@
     "applying": "处理中",
     "applyHint": "自动对齐重叠时间码、补足显示时长、整理标点",
     "applyReadOnly": "当前状态不可编辑",
-    "applyNothing": "没有可自动修复的项",
     "kind": {
       "overlap": "时间重叠",
       "emptyText": "文本为空",

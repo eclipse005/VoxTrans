@@ -255,12 +255,9 @@ function SubtitleEditorModal({
         <SubtitleQualityBar
           diagnostics={diagnostics}
           summary={summary}
-          canEdit={canEdit}
-          applying={applying}
           activeKind={effectiveKind}
           onActiveKindChange={setActiveKind}
           onLocate={locateCue}
-          onApply={applyBeautify}
         />
       ) : null}
 

@@ -96,7 +96,6 @@
     "applying": "Working",
     "applyHint": "Align overlapping timings, pad short cues, tidy punctuation",
     "applyReadOnly": "Not editable in this state",
-    "applyNothing": "Nothing to fix automatically",
     "kind": {
       "overlap": "Overlap",
       "emptyText": "Empty text",

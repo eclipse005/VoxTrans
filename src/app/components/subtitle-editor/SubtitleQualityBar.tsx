@@ -1,6 +1,6 @@
 import { useCallback, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertIcon, ChevronDownIcon, SparkleIcon } from "../Icons";
+import { AlertIcon, ChevronDownIcon } from "../Icons";
 import type {
   Diagnostic,
   DiagnosticKind,
@@ -11,13 +11,10 @@ import { describeDiagnostic, kindLabel } from "./diagnosticLabels";
 type SubtitleQualityBarProps = {
   diagnostics: Diagnostic[];
   summary: DiagnosticSummary;
-  canEdit: boolean;
-  applying: boolean;
   /** Active chip filter, `null` = show every cue. */
   activeKind: DiagnosticKind | null;
   onActiveKindChange: (kind: DiagnosticKind | null) => void;
   onLocate: (cueId: string) => void;
-  onApply: () => void;
 };
 
 
@@ -32,12 +29,9 @@ type SubtitleQualityBarProps = {
 export default function SubtitleQualityBar({
   diagnostics,
   summary,
-  canEdit,
-  applying,
   activeKind,
   onActiveKindChange,
   onLocate,
-  onApply,
 }: SubtitleQualityBarProps) {
   const { t } = useTranslation(["subtitles", "common"]);
   const [open, setOpen] = useState(false);
@@ -112,36 +106,16 @@ export default function SubtitleQualityBar({
           })}
         </div>
 
-        <div className="subtitle-quality-actions">
-          {summary.manual > 0 ? (
+        {summary.manual > 0 ? (
+          <div className="subtitle-quality-actions">
             <span
               className="subtitle-quality-manual"
               title={t("subtitles:quality.manualHint")}
             >
               {t("subtitles:quality.manualCount", { count: summary.manual })}
             </span>
-          ) : null}
-          <button
-            type="button"
-            className="apple-button apple-button-secondary subtitle-quality-apply"
-            disabled={!canEdit || applying || summary.autoFixable === 0}
-            title={
-              !canEdit
-                ? t("subtitles:quality.applyReadOnly")
-                : summary.autoFixable === 0
-                  ? t("subtitles:quality.applyNothing")
-                  : t("subtitles:quality.applyHint")
-            }
-            onClick={onApply}
-          >
-            <SparkleIcon />
-            <span>
-              {applying
-                ? t("subtitles:quality.applying")
-                : t("subtitles:quality.apply", { count: summary.autoFixable })}
-            </span>
-          </button>
-        </div>
+          </div>
+        ) : null}
       </div>
 
       <div
