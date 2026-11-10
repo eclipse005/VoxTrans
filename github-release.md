@@ -1,3 +1,23 @@
+## v1.6.2
+
+本版覆盖重发：在字幕时间轴 normalize 之外，安装包改为经 Cloudflare Workers 更新网关检测与下载（替换此前已发布的 v1.6.2 资源）。
+
+字幕时间轴 normalize：在「字幕美化」开关内，导出前按 OneAsr 单调规则整理时间轴（按 start 排序，并把每条 end 钳到不越过下一条 start），再做原有的 hold/gap pad。关闭美化时行为不变。
+
+### 更新器（覆盖重发）
+
+- 更新通道改走 Cloudflare Workers 网关：检测与安装包下载默认经 `voxtrans-updates` 加速；网关不可用时仍可回退 GitHub 拿版本信息，但下载 URL 会改写回网关，避免直连 GitHub releases
+- 默认检查 `{gateway}/releases/latest`（可用编译期 `VOXTRANS_UPDATE_BASE` 覆盖）
+- 仅允许从配置的更新网关主机下载；若响应仍带 github.com 地址则按 tag + 资源名改写
+- 保留原有重试（0/2/4s）、UA、超时与 CPU/CUDA 安装包选择
+
+### 字幕美化
+
+- 修时间轴重叠 / 倒挂：美化路径内先 normalize 再 pad，避免 hold/gap 在交错 cue 上垫出更糟的结果
+- 写入侧继续消费已美化的 SoT，不各自再钳一遍
+
+---
+
 ## v1.6.1
 
 安装器修复版：只有安装包变了，应用本身与 v1.6.0 相同。

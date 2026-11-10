@@ -228,6 +228,11 @@ pub fn beautify_subtitle_editor_internal(
         subtitle_length_preset.as_str(),
         &target_lang,
     );
+    // The shared transform returns cues sorted by start (the pipeline SoT
+    // wants that); the editor folds the response back by position, so undo
+    // the sort here or out-of-order drafts would receive neighbours' text.
+    let request_starts: Vec<u64> = before.iter().map(|(start, _, _)| *start).collect();
+    let segments = restore_display_order(segments, &request_starts);
     let changed_cues = segments
         .iter()
         .zip(before.iter())
@@ -241,6 +246,25 @@ pub fn beautify_subtitle_editor_internal(
         subtitle_segments_json,
         changed_cues,
     })
+}
+
+/// Map a start-sorted beautify result back onto the request order. Both the
+/// transform's sort and this one are stable, so equal starts keep their
+/// relative order and the rank mapping is exact.
+fn restore_display_order(
+    sorted: Vec<crate::domain::workspace_subtitle::WorkspaceSubtitleSegment>,
+    request_starts: &[u64],
+) -> Vec<crate::domain::workspace_subtitle::WorkspaceSubtitleSegment> {
+    let mut order: Vec<usize> = (0..request_starts.len()).collect();
+    order.sort_by_key(|&i| request_starts[i]);
+    let mut indexed: Vec<(usize, crate::domain::workspace_subtitle::WorkspaceSubtitleSegment)> =
+        order
+            .into_iter()
+            .enumerate()
+            .map(|(rank, original)| (original, sorted[rank].clone()))
+            .collect();
+    indexed.sort_by_key(|(original, _)| *original);
+    indexed.into_iter().map(|(_, segment)| segment).collect()
 }
 
 #[tauri::command]
@@ -439,5 +463,28 @@ mod tests {
             parse_subtitle_segments_json("[]").expect("an explicit empty list must stay valid");
 
         assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn display_order_restore_maps_sorted_result_back_onto_request_order() {
+        use crate::domain::workspace_subtitle::WorkspaceSubtitleSegment;
+        let seg = |start_ms: u64, translated: &str| WorkspaceSubtitleSegment {
+            start_ms,
+            end_ms: start_ms + 1000,
+            source_text: String::new(),
+            translated_text: translated.into(),
+            source_words: vec![],
+            semantic_sentence_id: 0,
+        };
+        // BONE-BREAK target: returning the sorted vec verbatim hands the
+        // editor's positional merge the neighbours' text and timings.
+        let request_starts = vec![2000, 0, 1000, 0];
+        let sorted = vec![seg(0, "a"), seg(0, "b"), seg(1000, "c"), seg(2000, "d")];
+        let restored = restore_display_order(sorted, &request_starts);
+        let texts: Vec<&str> = restored.iter().map(|s| s.translated_text.as_str()).collect();
+        // Stable ranks: the two zero-start requests keep their relative order.
+        assert_eq!(texts, vec!["d", "a", "c", "b"]);
+        let starts: Vec<u64> = restored.iter().map(|s| s.start_ms).collect();
+        assert_eq!(starts, request_starts);
     }
 }

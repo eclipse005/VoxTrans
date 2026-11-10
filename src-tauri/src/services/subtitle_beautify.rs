@@ -29,6 +29,26 @@ const MIN_HOLD_MS: u64 = 800;
 /// start so the viewer sees a cut, not a blank flash.
 const MAX_GAP_FILL_MS: u64 = 800;
 
+/// Sort by start, then clamp each cue's end so it does not past the next
+/// start: `end = min(end, next.start).max(start)`. Never moves a start.
+/// Same clamp rule as OneAsr `enforce_monotonic`, plus an explicit sort so
+/// out-of-order ASR rows do not confuse hold/gap padding. Timing changes
+/// live only in this beautify module (gated by `enable_subtitle_beautify`);
+/// SRT writers consume already-beautified cues and do not re-clamp.
+fn normalize_timeline(segments: &mut [SubtitleSrtSegment]) {
+    segments.sort_by_key(|segment| segment.start_ms);
+    let len = segments.len();
+    for i in 0..len {
+        let start = segments[i].start_ms;
+        let end = segments[i].end_ms;
+        if let Some(next_start) = segments.get(i + 1).map(|s| s.start_ms) {
+            segments[i].end_ms = end.min(next_start).max(start);
+        } else {
+            segments[i].end_ms = end.max(start);
+        }
+    }
+}
+
 /// Two mutually exclusive timing tweaks, decided from the original gap:
 /// 1. Gap to next is (0, 800ms) → end = next.start. Done.
 /// 2. Else if duration < 800ms → grow up to 800ms, never past next.start.
@@ -37,11 +57,16 @@ const MAX_GAP_FILL_MS: u64 = 800;
 /// Overlapping cues are aligned first: an end past the next cue's start is a
 /// value the player never shows (the next cue already owns that instant), so
 /// clamping it to the boundary changes nothing on screen but makes the file
-/// truthful. Starts, order and numbering are never touched.
+/// truthful. Starts and numbering are never touched.
+///
+/// Runs [`normalize_timeline`] first so pad always sees sorted, non-overlapping
+/// cues. The sort reorders this working slice; callers that display cues in
+/// their own order map the result back (see the editor command).
 ///
 /// Running this twice is a no-op: after one pass every end is either equal to
 /// the next start or at least 800ms away from it.
 fn pad_cue_hold_and_gaps(segments: &mut [SubtitleSrtSegment]) {
+    normalize_timeline(segments);
     let len = segments.len();
     for i in 0..len {
         let start = segments[i].start_ms;
@@ -89,6 +114,9 @@ pub fn beautify_workspace_segments(
     subtitle_length_preset: &str,
     target_lang: &str,
 ) {
+    // Keep SoT order aligned with normalize_timeline's sort so zip writeback
+    // applies padded ends to the matching cues (starts are never moved).
+    segments.sort_by_key(|segment| segment.start_ms);
     let mut srt_segments: Vec<SubtitleSrtSegment> = segments
         .iter()
         .map(|seg| SubtitleSrtSegment {
@@ -237,8 +265,8 @@ fn collapse_multiple_spaces(text: &str) -> String {
 mod tests {
     use super::{
         beautify_subtitle_srt_segments, beautify_subtitle_srt_text, beautify_subtitle_text,
-        collapse_multiple_spaces, is_ascii_word_char, is_cjk_char, need_cjk_ascii_space,
-        pad_cue_hold_and_gaps, trim_bounding_punctuation,
+        beautify_workspace_segments, collapse_multiple_spaces, is_ascii_word_char, is_cjk_char,
+        need_cjk_ascii_space, normalize_timeline, pad_cue_hold_and_gaps, trim_bounding_punctuation,
     };
     use crate::services::subtitle_srt::SubtitleSrtSegment;
 
@@ -370,6 +398,42 @@ mod tests {
     }
 
     #[test]
+    fn normalize_sorts_inverted_order_without_moving_starts() {
+        // 倒挂：数组顺序与 start 相反；只重排，不改任何 start。
+        let mut segments = vec![timed(2000, 3000), timed(0, 1000)];
+        normalize_timeline(&mut segments);
+        assert_eq!((segments[0].start_ms, segments[0].end_ms), (0, 1000));
+        assert_eq!((segments[1].start_ms, segments[1].end_ms), (2000, 3000));
+    }
+
+    #[test]
+    fn normalize_clamps_overlap_to_next_start() {
+        // 重叠：上一段 end 夹到 next.start，下一段 start 不动。
+        let mut segments = vec![timed(1000, 2000), timed(1500, 3000)];
+        normalize_timeline(&mut segments);
+        assert_eq!((segments[0].start_ms, segments[0].end_ms), (1000, 1500));
+        assert_eq!((segments[1].start_ms, segments[1].end_ms), (1500, 3000));
+    }
+
+    #[test]
+    fn normalize_leaves_adjacent_edge_alone() {
+        // 贴边：end == next.start，无需改动。
+        let mut segments = vec![timed(0, 1000), timed(1000, 2000)];
+        normalize_timeline(&mut segments);
+        assert_eq!((segments[0].start_ms, segments[0].end_ms), (0, 1000));
+        assert_eq!((segments[1].start_ms, segments[1].end_ms), (1000, 2000));
+    }
+
+    #[test]
+    fn normalize_collapses_inverted_end_before_start() {
+        // 单条倒挂（end < start）：夹紧后变为零长度，不拖动下一段。
+        let mut segments = vec![timed(1000, 500), timed(2000, 3000)];
+        normalize_timeline(&mut segments);
+        assert_eq!((segments[0].start_ms, segments[0].end_ms), (1000, 1000));
+        assert_eq!((segments[1].start_ms, segments[1].end_ms), (2000, 3000));
+    }
+
+    #[test]
     fn pads_sub_800ms_hold_when_following_gap_is_wide() {
         let mut segments = vec![timed(0, 240), timed(4000, 5000)];
         pad_cue_hold_and_gaps(&mut segments);
@@ -447,12 +511,40 @@ mod tests {
     }
 
     #[test]
-    fn a_backwards_next_start_never_produces_end_before_start() {
-        // Timestamps that go backwards are user data, not ours to "fix" by
-        // inventing an inverted interval.
+    fn backwards_input_is_normalized_without_inverted_intervals() {
+        // normalize sorts and clamps out-of-order rows; the invariant kept
+        // here is that no cue ever ends before it starts.
         let mut segments = vec![timed(2000, 2600), timed(1500, 3000)];
         pad_cue_hold_and_gaps(&mut segments);
-        assert_eq!(segments[0].end_ms, 2600);
+        assert_eq!(segments[0].start_ms, 1500);
+        assert!(segments.iter().all(|s| s.end_ms >= s.start_ms));
+    }
+
+    #[test]
+    fn workspace_beautify_returns_start_sorted_for_sot_callers() {
+        // BONE-BREAK target: the editor command's rank mapping assumes this
+        // sort; dropping it would silently mis-map out-of-order drafts.
+        let mut segments = vec![
+            crate::domain::workspace_subtitle::WorkspaceSubtitleSegment {
+                start_ms: 2000,
+                end_ms: 2600,
+                source_text: String::new(),
+                translated_text: String::new(),
+                source_words: vec![],
+                semantic_sentence_id: 0,
+            },
+            crate::domain::workspace_subtitle::WorkspaceSubtitleSegment {
+                start_ms: 0,
+                end_ms: 900,
+                source_text: String::new(),
+                translated_text: String::new(),
+                source_words: vec![],
+                semantic_sentence_id: 0,
+            },
+        ];
+        beautify_workspace_segments(&mut segments, "standard", "en");
+        let starts: Vec<u64> = segments.iter().map(|s| s.start_ms).collect();
+        assert_eq!(starts, vec![0, 2000]);
     }
 
     #[test]
