@@ -127,7 +127,12 @@ export function diagnoseCues(
     }
 
     if (durationMs >= 0 && durationMs < MIN_HOLD_MS) {
-      push("tooShort", "warning", true, { durationMs });
+      // Beautify only grows a short cue into the silence before the next cue.
+      // When the next cue already starts inside that window, no padding can
+      // lengthen it — reporting it as "auto-fixable" would promise a fix the
+      // transform cannot deliver.
+      const roomMs = next ? Math.max(0, Math.round(next.startMs)) - startMs : Number.POSITIVE_INFINITY;
+      push("tooShort", "warning", roomMs >= MIN_HOLD_MS, { durationMs, roomMs: Number.isFinite(roomMs) ? roomMs : MIN_HOLD_MS });
     }
 
     if (cjkTarget && hasBoundaryPunctuation(cue.translatedText)) {

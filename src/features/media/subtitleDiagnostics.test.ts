@@ -49,6 +49,23 @@ describe("diagnoseCues timing", () => {
     expect(diagnostics.find((d) => d.kind === "gapTiny")?.params.gapMs).toBe(600);
   });
 
+  it("promises a short-cue fix only when there is room to grow", () => {
+    // Real-data case: the next cue starts 580ms after this one, so beautify
+    // cannot pad it to 800 no matter what. Reporting it as auto-fixable made
+    // the button claim "fix 11" and then change nothing.
+    const tight = diagnoseCues([cue("a", 8700, 9280), cue("b", 9280, 10_000)]);
+    const tightShort = tight.find((d) => d.kind === "tooShort");
+    expect(tightShort?.params.durationMs).toBe(580);
+    expect(tightShort?.autoFixable).toBe(false);
+
+    const roomy = diagnoseCues([cue("a", 0, 300), cue("b", 5000, 7000)]);
+    expect(roomy.find((d) => d.kind === "tooShort")?.autoFixable).toBe(true);
+
+    // The last cue has no successor, so it can always be padded.
+    const last = diagnoseCues([cue("a", 0, 300)]);
+    expect(last.find((d) => d.kind === "tooShort")?.autoFixable).toBe(true);
+  });
+
   it("does not flag a gap of exactly the threshold", () => {
     const diagnostics = diagnoseCues([cue("a", 0, 1000), cue("b", 1800, 2600)]);
     expect(diagnostics.some((d) => d.kind === "gapTiny")).toBe(false);
