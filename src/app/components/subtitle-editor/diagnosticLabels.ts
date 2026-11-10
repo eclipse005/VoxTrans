@@ -29,7 +29,14 @@ export function describeDiagnostic(t: TFunction, diagnostic: Diagnostic): string
     case "gapTiny":
       return t("subtitles:quality.detail.gapTiny", { ms: diagnostic.params.gapMs });
     case "tooShort":
-      return t("subtitles:quality.detail.tooShort", { ms: diagnostic.params.durationMs });
+      // A short cue that the next cue blocks is informational: saying "too
+      // short" without the reason reads as a fix nobody applied.
+      return diagnostic.autoFixable
+        ? t("subtitles:quality.detail.tooShort", { ms: diagnostic.params.durationMs })
+        : t("subtitles:quality.detail.tooShortTight", {
+            ms: diagnostic.params.durationMs,
+            room: diagnostic.params.roomMs,
+          });
     case "tooLong":
       return t("subtitles:quality.detail.tooLong", { seconds: diagnostic.params.seconds });
     case "startReversed":

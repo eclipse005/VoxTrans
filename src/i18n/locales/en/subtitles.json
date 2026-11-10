@@ -115,7 +115,8 @@
       "startReversed": "The next cue starts before this one",
       "emptyText": "No source text to show",
       "missingTranslation": "This cue has no translation yet",
-      "cjkPunctuation": "Leading or trailing punctuation, beautify trims it"
+      "cjkPunctuation": "Leading or trailing punctuation, beautify trims it",
+      "tooShortTight": "Visible for {{ms}} ms; the next cue starts {{room}} ms later, so it cannot be lengthened"
     }
   }
 }

@@ -378,24 +378,38 @@ export function useSubtitleWorkflow({
     if (!taskId) return 0;
     const cues = subtitleCuesRef.current;
     if (cues.length === 0) return 0;
-    const response = await beautifySubtitleEditor(
-      taskId,
-      JSON.stringify(buildSubtitleSegmentsFromCues(cues)),
-    );
-    const segments = parseSubtitleSegments(response.subtitleSegmentsJson);
-    const nextCues = applyBeautifiedSegments(subtitleCuesRef.current, segments);
-    if (!nextCues) {
-      throw new Error("beautify returned a different cue count");
+    let nextCues: SubtitleCue[];
+    let changedCues = 0;
+    try {
+      const response = await beautifySubtitleEditor(
+        taskId,
+        JSON.stringify(buildSubtitleSegmentsFromCues(cues)),
+      );
+      const merged = applyBeautifiedSegments(
+        subtitleCuesRef.current,
+        parseSubtitleSegments(response.subtitleSegmentsJson),
+      );
+      if (!merged) {
+        throw new Error("beautify returned a different cue count");
+      }
+      nextCues = merged;
+      changedCues = response.changedCues;
+    } catch (error) {
+      // A failed beautify must never look like a successful no-op: the strip
+      // would keep its counts and the user would think the click was ignored.
+      reportError(error, "beautifySubtitleEditor");
+      pushToast(toUserErrorMessage(error, t("toasts:subtitleBeautify.failed")), "error");
+      return 0;
     }
-    if (response.changedCues > 0) {
+    if (changedCues > 0) {
       markSubtitleEdited(nextCues);
-      pushToast(t("toasts:subtitleBeautify.fixed", { count: response.changedCues }), "success");
+      pushToast(t("toasts:subtitleBeautify.fixed", { count: changedCues }), "success");
     } else {
       // Never a silent no-op: the strip can look unchanged when only text
       // polish had nothing to do.
       pushToast(t("toasts:subtitleBeautify.nothing"), "info");
     }
-    return response.changedCues;
+    return changedCues;
   }, [markSubtitleEdited, pushToast, t]);
 
   const addCueAfter = useCallback(

@@ -115,7 +115,8 @@
       "startReversed": "下一条的开始时间早于本条",
       "emptyText": "原文为空，无法显示",
       "missingTranslation": "这一条还没有译文",
-      "cjkPunctuation": "译文首尾多余标点，美化会清理"
+      "cjkPunctuation": "译文首尾多余标点，美化会清理",
+      "tooShortTight": "仅显示 {{ms}} 毫秒，下一条 {{room}} 毫秒后开始，无法再延长"
     }
   }
 }

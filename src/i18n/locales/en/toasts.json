@@ -78,6 +78,7 @@
   },
   "subtitleBeautify": {
     "fixed": "Beautify applied, {{count}} cue(s) changed",
-    "nothing": "Nothing to fix automatically"
+    "nothing": "Nothing to fix automatically",
+    "failed": "Beautify failed"
   }
 }

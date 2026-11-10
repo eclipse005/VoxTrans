@@ -78,6 +78,7 @@
   },
   "subtitleBeautify": {
     "fixed": "美化完成，共修改 {{count}} 条字幕",
-    "nothing": "没有可自动修改的项"
+    "nothing": "没有可自动修改的项",
+    "failed": "美化失败"
   }
 }

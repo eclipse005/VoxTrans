@@ -191,6 +191,8 @@ function SubtitleEditorModal({
   const applyBeautify = useCallback(() => {
     if (!onApplyBeautify) return;
     setApplying(true);
+    // Errors are reported by the caller (it owns toast); this only guarantees
+    // the spinner never sticks.
     void onApplyBeautify()
       .catch(() => undefined)
       .finally(() => setApplying(false));
@@ -223,7 +225,8 @@ function SubtitleEditorModal({
         onOpenLogs={onOpenLogs}
       />
 
-      <SubtitleEditorToolbar        canEdit={canEdit}
+      <SubtitleEditorToolbar
+        canEdit={canEdit}
         findText={findText}
         replaceText={replaceText}
         findCounterLabel={findCounterLabel}
