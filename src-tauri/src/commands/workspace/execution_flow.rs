@@ -338,15 +338,13 @@ async fn execute_srt_translate_task(
     let step2_segments =
         crate::services::subtitle_import::workspace_segments_to_step2(&workspace_segments);
 
-    // Force no beautify so imported cue boundaries stay intact.
-    let mut record = record.clone();
-    record.frozen.enable_subtitle_beautify = false;
-    record.intent = "TRANSLATE_SRT".to_string();
-
+    // Imported cue boundaries were already persisted above and neither
+    // materialize step touches timing for this path, so the task keeps the
+    // user's beautify setting: text polish applies, cue times stay intact.
     execute_translate_steps(
         app,
         task_id,
-        &record,
+        record,
         runtime,
         source_lang,
         target_lang,

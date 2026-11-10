@@ -1,4 +1,3 @@
-use crate::db::store::TaskStore;
 use crate::services::task_log::{TaskLogger, event};
 use serde::Deserialize;
 use serde_json::json;
@@ -141,7 +140,7 @@ pub fn export_srt(request: ExportSrtRequest) -> Result<String, String> {
     Ok(output_path.display().to_string())
 }
 
-pub fn export_task_srts(store: &TaskStore, request: ExportTaskSrtsRequest) -> Result<Vec<String>, String> {
+pub fn export_task_srts(request: ExportTaskSrtsRequest) -> Result<Vec<String>, String> {
     if request.task_id.trim().is_empty() {
         return Err("taskId is required".to_string());
     }
@@ -161,24 +160,15 @@ pub fn export_task_srts(store: &TaskStore, request: ExportTaskSrtsRequest) -> Re
     }
 
     let task_item = crate::commands::workspace::get_task_queue_item_for_export(&request.task_id)?;
-    let (task_enable_subtitle_beautify, _subtitle_length_preset, target_lang) =
-        crate::commands::workspace::task_subtitle_beautify_context(store, &request.task_id)?;
     let segments =
         crate::services::subtitle_srt::parse_segments_json(&task_item.subtitle_segments_json)
             .map_err(|err| format!("Failed to parse subtitle segments: {err}"))?;
     if segments.is_empty() {
         return Err("Current task has no exportable subtitle segments".to_string());
     }
-    let mut segments = segments;
-    if task_enable_subtitle_beautify {
-        // Text polish only. Hold/gap padding already ran when the SoT was
-        // materialized; running it again would min-hold a short cue and then
-        // treat the leftover gap as a snap-to-next.
-        crate::services::subtitle_beautify::beautify_subtitle_srt_text(
-            &mut segments,
-            &target_lang,
-        );
-    }
+    // Export is pure serialization: what the editor shows is what lands on
+    // disk. Beautify runs where the data is produced (SoT materialisation) or
+    // when the user asks for it, never as a surprise at export time.
 
     let output_paths = crate::services::subtitle_srt::write_variants_to_directory(
         &dir_path,
@@ -220,4 +210,29 @@ fn round2(value: f64) -> f64 {
         return 0.0;
     }
     (value * 100.0).round() / 100.0
+}
+
+#[cfg(test)]
+mod tests {
+    /// Export is pure serialization: the file must contain exactly what the
+    /// editor showed. A beautify pass here would silently rewrite text the
+    /// user already reviewed, which is the class of bug this guard exists for.
+    /// BONE-BREAK target: re-adding any `beautify_*` call to `export_task_srts`
+    /// turns this red.
+    #[test]
+    fn export_task_srts_does_not_transform_text_or_timings() {
+        const SOURCE: &str = include_str!("file.rs");
+        let start = SOURCE
+            .find("pub fn export_task_srts")
+            .expect("export_task_srts must exist");
+        let end = SOURCE[start + 1..]
+            .find("\npub fn ")
+            .map(|offset| start + 1 + offset)
+            .unwrap_or(SOURCE.len());
+        let body = &SOURCE[start..end];
+        assert!(
+            !body.contains("beautify_"),
+            "export_task_srts must not run beautify; it runs where the SoT is produced"
+        );
+    }
 }
