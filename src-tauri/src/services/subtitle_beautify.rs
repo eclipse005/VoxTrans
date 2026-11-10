@@ -33,6 +33,14 @@ const MAX_GAP_FILL_MS: u64 = 800;
 /// 1. Gap to next is (0, 800ms) → end = next.start. Done.
 /// 2. Else if duration < 800ms → grow up to 800ms, never past next.start.
 ///    The leftover gap is left as-is; it must not then trigger (1).
+///
+/// Overlapping cues are aligned first: an end past the next cue's start is a
+/// value the player never shows (the next cue already owns that instant), so
+/// clamping it to the boundary changes nothing on screen but makes the file
+/// truthful. Starts, order and numbering are never touched.
+///
+/// Running this twice is a no-op: after one pass every end is either equal to
+/// the next start or at least 800ms away from it.
 fn pad_cue_hold_and_gaps(segments: &mut [SubtitleSrtSegment]) {
     let len = segments.len();
     for i in 0..len {
@@ -46,6 +54,9 @@ fn pad_cue_hold_and_gaps(segments: &mut [SubtitleSrtSegment]) {
 
         match next_start {
             Some(next) if next <= start => {}
+            Some(next) if next < end => {
+                end = next;
+            }
             Some(next) if next > end && next - end < MAX_GAP_FILL_MS => {
                 end = next;
             }
@@ -404,6 +415,63 @@ mod tests {
         pad_cue_hold_and_gaps(&mut segments);
         assert_eq!(segments[0].end_ms, 800);
         assert_eq!(segments[1].start_ms, 1500);
+    }
+
+    #[test]
+    fn overlapping_end_is_clamped_to_the_next_start() {
+        // BONE-BREAK target: dropping the `next < end` arm leaves the first
+        // cue ending at 2600 while the next starts at 2000 — exactly the
+        // reported symptom (a cue covering the next cue's start).
+        let mut segments = vec![timed(1000, 2600), timed(2000, 3000)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].start_ms, 1000);
+        assert_eq!(segments[0].end_ms, 2000);
+        assert_eq!(segments[1].start_ms, 2000);
+        assert_eq!(segments[1].end_ms, 3000);
+    }
+
+    #[test]
+    fn clamping_overlap_leaves_a_zero_gap_and_not_a_min_hold() {
+        // The clamp must win over the min-hold growth: after aligning to the
+        // next start there is nothing left to grow into.
+        let mut segments = vec![timed(0, 900), timed(400, 1200)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].end_ms, 400);
+    }
+
+    #[test]
+    fn touching_cues_are_not_clamped() {
+        let mut segments = vec![timed(0, 1000), timed(1000, 2000)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].end_ms, 1000);
+    }
+
+    #[test]
+    fn a_backwards_next_start_never_produces_end_before_start() {
+        // Timestamps that go backwards are user data, not ours to "fix" by
+        // inventing an inverted interval.
+        let mut segments = vec![timed(2000, 2600), timed(1500, 3000)];
+        pad_cue_hold_and_gaps(&mut segments);
+        assert_eq!(segments[0].end_ms, 2600);
+    }
+
+    #[test]
+    fn padding_is_idempotent_so_the_editor_button_can_run_twice() {
+        // BONE-BREAK target: the editor exposes beautify as a button, so a
+        // second click must not shift timings again.
+        let original = vec![
+            timed(0, 200),
+            timed(600, 1200),
+            timed(1500, 1600),
+            timed(4000, 5200),
+        ];
+        let mut once = original.clone();
+        pad_cue_hold_and_gaps(&mut once);
+        let mut twice = once.clone();
+        pad_cue_hold_and_gaps(&mut twice);
+        let once_ends: Vec<u64> = once.iter().map(|s| s.end_ms).collect();
+        let twice_ends: Vec<u64> = twice.iter().map(|s| s.end_ms).collect();
+        assert_eq!(once_ends, twice_ends);
     }
 
     #[test]

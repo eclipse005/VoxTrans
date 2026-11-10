@@ -94,7 +94,6 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     subtitleMediaPath,
     subtitleSrtPath,
     subtitleCues,
-    subtitleCueWarnings,
     subtitleDirty,
   } = state;
 
@@ -155,6 +154,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
     splitSelectedCues,
     replaceTextInCues,
     removeCue,
+    beautifyCues,
     exportSubtitleSrt,
     prepareReviewFlushJson,
   } = useSubtitleWorkflow({
@@ -352,7 +352,7 @@ function AppContent({ settings, state, dispatch }: AppContentProps) {
         canEditSubtitle={canEditSubtitle}
         subtitleTaskName={subtitleTaskName}
         subtitleCues={subtitleCues}
-        subtitleCueWarnings={subtitleCueWarnings}
+        onApplySubtitleBeautify={beautifyCues}
         asrModel={settings.asrModel}
         alignModel={settings.alignModel}
         pushToast={pushToast}

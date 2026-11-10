@@ -86,6 +86,7 @@ fn main() {
             commands::workspace::update_task_review_flags,
             commands::workspace::resume_task_after_review,
             commands::workspace::save_subtitle_editor,
+            commands::workspace::beautify_subtitle_editor,
             commands::workspace::execute_task_batch,
             commands::logs::read_task_log,
             commands::logs::report_frontend_error,

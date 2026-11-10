@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { DownloadIcon, LogsIcon } from "../Icons";
+import { DownloadIcon, LogsIcon, SparkleIcon } from "../Icons";
 
 type SubtitleEditorHeaderProps = {
   canEdit: boolean;
@@ -13,6 +13,10 @@ type SubtitleEditorHeaderProps = {
   onToggleReviewTarget?: (value: boolean) => void;
   onOpenSrtDir: () => void | Promise<void>;
   onExportSrt: () => void | Promise<void>;
+  /** Document-level beautify. Always available: the settings toggle only
+   *  decides whether the automatic pipeline runs it on its own. */
+  onBeautify?: () => void;
+  beautifying?: boolean;
   onOpenLogs: () => void | Promise<void>;
 };
 
@@ -28,6 +32,8 @@ export default function SubtitleEditorHeader({
   onToggleReviewTarget,
   onOpenSrtDir,
   onExportSrt,
+  onBeautify,
+  beautifying = false,
   onOpenLogs,
 }: SubtitleEditorHeaderProps) {
   const { t } = useTranslation(["subtitles", "common"]);
@@ -93,6 +99,22 @@ export default function SubtitleEditorHeader({
               <span>{t("subtitles:review.target")}</span>
             </label>
           </div>
+        ) : null}
+        {onBeautify ? (
+          <button
+            type="button"
+            className="subtitle-header-icon-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onBeautify();
+            }}
+            disabled={!canEdit || beautifying}
+            aria-label={t("subtitles:quality.apply")}
+            title={canEdit ? t("subtitles:quality.applyHint") : t("subtitles:quality.applyReadOnly")}
+          >
+            <SparkleIcon />
+            <span>{beautifying ? t("subtitles:quality.applying") : t("subtitles:quality.apply")}</span>
+          </button>
         ) : null}
         <button
           type="button"

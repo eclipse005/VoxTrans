@@ -75,5 +75,9 @@
     "alreadyInQueue": "该任务已在下载队列中",
     "retryQueued": "已加入下载重试队列",
     "deleteFailed": "删除任务失败"
+  },
+  "subtitleBeautify": {
+    "fixed": "美化完成，共修改 {{count}} 条字幕",
+    "nothing": "没有可自动修改的项"
   }
 }

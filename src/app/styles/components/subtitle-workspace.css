@@ -299,3 +299,344 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* -------------------------------------------------------------------------
+   Subtitle quality strip (diagnostics + one-click beautify)
+
+   Only rendered when something is wrong: a clean list stays quiet, so the
+   green "all clear" state is the absence of this strip rather than a badge on
+   every row. Motion is transform/opacity only, always ease-out (never the
+   native ease-in), and hover effects are gated to fine pointers.
+   ---------------------------------------------------------------------- */
+
+.subtitle-quality-bar {
+  --quality-error: #b42318;
+  --quality-warning: #a05a00;
+  --quality-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  position: relative;
+  margin: 0 0 8px;
+}
+
+.subtitle-quality-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.subtitle-quality-strip.error {
+  border-color: rgba(180, 35, 24, 0.28);
+  background: rgba(255, 59, 48, 0.07);
+}
+
+.subtitle-quality-strip.warning {
+  border-color: rgba(160, 90, 0, 0.26);
+  background: rgba(255, 159, 10, 0.1);
+}
+
+.subtitle-quality-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--apple-text-primary, #1d1d1f);
+  transition: background-color 160ms ease-out, transform 160ms var(--quality-ease-out);
+}
+
+.subtitle-quality-summary:active {
+  transform: scale(0.97);
+}
+
+.subtitle-quality-strip.error .subtitle-quality-summary {
+  color: var(--quality-error);
+}
+
+.subtitle-quality-strip.warning .subtitle-quality-summary {
+  color: var(--quality-warning);
+}
+
+.subtitle-quality-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.subtitle-quality-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.subtitle-quality-summary svg {
+  flex: 0 0 auto;
+  opacity: 0.7;
+  transition: transform 200ms var(--quality-ease-out);
+}
+
+.subtitle-quality-summary[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.subtitle-quality-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.subtitle-quality-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--apple-border-lighter, rgba(0, 0, 0, 0.12));
+  border-radius: 999px;
+  background: #fff;
+  font-size: 11.5px;
+  color: var(--apple-text-secondary, #6e6e73);
+  cursor: pointer;
+  transition: border-color 160ms ease-out, color 160ms ease-out,
+    background-color 160ms ease-out, transform 160ms var(--quality-ease-out);
+}
+
+.subtitle-quality-chip-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--apple-text-primary, #1d1d1f);
+}
+
+.subtitle-quality-chip.is-active {
+  border-color: var(--apple-blue, #0a84ff);
+  background: var(--apple-blue-soft, rgba(10, 132, 255, 0.1));
+  color: var(--apple-blue, #0a84ff);
+}
+
+.subtitle-quality-chip:active {
+  transform: scale(0.97);
+}
+
+.subtitle-quality-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.subtitle-quality-manual {
+  font-size: 11.5px;
+  /* Secondary, not tertiary: tertiary on the tinted strip measures ~2.9:1. */
+  color: var(--apple-text-secondary, #6e6e73);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.subtitle-quality-apply {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: transform 160ms var(--quality-ease-out);
+}
+
+.subtitle-quality-apply:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.subtitle-quality-panel {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  padding: 6px;
+  overflow: hidden;
+  border: 1px solid var(--apple-border-light, rgba(0, 0, 0, 0.1));
+  border-radius: 10px;
+  background: var(--apple-bg-secondary, #fff);
+  box-shadow: var(--apple-shadow-md, 0 10px 30px rgba(0, 0, 0, 0.12));
+  transform-origin: top center;
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 160ms var(--quality-ease-out),
+    transform 160ms var(--quality-ease-out), visibility 0s linear 160ms;
+}
+
+.subtitle-quality-panel[data-open="true"] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+/* Scroll affordance lives on the inner scroller: masking the panel itself
+   would make the cue rows behind it show through the fade. Masking here fades
+   the list into the panel's own opaque background instead. */
+.subtitle-quality-scroll {
+  max-height: 228px;
+  overflow: auto;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent 100%);
+}
+
+.subtitle-quality-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+}
+
+.subtitle-quality-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  color: var(--apple-text-primary, #1d1d1f);
+  cursor: pointer;
+  transition: background-color 140ms ease-out;
+}
+
+.subtitle-quality-item-number {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--apple-text-secondary, #6e6e73);
+}
+
+.subtitle-quality-item-kind {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.subtitle-quality-item.error .subtitle-quality-item-kind {
+  color: var(--quality-error);
+}
+
+.subtitle-quality-item.warning .subtitle-quality-item-kind {
+  color: var(--quality-warning);
+}
+
+.subtitle-quality-item-detail {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--apple-text-secondary, #6e6e73);
+  overflow-wrap: anywhere;
+}
+
+.subtitle-quality-item-locate {
+  flex: 0 0 auto;
+  color: var(--apple-blue, #0a84ff);
+  opacity: 0;
+  transition: opacity 140ms ease-out;
+}
+
+.subtitle-quality-item:hover .subtitle-quality-item-locate,
+.subtitle-quality-item:focus-visible .subtitle-quality-item-locate {
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .subtitle-quality-summary:hover {
+    background: rgba(120, 120, 128, 0.1);
+  }
+
+  .subtitle-quality-chip:hover {
+    border-color: var(--apple-blue, #0a84ff);
+    color: var(--apple-blue, #0a84ff);
+  }
+
+  .subtitle-quality-item:hover {
+    background: rgba(120, 120, 128, 0.1);
+  }
+}
+
+.subtitle-quality-summary:focus-visible,
+.subtitle-quality-chip:focus-visible,
+.subtitle-quality-item:focus-visible,
+.subtitle-quality-apply:focus-visible {
+  outline: 2px solid var(--apple-blue, #0a84ff);
+  outline-offset: 2px;
+}
+
+/* Located row: a single ring that fades out. Animated properties are opacity
+   and transform only, so this stays off the layout and paint path. */
+.subtitle-row-card.is-located {
+  position: relative;
+}
+
+.subtitle-row-card.is-located::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--apple-blue, #0a84ff);
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  animation: subtitle-located-ring 1200ms var(--quality-ease-out, cubic-bezier(0.23, 1, 0.32, 1)) forwards;
+}
+
+@keyframes subtitle-located-ring {
+  0% {
+    opacity: 0;
+    transform: scale(0.995);
+  }
+  12% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  70% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subtitle-quality-summary,
+  .subtitle-quality-chip,
+  .subtitle-quality-apply,
+  .subtitle-quality-item,
+  .subtitle-quality-panel {
+    transition-duration: 1ms;
+  }
+
+  .subtitle-quality-summary svg {
+    transition-duration: 1ms;
+  }
+
+  .subtitle-row-card.is-located::after {
+    animation-duration: 1ms;
+    animation-fill-mode: both;
+  }
+}
+
+@media (max-width: 720px) {
+  .subtitle-quality-strip {
+    gap: 6px;
+  }
+
+  .subtitle-quality-actions {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

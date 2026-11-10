@@ -27,7 +27,6 @@ export type AppState = {
   subtitleMediaPath: string;
   subtitleSrtPath: string;
   subtitleCues: SubtitleCue[];
-  subtitleCueWarnings: Record<string, string[]>;
   subtitleSelectedCueId: string;
   subtitleDirty: boolean;
 };
@@ -65,7 +64,6 @@ export type SubtitleAction = {
       | "subtitleMediaPath"
       | "subtitleSrtPath"
       | "subtitleCues"
-      | "subtitleCueWarnings"
       | "subtitleDirty"
     >
   >;
@@ -94,7 +92,6 @@ export const initialAppState: AppState = {
   subtitleMediaPath: "",
   subtitleSrtPath: "",
   subtitleCues: [],
-  subtitleCueWarnings: {},
   subtitleSelectedCueId: "",
   subtitleDirty: false,
 };

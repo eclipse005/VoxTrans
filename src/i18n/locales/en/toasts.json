@@ -75,5 +75,9 @@
     "alreadyInQueue": "This task is already in the download queue",
     "retryQueued": "Added to the download retry queue",
     "deleteFailed": "Failed to delete task"
+  },
+  "subtitleBeautify": {
+    "fixed": "Beautify applied, {{count}} cue(s) changed",
+    "nothing": "Nothing to fix automatically"
   }
 }

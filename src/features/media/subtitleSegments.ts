@@ -1,6 +1,5 @@
 import { cuesToSrt } from "./srt";
 import type { SubtitleCue, SubtitleSegment, SubtitleWordAnchor } from "./types";
-
 export function parseSubtitleSegments(raw?: string): SubtitleSegment[] {
   if (!raw?.trim()) return [];
   try {
@@ -38,6 +37,26 @@ export function buildSubtitleSegmentsFromCues(cues: SubtitleCue[]): SubtitleSegm
     translatedText: cue.translatedText || "",
     sourceWords: [],
     semanticSentenceId: cue.semanticSentenceId ?? 0,
+  }));
+}
+
+/**
+ * Fold a beautified segment list back onto the editor's cue list.
+ *
+ * Only timing and translated text can change (see `services::subtitle_beautify`),
+ * and the cue count is preserved, so ids stay stable and selection survives.
+ * Returns `null` when the counts disagree — the caller must not guess.
+ */
+export function applyBeautifiedSegments(
+  cues: SubtitleCue[],
+  segments: SubtitleSegment[],
+): SubtitleCue[] | null {
+  if (segments.length !== cues.length) return null;
+  return cues.map((cue, index) => ({
+    ...cue,
+    startMs: segments[index].startMs,
+    endMs: segments[index].endMs,
+    translatedText: segments[index].translatedText,
   }));
 }
 

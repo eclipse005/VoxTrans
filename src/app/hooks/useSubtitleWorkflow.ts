@@ -4,12 +4,17 @@ import { open } from "@tauri-apps/plugin-dialog";
 
 import type { QueueItem, SubtitleCue } from "../../features/media/types";
 import { isSubtitleEditMode, resolveSubtitleEditorMode } from "../../features/media/subtitleEditorMode";
-import { buildSubtitleSegmentsFromCues, subtitleSegmentsToSrt } from "../../features/media/subtitleSegments";
+import {
+  applyBeautifiedSegments,
+  buildSubtitleSegmentsFromCues,
+  parseSubtitleSegments,
+  subtitleSegmentsToSrt,
+} from "../../features/media/subtitleSegments";
 import type { ExportSrtItem } from "../api/transcribe";
 import { getTaskRunQueueItem } from "../api/workspace";
 import type { AppAction } from "../state/appReducer";
 import { reportError, toUserErrorMessage } from "../utils/errors";
-import { buildCueWarningsById } from "../utils/subtitleWarnings";
+
 import {
   addCueAfterSelection,
   mergeSelectedCueList,
@@ -18,7 +23,7 @@ import {
   splitSelectedCueList,
   updateCueList,
 } from "./subtitleWorkflow/cueOperations";
-import { exportSubtitleVariantsToDirectory, loadSubtitleEditorData, saveSubtitleEditor } from "./subtitleWorkflow/io";
+import { exportSubtitleVariantsToDirectory, loadSubtitleEditorData, saveSubtitleEditor, beautifySubtitleEditor } from "./subtitleWorkflow/io";
 import { buildSubtitleVersion } from "./subtitleWorkflow/versionSync";
 
 type DispatchState = (action: AppAction) => void;
@@ -161,7 +166,6 @@ export function useSubtitleWorkflow({
             subtitleMediaPath: item.path,
             subtitleSrtPath: "",
             subtitleCues: hydratedCues,
-            subtitleCueWarnings: buildCueWarningsById(hydratedCues, []),
             // Preview never owns a draft.
             subtitleDirty: false,
           },
@@ -196,7 +200,6 @@ export function useSubtitleWorkflow({
           payload: {
             subtitleSrtPath: response.srtPath,
             subtitleCues: hydratedCues,
-            subtitleCueWarnings: buildCueWarningsById(hydratedCues, response.warnings),
             subtitleDirty: false,
           },
         });
@@ -213,7 +216,6 @@ export function useSubtitleWorkflow({
             subtitleMediaPath: item.path,
             subtitleSrtPath: "",
             subtitleCues: [],
-            subtitleCueWarnings: {},
             subtitleDirty: false,
           },
         });
@@ -325,7 +327,6 @@ export function useSubtitleWorkflow({
         type: "set_subtitle",
         payload: {
           subtitleCues: nextCues,
-          subtitleCueWarnings: {},
           subtitleDirty: true,
         },
       });
@@ -363,6 +364,39 @@ export function useSubtitleWorkflow({
     },
     [markSubtitleEdited],
   );
+
+  /**
+   * Run the shared Rust beautify on the live draft.
+   *
+   * The transform lives in `services::subtitle_beautify` so the editor button
+   * and the automatic pipeline can never drift apart; this only ships the
+   * current segments over and folds the result back onto the same cue ids
+   * (selection, refs and row identity survive).
+   */
+  const beautifyCues = useCallback(async (): Promise<number> => {
+    const taskId = currentSubtitleTaskIdRef.current;
+    if (!taskId) return 0;
+    const cues = subtitleCuesRef.current;
+    if (cues.length === 0) return 0;
+    const response = await beautifySubtitleEditor(
+      taskId,
+      JSON.stringify(buildSubtitleSegmentsFromCues(cues)),
+    );
+    const segments = parseSubtitleSegments(response.subtitleSegmentsJson);
+    const nextCues = applyBeautifiedSegments(subtitleCuesRef.current, segments);
+    if (!nextCues) {
+      throw new Error("beautify returned a different cue count");
+    }
+    if (response.changedCues > 0) {
+      markSubtitleEdited(nextCues);
+      pushToast(t("toasts:subtitleBeautify.fixed", { count: response.changedCues }), "success");
+    } else {
+      // Never a silent no-op: the strip can look unchanged when only text
+      // polish had nothing to do.
+      pushToast(t("toasts:subtitleBeautify.nothing"), "info");
+    }
+    return response.changedCues;
+  }, [markSubtitleEdited, pushToast, t]);
 
   const addCueAfter = useCallback(
     (selectedCueId: string | null) => {
@@ -478,7 +512,6 @@ export function useSubtitleWorkflow({
           subtitleMediaPath: "",
           subtitleSrtPath: "",
           subtitleCues: [],
-          subtitleCueWarnings: {},
           subtitleDirty: false,
         },
       });
@@ -517,6 +550,8 @@ export function useSubtitleWorkflow({
     subtitleSrtPath,
     subtitleCues,
     updateCue,
+    /** Editor "beautify" button: runs the shared Rust transform, returns changed cue count. */
+    beautifyCues,
     addCueAfter,
     mergeSelectedCues,
     splitSelectedCues,

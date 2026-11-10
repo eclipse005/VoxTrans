@@ -1,6 +1,12 @@
-import { memo, type MouseEvent, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { SubtitleCue } from "../../features/media/types";
+import {
+  diagnoseCues,
+  groupDiagnosticsByCueId,
+  summarizeDiagnostics,
+  type DiagnosticKind,
+} from "../../features/media/subtitleDiagnostics";
 import { useSubtitleBatchAnimations } from "../hooks/useSubtitleBatchAnimations";
 import { useSubtitleFindReplace } from "../hooks/useSubtitleFindReplace";
 import { useSubtitleSelection } from "../hooks/useSubtitleSelection";
@@ -8,6 +14,7 @@ import { useSubtitleTimeValidation } from "../hooks/useSubtitleTimeValidation";
 import SubtitleCueList from "./subtitle-editor/SubtitleCueList";
 import SubtitleEditorHeader from "./subtitle-editor/SubtitleEditorHeader";
 import SubtitleEditorToolbar from "./subtitle-editor/SubtitleEditorToolbar";
+import SubtitleQualityBar from "./subtitle-editor/SubtitleQualityBar";
 
 type SubtitleEditorModalProps = {
   visible: boolean;
@@ -19,7 +26,10 @@ type SubtitleEditorModalProps = {
   emptyText?: string;
   taskName: string;
   cues: SubtitleCue[];
-  cueWarningsById: Record<string, string[]>;
+  /** Task target language, used to gate CJK-only text checks. */
+  targetLang?: string;
+  /** Runs the shared Rust beautify over the live draft; returns changed cues. */
+  onApplyBeautify?: () => Promise<number>;
   onUpdateCue: (cueId: string, patch: Partial<SubtitleCue>) => void;
   onAddCueAfter: (selectedCueId: string | null) => void;
   onMergeSelected: (selectedCueIds: string[]) => void;
@@ -45,7 +55,8 @@ function SubtitleEditorModal({
   emptyText,
   taskName,
   cues,
-  cueWarningsById,
+  targetLang,
+  onApplyBeautify,
   onUpdateCue,
   onAddCueAfter,
   onMergeSelected,
@@ -120,6 +131,71 @@ function SubtitleEditorModal({
     cueIds,
     onSelectedCueChanged: moveCursorToCue,
   });
+
+  // Diagnostics are a pure function of the cue list, so the strip, the per-row
+  // badges and the chip filters all read the same result.
+  const diagnostics = useMemo(() => diagnoseCues(cues, targetLang), [cues, targetLang]);
+  const summary = useMemo(() => summarizeDiagnostics(diagnostics), [diagnostics]);
+  const diagnosticsByCueId = useMemo(
+    () => groupDiagnosticsByCueId(diagnostics),
+    [diagnostics],
+  );
+  const cueNumbers = useMemo(() => {
+    const numbers: Record<string, number> = {};
+    cues.forEach((cue, index) => {
+      numbers[cue.id] = index + 1;
+    });
+    return numbers;
+  }, [cues]);
+
+  const [activeKind, setActiveKind] = useState<DiagnosticKind | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [locatedCueId, setLocatedCueId] = useState<string | null>(null);
+
+  // Derived, not synced: when a fix clears the last cue of the filtered kind
+  // the chip disappears on its own, so the stored filter silently stops
+  // applying instead of needing an effect to reset it.
+  const effectiveKind =
+    activeKind && summary.byKind.some((entry) => entry.kind === activeKind)
+      ? activeKind
+      : null;
+
+  const visibleCues = useMemo(
+    () =>
+      effectiveKind
+        ? cues.filter((cue) =>
+            diagnostics.some(
+              (diagnostic) => diagnostic.cueId === cue.id && diagnostic.kind === effectiveKind,
+            ),
+          )
+        : cues,
+    [effectiveKind, cues, diagnostics],
+  );
+
+  const locateCue = useCallback(
+    (cueId: string) => {
+      ensureSelected(cueId);
+      const node = cardRefs.current[cueId];
+      node?.scrollIntoView({ block: "center", behavior: "smooth" });
+      setLocatedCueId(cueId);
+    },
+    [cardRefs, ensureSelected],
+  );
+
+  useEffect(() => {
+    if (!locatedCueId) return;
+    const timer = window.setTimeout(() => setLocatedCueId(null), 1200);
+    return () => window.clearTimeout(timer);
+  }, [locatedCueId]);
+
+  const applyBeautify = useCallback(() => {
+    if (!onApplyBeautify) return;
+    setApplying(true);
+    void onApplyBeautify()
+      .catch(() => undefined)
+      .finally(() => setApplying(false));
+  }, [onApplyBeautify]);
+
   if (!visible) return null;
 
   const content = (
@@ -142,11 +218,12 @@ function SubtitleEditorModal({
         onToggleReviewTarget={onToggleReviewTarget}
         onOpenSrtDir={onOpenSrtDir}
         onExportSrt={onExportSrt}
+        onBeautify={onApplyBeautify ? applyBeautify : undefined}
+        beautifying={applying}
         onOpenLogs={onOpenLogs}
       />
 
-      <SubtitleEditorToolbar
-        canEdit={canEdit}
+      <SubtitleEditorToolbar        canEdit={canEdit}
         findText={findText}
         replaceText={replaceText}
         findCounterLabel={findCounterLabel}
@@ -171,10 +248,26 @@ function SubtitleEditorModal({
         }}
       />
 
+      {summary.total > 0 ? (
+        <SubtitleQualityBar
+          diagnostics={diagnostics}
+          summary={summary}
+          canEdit={canEdit}
+          applying={applying}
+          activeKind={effectiveKind}
+          onActiveKindChange={setActiveKind}
+          onLocate={locateCue}
+          onApply={applyBeautify}
+        />
+      ) : null}
+
       <SubtitleCueList
         canEdit={canEdit}
-        cues={cues}
-        cueWarningsById={cueWarningsById}
+        cues={visibleCues}
+        totalCount={cues.length}
+        diagnosticsByCueId={diagnosticsByCueId}
+        cueNumbers={cueNumbers}
+        locatedCueId={locatedCueId}
         emptyText={emptyText ?? (canEdit ? t("subtitles:editor.emptyEditable") : t("subtitles:editor.emptyReadOnly"))}
         selectedCueIds={validSelectedCueIds}
         matchedCueIds={matchedCueIds}

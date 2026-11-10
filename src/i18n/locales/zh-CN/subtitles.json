@@ -80,10 +80,42 @@
     "startInvalid": "开始时间格式错误，使用 HH:MM:SS,mmm",
     "endInvalid": "结束时间格式错误，使用 HH:MM:SS,mmm"
   },
-  "warnings": {
-    "emptyText": "文本为空",
-    "endBeforeStart": "结束时间早于开始时间",
-    "tooLong": "时长超过 60 秒",
-    "overlap": "与第 {{n}} 条时间重叠"
+  "quality": {
+    "regionLabel": "字幕质量检查",
+    "filtersAria": "按问题类型筛选",
+    "listLabel": "问题列表",
+    "locate": "定位",
+    "summary": {
+      "needsFix": "待修复 {{errors}} 项",
+      "canImprove": "可优化 {{warnings}} 项",
+      "mixed": "待修复 {{errors}} 项 · 可优化 {{warnings}} 项"
+    },
+    "manualCount": "{{count}} 项需手动处理",
+    "manualHint": "这些项美化不会自动改动，需要你确认后再编辑",
+    "apply": "美化",
+    "applying": "处理中",
+    "applyHint": "自动对齐重叠时间码、补足显示时长、整理标点",
+    "applyReadOnly": "当前状态不可编辑",
+    "applyNothing": "没有可自动修复的项",
+    "kind": {
+      "overlap": "时间重叠",
+      "emptyText": "文本为空",
+      "missingTranslation": "译文缺失",
+      "tooShort": "显示过短",
+      "tooLong": "时长过长",
+      "gapTiny": "间隙过小",
+      "cjkPunctuation": "标点冗余",
+      "startReversed": "时间码回退"
+    },
+    "detail": {
+      "overlap": "结束时间超出第 {{next}} 条开始时间 {{ms}} 毫秒",
+      "gapTiny": "与下一条的间隙只有 {{ms}} 毫秒，播放时会闪空",
+      "tooShort": "仅显示 {{ms}} 毫秒",
+      "tooLong": "单条显示 {{seconds}} 秒，阅读吃力",
+      "startReversed": "下一条的开始时间早于本条",
+      "emptyText": "原文为空，无法显示",
+      "missingTranslation": "这一条还没有译文",
+      "cjkPunctuation": "译文首尾多余标点，美化会清理"
+    }
   }
 }

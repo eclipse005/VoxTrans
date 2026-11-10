@@ -80,10 +80,42 @@
     "startInvalid": "Invalid start time format, use HH:MM:SS,mmm",
     "endInvalid": "Invalid end time format, use HH:MM:SS,mmm"
   },
-  "warnings": {
-    "emptyText": "Empty text",
-    "endBeforeStart": "End time precedes start time",
-    "tooLong": "Longer than 60 seconds",
-    "overlap": "Overlaps with cue {{n}}"
+  "quality": {
+    "regionLabel": "Subtitle quality",
+    "filtersAria": "Filter by issue type",
+    "listLabel": "Issue list",
+    "locate": "Go",
+    "summary": {
+      "needsFix": "{{errors}} to fix",
+      "canImprove": "{{warnings}} to improve",
+      "mixed": "{{errors}} to fix · {{warnings}} to improve"
+    },
+    "manualCount": "{{count}} need a manual edit",
+    "manualHint": "Beautify will not change these; review and edit them yourself",
+    "apply": "Beautify",
+    "applying": "Working",
+    "applyHint": "Align overlapping timings, pad short cues, tidy punctuation",
+    "applyReadOnly": "Not editable in this state",
+    "applyNothing": "Nothing to fix automatically",
+    "kind": {
+      "overlap": "Overlap",
+      "emptyText": "Empty text",
+      "missingTranslation": "Missing translation",
+      "tooShort": "Too short",
+      "tooLong": "Too long",
+      "gapTiny": "Tiny gap",
+      "cjkPunctuation": "Extra punctuation",
+      "startReversed": "Backwards timing"
+    },
+    "detail": {
+      "overlap": "Ends {{ms}} ms after cue {{next}} starts",
+      "gapTiny": "Only {{ms}} ms before the next cue, the frame flashes blank",
+      "tooShort": "Visible for {{ms}} ms only",
+      "tooLong": "On screen for {{seconds}} s, hard to read",
+      "startReversed": "The next cue starts before this one",
+      "emptyText": "No source text to show",
+      "missingTranslation": "This cue has no translation yet",
+      "cjkPunctuation": "Leading or trailing punctuation, beautify trims it"
+    }
   }
 }

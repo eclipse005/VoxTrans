@@ -1,5 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export type BeautifySubtitleEditorResponse = {
+  subtitleSegmentsJson: string;
+  changedCues: number;
+};
+
+/** Run the shared Rust subtitle beautify on the editor's current segments. */
+export async function beautifySubtitleEditor(
+  taskId: string,
+  subtitleSegmentsJson: string,
+): Promise<BeautifySubtitleEditorResponse> {
+  return invoke<BeautifySubtitleEditorResponse>("beautify_subtitle_editor", {
+    request: { taskId, subtitleSegmentsJson },
+  });
+}
+
 import type { QueueItem, SubtitleCue } from "../../../features/media/types";
 import {
   buildCueListFromSubtitleSegments,

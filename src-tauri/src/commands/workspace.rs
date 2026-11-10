@@ -186,6 +186,75 @@ pub async fn save_subtitle_editor(
     .await
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BeautifySubtitleEditorRequest {
+    pub task_id: String,
+    pub subtitle_segments_json: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BeautifySubtitleEditorResponse {
+    pub subtitle_segments_json: String,
+    /// Cues whose timing or translated text actually changed. The editor uses
+    /// it to report "fixed N" instead of claiming success blindly.
+    pub changed_cues: usize,
+}
+
+/// Apply subtitle beautify on demand from the editor.
+///
+/// Deliberately the *same* function the automatic pipeline runs
+/// (`services::subtitle_beautify::beautify_workspace_segments`), so the editor
+/// button and the auto flow can never disagree about what beautifying means.
+/// The settings toggle does not gate this: it only decides whether the
+/// pipeline runs beautify on its own.
+pub fn beautify_subtitle_editor_internal(
+    app: &AppHandle,
+    request: BeautifySubtitleEditorRequest,
+) -> WorkspaceResult<BeautifySubtitleEditorResponse> {
+    let task_id = require_task_id(&request.task_id)?;
+    let mut segments = parse_subtitle_segments_json(&request.subtitle_segments_json)?;
+    let store = app.state::<TaskStore>().inner().clone();
+    let (_, subtitle_length_preset, target_lang) =
+        task_subtitle_beautify_context(&store, task_id)?;
+
+    let before: Vec<(u64, u64, String)> = segments
+        .iter()
+        .map(|seg| (seg.start_ms, seg.end_ms, seg.translated_text.clone()))
+        .collect();
+    crate::services::subtitle_beautify::beautify_workspace_segments(
+        &mut segments,
+        subtitle_length_preset.as_str(),
+        &target_lang,
+    );
+    let changed_cues = segments
+        .iter()
+        .zip(before.iter())
+        .filter(|(seg, (start, end, translated))| {
+            seg.start_ms != *start || seg.end_ms != *end || seg.translated_text != *translated
+        })
+        .count();
+
+    let subtitle_segments_json = crate::domain::workspace_subtitle::serialize_segments(&segments);
+    Ok(BeautifySubtitleEditorResponse {
+        subtitle_segments_json,
+        changed_cues,
+    })
+}
+
+#[tauri::command]
+pub async fn beautify_subtitle_editor(
+    app: AppHandle,
+    request: BeautifySubtitleEditorRequest,
+) -> Result<BeautifySubtitleEditorResponse, String> {
+    crate::services::app_log::guard_async("workspace", "BEAUTIFY_SUBTITLE_EDITOR_FAILED", async {
+        ensure_workspace_hydrated_from_db(&app).await?;
+        Ok(beautify_subtitle_editor_internal(&app, request)?)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn execute_task_batch(
     app: AppHandle,

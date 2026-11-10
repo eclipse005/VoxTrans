@@ -41,6 +41,19 @@ mod command_registration_tests {
     }
 
     #[test]
+    fn subtitle_editor_commands_are_registered_in_tauri_handler() {
+        for command in [
+            "commands::workspace::save_subtitle_editor",
+            "commands::workspace::beautify_subtitle_editor",
+        ] {
+            assert!(
+                MAIN_RS.contains(command),
+                "{command} must be registered in the Tauri invoke handler"
+            );
+        }
+    }
+
+    #[test]
     fn final_check_command_is_not_registered_in_tauri_handler() {
         assert!(
             !MAIN_RS.contains("commands::translate_final_check::build_step_6_final_check"),

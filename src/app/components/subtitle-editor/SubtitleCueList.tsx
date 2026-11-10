@@ -8,7 +8,9 @@ import {
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import type { SubtitleCue } from "../../../features/media/types";
+import type { Diagnostic } from "../../../features/media/subtitleDiagnostics";
 import { AlertIcon, TrashIcon } from "../Icons";
+import { diagnosticLabel } from "./diagnosticLabels";
 import { TimeField } from "./TimeField";
 
 /// Labels a row needs that do not depend on the row. Resolved once per list
@@ -27,7 +29,15 @@ type SubtitleRowLabels = {
 type SubtitleCueListProps = {
   canEdit: boolean;
   cues: SubtitleCue[];
-  cueWarningsById: Record<string, string[]>;
+  /** Problem list per cue id. Exception-only: a clean cue has no entry. */
+  diagnosticsByCueId: Record<string, Diagnostic[]>;
+  /** Display number per cue id. Filtering the list must not renumber cues. */
+  cueNumbers?: Record<string, number>;
+  /** Total cues in the draft. A filter can shrink `cues`, but the delete
+   *  guard must keep counting the whole list. */
+  totalCount?: number;
+  /** Cue briefly highlighted after the quality bar locates it. */
+  locatedCueId?: string | null;
   /** Message shown when there are no cues. Caller decides the wording from
    *  task state; the list only renders it (presentational component). */
   emptyText: string;
@@ -52,13 +62,15 @@ type SubtitleCueListProps = {
 
 type SubtitleCueRowProps = {
   cue: SubtitleCue;
-  index: number;
   canEdit: boolean;
   cuesLength: number;
   isSelected: boolean;
   hasFindHit: boolean;
   isFindCurrent: boolean;
-  warnings: string[] | undefined;
+  /// Stable cue number (survives filtering); falls back to list position.
+  cueNumber: number;
+  diagnostics: Diagnostic[] | undefined;
+  isLocated: boolean;
   timeError: string;
   /// Resolved once by the list; see `SubtitleRowLabels`.
   labels: SubtitleRowLabels;
@@ -82,13 +94,14 @@ function stopCardClick(event: MouseEvent<HTMLElement>) {
 
 const SubtitleCueRow = memo(function SubtitleCueRow({
   cue,
-  index,
   canEdit,
   cuesLength,
   isSelected,
   hasFindHit,
   isFindCurrent,
-  warnings,
+  cueNumber,
+  diagnostics,
+  isLocated,
   timeError,
   labels,
   t,
@@ -103,7 +116,8 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
   onClearTimeError,
   onUpdateCue,
 }: SubtitleCueRowProps) {
-  const warningList = warnings ?? [];
+  const warningList = diagnostics ?? [];
+  const hasError = warningList.some((diagnostic) => diagnostic.severity === "error");
   const timeErrorId = timeError ? `subtitle-time-error-${cue.id}` : undefined;
 
   const handleCardRef = (node: HTMLElement | null) => {
@@ -140,6 +154,7 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
     isSelected ? "selected" : "",
     hasFindHit ? "has-find-hit" : "",
     isFindCurrent ? "is-find-current" : "",
+    isLocated ? "is-located" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -157,14 +172,14 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
             type="button"
             className="subtitle-row-index"
             title={labels.select}
-            aria-label={t("subtitles:cue.selectAria", { n: index + 1 })}
+            aria-label={t("subtitles:cue.selectAria", { n: cueNumber })}
             aria-pressed={isSelected}
             onClick={(event) => {
               event.stopPropagation();
               onCueClick(cue.id, event);
             }}
           >
-            #{index + 1}
+            #{cueNumber}
           </button>
           <TimeField
             valueMs={cue.startMs}
@@ -195,8 +210,8 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
         <div className="subtitle-row-actions">
           {warningList.length > 0 ? (
             <span
-              className="subtitle-warning-badge"
-              title={warningList.join("\n")}
+              className={`subtitle-warning-badge${hasError ? " is-error" : " is-warning"}`}
+              title={warningList.map((diagnostic) => diagnosticLabel(t, diagnostic)).join("\n")}
               aria-label={t("subtitles:cue.warningCount", { count: warningList.length })}
             >
               <AlertIcon />
@@ -231,7 +246,7 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
         onClick={stopCardClick}
         onFocus={handleFocusCue}
         placeholder={labels.textPlaceholder}
-        aria-label={t("subtitles:cue.textAria", { n: index + 1 })}
+        aria-label={t("subtitles:cue.textAria", { n: cueNumber })}
         readOnly={!canEdit}
         rows={1}
       />
@@ -242,7 +257,7 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
         onClick={stopCardClick}
         onFocus={handleFocusCue}
         placeholder={labels.translationPlaceholder}
-        aria-label={t("subtitles:cue.translationAria", { n: index + 1 })}
+        aria-label={t("subtitles:cue.translationAria", { n: cueNumber })}
         readOnly={!canEdit}
         rows={1}
       />
@@ -253,7 +268,10 @@ const SubtitleCueRow = memo(function SubtitleCueRow({
 function SubtitleCueList({
   canEdit,
   cues,
-  cueWarningsById,
+  diagnosticsByCueId,
+  cueNumbers,
+  totalCount,
+  locatedCueId,
   emptyText,
   selectedCueIds,
   matchedCueIds,
@@ -317,13 +335,14 @@ function SubtitleCueList({
           <SubtitleCueRow
             key={cue.id}
             cue={cue}
-            index={idx}
             canEdit={canEdit}
-            cuesLength={cues.length}
+            cuesLength={totalCount ?? cues.length}
             isSelected={selectedIdSet.has(cue.id)}
             hasFindHit={matchedCueIds.has(cue.id)}
             isFindCurrent={currentMatchCueId === cue.id}
-            warnings={cueWarningsById[cue.id]}
+            cueNumber={cueNumbers?.[cue.id] ?? idx + 1}
+            diagnostics={diagnosticsByCueId[cue.id]}
+            isLocated={locatedCueId === cue.id}
             timeError={timeErrorByCue[cue.id] ?? ""}
             labels={rowLabels}
             t={t}

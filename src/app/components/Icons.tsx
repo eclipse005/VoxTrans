@@ -46,6 +46,10 @@ export function ReplaceIcon() {
 export function AlertIcon() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M12 3l9 16H3l9-16z" /><path d="M12 9v5" /><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none" /></svg>;
 }
+/** Beautify / auto-fix: sparkles, drawn as SVG (the project never uses emoji). */
+export function SparkleIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3l1.9 4.9L19 9.8l-5.1 1.9L12 17l-1.9-5.3L5 9.8l5.1-1.9L12 3z" /><path d="M18.5 15l.8 2.1 2.2.8-2.2.8-.8 2.1-.8-2.1-2.2-.8 2.2-.8.8-2.1z" /></svg>;
+}
 export function CheckIcon() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M20 6L9 17l-5-5" /></svg>;
 }

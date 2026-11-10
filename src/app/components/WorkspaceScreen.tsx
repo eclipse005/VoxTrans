@@ -28,7 +28,7 @@ type WorkspaceScreenProps = {
   canEditSubtitle: boolean;
   subtitleTaskName: string;
   subtitleCues: SubtitleCue[];
-  subtitleCueWarnings: Record<string, string[]>;
+  onApplySubtitleBeautify: () => Promise<number>;
   asrModel: Parameters<typeof MediaList>[0]["asrModel"];
   alignModel: Parameters<typeof MediaList>[0]["alignModel"];
   pushToast: Parameters<typeof MediaList>[0]["pushToast"];
@@ -71,7 +71,7 @@ export function WorkspaceScreen({
   canEditSubtitle,
   subtitleTaskName,
   subtitleCues,
-  subtitleCueWarnings,
+  onApplySubtitleBeautify,
   asrModel,
   alignModel,
   pushToast,
@@ -210,7 +210,8 @@ export function WorkspaceScreen({
             emptyText={emptyText}
             taskName={subtitleTaskName}
             cues={subtitleCues}
-            cueWarningsById={subtitleCueWarnings}
+            targetLang={activeItem?.targetLang}
+            onApplyBeautify={onApplySubtitleBeautify}
             reviewSource={Boolean(activeItem?.reviewSource)}
             reviewTarget={Boolean(activeItem?.reviewTarget)}
             reviewBanner={reviewBanner}

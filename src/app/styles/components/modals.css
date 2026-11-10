@@ -199,6 +199,21 @@
   cursor: help;
 }
 
+/* Severity split for the exception-only row badge: red = the file is wrong
+   (overlap, empty text), amber = readable but improvable. Shape and tooltip
+   carry the meaning too, never colour alone. */
+.subtitle-warning-badge.is-error {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #b42318;
+}
+
+.subtitle-warning-badge.is-warning {
+  border-color: #fcd34d;
+  background: #fffbeb;
+  color: #a05a00;
+}
+
 .subtitle-icon-btn {
   width: 30px;
   height: 30px;
