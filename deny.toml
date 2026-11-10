@@ -46,6 +46,40 @@ ignore = [
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
+    # RUSTSEC-2026-0429 是同一 extract() 路径的第四条（symlink 目标缓冲区按
+    # 归档声明的大小预分配，恶意档案可撑爆内存）：与上面三条同源同理，
+    # 本仓库不调用 extract。摘除条件同上。
+    "RUSTSEC-2026-0429",
+    # zstd 链（include-flate-compress ← include-flate ← jieba-rs / 内嵌本地化数据）
+    # 的三条通告：0391 = with_context 复用流上下文导致跨流数据泄漏；0398 =
+    # Seekable::decompress 对越界 offset 设置超容量长度；0403 = legacy 帧流式
+    # 解压失败时暴露未初始化内存。本仓库只经 include-flate 调用
+    # ZstdDecoder::new / ZstdEncoder::new——每次新建上下文、不用 seekable，
+    # 且压缩与解压的都是编译期嵌入的自有数据（本地化 JSON、jieba 词典），
+    # 不存在不可信帧、也不跨流复用上下文。
+    # 为什么不升：依赖版本钉死，且升级要连带 zstd 0.13 → 0.13.4+ /
+    # zstd-safe 7.4+；上述缺陷调用面与我们的用法不相交。
+    # 摘除条件 = include-flate 链升到 zstd >= 0.13.4（zstd-safe >= 7.4）后删除。
+    "RUSTSEC-2026-0391",
+    "RUSTSEC-2026-0398",
+    "RUSTSEC-2026-0403",
+    # zstd-sys 2.0.16 的 wasm32 分配器 shim（RUSTSEC-2026-0410，2026-11 发布）：
+    # shim 只在 wasm32 目标上参与编译，本项目交付目标只有 Windows x64，
+    # [graph].targets 也只按 x64 评估——受影响代码不可能进入任何产物。
+    # 为什么不升：依赖版本钉死，不跟随与本项目目标平台不相交的公告移动锁；
+    # zstd-sys 是 include-flate-compress → jieba-rs 的传递依赖，锁不动就是零影响。
+    # 摘除条件 = 真正引入 wasm32 交付目标（或上游链自然升到 zstd-sys >= 2.1.2）后删掉这条。
+    "RUSTSEC-2026-0410",
+    # libsqlite3-sys 0.30.1（C SQLite 3.54 之前，CVE-2026-119375）：需要同时
+    # 打开一份数据库与其旁路 -wal，且两者页大小不一致时，普通查询可能读到
+    # 进程内存里的陈旧字节。攻击要求本地文件写入权限——本应用只打开
+    # %APPDATA%\com.voxtrans.desktop\voxtrans.db 自己的库，不提供导入第三方
+    # SQLite 文件的入口；同用户把文件放进这个目录时已可替换程序本身，
+    # 该向量不再提供额外能力。
+    # 为什么不升：0.39（修复版）不在 sqlx-sqlite 0.8.6 的 ^0.30.1 约束内，
+    # 升它等于升级 sqlx 整条链；依赖版本钉死，不为此移动。
+    # 摘除条件 = sqlx 升级到依赖 libsqlite3-sys >= 0.39 的版本后删除。
+    "RUSTSEC-2026-0459",
 ]
 
 [sources]
